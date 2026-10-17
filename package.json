@@ -9,7 +9,8 @@
   "exports": {
     ".": "./src/compiler.mjs",
     "./host-bridge": "./src/host-bridge.mjs",
-    "./build-package": "./src/build-package.mjs"
+    "./build-package": "./src/build-package.mjs",
+    "./package-admission": "./src/package-admission.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
