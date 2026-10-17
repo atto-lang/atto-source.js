@@ -40,9 +40,9 @@ Do not merge/promote on structural checks, fabricated module namespaces, hash-on
 
 - `src/compiler.mjs` no longer depends on Node `Buffer.byteLength`; it
   measures UTF-8 source length with `TextEncoder`, compatible with browser JS.
-- Build inputs and admission files are read from bounded file descriptors with
-  final-component no-follow flags where supported, avoiding pathname swaps
-  between `lstat` and opening the file. A parent-directory attacker remains
+- Build inputs and admission files use a pre-open `lstat` symlink/type/size check,
+  final-component no-follow flags where supported, and post-open device/inode
+  identity checks, avoiding silent symlink following on hosts without `O_NOFOLLOW`. A parent-directory attacker remains
   out of scope; hosts must control their build/store directories.
 - `readVerifiedPackage()` returns an immutable base64 string containing the
   exact **previously hashed module bytes**. The Node-only
@@ -51,9 +51,10 @@ Do not merge/promote on structural checks, fabricated module namespaces, hash-on
   do not match the reviewed manifest.
 - Added tests for import after a pathname mutation, corrupt digests, module
   symlinks, mismatched exports and exact-arity Node invocation.
-- Added a deterministic 250-vector arithmetic test against the provisional
-  signed-i64 `BigInt` oracle. A targeted current-compiler run of 250 separate
-  vectors passed; this **does not establish Java backend numeric parity**.
+- Added deterministic scalar property coverage aligned to the audited Java
+  signed-i64 contract. On the current compiler blob, 250 generated vectors
+  produced **1,250/1,250 passing assertions** for add/subtract/multiply/remainder
+  and nested calls. Full differential Java execution is still a separate gate.
 - A separate `oreslang-platform-conformance` PR now contains a
   real compiler-to-ESM execution evidence collector, but cannot certify
   real execution until the private source checkout and runner are available.
@@ -64,3 +65,32 @@ compiler artifact and do not claim OS isolation. Declared source revision
 still needs independent attestation; a caller-supplied 40-hex SHA is metadata.
 
 CI incident: [JS private Actions runner issue #2](https://github.com/ores-truffle-oreslang/oreslang-source.js/issues/2).
+
+
+## Follow-up audit: package admission portability and public API
+
+Current head hardening additionally:
+
+- exports `@oreslang/source-js/load-trusted-package.node`; the exact-byte loader
+  existed previously but was unreachable through the package `exports` map;
+- rejects source symlinks in `buildPackage()` even on hosts where
+  `O_NOFOLLOW` is unavailable, using pre-open `lstat` plus post-open
+  device/inode identity checks;
+- applies the same fallback identity checks to admitted manifest/module files;
+- decodes independently pinned `manifest.json` with fatal UTF-8 rather than
+  Node's replacement-character string conversion. Malformed bytes inside an
+  otherwise syntactically valid JSON string therefore fail closed;
+- adds self-reference loader-export, invalid-manifest-UTF-8, and portable
+  symlink regressions.
+
+The current PR contains **43 Node test cases**. Their source syntax has been
+checked and the pure compiler subset has targeted exact-blob execution, but
+the complete 43-test filesystem/Node suite has **not** executed on the latest
+head because the source repository's Actions job still records zero steps and
+zero artifacts.
+
+The reviewed private-CI fallback is being hardened in
+`oreslang-source.java#1217` with a funded source-free carrier in
+`sagitta-stack/sagitta-infra#7`. No JS source may be mirrored there until the
+independent-review policy, incident #22, exact approvals and source-snapshot
+authorization all permit the transfer.
