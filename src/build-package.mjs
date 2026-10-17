@@ -1,5 +1,5 @@
 /** Trusted build-time package for browser/edge JS hosts; no guest execution. */
-import {readFile, lstat, mkdtemp, writeFile, rename, rm} from 'node:fs/promises';
+import {readFile, lstat, mkdtemp, mkdir, link, writeFile, rm} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {dirname, basename, join, resolve} from 'node:path';
 import {TextDecoder} from 'node:util';
@@ -21,10 +21,12 @@ export async function buildPackage({sourceFile, outputDir, target='edge-js', dec
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 262144) throw Error('source must be a bounded regular file');
   const sourceBytes = await readFile(input);
   if (sourceBytes.length > 262144) throw Error('source grew beyond limit');
-  const source = new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(sourceBytes);
+  const source = new TextDecoder('utf-8',{fatal:true,ignoreBOM:false}).decode(sourceBytes);
   const generated = compile(source);
   const emitted = Buffer.from(generated,'utf8');
   const exports = [...generated.matchAll(/^export \{ _f\d+ as ([A-Za-z_][A-Za-z0-9_]*) \};$/gm)].map(m=>m[1]);
+  if (exports.length > 128 || new Set(exports).size !== exports.length)
+    throw Error('unsupported public entrypoint count');
   const manifest = {
     schemaVersion:1, backend:'javascript', target, hostABI:HOST_ABI,
     module:'module.mjs', declaredCompilerSha,
@@ -33,13 +35,24 @@ export async function buildPackage({sourceFile, outputDir, target='edge-js', dec
     provenanceNote:'The compiler SHA is caller-declared, not independently attested. A hash is not an authorization or a sandbox.'
   };
   const parent = dirname(dest);
-  const st = await lstat(dest).then(()=>true).catch(e=>{if(e.code==='ENOENT')return false;throw e;});
-  if (st) throw Error('refusing to overwrite an existing package');
+  // The caller must control the parent directory. Cross-process attackers with
+  // write access to the parent can replace paths despite any JS-only checks.
   const temp = await mkdtemp(join(parent,'.'+basename(dest)+'.staging-'));
   try {
     await writeFile(join(temp,'module.mjs'),emitted,{flag:'wx',mode:0o600});
     await writeFile(join(temp,'manifest.json'),JSON.stringify(manifest,null,2)+'\n',{flag:'wx',mode:0o600});
-    await rename(temp,dest);
-  } catch (error) { await rm(temp,{recursive:true,force:true}); throw error; }
+    try { await mkdir(dest,{mode:0o700}); }
+    catch(error) {
+      if (error.code === 'EEXIST') throw Error('refusing to overwrite an existing package');
+      throw error;
+    }
+    // Reserve destination exclusively, then link each fully written file.
+    // Manifest is published last as the ready marker. If interrupted, leave
+    // an incomplete directory that the verifying host must fail closed on.
+    await link(join(temp,'module.mjs'),join(dest,'module.mjs'));
+    await link(join(temp,'manifest.json'),join(dest,'manifest.json'));
+  } finally {
+    await rm(temp,{recursive:true,force:true});
+  }
   return manifest;
 }
