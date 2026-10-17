@@ -8,7 +8,7 @@ export class CompileError extends Error {
   }
 }
 function lex(src) {
-  if (typeof src !== 'string' || Buffer.byteLength(src, 'utf8') > MAX_BYTES) throw new CompileError('invalid or oversized source');
+  if (typeof src !== 'string' || new TextEncoder().encode(src).byteLength > MAX_BYTES) throw new CompileError('invalid or oversized source');
   const out = [];
   let i=0, line=1, col=1;
   function advance() { if(src[i]==='\n'){line++;col=1;}else col++;i++; }
