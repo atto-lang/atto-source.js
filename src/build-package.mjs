@@ -24,6 +24,7 @@ export async function buildPackage({sourceFile, outputDir, target='edge-js', dec
   const source = new TextDecoder('utf-8',{fatal:true,ignoreBOM:false}).decode(sourceBytes);
   const generated = compile(source);
   const emitted = Buffer.from(generated,'utf8');
+  if (emitted.length > 4194304) throw Error('generated module exceeds package limit');
   const exports = [...generated.matchAll(/^export \{ _f\d+ as ([A-Za-z_][A-Za-z0-9_]*) \};$/gm)].map(m=>m[1]);
   if (exports.length > 128 || new Set(exports).size !== exports.length)
     throw Error('unsupported public entrypoint count');
