@@ -71,8 +71,8 @@ class Parser {
       let left=this.primary();
       while(true){
         const op=this.peek().value;
-        if(op==='/'||op==='%')throw new CompileError('unsupported operator '+op,this.peek());
-        const prec=op==='*'?20:op==='+'||op==='-'?10:-1;
+        if(op==='/')throw new CompileError('unsupported operator '+op,this.peek());
+        const prec=op==='*'||op==='%'?20:op==='+'||op==='-'?10:-1;
         if(prec<min)break;
         this.pos++;left={kind:'binary',op,left,right:this.expr(prec+1)};
       }
