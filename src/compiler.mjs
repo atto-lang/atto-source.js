@@ -124,6 +124,32 @@ export function compile(source){
     }
     throw new CompileError('invalid expression');
   }
+  // With return-only, strict evaluation and no branches, a call cycle
+  // is unconditionally non-terminating. Refuse it until the backend has
+  // conditional control flow and an explicit execution/fuel budget.
+  const dependencies=fns.map(()=>new Set());
+  function gatherCalls(expr,into,depth=0) {
+    if(depth>384)throw new CompileError('expression depth limit during dependency scan');
+    if(expr.kind==='call') {
+      const callee=byName.get(expr.name);
+      if(!callee)throw new CompileError('unresolved identifier '+expr.name);
+      into.add(callee.i);
+      for(const arg of expr.args)gatherCalls(arg,into,depth+1);
+    }else if(expr.kind==='binary'){
+      gatherCalls(expr.left,into,depth+1);
+      gatherCalls(expr.right,into,depth+1);
+    }else if(expr.kind==='neg')gatherCalls(expr.inner,into,depth+1);
+  }
+  fns.forEach((fn,i)=>gatherCalls(fn.body,dependencies[i]));
+  const status=new Uint8Array(fns.length);
+  function verifyAcyclic(i) {
+    if(status[i]===1)throw new CompileError('unconditional recursive call cycle at '+fns[i].name);
+    if(status[i]===2)return;
+    status[i]=1;
+    for(const callee of dependencies[i])verifyAcyclic(callee);
+    status[i]=2;
+  }
+  fns.forEach((_,i)=>verifyAcyclic(i));
   const out=['// Oreslang JS scalar subset. Signed i64 wrapping is provisional.',
     'function _int(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang int requires a signed i64 BigInt");return v;}'];
   fns.forEach((f,i)=>{
