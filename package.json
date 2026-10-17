@@ -8,7 +8,10 @@
   },
   "exports": {
     ".": "./src/compiler.mjs",
-    "./host-abi": "./src/host-abi.mjs"
+    "./build-package": "./src/build-package.mjs",
+    "./host-bridge": "./src/host-bridge.mjs",
+    "./host-bridge.node": "./src/host-bridge.node.mjs",
+    "./package-admission": "./src/package-admission.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
