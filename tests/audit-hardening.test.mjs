@@ -81,7 +81,7 @@ test('admission requires independent hashes and refuses corrupted or substituted
     const link=join(dir,'real-module.mjs');
     await rename(mod,link);
     await symlink(link,mod);
-    await assert.rejects(admitPackage(pinned),/bounded regular file/);
+    await assert.rejects(admitPackage(pinned),/package file inaccessible|bounded regular file/);
   }finally{await rm(dir,{recursive:true,force:true});}
 });
 
