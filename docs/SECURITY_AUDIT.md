@@ -17,7 +17,7 @@ Status: **draft hardening changes; exact-head GitHub CI has not executed**.
 
 ## Test evidence and limits
 
-- Targeted dynamic compiler checks ran against the fetched exact GitHub source for arithmetic, the signed minimum, positive overflow rejection, oversized literals and deep expressions.
+- Targeted dynamic compiler checks ran against the fetched exact GitHub source for arithmetic, the signed minimum, positive overflow rejection, signed remainder, oversized literals and deep expressions.
 - Targeted host-bridge checks exercised signed-int64 round trips, non-invocation of accessors, simple forgery rejection and exact/missing/extra arity.
 - Node 22 native `util.types.isModuleNamespaceObject` accepts a real module namespace and rejects a constructed module-tag impersonator.
 - Read-only package admission exercised success, modified module bytes, modified manifest bytes and symlink rejection using stubbed filesystem/digest dependencies. **This is logic testing, not a full native filesystem/cryptographic integration run**.
