@@ -1,5 +1,6 @@
 /** Read-only exact-digest admission for a reviewed JS package; never imports code. */
-import {lstat, readFile} from 'node:fs/promises';
+import {lstat, open} from 'node:fs/promises';
+import {constants} from 'node:fs';
 import {resolve, join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {HOST_ABI} from './host-bridge.mjs';
@@ -20,12 +21,27 @@ function requireSha(value, pattern, label) {
   if(typeof value!=='string'||!pattern.test(value))throw new PackageAdmissionError('missing or invalid trusted '+label);
 }
 async function readBoundedRegular(path,limit){
-  let st;
-  try{st=await lstat(path);}catch{throw new PackageAdmissionError('package file inaccessible');}
-  if(!st.isFile()||st.isSymbolicLink()||st.size>limit)throw new PackageAdmissionError('package file must be bounded regular file');
-  const bytes=await readFile(path);
-  if(bytes.length>limit)throw new PackageAdmissionError('package file exceeded size limit');
-  return bytes;
+  // O_NOFOLLOW refuses final-component symlinks; O_NONBLOCK avoids hanging on
+  // a substituted FIFO. Bound actual bytes read, not just initial stat.size.
+  const flags = constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0);
+  let file;
+  try { file=await open(path,flags); }
+  catch { throw new PackageAdmissionError('package file inaccessible'); }
+  try {
+    const st=await file.stat();
+    if(!st.isFile() || st.size>limit)throw new PackageAdmissionError('package file must be bounded regular file');
+    const chunks=[];
+    let total=0;
+    while(total<=limit){
+      const chunk=Buffer.allocUnsafe(Math.min(65536,limit+1-total));
+      const {bytesRead}=await file.read(chunk,0,chunk.length,null);
+      if(bytesRead===0)break;
+      total+=bytesRead;
+      if(total>limit)throw new PackageAdmissionError('package file exceeded size limit');
+      chunks.push(chunk.subarray(0,bytesRead));
+    }
+    return Buffer.concat(chunks,total);
+  }finally{await file.close();}
 }
 function validateManifest(m){
   if(!m||typeof m!=='object'||Array.isArray(m)||
@@ -49,7 +65,7 @@ function validateManifest(m){
  * This only verifies bytes at read time, not future file immutability, provenance,
  * safety of executing JS, nor compiler-revision attestation.
  */
-export async function admitPackage({
+export async function readVerifiedPackage({
   directory,expectedManifestSha256,expectedModuleSha256,
   expectedSourceSha256,expectedCompilerSha,target
 }={}){
@@ -72,10 +88,17 @@ export async function admitPackage({
     throw new PackageAdmissionError('package does not match trusted expectations');
   const rawModule=await readBoundedRegular(join(dir,'module.mjs'),4194304);
   if(hash(rawModule)!==expectedModuleSha256)throw new PackageAdmissionError('module digest mismatch');
-  // The imported path must remain immutable after this check. This function
-  // deliberately does not import/evaluate JS or claim provenance attestation.
-  return Object.freeze({...manifest,
+  const approved=Object.freeze({...manifest,
     publicEntrypoints:Object.freeze([...manifest.publicEntrypoints]),
     declaredCapabilities:Object.freeze([])
   });
+  // Exact verified bytes are snapshotted as an immutable base64 string.
+  // Hosts must import THIS content, not reopen the original filesystem path.
+  return Object.freeze({manifest:approved,moduleBase64:rawModule.toString('base64')});
+}
+
+/** Legacy metadata-only admission, retained for callers that do not load code. */
+export async function admitPackage(options){
+  const verified=await readVerifiedPackage(options);
+  return verified.manifest;
 }
