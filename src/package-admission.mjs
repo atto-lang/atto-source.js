@@ -1,5 +1,6 @@
 /** Read-only exact-digest admission for a reviewed JS package; never imports code. */
 import {lstat, open} from 'node:fs/promises';
+import {TextDecoder} from 'node:util';
 import {constants} from 'node:fs';
 import {resolve, join} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -21,15 +22,20 @@ function requireSha(value, pattern, label) {
   if(typeof value!=='string'||!pattern.test(value))throw new PackageAdmissionError('missing or invalid trusted '+label);
 }
 async function readBoundedRegular(path,limit){
-  // O_NOFOLLOW refuses final-component symlinks; O_NONBLOCK avoids hanging on
-  // a substituted FIFO. Bound actual bytes read, not just initial stat.size.
+  // lstat is also required because O_NOFOLLOW is not available on every host.
+  let before;
+  try { before=await lstat(path); }
+  catch { throw new PackageAdmissionError('package file inaccessible'); }
+  if(!before.isFile() || before.isSymbolicLink() || before.size>limit)
+    throw new PackageAdmissionError('package file must be bounded regular non-symlink file');
   const flags = constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0);
   let file;
   try { file=await open(path,flags); }
   catch { throw new PackageAdmissionError('package file inaccessible'); }
   try {
     const st=await file.stat();
-    if(!st.isFile() || st.size>limit)throw new PackageAdmissionError('package file must be bounded regular file');
+    if(!st.isFile() || st.size>limit || before.dev!==st.dev || before.ino!==st.ino)
+      throw new PackageAdmissionError('package file changed or is not a bounded regular file');
     const chunks=[];
     let total=0;
     while(total<=limit){
@@ -81,7 +87,10 @@ export async function readVerifiedPackage({
   const rawManifest=await readBoundedRegular(join(dir,'manifest.json'),65536);
   if(hash(rawManifest)!==expectedManifestSha256)throw new PackageAdmissionError('manifest digest mismatch');
   let manifest;
-  try{manifest=JSON.parse(rawManifest.toString('utf8'));}catch{throw new PackageAdmissionError('invalid package JSON');}
+  try{
+    const text=new TextDecoder('utf-8',{fatal:true}).decode(rawManifest);
+    manifest=JSON.parse(text);
+  }catch{throw new PackageAdmissionError('invalid package JSON or UTF-8');}
   validateManifest(manifest);
   if(manifest.target!==target||manifest.moduleSha256!==expectedModuleSha256||
      manifest.sourceSha256!==expectedSourceSha256||manifest.declaredCompilerSha!==expectedCompilerSha)
