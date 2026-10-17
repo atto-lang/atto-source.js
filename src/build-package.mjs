@@ -1,5 +1,5 @@
 /** Trusted build-time package for browser/edge JS hosts; no guest execution. */
-import {open, mkdtemp, mkdir, link, writeFile, rm} from 'node:fs/promises';
+import {lstat, open, mkdtemp, mkdir, link, writeFile, rm} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {dirname, basename, join, resolve} from 'node:path';
@@ -20,12 +20,17 @@ export async function buildPackage({sourceFile, outputDir, target='edge-js', dec
   const input = resolve(sourceFile), dest = resolve(outputDir);
   // Read from one file descriptor, without following a final-component
   // symlink. Bound actual bytes even if the source changes while being read.
+  const before=await lstat(input);
+  if(!before.isFile() || before.isSymbolicLink() || before.size > 262144)
+    throw Error('source must be a bounded regular non-symlink file');
   const flags=constants.O_RDONLY|(constants.O_NOFOLLOW||0)|(constants.O_NONBLOCK||0);
   const file=await open(input,flags);
   let sourceBytes;
   try{
     const stat=await file.stat();
-    if(!stat.isFile() || stat.size > 262144)throw Error('source must be a bounded regular file');
+    if(!stat.isFile() || stat.size > 262144 ||
+       before.dev!==stat.dev || before.ino!==stat.ino)
+      throw Error('source changed or is not a bounded regular file');
     const chunks=[];let size=0;
     while(size<=262144){
       const b=Buffer.allocUnsafe(Math.min(65536,262145-size));
