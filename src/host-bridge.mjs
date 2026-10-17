@@ -60,6 +60,9 @@ export function invokeTrustedModule(namespace, {entry, allowlist, args} = {}) {
   const decoded = args.map(decodeInt64);
   const desc = Object.getOwnPropertyDescriptor(namespace, entry);
   if (!desc || typeof desc.value !== 'function') throw new HostBridgeError('entrypoint is not a public function');
+  // Generated scalar functions use explicit positional parameters. JS would
+  // otherwise ignore extra arguments or fill missing arguments with undefined.
+  if (desc.value.length !== decoded.length) throw new HostBridgeError('entrypoint arity mismatch');
   let result;
   try { result = desc.value(...decoded); }
   catch { throw new HostBridgeError('guest invocation failed'); }
