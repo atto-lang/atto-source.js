@@ -1,0 +1,13 @@
+{
+  "name": "@oreslang/source-js",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22"},
+  "exports": {".": "./src/compiler.mjs"},
+  "bin": {"oreslang-jsc": "./bin/oreslang-jsc.mjs"},
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "node bin/oreslang-jsc.mjs --check tests/fixtures/arithmetic.ores"
+  }
+}
