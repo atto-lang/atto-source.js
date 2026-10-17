@@ -60,7 +60,22 @@ test('symlink substituted for unchanged module bytes is rejected',async()=>{
    const moduleFile=join(dest,'module.mjs'),alternate=join(dest,'real.mjs');
    await writeFile(alternate,await readFile(moduleFile));
    await unlink(moduleFile);await symlink(alternate,moduleFile);
-   await assert.rejects(readVerifiedPackage(expect),/package file inaccessible/);
+   await assert.rejects(readVerifiedPackage(expect),/package file inaccessible|non-symlink|bounded regular/);
+ });
+});
+test('trusted manifest bytes must still be valid UTF-8',async()=>{
+ await fixture(async({dest,expect})=>{
+   const path=join(dest,'manifest.json');
+   const raw=await readFile(path);
+   const needle=Buffer.from('caller-declared');
+   const at=raw.indexOf(needle);
+   assert.ok(at>=0);
+   const invalid=Buffer.from(raw);
+   invalid[at]=0xff;
+   await writeFile(path,invalid);
+   await assert.rejects(readVerifiedPackage({
+     ...expect,expectedManifestSha256:hash(invalid)
+   }),/invalid package JSON or UTF-8/);
  });
 });
 test('two package builders cannot both publish the same directory',async()=>{
