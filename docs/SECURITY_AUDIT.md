@@ -35,3 +35,32 @@ Status: **draft hardening changes; exact-head GitHub CI has not executed**.
 6. The `declaredCompilerSha` is caller-supplied metadata, not cryptographic attestation that produced the JS module.
 
 Do not merge/promote on structural checks, fabricated module namespaces, hash-only claims without an independent trusted pin, or workflows with zero executed steps.
+
+## Follow-up hardening: exact-byte loading and evidence
+
+- `src/compiler.mjs` no longer depends on Node `Buffer.byteLength`; it
+  measures UTF-8 source length with `TextEncoder`, compatible with browser JS.
+- Build inputs and admission files are read from bounded file descriptors with
+  final-component no-follow flags where supported, avoiding pathname swaps
+  between `lstat` and opening the file. A parent-directory attacker remains
+  out of scope; hosts must control their build/store directories.
+- `readVerifiedPackage()` returns an immutable base64 string containing the
+  exact **previously hashed module bytes**. The Node-only
+  `loadTrustedNodePackage()` imports that snapshot via a data URL instead of
+  reopening a mutable module path, and rejects exported names/functions that
+  do not match the reviewed manifest.
+- Added tests for import after a pathname mutation, corrupt digests, module
+  symlinks, mismatched exports and exact-arity Node invocation.
+- Added a deterministic 250-vector arithmetic test against the provisional
+  signed-i64 `BigInt` oracle. A targeted current-compiler run of 250 separate
+  vectors passed; this **does not establish Java backend numeric parity**.
+- A separate `oreslang-platform-conformance` PR now contains a
+  real compiler-to-ESM execution evidence collector, but cannot certify
+  real execution until the private source checkout and runner are available.
+
+`loadTrustedNodePackage()` executes JavaScript **with the host process's
+privileges**, even though the bytes are pinned. Do not load an untrusted
+compiler artifact and do not claim OS isolation. Declared source revision
+still needs independent attestation; a caller-supplied 40-hex SHA is metadata.
+
+CI incident: [JS private Actions runner issue #2](https://github.com/ores-truffle-oreslang/oreslang-source.js/issues/2).
