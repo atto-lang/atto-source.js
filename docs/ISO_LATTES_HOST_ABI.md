@@ -80,3 +80,48 @@ tests is not feature parity.
    and quota enforcement have been proven.
 7. Keep this backend separate from JS/Wasm/Java/.NET actor parity until the
    shared conformance suite has actual exact-revision execution receipts.
+
+## Hardened publication and admission (October 17, 2026)
+
+A host must **not** accept a package merely because its own manifest lists
+SHA-256 hashes. It needs independently trusted expected SHA-256 digests of
+`manifest.json`, `module.mjs` and the source, an exact compiler revision,
+and the requested target. `admitPackage()` now validates those expectations
+without importing or evaluating guest JavaScript:
+
+```js
+import {admitPackage} from '@oreslang/source-js/package-admission';
+// All expected hashes must come from an independently reviewed trusted release.
+const approved = await admitPackage({
+  directory: '/trusted/immutable/package',
+  target: 'edge-js',
+  expectedManifestSha256: '...exact SHA-256 hex...',
+  expectedModuleSha256: '...exact SHA-256 hex...',
+  expectedSourceSha256: '...exact SHA-256 hex...',
+  expectedCompilerSha: '...exact 40-hex Git SHA...'
+});
+```
+
+`buildPackage()` now reserves its destination using an exclusive directory
+creation before publishing files. The manifest is linked into place **last**
+as a readiness marker, so a crash may leave an incomplete directory that
+admission must reject. Build into a trusted, private parent directory; this
+does not protect against attackers who can mutate that parent or swap paths
+between hash verification and import. Move admitted artifacts into a sealed
+or immutable store before loading them.
+
+For Node-based hosts, prefer `invokeTrustedNodeModule()` from
+`@oreslang/source-js/host-bridge.node`, which uses Node's native
+`util.types.isModuleNamespaceObject` brand check to reject forged ESM-like
+plain objects. The browser-portable `invokeTrustedModule()` uses a structural
+namespace check that **can be forged**; neither API establishes module
+authenticity. Content trust comes from verified pinned provenance and a
+trusted loader, and isolation requires a separate sandbox/process boundary.
+
+The package builder rejects more than 128 public entrypoints and invalid
+UTF-8 source, accepts a leading UTF-8 BOM consistently, and refuses to
+replace an existing output directory even when concurrent builders race.
+The wire ABI refuses accessor-backed data objects without invoking getters.
+
+Remaining gaps: no verified iso-lattes host integration, no actor/async
+semantics, no runtime sandbox, and no exact-runner CI evidence.
