@@ -71,6 +71,6 @@ test('unapproved manifest pins, symlinks and incorrect exports fail closed',asyn
     const backing=join(p.root,'backing.mjs');
     await writeFile(backing,original);
     await symlink(backing,modulePath);
-    await assert.rejects(readVerifiedPackage(p.options),/package file inaccessible/);
+    await assert.rejects(readVerifiedPackage(changed),/package file inaccessible/);
   }finally{await rm(p.root,{recursive:true,force:true});}
 });
