@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import {readFile, writeFile, rename, lstat, unlink} from 'node:fs/promises';
+import {readFile, writeFile, link, lstat, unlink} from 'node:fs/promises';
 import {basename, dirname, join, resolve} from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {compile, check} from '../src/compiler.mjs';
@@ -28,7 +28,9 @@ try {
         throw Error('refusing to replace existing output');
       temp = join(dirname(dest), '.'+basename(dest)+'.'+randomBytes(12).toString('hex')+'.tmp');
       await writeFile(temp, output, {flag:'wx',mode:0o600});
-      await rename(temp,dest);
+      // Hard-link publishes only if destination does not already exist; rename could overwrite in a race.
+      await link(temp,dest);
+      await unlink(temp);
       temp = null;
     }
   }
