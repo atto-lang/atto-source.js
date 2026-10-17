@@ -69,3 +69,16 @@ test('CLI check works and emits no compiled JS on reject',()=>{
  const negative='pub fnc main(): int { return nonexistent_symbol; }';
  assert.throws(()=>compile(negative),/unresolved identifier nonexistent_symbol/);
 });
+
+
+test('scalar call graph accepts forward DAGs but rejects unconditionally infinite cycles', async () => {
+ const acyclic='pub fnc main(): int { return a(40); } fnc a(int x): int { return b(x,2); } fnc b(int x,int y): int { return x+y; }';
+ const mod=await moduleFrom(acyclic);
+ assert.equal(mod.main(),42n);
+ for(const bad of [
+  'pub fnc main(): int { return main(); }',
+  'pub fnc main(): int { return a(); } fnc a(): int { return main(); }',
+  'pub fnc main(): int { return 1; } fnc unused(): int { return unused(); }',
+  'pub fnc main(): int { return a(); } fnc a(): int { return b(); } fnc b(): int { return a(); }'
+ ])assert.throws(()=>compile(bad),/error: unconditional recursive call cycle/);
+});
