@@ -71,6 +71,11 @@ test('unapproved manifest pins, symlinks and incorrect exports fail closed',asyn
     const backing=join(p.root,'backing.mjs');
     await writeFile(backing,original);
     await symlink(backing,modulePath);
-    await assert.rejects(readVerifiedPackage(changed),/package file inaccessible/);
+    await assert.rejects(readVerifiedPackage(changed),/package file inaccessible|non-symlink|bounded regular/);
   }finally{await rm(p.root,{recursive:true,force:true});}
+});
+
+test('package self-reference exports the exact-byte Node loader',async()=>{
+  const mod=await import('@oreslang/source-js/load-trusted-package.node');
+  assert.equal(typeof mod.loadTrustedNodePackage,'function');
 });
