@@ -53,7 +53,8 @@ test('buildPackage creates manifest plus executable ESM for browser/edge',async(
    const compiled=await readFile(join(output,'module.mjs'));
    assert.equal(digest(compiled),manifest.moduleSha256);
    assert.equal(digest(await readFile(source)),manifest.sourceSha256);
-   assert.equal((await import(pathToFileURL(join(output,'module.mjs')).href)).main(),42n);
+   const hostNamespace = await import(pathToFileURL(join(output,'module.mjs')).href);
+   assert.deepEqual(invokeTrustedModule(hostNamespace,{entry:'main',allowlist:manifest.publicEntrypoints,args:[]}),i('42'));
    await assert.rejects(buildPackage({sourceFile:source,outputDir:output,target:'edge-js',declaredCompilerSha:SHA}),/overwrite/);
    const parsed=JSON.parse(await readFile(join(output,'manifest.json'),'utf8'));
    assert.deepEqual(parsed,manifest);
