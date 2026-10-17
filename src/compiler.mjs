@@ -81,7 +81,15 @@ class Parser {
   }
   primary(){
     const t=this.peek();
-    if(this.match('-'))return {kind:'neg',inner:this.expr(30)};
+    if(this.match('-')){
+      // The absolute magnitude 2^63 is legal only as a negated literal.
+      // All other positive literals must remain within signed i64.
+      const next=this.peek();
+      if(next.kind==='int' && BigInt(next.value.replaceAll('_',''))===(1n<<63n)){
+        this.pos++;return {kind:'int',n:-(1n<<63n)};
+      }
+      return {kind:'neg',inner:this.expr(30)};
+    }
     if(this.match('+'))return this.expr(30);
     if(this.match('(')){const v=this.expr();this.expect(')');return v;}
     if(t.kind==='int'){this.pos++;const n=BigInt(t.value.replaceAll('_',''));if(n>I64_MAX)throw new CompileError('positive int outside signed i64',t);return {kind:'int',n};}
