@@ -36,7 +36,8 @@ test('trusted ES module boundary calls explicitly allowed public function',async
   assert.deepEqual(invokeTrustedModule(namespace,{entry:'add',allowlist:['add'],args:[i('40'),i('2')]}),i('42'));
   assert.throws(()=>invokeTrustedModule(namespace,{entry:'private',allowlist:['private'],args:[]}),/not a public function/);
   assert.throws(()=>invokeTrustedModule(namespace,{entry:'add',allowlist:['main'],args:[i('1'),i('2')]}),/not permitted/);
-  assert.throws(()=>invokeTrustedModule(namespace,{entry:'add',allowlist:['add'],args:[i('1')]}),/guest invocation failed/);
+  assert.throws(()=>invokeTrustedModule(namespace,{entry:'add',allowlist:['add'],args:[i('1')]}),/arity mismatch/);
+  assert.throws(()=>invokeTrustedModule(namespace,{entry:'add',allowlist:['add'],args:[i('1'),i('2'),i('3')]}),/arity mismatch/);
   assert.throws(()=>invokeTrustedModule({add(){return 1n;}},{entry:'add',allowlist:['add'],args:[]}),/module namespace/);
  }finally { await rm(dir,{recursive:true,force:true}); }
 });
