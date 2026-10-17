@@ -63,3 +63,32 @@ test('rejects symbolic-link source input',async()=>{
    assert.match(result.stderr,/regular non-symlink/);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+
+test('CLI rejects malformed UTF-8 including invalid bytes hidden in comments',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ores-cli-utf8-'));
+ try{
+   const source=join(dir,'bad.ores'),dest=join(dir,'compiled.mjs');
+   const prefix=Buffer.from('// comment ');
+   const suffix=Buffer.from('\npub fnc main(): int { return 42; }\n');
+   await writeFile(source,Buffer.concat([prefix,Buffer.from([0xff]),suffix]));
+   const checked=await invoke(['--check',source]);
+   assert.notEqual(checked.code,0);
+   const compiled=await invoke([source,'--out='+dest]);
+   assert.notEqual(compiled.code,0);
+   assert.deepEqual((await readdir(dir)).sort(),['bad.ores']);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+test('CLI rejects oversized real files and relative --out paths',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'ores-cli-limits-'));
+ try{
+   const input=join(dir,'large.ores');
+   await writeFile(input,' '.repeat(262145));
+   const oversized=await invoke(['--check',input]);
+   assert.notEqual(oversized.code,0);
+   assert.match(oversized.stderr,/262144/);
+   const relative=await invoke([fixture,'--out=relative-output.mjs']);
+   assert.notEqual(relative.code,0);
+   assert.match(relative.stderr,/absolute destination path/);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
