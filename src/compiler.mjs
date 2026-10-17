@@ -150,7 +150,7 @@ export function compile(source){
     status[i]=2;
   }
   fns.forEach((_,i)=>verifyAcyclic(i));
-  const out=['// Oreslang JS scalar subset. Signed i64 wrapping is provisional.',
+  const out=['// Oreslang JS scalar subset. Signed i64 arithmetic follows the Java reference contract.',
     'function _int(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang int requires a signed i64 BigInt");return v;}'];
   fns.forEach((f,i)=>{
     const params=f.params.map((_,j)=>'_p'+j);
