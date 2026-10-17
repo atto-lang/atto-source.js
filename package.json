@@ -11,7 +11,8 @@
     "./build-package": "./src/build-package.mjs",
     "./host-bridge": "./src/host-bridge.mjs",
     "./host-bridge.node": "./src/host-bridge.node.mjs",
-    "./package-admission": "./src/package-admission.mjs"
+    "./package-admission": "./src/package-admission.mjs",
+    "./load-trusted-package.node": "./src/load-trusted-package.node.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
