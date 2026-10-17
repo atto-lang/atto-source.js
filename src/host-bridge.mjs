@@ -12,13 +12,19 @@ export class HostBridgeError extends Error {
 export function decodeInt64(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
       (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) ||
-      Object.keys(value).length !== 2 ||
-      !Object.hasOwn(value, 'type') || !Object.hasOwn(value, 'value') ||
-      value.type !== 'int64' || typeof value.value !== 'string' ||
-      value.value.length > 20 || !/^(?:0|[1-9][0-9]*|-[1-9][0-9]*)$/.test(value.value)) {
+      Reflect.ownKeys(value).length !== 2) {
     throw new HostBridgeError('invalid canonical int64 wire value');
   }
-  const v = BigInt(value.value);
+  const type = Object.getOwnPropertyDescriptor(value, 'type');
+  const decimal = Object.getOwnPropertyDescriptor(value, 'value');
+  // Never invoke getters or accessor properties on purported JSON data.
+  if (!type || !decimal || !Object.hasOwn(type,'value') ||
+      !Object.hasOwn(decimal,'value') || type.value !== 'int64' ||
+      typeof decimal.value !== 'string' || decimal.value.length > 20 ||
+      !/^(?:0|[1-9][0-9]*|-[1-9][0-9]*)$/.test(decimal.value)) {
+    throw new HostBridgeError('invalid canonical int64 wire value');
+  }
+  const v = BigInt(decimal.value);
   if (v < I64_MIN || v > I64_MAX) throw new HostBridgeError('int64 out of range');
   return v;
 }
@@ -32,12 +38,16 @@ export function encodeInt64(value) {
 /**
  * Invoke a reviewed and explicitly allowlisted ESM module namespace.
  * Host must import a trusted, pinned module in its own security boundary.
- * This adapter cannot safely execute untrusted code or establish isolation.
+ * The namespace shape check catches accidental misuse, NOT forged objects:
+ * JavaScript code can imitate its observable properties. Trust must come
+ * from an independently verified immutable artifact and trusted host loader.
+ * This adapter cannot execute untrusted code safely or establish isolation.
  */
 export function invokeTrustedModule(namespace, {entry, allowlist, args} = {}) {
   if (!namespace || typeof namespace !== 'object' ||
       Object.prototype.toString.call(namespace) !== '[object Module]' ||
-      Object.getPrototypeOf(namespace) !== null) {
+      Object.getPrototypeOf(namespace) !== null ||
+      Object.isExtensible(namespace)) {
     throw new HostBridgeError('expected a trusted ESM module namespace');
   }
   if (typeof entry !== 'string' || !NAME.test(entry) ||
