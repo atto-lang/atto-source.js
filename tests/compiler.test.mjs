@@ -33,13 +33,19 @@ test('module wrappers, parameter checking, precedence and wrapping',async()=>{
  const signed=await moduleFrom('pub fnc main(): int { return 9223372036854775807 + 1; }');
  assert.equal(signed.main(), -(1n<<63n));
 });
+test('signed-i64 remainder follows Java long remainder semantics',async()=>{
+ const mod=await moduleFrom('pub fnc rem(int a, int b): int { return a % b; }');
+ assert.equal(mod.rem(7n,3n),1n);
+ assert.equal(mod.rem(-7n,3n),-1n);
+ assert.equal(mod.rem(-(1n<<63n),-1n),0n);
+ assert.throws(()=>mod.rem(1n,0n));
+});
 test('rejects unknown symbols with conformance-friendly diagnostic',()=>{
  assert.throws(()=>compile('pub fnc main(): int { return nonexistent_symbol; }'),/error: unresolved identifier nonexistent_symbol/);
 });
 test('fail-closed: unsupported language features and syntax',()=>{
  const invalid=[
   'pub fnc main(): int { return 1 / 2; }',
-  'pub fnc main(): int { return 1 % 2; }',
   'pub fnc main(): int { return host(); }',
   'pub fnc main(): int { return 1; } import bad;',
   'define actor A as end',
