@@ -33,6 +33,7 @@ function lex(src) {
     }else if(/[0-9]/.test(src[i])){
       let s='';while(i<src.length&&/[0-9_]/.test(src[i])){s+=src[i];advance();}
       if(!/^[0-9]+(?:_[0-9]+)*$/.test(s))throw new CompileError('invalid integer literal',loc);
+      if (s.length > 64) throw new CompileError('integer literal length limit',loc);
       add('int',s,loc);
     }else if('(){}:,;+-*/%=.'.includes(src[i])){add('sym',src[i],loc);advance();}
     else throw new CompileError('unsupported character',loc);
@@ -99,18 +100,19 @@ class Parser {
 export function compile(source){
   const fns=new Parser(lex(source)).parse();const byName=new Map();
   fns.forEach((f,i)=>{if(byName.has(f.name))throw new CompileError('duplicate function '+f.name);byName.set(f.name,{i,arity:f.params.length});});
-  function lower(e,params){
+  function lower(e,params,depth=0){
+    if(depth>384)throw new CompileError('expression depth limit during lowering');
     if(e.kind==='int')return String(e.n)+'n';
     if(e.kind==='var'){
       const i=params.indexOf(e.name);if(i<0)throw new CompileError('unresolved identifier '+e.name);
       return '_p'+i;
     }
-    if(e.kind==='neg')return 'BigInt.asIntN(64,-('+lower(e.inner,params)+'))';
-    if(e.kind==='binary')return 'BigInt.asIntN(64,('+lower(e.left,params)+')'+e.op+'('+lower(e.right,params)+'))';
+    if(e.kind==='neg')return 'BigInt.asIntN(64,-('+lower(e.inner,params,depth+1)+'))';
+    if(e.kind==='binary')return 'BigInt.asIntN(64,('+lower(e.left,params,depth+1)+')'+e.op+'('+lower(e.right,params,depth+1)+'))';
     if(e.kind==='call'){
       const fn=byName.get(e.name);if(!fn)throw new CompileError('unresolved identifier '+e.name);
       if(e.args.length!==fn.arity)throw new CompileError('arity mismatch for '+e.name);
-      return '_f'+fn.i+'('+e.args.map(a=>lower(a,params)).join(',')+')';
+      return '_f'+fn.i+'('+e.args.map(a=>lower(a,params,depth+1)).join(',')+')';
     }
     throw new CompileError('invalid expression');
   }
