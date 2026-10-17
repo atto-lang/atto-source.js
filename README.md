@@ -2,7 +2,7 @@
 
 Experimental source-to-ESM compiler for Oreslang, intended ultimately for browser/edge JavaScript and the iso-lattes execution host.
 
-Implemented first slice: integer functions with typed int parameters, return-only bodies, operators +, - and *, forward/same-module calls, pub exports, optional module wrapper, lexical comments and bounded source. Unsupported features fail closed. The Java/Truffle frontend is the language reference; this is **not** feature parity.
+Implemented first slice: integer functions with typed int parameters, return-only bodies, operators +, -, *, and %, forward/same-module calls, pub exports, optional module wrapper, lexical comments and bounded source. Unsupported features fail closed. The Java/Truffle frontend is the language reference; this is **not** feature parity.
 
 ## Quick start
 
@@ -13,7 +13,7 @@ Requires Node.js 22 or later; no third-party runtime dependencies.
     node bin/oreslang-jsc.mjs tests/fixtures/forward-call.ores --out=/tmp/forward.mjs
     node -e 'import("/tmp/forward.mjs").then(m => console.log(m.main()))'
 
-The compiled main() returns 42n (BigInt). Numeric behavior uses **provisional** signed 64-bit wrapping; Java semantic parity is unverified. Division/remainder and unsupported operations are rejected rather than guessed.
+The compiled main() returns 42n (BigInt). Numeric behavior uses **provisional** signed 64-bit wrapping; Java semantic parity is unverified. Division remains unsupported in this int-only slice because the Java reference types int/int division as float. Integer remainder (%) follows signed-i64 Java long semantics; other unsupported operations are rejected rather than guessed.
 
 Exports from src/compiler.mjs: compile(source) -> ECMAScript module source text; check(source) -> true or exception. Compilation does not execute generated code.
 
