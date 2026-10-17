@@ -1,5 +1,6 @@
 /** Trusted build-time package for browser/edge JS hosts; no guest execution. */
-import {readFile, lstat, mkdtemp, mkdir, link, writeFile, rm} from 'node:fs/promises';
+import {open, mkdtemp, mkdir, link, writeFile, rm} from 'node:fs/promises';
+import {constants} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {dirname, basename, join, resolve} from 'node:path';
 import {TextDecoder} from 'node:util';
@@ -17,10 +18,25 @@ export async function buildPackage({sourceFile, outputDir, target='edge-js', dec
   if (!/^[0-9a-f]{40}$/.test(declaredCompilerSha || '')) throw Error('exact declared compiler SHA required');
   if (typeof sourceFile !== 'string' || typeof outputDir !== 'string') throw Error('source and output paths required');
   const input = resolve(sourceFile), dest = resolve(outputDir);
-  const stat = await lstat(input);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 262144) throw Error('source must be a bounded regular file');
-  const sourceBytes = await readFile(input);
-  if (sourceBytes.length > 262144) throw Error('source grew beyond limit');
+  // Read from one file descriptor, without following a final-component
+  // symlink. Bound actual bytes even if the source changes while being read.
+  const flags=constants.O_RDONLY|(constants.O_NOFOLLOW||0)|(constants.O_NONBLOCK||0);
+  const file=await open(input,flags);
+  let sourceBytes;
+  try{
+    const stat=await file.stat();
+    if(!stat.isFile() || stat.size > 262144)throw Error('source must be a bounded regular file');
+    const chunks=[];let size=0;
+    while(size<=262144){
+      const b=Buffer.allocUnsafe(Math.min(65536,262145-size));
+      const {bytesRead}=await file.read(b,0,b.length,null);
+      if(!bytesRead)break;
+      size+=bytesRead;
+      if(size>262144)throw Error('source grew beyond limit');
+      chunks.push(b.subarray(0,bytesRead));
+    }
+    sourceBytes=Buffer.concat(chunks,size);
+  }finally{await file.close();}
   const source = new TextDecoder('utf-8',{fatal:true,ignoreBOM:false}).decode(sourceBytes);
   const generated = compile(source);
   const emitted = Buffer.from(generated,'utf8');
