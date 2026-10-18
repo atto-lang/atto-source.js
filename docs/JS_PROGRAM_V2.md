@@ -84,3 +84,5 @@ Required next vertical slices:
 3. Implement full class layout + nominal inheritance graph + constructor and field initialization + private dispatch before enabling class syntax.
 4. Add runtime module fields and graph-aware staged module initialization, respecting cyclic import barriers.
 5. Execute exact-revision Node and Java/LLVM differential tests with actual CI runner steps/logs. Zero-step Actions failures do not count as tests.
+
+Audit gate: exported file-root routines must remain direct-call-only and cannot be ESM values.
