@@ -109,7 +109,18 @@ class Parser {
 // The isolated parser is a bootstrap adapter. Future language frontends
 // should produce this versioned IR instead of duplicating parser semantics.
 export function compileToIR(source) {
-  return createScalarIR(new Parser(lex(source)).parse());
+  const parsed=new Parser(lex(source)).parse();
+  try {
+    return createScalarIR(parsed);
+  } catch (error) {
+    // Keep the source frontend's stable diagnostics while preserving
+    // strict "scalar IR" diagnostics for direct compileIR callers.
+    if(error?.name==='ScalarIRError' && typeof error.message==='string' &&
+       error.message.startsWith('error: scalar IR: ')) {
+      throw new CompileError(error.message.slice('error: scalar IR: '.length));
+    }
+    throw error;
+  }
 }
 export function compileIR(input) {
   const ir = validateScalarIR(input);
