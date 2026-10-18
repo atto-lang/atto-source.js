@@ -116,3 +116,26 @@ test('CLI program-v2 rejects public routines and accepts module named root',asyn
   assert.equal(success.status,0,success.stderr);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('external IR cannot mix fnc/routine overload kinds even with distinct arities',()=>{
+ const ir=compileToProgramIRV2('pub fnc main(): int {return 42;}');
+ const fnc={module:null,name:'compute',kind:'fnc',pub:false,params:[],body:{kind:'int',value:'1'}};
+ const routine={...fnc,kind:'routine',params:['a']};
+ for(const entries of [[fnc,routine],[routine,fnc]]) {
+   assert.throws(()=>validateProgramIRV2({...ir,functions:[...ir.functions,...entries]}),
+     /fnc\/routine overload kind conflict/);
+ }
+ for(const kind of ['fnc','routine']) {
+   const valid=validateProgramIRV2({...ir,functions:[
+     ...ir.functions,{...fnc,kind},{...fnc,kind,params:['a']}
+   ]});
+   assert.equal(valid.functions.length,3);
+ }
+});
+
+test('module namespace scope keeps overload-family identity separate from file root',()=>{
+ const ir=compileToProgramIRV2('define module root pub fnc compute(): int {return 1;} end pub fnc compute(int a): int {return a;}');
+ assert.equal(ir.functions.length,2);
+ assert.deepEqual(ir.functions.map(f=>f.module),['root',null]);
+ assert.equal(validateProgramIRV2(ir).functions.length,2);
+});
