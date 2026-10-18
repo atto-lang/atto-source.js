@@ -105,6 +105,13 @@ class Parser {
     return {module:moduleName, name, kind, pub, params, body};
   }
   parse() {
+    // Oreslang's flat source namespace is compile-time package metadata,
+    // not a runtime module/object. It must occur only once at file start.
+    let namespace = null;
+    if (this.eat('namespace')) {
+      namespace = this.name();
+      this.expect(';');
+    }
     const modules = [], functions = [], usedModules = new Set();
     while (this.peek().kind !== 'eof') {
       if (this.eat('define')) {
@@ -124,7 +131,7 @@ class Parser {
       }
     }
     if (!functions.length) fail('empty program');
-    return {modules,functions};
+    return {namespace,modules,functions};
   }
   integer(negative = false) {
     const token=this.peek();
@@ -227,10 +234,9 @@ function resolveProgram(parsed) {
     if(exports.has(m)) fail('module/function export conflict '+m);
     exports.add(m);
   });
-  let nodeCount=0, maxRecDepth=0;
+  let nodeCount=0;
   function resolve(expr,owner,depth=0) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
-    maxRecDepth=Math.max(depth,maxRecDepth);
     switch(expr.kind) {
       case 'int': return expr;
       case 'variable': {
