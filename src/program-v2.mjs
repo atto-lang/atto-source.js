@@ -298,8 +298,10 @@ function emitProgram(program) {
     switch(expr.kind) {
       case 'int': return expr.value+'n';
       case 'param':return '_p'+expr.index;
-      case 'neg':return 'BigInt.asIntN(64,-('+emitExpr(expr.inner,depth+1)+'))';
-      case 'binary':return 'BigInt.asIntN(64,('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
+      // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
+      // wrapping arithmetic. Check the computed result before returning.
+      case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
+      case 'binary':return '_check(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
       case 'call':return '_f'+expr.target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
       case 'match': {
         // _subject is evaluated exactly once. A branch returns immediately,
