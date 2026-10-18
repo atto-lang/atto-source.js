@@ -64,7 +64,7 @@ export function validateProgramIRV2(input) {
   });
   const sourceFunctions=sequence(input.functions,512,'functions');
   if(!moduleNames.length && !sourceFunctions.length)fail('empty program');
-  const slots=new Set(),exportNames=new Set(moduleNames);
+  const slots=new Set(),symbolKinds=new Map(),exportNames=new Set(moduleNames);
   const headers=sourceFunctions.map(f=>{
     record(f,['module','name','kind','pub','params','body'],'function');
     const module=f.module===null?null:ident(f.module,'owner module');
@@ -77,6 +77,10 @@ export function validateProgramIRV2(input) {
     if(new Set(params).size!==params.length)fail('duplicate parameters');
     const slot=(module===null?'@file/':'@module/'+module+'/')+name+'/'+params.length;
     if(slots.has(slot))fail('duplicate caller-visible method arity '+slot);
+    const family=slot.slice(0,slot.lastIndexOf('/'));
+    if(symbolKinds.has(family)&&symbolKinds.get(family)!==f.kind)
+      fail('fnc/routine overload kind conflict '+family);
+    symbolKinds.set(family,f.kind);
     slots.add(slot);
     if(module===null&&f.pub)exportNames.add(name);
     return {module,name,kind:f.kind,pub:f.pub,params};
