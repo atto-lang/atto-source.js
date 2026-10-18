@@ -170,7 +170,7 @@ export function materializeMethodOnlyClass(definitions,target) {
     newInstance() {
       const instance=Object.create(prototype);
       brands.set(instance,{token,names:new Set(nominal)});
-      return instance;
+      return Object.preventExtensions(instance);
     },
     isA(instance,type) {
       return !!instance && typeof instance==='object' &&
