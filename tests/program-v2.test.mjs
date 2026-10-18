@@ -173,3 +173,26 @@ test('inheritance descriptor validation fails closed before touching getter cont
   assert.throws(()=>planMultipleInheritance([{name:'C',parents:[],fields:[],methods:[callback]}],'C'),/accessor or missing field/);
   assert.equal(used,false);
 });
+
+test('runtime module function overloads select by caller-visible arity',async()=>{
+  const src=[
+    'define module math',
+    'pub fnc add(int x): int {return x+1;}',
+    'pub fnc add(int x,int y): int {return x+y;}',
+    'end',
+    'pub fnc main(): int {return math.add(40,2);}',
+    'pub fnc main(int x): int {return math.add(x);}'
+  ].join('\n');
+  const ns=await execute(src);
+  assert.equal(ns.math.add(41n),42n);
+  assert.equal(ns.math.add(40n,2n),42n);
+  assert.equal(ns.main(),42n);
+  assert.equal(ns.main(41n),42n);
+  assert.throws(()=>ns.math.add(),/overload arity mismatch/);
+  assert.throws(()=>ns.main(1n,2n),/overload arity mismatch/);
+  assert.deepEqual(Object.keys(ns.math),['add']);
+  for(const bad of [
+    'pub fnc f(): int {return 1;} pub fnc f(): int {return 2;}',
+    'pub fnc f(): int {return 1;} pub routine f(int x): int {return x;}'
+  ])assert.throws(()=>compileProgramV2(bad),/error: program v2:/);
+});
