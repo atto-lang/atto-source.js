@@ -323,7 +323,7 @@ function emitProgram(program) {
   });
   let dispatcherNumber=0;
   function exportCallable(indices) {
-    if(indices.length===1) return '_f'+indices[0];
+    // Always use the public arity dispatcher, even for one overload.
     const name='_dispatch'+(dispatcherNumber++);
     out.push('function '+name+'(..._args){switch(_args.length){');
     for(const i of indices) {
