@@ -14,7 +14,7 @@ The wire shape, also described structurally in `schemas/program-ir-v2.schema.jso
 {
   "schemaVersion": 2,
   "dialect": "oreslang.program",
-  "integerModel": "signed-i64-wrap-provisional",
+  "integerModel": "signed-i64-checked-provisional",
   "sourceNamespace": "payments",
   "modules": ["math"],
   "functions": [
@@ -41,7 +41,7 @@ IR expressions are `int`, `param`, `neg`, `binary`, `call` and scalar `match`. E
 - Bound functions/modules at 512, arguments at 128, match arms at 256 and expression nodes at 30,000 with depth at 192.
 - Treat the IR as **trusted data** in the JS engine, not a security boundary for malicious JavaScript Proxy objects. Generated JS and runtime modules are not an OS/VM sandbox.
 - This compiler has no imports, module fields, init lifecycle, actors, classes, full pattern matching, ownership or async lowering. Recursive functions are still rejected in this subset pending fuel/stack semantics.
-- Source `int` semantics remain provisional signed-64 BigInt wraparound; Java/LLVM differential execution is mandatory before parity claims.
+- Source `int` semantics use provisional **checked signed-64** BigInt arithmetic: inputs must fit signed i64 and overflowing negation, addition, subtraction or multiplication must reject instead of wrapping. The previous `signed-i64-wrap-provisional` model tag was incorrect and is now deliberately rejected on input, even though the IR is still marked v2. Java/LLVM differential execution is mandatory before parity claims.
 - This IR does not implement TypeSpec/WIT contract generation or eliminate backend-local parsing. It is a **migration seam** toward a shared typed IR, not the shared IR itself.
 
 ## Evidence required for graduation
