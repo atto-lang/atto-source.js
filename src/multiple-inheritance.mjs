@@ -125,6 +125,9 @@ export function planMultipleInheritance(definitions, target) {
 export function materializeMethodOnlyClass(definitions,target) {
   const plan=planMultipleInheritance(definitions,target);
   if(plan.fields.length) fail('field initialization requires future constructor lowering');
+  if(plan.methods.some(method => !method.pub))
+    fail('private method dispatch requires compiler-controlled access lowering');
+  const token=Symbol('Oreslang nominal constructor: '+target);
   const prototype=Object.create(null);
   const names=new Map();
   for(const method of plan.methods) {
@@ -135,7 +138,7 @@ export function materializeMethodOnlyClass(definitions,target) {
     const fn=function(...args) {
       const entry=overloads.get(args.length);
       if(!entry)throw new TypeError('Oreslang method arity mismatch: '+name+'/'+args.length);
-      if(!brands.has(this) || !brands.get(this).has(target))throw new TypeError('invalid Oreslang receiver');
+      if(brands.get(this)?.token!==token)throw new TypeError('invalid Oreslang receiver');
       return entry.apply(this,args);
     };
     Object.defineProperty(prototype,name,{value:fn,enumerable:false,writable:false,configurable:false});
@@ -146,13 +149,14 @@ export function materializeMethodOnlyClass(definitions,target) {
     plan,
     newInstance() {
       const instance=Object.create(prototype);
-      brands.set(instance,new Set(nominal));
+      brands.set(instance,{token,names:new Set(nominal)});
       return instance;
     },
     isA(instance,type) {
       return !!instance && typeof instance==='object' &&
         typeof type==='string' && nominal.has(type) &&
-        brands.get(instance)?.has(type)===true;
+        brands.get(instance)?.token===token &&
+        brands.get(instance)?.names.has(type)===true;
     }
   });
 }
