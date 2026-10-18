@@ -1,3 +1,4 @@
+import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 /**
  * Experimental Oreslang program-to-ESM v2 slice:
  * flat runtime modules, private/public functions, qualified calls, integer matches.
@@ -285,7 +286,7 @@ function resolveProgram(parsed) {
     colors[i]=1;for(const j of graph[i])visit(j); colors[i]=2;
   }
   resolved.forEach((_,i)=>visit(i));
-  return {modules,functions:resolved};
+  return {sourceNamespace:parsed.namespace,modules,functions:resolved};
 }
 function emitProgram(program) {
   const out=[
@@ -355,8 +356,20 @@ function emitProgram(program) {
   }
   return out.join('\n')+'\n';
 }
+export function compileToProgramIRV2(source) {
+  const program=resolveProgram(new Parser(tokenize(source)).parse());
+  return validateProgramIRV2({
+    schemaVersion:PROGRAM_IR_VERSION,
+    dialect:PROGRAM_IR_DIALECT,
+    integerModel:PROGRAM_IR_INT_MODEL,
+    ...program
+  });
+}
+export function compileProgramIRV2(ir) {
+  return emitProgram(validateProgramIRV2(ir));
+}
 export function compileProgramV2(source) {
-  return emitProgram(resolveProgram(new Parser(tokenize(source)).parse()));
+  return emitProgram(compileToProgramIRV2(source));
 }
 export function checkProgramV2(source) {
   compileProgramV2(source);
