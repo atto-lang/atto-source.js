@@ -130,7 +130,7 @@ class Parser {
         functions.push(this.functions(null));
       }
     }
-    if (!functions.length) fail('empty program');
+    if (!functions.length && !modules.length) fail('empty program');
     return {namespace,modules,functions};
   }
   integer(negative = false) {
