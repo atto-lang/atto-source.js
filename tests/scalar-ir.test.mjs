@@ -113,6 +113,14 @@ test('IR object format excludes accessors, symbols and prototype trickery', () =
   });
   assert.throws(() => compileIR(forged), /accessor or missing field/);
   assert.equal(accessed, false);
+  const accessorKind = {};
+  Object.defineProperty(accessorKind, 'kind', {enumerable: true, get() {
+    accessed = true; throw Error('expression getter should not execute');
+  }});
+  assert.throws(() => compileIR({
+    ...ir, functions:[{...ir.functions[0], body:accessorKind}, ir.functions[1]]
+  }), /missing or accessor kind/);
+  assert.equal(accessed, false);
   assert.throws(() => compileIR({...ir, [Symbol.for('evil')]: 'payload'}), /unexpected or missing field/);
   assert.throws(() => compileIR(Object.assign(Object.create({foreign:true}),ir)), /non-plain object/);
 });
