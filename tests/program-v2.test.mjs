@@ -159,3 +159,17 @@ test('method-only materializer rejects private method escape',()=>{
   assert.deepEqual(planMultipleInheritance([privateClass],'A').methods.map(x=>x.slot),['secret/0']);
   assert.throws(()=>materializeMethodOnlyClass([privateClass],'A'),/private method dispatch requires/);
 });
+
+test('inheritance descriptor validation fails closed before touching getter content',()=>{
+  let used=false;
+  const attack={name:'A',parents:[],fields:[],methods:[]};
+  Object.defineProperty(attack,'methods',{enumerable:true,get(){used=true;throw Error('getter fired');}});
+  assert.throws(()=>planMultipleInheritance([attack],'A'),/accessor or missing field/);
+  assert.equal(used,false);
+  const extra={name:'B',parents:[],fields:[],methods:[],jsPrototype:'unsafe'};
+  assert.throws(()=>planMultipleInheritance([extra],'B'),/unexpected fields/);
+  const callback={name:'ok',arity:0,pub:true,impl:()=>42};
+  Object.defineProperty(callback,'impl',{enumerable:true,get(){used=true;throw Error('getter fired');}});
+  assert.throws(()=>planMultipleInheritance([{name:'C',parents:[],fields:[],methods:[callback]}],'C'),/accessor or missing field/);
+  assert.equal(used,false);
+});
