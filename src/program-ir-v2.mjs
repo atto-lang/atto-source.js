@@ -4,7 +4,7 @@
  */
 export const PROGRAM_IR_VERSION=2;
 export const PROGRAM_IR_DIALECT='oreslang.program';
-export const PROGRAM_IR_INT_MODEL='signed-i64-wrap-provisional';
+export const PROGRAM_IR_INT_MODEL='signed-i64-checked-provisional';
 const ID=/^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const DEC=/^(?:0|[1-9][0-9]*|-[1-9][0-9]*)$/;
 const MIN=-(1n<<63n), MAX=(1n<<63n)-1n;
