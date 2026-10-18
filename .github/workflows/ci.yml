@@ -16,3 +16,4 @@ jobs:
       - run: npm test
       - run: npm run check
       - run: npm run parity:js
+      - run: npm run parity:numeric-js
