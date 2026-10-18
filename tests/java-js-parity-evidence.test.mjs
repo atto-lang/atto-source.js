@@ -106,3 +106,61 @@ test('JS parity report cannot spoof authority, execution metadata, duplicate IDs
   }
   assert.equal(compareJavaAndJsReports(original,graal).cases_compared.length,10);
 });
+
+test('foreign report descriptors are rejected before getters execute',async()=>{
+  const js=await executeJsReferenceFixtures();
+  const graal=syntheticGraal(js);
+  let invocations=0;
+  const getter=()=>{invocations++;throw Error('malicious accessor executed');};
+  for(const variant of [
+    ()=>{const x=structuredClone(js);Object.defineProperty(x,'results',{get:getter,enumerable:true});return [x,graal];},
+    ()=>{const x=structuredClone(js);Object.defineProperty(x.results[0],'id',{get:getter,enumerable:true});return [x,graal];},
+    ()=>{const x=structuredClone(graal);Object.defineProperty(x.results[0],'observed_exit',{get:getter,enumerable:true});return [js,x];},
+    ()=>{const x=structuredClone(graal);Object.defineProperty(x,'suite_sha256',{get:getter,enumerable:true});return [js,x];}
+  ]) {
+    const [a,b]=variant();
+    assert.throws(()=>compareJavaAndJsReports(a,b),/accessor property rejected/);
+  }
+  assert.equal(invocations,0);
+});
+
+test('report admission rejects unexpected fields, symbols, inherited records and array tricks',async()=>{
+  const js=await executeJsReferenceFixtures();
+  const graal=syntheticGraal(js);
+  const bad=[
+    [Object.assign(Object.create({injected:true}),js),graal],
+    [{...js,unexpected_authority:'true'},graal],
+    [{...js,[Symbol.for('secret')]:true},graal],
+    [{...js,results:Object.assign([...js.results],{extra:1})},graal],
+    [{...js,results:[...js.results].map((v,i)=>i===0?
+      Object.assign(Object.create({bad:true}),v):v)},graal],
+    [js,{...graal,spoofed_status:'pass'}],
+    [js,{...graal,results:Object.assign([...graal.results],{tampered:true})}],
+    [js,{...graal,results:[...graal.results,undefined]}]
+  ];
+  for(const [a,b] of bad)
+    assert.throws(()=>compareJavaAndJsReports(a,b),/report|result|array|record/i);
+  const sparse=Array.from(js.results);
+  delete sparse[2];
+  assert.throws(()=>compareJavaAndJsReports({...js,results:sparse},graal),/sparse/);
+});
+
+test('noncanonical metadata and counterfeit success flags fail closed',async()=>{
+  const js=await executeJsReferenceFixtures();
+  const graal=syntheticGraal(js);
+  for(const variant of [
+    {github_run_authenticated:true},
+    {java_js_semantic_parity_certified:true},
+    {checkout_tree_sha:'0'.repeat(39)},
+    {checkout_commit_sha:'z'.repeat(40)},
+    {checked_fixture_count:11},
+    {node_version:Symbol.for('bad')}
+  ])assert.throws(()=>compareJavaAndJsReports({...js,...variant},graal));
+  const wrongExit=structuredClone(graal);
+  wrongExit.results[0].observed_exit=-0;
+  assert.throws(()=>compareJavaAndJsReports(js,wrongExit),/noncanonical number/);
+  const incomplete=structuredClone(js);
+  incomplete.results[0].status=undefined;
+  assert.throws(()=>compareJavaAndJsReports(incomplete,graal));
+  assert.equal(compareJavaAndJsReports(js,graal).cases_compared.length,10);
+});
