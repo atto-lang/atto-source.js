@@ -35,6 +35,19 @@ export function encodeInt64(value) {
   return {type:'int64', value:value.toString(10)};
 }
 
+/** The caller supplies JSON-like lists, never executable Array methods. */
+function wireArray(value, maximum, label) {
+  if(!Array.isArray(value) || Object.getPrototypeOf(value)!==Array.prototype ||
+     value.length>maximum)throw new HostBridgeError('invalid '+label);
+  const own=Reflect.ownKeys(value);
+  if(own.length!==value.length+1)throw new HostBridgeError('invalid '+label);
+  for(let i=0;i<value.length;i++){
+    const desc=Object.getOwnPropertyDescriptor(value,String(i));
+    if(!desc||!Object.hasOwn(desc,'value'))throw new HostBridgeError('invalid '+label);
+  }
+  return value;
+}
+
 /**
  * Invoke a reviewed and explicitly allowlisted ESM module namespace.
  * Host must import a trusted, pinned module in its own security boundary.
@@ -51,12 +64,11 @@ export function invokeTrustedModule(namespace, {entry, allowlist, args} = {}) {
     throw new HostBridgeError('expected a trusted ESM module namespace');
   }
   if (typeof entry !== 'string' || !NAME.test(entry) ||
-      !Array.isArray(allowlist) || !allowlist.includes(entry) ||
-      allowlist.length > 128 || allowlist.some(name => typeof name !== 'string' || !NAME.test(name))) {
+      !wireArray(allowlist,128,'entrypoint allowlist').includes(entry) ||
+      allowlist.some(name => typeof name !== 'string' || !NAME.test(name))) {
     throw new HostBridgeError('entrypoint not permitted');
   }
-  if (!Array.isArray(args) || args.length > 128)
-    throw new HostBridgeError('invalid argument list');
+  wireArray(args,128,'argument list');
   const decoded = args.map(decodeInt64);
   const desc = Object.getOwnPropertyDescriptor(namespace, entry);
   if (!desc || typeof desc.value !== 'function') throw new HostBridgeError('entrypoint is not a public function');
