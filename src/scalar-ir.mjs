@@ -39,7 +39,10 @@ function name(value, context) {
 }
 function array(value, maximum, context) {
   if (!Array.isArray(value) || value.length > maximum) fail(context + ': invalid array size');
-  for (let i = 0; i < value.length; i++) if (!Object.hasOwn(value, i)) fail(context + ': sparse array');
+  for (let i = 0; i < value.length; i++) {
+    const desc = Object.getOwnPropertyDescriptor(value, i);
+    if (!desc || !Object.hasOwn(desc, 'value')) fail(context + ': sparse or accessor array');
+  }
   return value;
 }
 function index(value, maximum, context) {
