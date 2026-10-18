@@ -114,7 +114,108 @@ export async function executeJsReferenceFixtures() {
  * This is STRUCTURAL comparison only; it never attests Java checkout/build,
  * signature, runner provenance, guest execution, or language-wide parity.
  */
+
+// External report objects must be inert JSON-like values, not objects with
+// getters, inherited properties, sparse arrays, symbols or unexpected fields.
+// This prevents the comparator itself from invoking ordinary accessors.
+// JavaScript proxies remain a host-trust boundary: use parsed JSON for
+// independently received reports, never arbitrary foreign live objects.
+const JS_REPORT_FIELDS=[
+  'format','backend','fixture_authority','fixture_authority_revision',
+  'fixture_suite_sha256','integer_model','execution',
+  'provenance_authenticated','java_execution_verified','results',
+  'checkout_commit_sha','checkout_tree_sha','node_version',
+  'checked_fixture_count','github_run_authenticated',
+  'java_js_semantic_parity_certified'
+];
+const JS_REQUIRED=JS_REPORT_FIELDS.slice(0,10);
+const JAVA_REPORT_FIELDS=['schema_version','backend','suite_sha256','source_revision','results'];
+const JS_RESULT_FIELDS=['id','fixture_git_blob','kind','status','observed_int64','diagnostic_class'];
+const JAVA_RESULT_FIELDS=['id','status','observed_exit','diagnostic_class','detail'];
+function inertRecord(value,allowed,required,where) {
+  if(value===null||typeof value!=='object'||Array.isArray(value))
+    throw Error(where+': expected plain record');
+  const proto=Object.getPrototypeOf(value);
+  if(proto!==Object.prototype&&proto!==null)
+    throw Error(where+': non-plain record');
+  const keys=Reflect.ownKeys(value);
+  if(keys.length<required.length||keys.length>allowed.length||
+     keys.some(key=>typeof key!=='string'||!allowed.includes(key)))
+    throw Error(where+': unexpected/missing fields');
+  const copy=Object.create(null);
+  for(const key of keys) {
+    const descriptor=Object.getOwnPropertyDescriptor(value,key);
+    if(!descriptor||!Object.hasOwn(descriptor,'value'))
+      throw Error(where+': accessor property rejected');
+    copy[key]=descriptor.value;
+  }
+  for(const key of required)if(!Object.hasOwn(copy,key))
+    throw Error(where+': required field missing');
+  return copy;
+}
+function inertArray(value,max,where) {
+  if(!Array.isArray(value)||Object.getPrototypeOf(value)!==Array.prototype||
+     value.length>max)throw Error(where+': invalid array');
+  const keys=Reflect.ownKeys(value);
+  if(keys.length!==value.length+1||
+     keys.some(key=>key!=='length'&&
+       (typeof key!=='string'||!/^(0|[1-9][0-9]*)$/.test(key)||
+        Number(key)>=value.length)))
+    throw Error(where+': sparse, accessor or extended array');
+  const copy=[];
+  for(let i=0;i<value.length;i++) {
+    const descriptor=Object.getOwnPropertyDescriptor(value,i);
+    if(!descriptor||!Object.hasOwn(descriptor,'value'))
+      throw Error(where+': sparse or accessor element');
+    copy.push(descriptor.value);
+  }
+  return copy;
+}
+function inertReport(value,backend) {
+  const java=backend==='graal';
+  const where=java?'Java report':'JS report';
+  const root=inertRecord(value,
+    java?JAVA_REPORT_FIELDS:JS_REPORT_FIELDS,
+    java?JAVA_REPORT_FIELDS:JS_REQUIRED,where);
+  const records=inertArray(root.results,java?256:REFERENCE_CASES.length,where+' results');
+  root.results=records.map((v,i)=>{
+    const fieldset=java?JAVA_RESULT_FIELDS:JS_RESULT_FIELDS;
+    const required=java?['id','status']:['id','fixture_git_blob','kind','status'];
+    const record=inertRecord(v,fieldset,required,where+' result '+i);
+    for(const [key,val] of Object.entries(record)) {
+      if(typeof val!=='string'&&typeof val!=='number')
+        throw Error(where+' result '+i+': non-JSON scalar '+key);
+      if(typeof val==='string'&&val.length>700)
+        throw Error(where+' result '+i+': oversized field '+key);
+      if(typeof val==='number'&&(!Number.isSafeInteger(val)||Object.is(val,-0)))
+        throw Error(where+' result '+i+': noncanonical number '+key);
+    }
+    return record;
+  });
+  for(const [key,val] of Object.entries(root)) {
+    if(key==='results')continue;
+    if(!['string','boolean','number'].includes(typeof val)||
+       typeof val==='string'&&val.length>128||
+       typeof val==='number'&&(!Number.isSafeInteger(val)||Object.is(val,-0)))
+      throw Error(where+': invalid metadata '+key);
+  }
+  if(!java) {
+    for(const flag of ['github_run_authenticated','java_js_semantic_parity_certified'])
+      if(Object.hasOwn(root,flag)&&root[flag]!==false)
+        throw Error('invalid or contradictory JS authentication flag');
+    if(Object.hasOwn(root,'checked_fixture_count')&&
+       root.checked_fixture_count!==REFERENCE_CASES.length)
+      throw Error('invalid JS fixture count');
+    for(const field of ['checkout_commit_sha','checkout_tree_sha'])
+      if(Object.hasOwn(root,field)&&!/^[a-f0-9]{40}$/.test(root[field]))
+        throw Error('invalid JS checkout identity');
+  }
+  return root;
+}
+
 export function compareJavaAndJsReports(js,graal) {
+  js=inertReport(js,'js');
+  graal=inertReport(graal,'graal');
   // No claim of provenance: this is a deliberately strict, structural
   // comparison over JSON-shaped reports. Authenticate CI separately.
   if(!js||js.format!==JS_PARITY_REPORT_FORMAT||js.backend!=='js'||
