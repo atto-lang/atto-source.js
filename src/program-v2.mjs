@@ -220,15 +220,16 @@ class Parser {
 }
 function resolveProgram(parsed) {
   const {modules,functions}=parsed;
-  const slots = new Map(), exports = new Set();
+  const slots = new Map(), exports = new Set(), symbolKinds = new Map();
   functions.forEach((fn,i)=>{
     const qualified=(fn.module===null?'root':fn.module)+'.'+fn.name;
-    if(slots.has(qualified)) fail('duplicate function '+qualified);
-    slots.set(qualified,i);
-    if(fn.pub && fn.module===null) {
-      if(exports.has(fn.name)) fail('duplicate ESM export '+fn.name);
-      exports.add(fn.name);
-    }
+    const slot=qualified+'/'+fn.params.length;
+    if(slots.has(slot)) fail('duplicate caller-visible arity '+slot);
+    if(symbolKinds.has(qualified) && symbolKinds.get(qualified)!==fn.kind)
+      fail('fnc and direct-call-only routine cannot share an exported name '+qualified);
+    symbolKinds.set(qualified,fn.kind);
+    slots.set(slot,i);
+    if(fn.pub && fn.module===null) exports.add(fn.name);
   });
   modules.forEach(m=>{
     if(exports.has(m)) fail('module/function export conflict '+m);
@@ -250,11 +251,12 @@ function resolveProgram(parsed) {
         const mod=expr.qualifier===null?owner.module:expr.qualifier;
         if(mod!==null && !modules.includes(mod)) fail('unknown module '+mod);
         const key=(mod===null?'root':mod)+'.'+expr.name;
-        const target=slots.get(key);
-        if(target===undefined) fail('unresolved callable '+key);
+        const target=slots.get(key+'/'+expr.args.length);
+        if(target===undefined) {
+          if(symbolKinds.has(key)) fail('call arity mismatch for '+key);
+          fail('unresolved callable '+key);
+        }
         if(expr.qualifier!==null && mod!==owner.module && !functions[target].pub) fail('private module member '+key);
-        if(expr.qualifier===null && functions[target].module!==owner.module) fail('unqualified cross-module call '+key);
-        if(expr.args.length!==functions[target].params.length) fail('call arity mismatch for '+key);
         return {kind:'call',target,args:expr.args.map(a=>resolve(a,owner,depth+1))};
       }
       case 'match': return {kind:'match',subject:resolve(expr.subject,owner,depth+1),
@@ -318,17 +320,39 @@ function emitProgram(program) {
     params.forEach(p=>out.push('_check('+p+');'));
     out.push('return '+emitExpr(fn.body)+';','}');
   });
+  let dispatcherNumber=0;
+  function exportCallable(indices) {
+    if(indices.length===1) return '_f'+indices[0];
+    const name='_dispatch'+(dispatcherNumber++);
+    out.push('function '+name+'(..._args){switch(_args.length){');
+    for(const i of indices) {
+      out.push('case '+program.functions[i].params.length+':return _f'+i+'(..._args);');
+    }
+    out.push('default:throw new TypeError("Oreslang overload arity mismatch");}}');
+    return name;
+  }
+  function publicGroups(module) {
+    const result=new Map();
+    program.functions.forEach((fn,i)=>{
+      if(fn.module===module && fn.pub) {
+        if(!result.has(fn.name))result.set(fn.name,[]);
+        result.get(fn.name).push(i);
+      }
+    });
+    return result;
+  }
   program.modules.forEach((module,i)=>{
     out.push('const _module'+i+'=Object.create(null);');
-    program.functions.forEach((fn,j)=>{
-      if(fn.module===module&&fn.pub) out.push('Object.defineProperty(_module'+i+','+JSON.stringify(fn.name)+',{value:_f'+j+',enumerable:true,configurable:false,writable:false});');
-    });
+    for(const [name,indices] of publicGroups(module)) {
+      const callable=exportCallable(indices);
+      out.push('Object.defineProperty(_module'+i+','+JSON.stringify(name)+',{value:'+callable+',enumerable:true,configurable:false,writable:false});');
+    }
     out.push('Object.freeze(_module'+i+');');
     out.push('export { _module'+i+' as '+JSON.stringify(module)+' };');
   });
-  program.functions.forEach((fn,i)=>{
-    if(fn.module===null&&fn.pub)out.push('export { _f'+i+' as '+JSON.stringify(fn.name)+' };');
-  });
+  for(const [name,indices] of publicGroups(null)) {
+    out.push('export { '+exportCallable(indices)+' as '+JSON.stringify(name)+' };');
+  }
   return out.join('\n')+'\n';
 }
 export function compileProgramV2(source) {
