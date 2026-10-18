@@ -16,13 +16,15 @@
     "./scalar-ir": "./src/scalar-ir.mjs",
     "./program-v2": "./src/program-v2.mjs",
     "./multiple-inheritance": "./src/multiple-inheritance.mjs",
-    "./program-ir-v2": "./src/program-ir-v2.mjs"
+    "./program-ir-v2": "./src/program-ir-v2.mjs",
+    "./java-js-parity-v1": "./src/java-js-parity-v1.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node bin/oreslang-jsc.mjs --check tests/fixtures/arithmetic.ores"
+    "check": "node bin/oreslang-jsc.mjs --check tests/fixtures/arithmetic.ores",
+    "parity:js": "node bin/js-semantic-parity-report.mjs"
   }
 }
