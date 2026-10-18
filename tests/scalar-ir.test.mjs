@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp, writeFile, rm} from 'node:fs/promises';
+import {mkdtemp, readFile, writeFile, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {compile, compileToIR, compileIR} from '../src/compiler.mjs';
+import {buildPackage} from '../src/build-package.mjs';
 import {
   validateScalarIR, stringifyScalarIR, SCALAR_IR_VERSION, SCALAR_IR_INT_MODEL
 } from '../src/scalar-ir.mjs';
@@ -133,4 +134,28 @@ test('IR enforces bounded depth and forbids non-terminating recursive objects', 
     () => compileIR({...ir, functions:[{...ir.functions[0], body:expr},ir.functions[1]]}),
     /expression limit exceeded/
   );
+});
+
+test('trusted package manifest takes public exports from IR, including keyword names', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ores-ir-package-'));
+  try {
+    const input = join(dir, 'input.ores');
+    const output = join(dir, 'output');
+    await writeFile(input, [
+      'pub fnc default(): int {return 42;}',
+      'pub fnc alternate(): int {return 7;}',
+      'fnc hidden(): int {return 0;}'
+    ].join('\\n'));
+    const manifest = await buildPackage({
+      sourceFile: input, outputDir: output, target: 'browser',
+      declaredCompilerSha: 'a'.repeat(40)
+    });
+    assert.deepEqual(manifest.publicEntrypoints, ['default', 'alternate']);
+    const emitted = await readFile(join(output, 'module.mjs'), 'utf8');
+    assert.match(emitted, /export \\{ _f0 as "default" \\};/);
+    assert.match(emitted, /export \\{ _f1 as "alternate" \\};/);
+    assert.doesNotMatch(emitted, /hidden/);
+  } finally {
+    await rm(dir, {recursive:true, force:true});
+  }
 });
