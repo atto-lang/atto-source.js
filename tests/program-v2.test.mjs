@@ -127,3 +127,35 @@ test('arity-dispatched methods and invalid field graphs',()=>{
   assert.throws(()=>materializeMethodOnlyClass([F],'F'),/field initialization requires/);
   assert.throws(()=>planMultipleInheritance([{...F,parents:['G']},{...G,parents:['F']}],'F'),/inheritance cycle/);
 });
+
+test('file namespace is compile-time only and never a runtime export',async()=>{
+  const src='namespace payments; define module math pub fnc answer(): int {return 42;} end pub fnc main(): int {return math.answer();}';
+  const js=compileProgramV2(src);
+  const ns=await execute(src);
+  assert.deepEqual(Object.keys(ns).sort(),['main','math']);
+  assert.equal(Object.hasOwn(ns,'payments'),false);
+  assert.equal(ns.main(),42n);
+  assert.doesNotMatch(js,/Object\.defineProperty\([^,]+,"payments"/);
+  for(const invalid of [
+    'namespace a.b; pub fnc main(): int {return 1;}',
+    'namespace a; namespace b; pub fnc main(): int {return 1;}',
+    'pub fnc main(): int {return 1;} namespace a;'
+  ]) assert.throws(()=>compileProgramV2(invalid),/error: program v2:/);
+});
+
+test('separately materialized classes with identical names do not share nominal identity',()=>{
+  const def={name:'A',parents:[],fields:[],methods:[method('f',0,()=>1)]};
+  const first=materializeMethodOnlyClass([def],'A');
+  const second=materializeMethodOnlyClass([def],'A');
+  const a=first.newInstance(),b=second.newInstance();
+  assert.equal(first.isA(a,'A'),true);
+  assert.equal(first.isA(b,'A'),false);
+  assert.equal(second.isA(a,'A'),false);
+  assert.throws(()=>a.f.call(b),/invalid Oreslang receiver/);
+});
+
+test('method-only materializer rejects private method escape',()=>{
+  const privateClass={name:'A',parents:[],fields:[],methods:[method('secret',0,()=>1,false)]};
+  assert.deepEqual(planMultipleInheritance([privateClass],'A').methods.map(x=>x.slot),['secret/0']);
+  assert.throws(()=>materializeMethodOnlyClass([privateClass],'A'),/private method dispatch requires/);
+});
