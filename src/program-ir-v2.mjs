@@ -102,7 +102,7 @@ export function validateProgramIRV2(input) {
         return {kind:'int',value:int(expr.value)};
       case 'param':
         record(expr,['kind','index'],'param');
-        if(!Number.isSafeInteger(expr.index)||expr.index<0||expr.index>=headers[owner].params.length)
+        if(!Number.isSafeInteger(expr.index)||Object.is(expr.index,-0)||expr.index<0||expr.index>=headers[owner].params.length)
           fail('out-of-bounds parameter');
         return {kind:'param',index:expr.index};
       case 'neg':
@@ -115,7 +115,7 @@ export function validateProgramIRV2(input) {
           left:node(expr.left,owner,depth+1),right:node(expr.right,owner,depth+1)};
       case 'call': {
         record(expr,['kind','target','args'],'call');
-        if(!Number.isSafeInteger(expr.target)||expr.target<0||expr.target>=headers.length)
+        if(!Number.isSafeInteger(expr.target)||Object.is(expr.target,-0)||expr.target<0||expr.target>=headers.length)
           fail('invalid call target');
         const target=headers[expr.target];
         const args=sequence(expr.args,128,'call args');
