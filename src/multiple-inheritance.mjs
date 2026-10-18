@@ -15,19 +15,38 @@ const ID = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const MAX_CLASSES = 128, MAX_METHODS = 256;
 const brands = new WeakMap();
 
+function plainDataObject(value,keys,context) {
+  if(!value || typeof value!=='object' || Array.isArray(value))fail('invalid '+context);
+  const proto=Object.getPrototypeOf(value);
+  if(proto!==Object.prototype && proto!==null)fail('non-plain '+context);
+  const actual=Reflect.ownKeys(value);
+  if(actual.length!==keys.length || actual.some(k=>typeof k!=='string'||!keys.includes(k)))fail('unexpected fields in '+context);
+  for(const k of keys){
+    const desc=Object.getOwnPropertyDescriptor(value,k);
+    if(!desc || !Object.hasOwn(desc,'value'))fail('accessor or missing field in '+context);
+  }
+  return value;
+}
+function dataArray(value,max,context) {
+  if(!Array.isArray(value)||value.length>max)fail('invalid '+context+' array');
+  for(let i=0;i<value.length;i++){
+    const desc=Object.getOwnPropertyDescriptor(value,i);
+    if(!desc||!Object.hasOwn(desc,'value'))fail('sparse/accessor '+context+' array');
+  }
+  return value;
+}
+
 function validate(definitions) {
-  if (!Array.isArray(definitions) || !definitions.length ||
-      definitions.length > MAX_CLASSES) fail('invalid class graph size');
+  dataArray(definitions,MAX_CLASSES,'class graph');
+  if (!definitions.length) fail('invalid class graph size');
   const byName = new Map();
   for (const def of definitions) {
-    if (!def || typeof def !== 'object' || Array.isArray(def) ||
-        typeof def.name !== 'string' || !ID.test(def.name)) fail('invalid class definition');
+    plainDataObject(def,['name','parents','methods','fields'],'class definition');
+    if (typeof def.name !== 'string' || !ID.test(def.name)) fail('invalid class definition');
     if (byName.has(def.name)) fail('duplicate class ' + def.name);
-    if (!Array.isArray(def.parents) || def.parents.length > MAX_CLASSES ||
-        !Array.isArray(def.methods) || def.methods.length > MAX_METHODS ||
-        !Array.isArray(def.fields) || def.fields.length > MAX_METHODS) {
-      fail('invalid class members or parent list for ' + def.name);
-    }
+    dataArray(def.parents,MAX_CLASSES,'parents');
+    dataArray(def.methods,MAX_METHODS,'methods');
+    dataArray(def.fields,MAX_METHODS,'fields');
     const seen = new Set(), local = new Set();
     for (const parent of def.parents) {
       if (typeof parent !== 'string' || !ID.test(parent) || seen.has(parent)) {
@@ -41,7 +60,8 @@ function validate(definitions) {
     }
     local.clear();
     for (const method of def.methods) {
-      if (!method || typeof method !== 'object' || typeof method.name !== 'string' ||
+      plainDataObject(method,['name','arity','pub','impl'],'method');
+      if (typeof method.name !== 'string' ||
           !ID.test(method.name) || method.name === 'constructor' ||
           !Number.isInteger(method.arity) || method.arity < 0 || method.arity > 128 ||
           typeof method.pub !== 'boolean' || typeof method.impl !== 'function') fail('invalid method in ' + def.name);
