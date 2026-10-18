@@ -90,6 +90,20 @@ The numeric JS probes do not assert Java guest behavior; no arithmetic
 parity may be claimed until a real compiler-checked Graal runtime executes
 equivalent boundary probes and the language standard chooses a policy.
 
+## October 18 — contradictory passing evidence rejection
+
+The structural adapter now rejects a passing Java result that simultaneously
+reports both a native exit and a compiler diagnostic. It also rejects nonempty
+`detail` on any passed Java fixture: the reference Java runner emits an empty
+detail for successful observations, so an error, timeout, or unrelated failure
+cannot hide in a record labelled `pass`. The equivalent JS result shape is
+also unambiguous: a numeric value cannot carry a diagnostic class, and an
+expected diagnostic cannot carry a numeric value.
+
+These are **consistency checks**, not independent attestation. In particular,
+an attacker can still author plausible synthetic data, and a real Java
+compiler build plus authenticated guest execution remains necessary.
+
 ## Required release evidence
 
 1. Verify Java compiler source checkout and built binary via a real GraalVM
