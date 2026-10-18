@@ -101,7 +101,7 @@ class Parser {
     this.expect(';');this.expect('}');
     // Exporting a routine as a module object property would make a
     // direct-call-only routine first class. Leave this for runtime/ABI design.
-    if (moduleName !== null && pub && kind === 'routine') fail('public module routine requires host ABI design');
+    if (pub && kind === 'routine') fail('public routine cannot be exported');
     return {module:moduleName, name, kind, pub, params, body};
   }
   parse() {
