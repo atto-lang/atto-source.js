@@ -196,3 +196,11 @@ test('runtime module function overloads select by caller-visible arity',async()=
     'pub fnc f(): int {return 1;} pub routine f(int x): int {return x;}'
   ])assert.throws(()=>compileProgramV2(bad),/error: program v2:/);
 });
+
+test('empty named module still emits an empty runtime namespace object',async()=>{
+  const ns=await execute('namespace types; define module empty as end');
+  assert.deepEqual(Object.keys(ns),['empty']);
+  assert.deepEqual(Object.keys(ns.empty),[]);
+  assert.equal(Object.getPrototypeOf(ns.empty),null);
+  assert.equal(Object.isFrozen(ns.empty),true);
+});
