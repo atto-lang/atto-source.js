@@ -145,15 +145,15 @@ test('trusted package manifest takes public exports from IR, including keyword n
       'pub fnc default(): int {return 42;}',
       'pub fnc alternate(): int {return 7;}',
       'fnc hidden(): int {return 0;}'
-    ].join('\\n'));
+    ].join('\n'));
     const manifest = await buildPackage({
       sourceFile: input, outputDir: output, target: 'browser',
       declaredCompilerSha: 'a'.repeat(40)
     });
     assert.deepEqual(manifest.publicEntrypoints, ['default', 'alternate']);
     const emitted = await readFile(join(output, 'module.mjs'), 'utf8');
-    assert.match(emitted, /export \\{ _f0 as "default" \\};/);
-    assert.match(emitted, /export \\{ _f1 as "alternate" \\};/);
+    assert.match(emitted, /export \{ _f0 as "default" \};/);
+    assert.match(emitted, /export \{ _f1 as "alternate" \};/);
     assert.doesNotMatch(emitted, /hidden/);
   } finally {
     await rm(dir, {recursive:true, force:true});
