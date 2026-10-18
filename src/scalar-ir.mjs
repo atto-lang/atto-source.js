@@ -128,8 +128,12 @@ export function validateScalarIR(ir) {
   const dependencies = headers.map(() => new Set());
   function checkExpr(expr, owner, depth = 0) {
     if (++nodes > MAX_NODES || depth > MAX_DEPTH) fail('expression limit exceeded');
-    if (expr === null || typeof expr !== 'object') fail('invalid expression');
-    switch (expr.kind) {
+    if (expr === null || typeof expr !== 'object' || Array.isArray(expr)) fail('invalid expression');
+    const proto = Object.getPrototypeOf(expr);
+    if (proto !== Object.prototype && proto !== null) fail('expression: non-plain object');
+    const kind = Object.getOwnPropertyDescriptor(expr, 'kind');
+    if (!kind || !Object.hasOwn(kind, 'value')) fail('expression: missing or accessor kind');
+    switch (kind.value) {
       case 'int':
         record(expr, ['kind', 'value'], 'int');
         return {kind: 'int', value: integer(expr.value)};
