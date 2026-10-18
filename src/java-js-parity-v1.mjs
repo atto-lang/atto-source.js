@@ -279,6 +279,21 @@ export function compareJavaAndJsReports(js,graal) {
     } else if(observation.diagnostic_class!==expected)
       throw Error('diagnostic-class divergence: '+id);
   }
+  // Passing reports must have one unambiguous observation per case. A
+  // diagnostic case cannot smuggle a successful guest result, and a native
+  // result cannot simultaneously claim a diagnostic. The Java producer
+  // currently emits empty detail on pass; never admit a "pass" with an error
+  // or timeout described in detail.
+  for(const {id,expected} of JAVA_GRAAL_MANIFEST) {
+    const record=lookup.get(id);
+    if(Object.hasOwn(record,'detail')&&record.detail!=='')
+      throw Error('contradictory Java pass detail: '+id);
+    if(typeof expected==='number') {
+      if(Object.hasOwn(record,'diagnostic_class'))
+        throw Error('contradictory Java value observation: '+id);
+    } else if(Object.hasOwn(record,'observed_exit'))
+      throw Error('contradictory Java diagnostic observation: '+id);
+  }
   const checked=[];
   for(const caseInfo of REFERENCE_CASES) {
     const ja=lookup.get(caseInfo.id), jsr=jsLookup.get(caseInfo.id);
@@ -286,15 +301,21 @@ export function compareJavaAndJsReports(js,graal) {
        jsr.kind!==caseInfo.kind||jsr.fixture_git_blob!==caseInfo.blob)
       throw Error('missing/pending/failed required reference case: '+caseInfo.id);
     if(caseInfo.kind==='value') {
+      if(Object.hasOwn(jsr,'diagnostic_class'))
+        throw Error('contradictory JS value observation: '+caseInfo.id);
       if(typeof jsr.observed_int64!=='string'||
          !/^(0|-?[1-9][0-9]*)$/.test(jsr.observed_int64)||
          !Number.isSafeInteger(ja.observed_exit)||
          ja.observed_exit!==Number(jsr.observed_int64)||
          jsr.observed_int64!==caseInfo.expected)
         throw Error('backend value divergence: '+caseInfo.id);
-    } else if(ja.diagnostic_class!==caseInfo.expected||
-              jsr.diagnostic_class!==caseInfo.expected)
-      throw Error('diagnostic-class divergence: '+caseInfo.id);
+    } else {
+      if(Object.hasOwn(jsr,'observed_int64'))
+        throw Error('contradictory JS diagnostic observation: '+caseInfo.id);
+      if(ja.diagnostic_class!==caseInfo.expected||
+         jsr.diagnostic_class!==caseInfo.expected)
+        throw Error('diagnostic-class divergence: '+caseInfo.id);
+    }
     checked.push(caseInfo.id);
   }
   return {
