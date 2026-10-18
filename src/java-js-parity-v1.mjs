@@ -212,6 +212,27 @@ function inertReport(value,backend) {
       if(typeof val==='number'&&(!Number.isSafeInteger(val)||Object.is(val,-0)))
         throw Error(where+' result '+i+': noncanonical number '+key);
     }
+    // A "pass" must carry exactly the observation appropriate for its
+    // declared case. Reject conflicting extra outcomes rather than ignoring
+    // them (including fake success records with an error in `detail`).
+    const hasValue=Object.hasOwn(record,java?'observed_exit':'observed_int64');
+    const hasDiagnostic=Object.hasOwn(record,'diagnostic_class');
+    if(record.status==='pass') {
+      if(java) {
+        if(hasValue===hasDiagnostic)
+          throw Error(where+' result '+i+': contradictory pass observations');
+        if(Object.hasOwn(record,'detail')&&record.detail!=='')
+          throw Error(where+' result '+i+': successful case contains error detail');
+      } else if(record.kind==='value') {
+        if(!hasValue||hasDiagnostic)
+          throw Error(where+' result '+i+': contradictory value observation');
+      } else if(record.kind==='diagnostic') {
+        if(hasValue||!hasDiagnostic)
+          throw Error(where+' result '+i+': contradictory diagnostic observation');
+      } else {
+        throw Error(where+' result '+i+': unknown result kind');
+      }
+    }
     return record;
   });
   for(const [key,val] of Object.entries(root)) {
@@ -232,7 +253,36 @@ function inertReport(value,backend) {
       if(Object.hasOwn(root,field)&&!/^[a-f0-9]{40}$/.test(root[field]))
         throw Error('invalid JS checkout identity');
   }
+  if(!java) {
+    const hasCommit=Object.hasOwn(root,'checkout_commit_sha');
+    const hasTree=Object.hasOwn(root,'checkout_tree_sha');
+    if(hasCommit!==hasTree)
+      throw Error('incomplete JS checkout identity');
+    if(Object.hasOwn(root,'node_version')&&
+       !/^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/.test(root.node_version))
+      throw Error('invalid Node runtime version');
+  }
   return root;
+}
+
+/**
+ * Preferred external ingress. JSON.parse creates inert ordinary data objects;
+ * the byte budget avoids unbounded parsing. This is validation, not proof of
+ * the origin or truthfulness of a report supplied by another party.
+ */
+export function compareJavaAndJsJsonReports(jsJson,graalJson) {
+  function parseBounded(text,maximum,where) {
+    if(typeof text!=='string'||Buffer.byteLength(text,'utf8')>maximum)
+      throw Error(where+': missing or oversized JSON report');
+    let parsed;
+    try { parsed=JSON.parse(text); }
+    catch { throw Error(where+': invalid JSON report'); }
+    return parsed;
+  }
+  return compareJavaAndJsReports(
+    parseBounded(jsJson,65536,'JS'),
+    parseBounded(graalJson,262144,'Java')
+  );
 }
 
 export function compareJavaAndJsReports(js,graal) {
