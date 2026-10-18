@@ -196,3 +196,23 @@ test('Java report must match pinned 19-file suite digest, revision and full 15-c
  r=other();r.results.push({id:'forged.extra',status:'pass',observed_exit:42});
  assert.throws(()=>compareJavaAndJsReports(js,r),/required Java suite inventory/);
 });
+
+test('pass observations never carry mutually inconsistent value and diagnostic claims',async()=>{
+ const js=await executeJsReferenceFixtures();
+ const graal=syntheticGraal(js);
+ const a=()=>structuredClone(js),b=()=>structuredClone(graal);
+ const idx=id=>graal.results.findIndex(x=>x.id===id);
+ let x=b(); x.results[idx('native.add')].diagnostic_class='unknown_name';
+ assert.throws(()=>compareJavaAndJsReports(js,x),/contradictory Java value observation/);
+ x=b();x.results[idx('diagnostic.unknown')].observed_exit=42;
+ assert.throws(()=>compareJavaAndJsReports(js,x),/contradictory Java diagnostic observation/);
+ x=b();x.results[idx('native.defer-lifo-cfg')].detail='timeout';
+ assert.throws(()=>compareJavaAndJsReports(js,x),/contradictory Java pass detail/);
+ x=b();x.results[idx('diagnostic.arity')].detail='unrelated host exception';
+ assert.throws(()=>compareJavaAndJsReports(js,x),/contradictory Java pass detail/);
+ let y=a();y.results.find(x=>x.id==='native.add').diagnostic_class='unknown_name';
+ assert.throws(()=>compareJavaAndJsReports(y,graal),/contradictory JS value observation/);
+ y=a();y.results.find(x=>x.id==='diagnostic.comment').observed_int64='42';
+ assert.throws(()=>compareJavaAndJsReports(y,graal),/contradictory JS diagnostic observation/);
+ assert.equal(compareJavaAndJsReports(js,graal).cases_compared.length,10);
+});
