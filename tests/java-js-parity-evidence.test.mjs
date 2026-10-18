@@ -28,7 +28,7 @@ function syntheticGraal(js){
   return {
     schema_version:'1.1.0',
     backend:'graal',
-    source_revision:'a'.repeat(40),
+    source_revision:JAVA_FIXTURE_REVISION,
     suite_sha256:'b'.repeat(64),
     results:js.results.map(r=>({
       id:r.id,status:'pass',
@@ -69,7 +69,7 @@ test('report comparison fails closed on mismatched, missing, pending and counter
   assert.throws(()=>compareJavaAndJsReports({...js,results:js.results.slice(1)},graal),
     /invalid or incomplete JS fixture report/);
   invalid=structuredClone(js);invalid.results[0].fixture_git_blob='0'.repeat(40);
-  assert.throws(()=>compareJavaAndJsReports(invalid,graal),/missing\/pending\/failed/);
+  assert.throws(()=>compareJavaAndJsReports(invalid,graal),/invalid or incomplete JS fixture report/);
 });
 
 test('checked JS runtime overflow is visibly distinct from Java long wrapping model',async()=>{
