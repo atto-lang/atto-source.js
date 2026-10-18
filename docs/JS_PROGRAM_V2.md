@@ -11,7 +11,7 @@ Or call `compileProgramV2(source)`. Standard `compile()` and trusted-package bui
 
 Oreslang flat file `namespace payments;` is compilation/package/type metadata. It must NOT become a JS object, global or ESM export. A namespace may appear once at the file beginning; dotted or nested namespaces are rejected.
 
-Oreslang's named `define module math [as] ... end` is a runtime namespace, *not* the type-only source namespace. A source file can contain multiple flat modules, plus file-root functions. Inside a module, private functions are callable by unqualified name from that module; only `pub fnc` members become keys on the emitted module object. Qualified `math.foo(...)` calls are resolved statically to a function slot and do not perform dynamic JS property lookups.
+Oreslang's named `define module math [as] ... end` is a runtime namespace, *not* the type-only source namespace. A source file can contain multiple flat modules, plus file-root functions. Inside a module, private functions are callable by unqualified name from that module; only `pub fnc` members become keys on the emitted module object. Qualified `math.foo(...)` calls are resolved statically by **name + caller-visible arity** to a function slot and do not perform dynamic JS property lookups. Several public `fnc` declarations with the same name but distinct arities become one module-object callable that dispatches on `args.length`; duplicate same-arity slots and mixed `fnc`/`routine` names fail closed. Root public function overloads use the same arity-dispatch rule.
 
 Example input:
 ```ores
