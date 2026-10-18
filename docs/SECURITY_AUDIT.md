@@ -94,3 +94,39 @@ The reviewed private-CI fallback is being hardened in
 `sagitta-stack/sagitta-infra#7`. No JS source may be mirrored there until the
 independent-review policy, incident #22, exact approvals and source-snapshot
 authorization all permit the transfer.
+
+## 2026-10-18 update: externally supplied IR, host arguments and parity-report admission
+
+The historical no-CI statements earlier in this document describe older
+snapshots; they are **superseded** for the latest JS draft source revisions.
+Private Node 22 GitHub Actions executed real jobs using the source-identical
+private carrier. Every green run must still be tied to the exact source tree
+and synthetic PR merge tree; it proves the tested JS subset, not Graal parity.
+
+- **Program IR v2 and scalar IR v1:** arrays are now required to have the native
+  array prototype, a dense canonical index set, and own data descriptors.
+  Subclass/custom-prototype arrays no longer get to supply their own
+  \`map\` implementation to the validator. Numeric target/parameter indices
+  reject negative zero instead of silently serializing it as zero.
+- **Parity report comparison:** JS and Java result records must contain own
+  plain-data properties, and result arrays must be dense native arrays.
+  All ten JS case results and source blob IDs must match pinned authority,
+  exact fixture model and observations. The Java report's claimed source
+  revision must match the pinned authority revision, and all ten required
+  cases must pass. A fabricated report containing self-consistent JSON still
+  cannot attest actual Java compilation, runner identity or build provenance.
+- **Host bridge:** allowlist and argument-list inputs now require dense native
+  arrays with own data values before membership tests or argument decoding.
+  Caller-supplied Array subclasses/custom methods must not be invoked.
+- **Boundaries not solved:** getters hidden behind malicious JS Proxy traps,
+  arbitrary JavaScript executing in the same process, ancestor-directory
+  filesystem substitution by a hostile writer, and claims derived from a
+  self-reported report remain outside these JSON-shape checks.
+- **Arithmetic parity blocker:** the scalar IR retains provisional signed-i64
+  wrap semantics, while Program IR v2 uses checked arithmetic. Java reference
+  source uses Java long wrapping operations. No Java↔JS parity is certified
+  until a real pinned Graal run and an explicit semantics decision.
+
+Keep all stacked JS PRs in draft until review and independently verified
+Java/Graal semantic evidence. The private test-org mirror is not a release
+provenance authority by itself.
