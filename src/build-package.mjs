@@ -4,7 +4,7 @@ import {constants} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {dirname, basename, join, resolve} from 'node:path';
 import {TextDecoder} from 'node:util';
-import {compile} from './compiler.mjs';
+import {compileToIR, compileIR} from './compiler.mjs';
 import {HOST_ABI} from './host-bridge.mjs';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -43,10 +43,12 @@ export async function buildPackage({sourceFile, outputDir, target='edge-js', dec
     sourceBytes=Buffer.concat(chunks,size);
   }finally{await file.close();}
   const source = new TextDecoder('utf-8',{fatal:true,ignoreBOM:false}).decode(sourceBytes);
-  const generated = compile(source);
+  const ir = compileToIR(source);
+  const generated = compileIR(ir);
   const emitted = Buffer.from(generated,'utf8');
   if (emitted.length > 4194304) throw Error('generated module exceeds package limit');
-  const exports = [...generated.matchAll(/^export \{ _f\d+ as ([A-Za-z_][A-Za-z0-9_]*) \};$/gm)].map(m=>m[1]);
+  // Derive the manifest from validated IR, not text patterns in generated JS.
+  const exports = ir.functions.filter(fn => fn.pub).map(fn => fn.name);
   if (exports.length > 128 || new Set(exports).size !== exports.length)
     throw Error('unsupported public entrypoint count');
   const manifest = {
