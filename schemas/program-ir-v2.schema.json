@@ -21,7 +21,7 @@
       "const": "oreslang.program"
     },
     "integerModel": {
-      "const": "signed-i64-wrap-provisional"
+      "const": "signed-i64-checked-provisional"
     },
     "sourceNamespace": {
       "anyOf": [
