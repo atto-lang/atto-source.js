@@ -114,33 +114,86 @@ export async function executeJsReferenceFixtures() {
  * This is STRUCTURAL comparison only; it never attests Java checkout/build,
  * signature, runner provenance, guest execution, or language-wide parity.
  */
+function dataRecord(v,where){
+  if(v===null||typeof v!=='object'||Array.isArray(v)||
+     (Object.getPrototypeOf(v)!==Object.prototype&&Object.getPrototypeOf(v)!==null))
+    throw Error('invalid '+where+' record');
+  for(const key of Reflect.ownKeys(v)) {
+    if(typeof key!=='string'||!Object.hasOwn(Object.getOwnPropertyDescriptor(v,key),'value'))
+      throw Error('invalid '+where+' record');
+  }
+  return v;
+}
+function dataArray(v,where,max){
+  if(!Array.isArray(v)||Object.getPrototypeOf(v)!==Array.prototype||v.length>max)
+    throw Error('invalid '+where+' array');
+  const keys=Reflect.ownKeys(v);
+  if(keys.length!==v.length+1)throw Error('invalid '+where+' array');
+  for(let i=0;i<v.length;i++)
+    if(!Object.hasOwn(Object.getOwnPropertyDescriptor(v,String(i))??{},'value'))
+      throw Error('invalid '+where+' array');
+  return v;
+}
+
+/**
+ * Compare Java's existing semantic-report v1.1 shape to JS observations.
+ * Strict on observed subsets and identity, but deliberately NON-ATTESTING.
+ * No caller-supplied JSON can verify its own provenance.
+ */
 export function compareJavaAndJsReports(js,graal) {
-  if(!js||js.format!==JS_PARITY_REPORT_FORMAT||js.backend!=='js'||
-     js.fixture_suite_sha256!==fixtureSuiteSha256()||js.results?.length!==10)
+  dataRecord(js,'JS report');
+  if(js.format!==JS_PARITY_REPORT_FORMAT||js.backend!=='js'||
+     js.fixture_authority!==FIXTURE_AUTHORITY||
+     js.fixture_authority_revision!==JAVA_FIXTURE_REVISION||
+     js.integer_model!==PROGRAM_IR_INT_MODEL||
+     js.execution!=='real-node-guest'||
+     js.provenance_authenticated!==false||js.java_execution_verified!==false||
+     js.fixture_suite_sha256!==fixtureSuiteSha256())
     throw Error('invalid or incomplete JS fixture report');
-  if(!graal||graal.schema_version!=='1.1.0'||graal.backend!=='graal'||
+  dataArray(js.results,'JS results',10);
+  if(js.results.length!==REFERENCE_CASES.length)
+    throw Error('invalid or incomplete JS fixture report');
+  const local=new Map();
+  for(const r of js.results){
+    dataRecord(r,'JS fixture result');
+    if(typeof r.id!=='string'||local.has(r.id))
+      throw Error('duplicate/bad JS result');
+    local.set(r.id,r);
+  }
+  for(const c of REFERENCE_CASES){
+    const r=local.get(c.id);
+    if(!r||r.status!=='pass'||r.kind!==c.kind||r.fixture_git_blob!==c.blob||
+       (c.kind==='value' ? r.observed_int64!==c.expected ||
+          Object.hasOwn(r,'diagnostic_class') :
+          r.diagnostic_class!==c.expected || Object.hasOwn(r,'observed_int64')))
+      throw Error('invalid or incomplete JS fixture report: '+c.id);
+  }
+
+  dataRecord(graal,'Java report');
+  if(graal.schema_version!=='1.1.0'||graal.backend!=='graal'||
      !/^[a-f0-9]{64}$/.test(graal.suite_sha256??'')||
-     !/^[a-f0-9]{40}$/.test(graal.source_revision??'')||
-     !Array.isArray(graal.results))throw Error('unverified Java report shape');
+     graal.source_revision!==JAVA_FIXTURE_REVISION)
+    throw Error('unverified Java report shape or revision');
+  dataArray(graal.results,'Java results',512);
   const lookup=new Map();
-  for(const r of graal.results) {
-    if(!r||typeof r.id!=='string'||lookup.has(r.id))throw Error('duplicate/bad Java result');
+  for(const r of graal.results){
+    dataRecord(r,'Java result');
+    if(typeof r.id!=='string'||lookup.has(r.id))
+      throw Error('duplicate/bad Java result');
     lookup.set(r.id,r);
   }
   const checked=[];
-  for(const caseInfo of REFERENCE_CASES) {
-    const ja=lookup.get(caseInfo.id), jsr=js.results.find(r=>r.id===caseInfo.id);
-    if(!ja||ja.status!=='pass'||!jsr||jsr.status!=='pass'||jsr.fixture_git_blob!==caseInfo.blob)
-      throw Error('missing/pending/failed required reference case: '+caseInfo.id);
-    if(caseInfo.kind==='value') {
+  for(const c of REFERENCE_CASES){
+    const ja=lookup.get(c.id),jr=local.get(c.id);
+    if(!ja||ja.status!=='pass')
+      throw Error('missing/pending/failed required reference case: '+c.id);
+    if(c.kind==='value'){
       if(!Number.isSafeInteger(ja.observed_exit)||
-         ja.observed_exit!==Number(jsr.observed_int64)||
-         jsr.observed_int64!==caseInfo.expected)
-        throw Error('backend value divergence: '+caseInfo.id);
-    } else if(ja.diagnostic_class!==caseInfo.expected||
-              jsr.diagnostic_class!==caseInfo.expected)
-      throw Error('diagnostic-class divergence: '+caseInfo.id);
-    checked.push(caseInfo.id);
+         ja.observed_exit!==Number(jr.observed_int64))
+        throw Error('backend value divergence: '+c.id);
+    } else if(ja.diagnostic_class!==c.expected)
+      throw Error('diagnostic-class divergence: '+c.id);
+    checked.push(c.id);
   }
   return {
     structural_result:'MATCHING_FIXTURE_RESULTS_ONLY',
