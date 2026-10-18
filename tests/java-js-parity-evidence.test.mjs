@@ -80,3 +80,29 @@ test('checked JS runtime overflow is visibly distinct from Java long wrapping mo
   assert.throws(()=>ns.main(),/signed i64 BigInt required/);
   assert.equal(BigInt.asIntN(64,9223372036854775807n+1n),-9223372036854775808n);
 });
+
+test('JS parity report cannot spoof authority, execution metadata, duplicate IDs or result kinds',async()=>{
+  const original=await executeJsReferenceFixtures();
+  const graal=syntheticGraal(original);
+  const copy=()=>structuredClone(original);
+  for(const mutate of [
+    x=>{x.fixture_authority='attacker/repo';},
+    x=>{x.fixture_authority_revision='0'.repeat(40);},
+    x=>{x.integer_model='signed-i64-wrap-provisional';},
+    x=>{x.execution='synthetic';},
+    x=>{x.provenance_authenticated=true;},
+    x=>{x.java_execution_verified=true;},
+    x=>{x.results[0].kind='diagnostic';},
+    x=>{x.results[0].status='pending';},
+    x=>{x.results[0].observed_int64=42;},
+    x=>{x.results[0].observed_int64='042';},
+    x=>{x.results[1].id=x.results[0].id;},
+    x=>{x.results[0].id='unlisted.case';},
+    x=>{x.results[5].kind='value';}
+  ]){
+    const altered=copy();
+    mutate(altered);
+    assert.throws(()=>compareJavaAndJsReports(altered,graal));
+  }
+  assert.equal(compareJavaAndJsReports(original,graal).cases_compared.length,10);
+});
