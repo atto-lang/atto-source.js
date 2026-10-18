@@ -142,7 +142,7 @@ export function compileIR(input) {
   fns.forEach((f,i) => {
     if (f.pub) out.push('export { _f' + i + ' as ' + JSON.stringify(f.name) + ' };');
   });
-  return out.join('\\n') + '\\n';
+  return out.join('\n') + '\n';
 }
 export function compile(source) {
   return compileIR(compileToIR(source));
