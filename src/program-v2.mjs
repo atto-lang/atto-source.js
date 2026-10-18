@@ -222,7 +222,7 @@ function resolveProgram(parsed) {
   const {modules,functions}=parsed;
   const slots = new Map(), exports = new Set(), symbolKinds = new Map();
   functions.forEach((fn,i)=>{
-    const qualified=(fn.module===null?'root':fn.module)+'.'+fn.name;
+    const qualified=(fn.module===null?'@file/':'@module/'+fn.module+'/')+fn.name;
     const slot=qualified+'/'+fn.params.length;
     if(slots.has(slot)) fail('duplicate caller-visible arity '+slot);
     if(symbolKinds.has(qualified) && symbolKinds.get(qualified)!==fn.kind)
@@ -250,7 +250,7 @@ function resolveProgram(parsed) {
       case 'call': {
         const mod=expr.qualifier===null?owner.module:expr.qualifier;
         if(mod!==null && !modules.includes(mod)) fail('unknown module '+mod);
-        const key=(mod===null?'root':mod)+'.'+expr.name;
+        const key=(mod===null?'@file/':'@module/'+mod+'/')+expr.name;
         const target=slots.get(key+'/'+expr.args.length);
         if(target===undefined) {
           if(symbolKinds.has(key)) fail('call arity mismatch for '+key);
