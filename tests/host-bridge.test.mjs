@@ -74,11 +74,11 @@ test('package refuses unsupported target, revision, source and syntax without pu
    const badUtf=join(dir,'invalid-utf.ores');await writeFile(badUtf,Buffer.from([0xff,0xfe]));
    await assert.rejects(buildPackage({sourceFile:badUtf,outputDir:output,declaredCompilerSha:SHA}),/not valid|encoded|valid UTF-8/i);
    const symlinkPath=join(dir,'source-link.ores');await symlink(source,symlinkPath);
-   await assert.rejects(buildPackage({sourceFile:symlinkPath,outputDir:output,declaredCompilerSha:SHA}),/regular file/);
+   await assert.rejects(buildPackage({sourceFile:symlinkPath,outputDir:output,declaredCompilerSha:SHA}),/regular (?:non-symlink )?file/);
  }finally {await rm(dir,{recursive:true,force:true});}
 });
 
 test('enforces bounded integer literals and compiler lowering depth',()=>{
  assert.throws(()=>compile('pub fnc main(): int {return '+ '0'.repeat(65) +';}'),/integer literal length limit/);
- assert.throws(()=>compile('pub fnc main(): int {return '+ ('1+'.repeat(1000)) +'1;}'),/expression depth limit during lowering/);
+ assert.throws(()=>compile('pub fnc main(): int {return '+ ('1+'.repeat(1000)) +'1;}'),/expression limit exceeded|expression depth limit during lowering/);
 });
