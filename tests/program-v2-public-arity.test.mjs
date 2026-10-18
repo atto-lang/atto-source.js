@@ -44,3 +44,19 @@ test('direct source compiler and serialized IR emitter produce identical safe ex
  const ns=await import('data:text/javascript,'+encodeURIComponent(fromIR));
  assert.throws(()=>ns.one(1n,2n),/overload arity mismatch/);
 });
+
+test('exported checked i64 arithmetic rejects overflow instead of silently wrapping',async()=>{
+ const checked=[
+  'pub fnc add(): int {return 9223372036854775807+1;}',
+  'pub fnc subtract(): int {return -9223372036854775807-2;}',
+  'pub fnc multiply(): int {return 4611686018427387904*2;}',
+  'pub fnc negate(): int {return -(-9223372036854775807-1);}'
+ ].join('\n');
+ const ns=await import('data:text/javascript,'+encodeURIComponent(compileProgramV2(checked)));
+ for(const name of ['add','subtract','multiply','negate']){
+  assert.throws(()=>ns[name](),/signed i64 BigInt required/,name);
+ }
+ assert.equal((await import('data:text/javascript,'+encodeURIComponent(
+  compileProgramV2('pub fnc safe(): int {return 9223372036854775807-1;}')))).safe(),
+  9223372036854775806n);
+});
