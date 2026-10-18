@@ -12,7 +12,8 @@
     "./host-bridge": "./src/host-bridge.mjs",
     "./host-bridge.node": "./src/host-bridge.node.mjs",
     "./package-admission": "./src/package-admission.mjs",
-    "./load-trusted-package.node": "./src/load-trusted-package.node.mjs"
+    "./load-trusted-package.node": "./src/load-trusted-package.node.mjs",
+    "./scalar-ir": "./src/scalar-ir.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
