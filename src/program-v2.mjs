@@ -16,8 +16,50 @@ export class ProgramCompileError extends Error {
 }
 const fail = (message, loc) => {throw new ProgramCompileError(message, loc);};
 
+/**
+ * Align source-profile negotiation with Java CheckedI64SourceHeader.
+ * Provisional JS arithmetic stays checked for unmarked source too, but a
+ * malformed or displaced explicit opt-in must never be silently ignored.
+ * Only actual line-comment tokens count; block/quoted lookalikes do not.
+ */
+function requireWellFormedCheckedI64Header(source) {
+  const directive='// oreslang:checked-i64-v1\n';
+  const prefix='oreslang:checked-i64';
+  const enabled=source.startsWith(directive);
+  let depth=0,quote=null;
+  for(let i=0;i<source.length;){
+    const ch=source[i], next=source[i+1];
+    if(quote!==null) {
+      if(ch==='\\'&&i+1<source.length){i+=2;continue;}
+      if(ch===quote)quote=null;
+      i++;
+      continue;
+    }
+    if(depth!==0) {
+      if(ch==='/'&&next==='*'){depth++;i+=2;continue;}
+      if(ch==='*'&&next==='/'){depth--;i+=2;continue;}
+      i++;
+      continue;
+    }
+    if(ch==='"'||ch==="'"){quote=ch;i++;continue;}
+    if(ch==='/'&&next==='*'){depth=1;i+=2;continue;}
+    if(ch==='/'&&next==='/'){
+      const end=source.indexOf('\n',i);
+      const stop=end<0?source.length:end;
+      let marker=i+2;
+      while(marker<stop&&' \t\r\v\f'.includes(source[marker]))marker++;
+      if(source.startsWith(prefix,marker)&&(!enabled||i!==0))
+        fail('checked-i64-v1: malformed, duplicated, displaced or unsupported directive');
+      i=end<0?stop:end+1;
+      continue;
+    }
+    i++;
+  }
+  return enabled;
+}
 function tokenize(source) {
   if (typeof source !== 'string' || new TextEncoder().encode(source).length > MAX_BYTES) fail('oversized or invalid source');
+  requireWellFormedCheckedI64Header(source);
   const result = [];
   let pos = 0, line = 1, col = 1;
   function advance() {
