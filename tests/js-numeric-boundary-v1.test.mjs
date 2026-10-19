@@ -1,9 +1,40 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
- NUMERIC_PROBES,numericProbeSuiteSha256,executeJsNumericBoundaryProbes
+ NUMERIC_PROBES,CHECKED_I64_SOURCE_DIRECTIVE,numericProbeGuestSource,
+ numericProbeSuiteSha256,executeJsNumericBoundaryProbes
 } from '../src/js-numeric-boundary-v1.mjs';
+import {createHash} from 'node:crypto';
 import {compileProgramV2} from '../src/program-v2.mjs';
+
+test('numeric evidence source bytes require the exact checked Java-compatible first line',()=>{
+ const header='// oreslang:checked-i64-v1\n';
+ assert.equal(CHECKED_I64_SOURCE_DIRECTIVE,header);
+ const h=createHash('sha256').update('oreslang-js-numeric-boundary-v1\0');
+ for(const p of NUMERIC_PROBES) {
+  const expected=header+'pub fnc main(): int {return '+p.expression+';}\n';
+  assert.equal(numericProbeGuestSource(p.expression),expected,p.id);
+  assert.match(expected,/^\/\/ oreslang:checked-i64-v1\npub fnc main\(\): int \{return /);
+  // Independently reconstruct the length-prefixed source-binding digest:
+  // an unmarked numeric source must never retain the checked witness SHA.
+  for(const field of [p.id,p.expression,p.expected_kind,p.expected_value??'',expected]){
+   const bytes=Buffer.from(field,'utf8');
+   const size=Buffer.alloc(8);size.writeBigUInt64BE(BigInt(bytes.length));
+   h.update(size).update(bytes);
+  }
+ }
+ assert.equal(numericProbeSuiteSha256(),h.digest('hex'));
+ // Arbitrary injected source, even without a newline, is not an eligible witness.
+ for(const forged of ['43','43;} pub fnc evil(): int {return 1',
+                       '\n',null,{},NUMERIC_PROBES[0].expression+'\r\n']){
+  assert.throws(()=>numericProbeGuestSource(forged),
+   /unlisted checked-i64 numeric witness expression/);
+ }
+ // A real compiler must accept the explicitly negotiated profile, not
+ // silently consume unmarked legacy wrapping source as a checked receipt.
+ assert.match(compileProgramV2(numericProbeGuestSource(NUMERIC_PROBES[0].expression)),
+              /main/);
+});
 
 test('sixteen real Node guest numeric probes pin checked-i64 and remainder outcomes',async()=>{
  const r=await executeJsNumericBoundaryProbes();
