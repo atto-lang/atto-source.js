@@ -291,7 +291,11 @@ function resolveProgram(parsed) {
 function emitProgram(program) {
   const out=[
     '// experimental Oreslang program-v2, provisional signed-64 integer model',
-    'function _check(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang signed i64 BigInt required");return v;}'
+    'function _check(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang signed i64 BigInt required");return v;}',
+    // Do not expose JS engine-specific "Division by zero" RangeError text as
+    // an unclassified Oreslang guest failure. This is a provisional host-side
+    // code, NOT the portable guest Error wire ABI or actor CONTROL signal.
+    'function _rem(a,b){_check(a);_check(b);if(b===0n)throw new RangeError("ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit remainder by zero");return _check(a%b);}'
   ];
   function emitExpr(expr,depth=0) {
     if(depth > MAX_DEPTH) fail('codegen depth exceeded');
@@ -301,7 +305,9 @@ function emitProgram(program) {
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
-      case 'binary':return '_check(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
+      case 'binary':
+        if(expr.op==='%')return '_rem(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
+        return '_check(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
       case 'call':return '_f'+expr.target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
       case 'match': {
         // _subject is evaluated exactly once. A branch returns immediately,
