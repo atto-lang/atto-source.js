@@ -69,6 +69,30 @@ under the same checked profile can be meaningfully compared across backends.
 Local Node 22 helper-level source/digest assertions do not replace running
 the complete JS compiler suite on an approved runner.
 
+## Checked-i64 executable source-vector gate (2026-10-19)
+
+The experimental JS numeric boundary reporter now generates the exact first-line
+`// oreslang:checked-i64-v1` profile marker for all 16 probes. Its suite SHA-256
+also binds the actual source bytes, so an unmarked program cannot retain the
+same reviewed evidence fingerprint. The source helper rejects expressions that
+are not members of the explicit probe inventory.
+
+The added `tests/checked-i64-shared-source-vectors.test.mjs` duplicates only
+the **38 source-executable** vectors from the independently authored
+`oreslang-platform-conformance#119` fixture Git blob
+`44224caf6f6c76dedff429a47d51edc926830fdc`, and pins their canonical
+five-field serialization with SHA-256
+`b83276db9e770025291dd09b0837a55cd8fadc2a7f9fff4c2a78a2ea836c3044`.
+The fixture's five abstract `div_trunc` cases are excluded because guest
+Oreslang `int / int` has different semantics.
+
+The test **requests real JS compilation and guest execution** for each source
+case and distinguishes 23 values, 2 compile-time literal errors and 13
+runtime checked arithmetic errors. These checks are *committed*, not yet
+confirmed executed on this PR head: source-org Actions currently fail before
+job steps. No Java/Graal or LLVM observations are supplied; cross-backend
+parity remains uncertified.
+
 ## CI and source-transfer policy
 
 1. Run source-repository Node 22 tests and record exact PR head, Git tree,
