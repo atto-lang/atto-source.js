@@ -47,8 +47,8 @@ test('unevaluated remainder-by-zero branch stays lazy',async()=>{
 test('evaluated left operand overflow wins before zero-divisor check',async()=>{
   const ns=await execute(expr('(9223372036854775807 + 1) % 0'));
   assert.throws(()=>ns.main(),error=>
-    error instanceof TypeError &&
-    /signed i64 BigInt required/.test(error.message));
+    error instanceof RangeError &&
+    error.message.startsWith('ORES_I64_OVERFLOW:'));
 });
 
 test('foreign JS guest operands cannot bypass signed-i64 guards',async()=>{
@@ -57,7 +57,7 @@ test('foreign JS guest operands cannot bypass signed-i64 guards',async()=>{
   assert.equal(ns.rem(-7n,3n),-1n);
   assert.throws(()=>ns.rem(7,3n),/signed i64 BigInt required/);
   assert.throws(()=>ns.rem(7n,0n),/ORES_I64_DIVISION_BY_ZERO/);
-  assert.throws(()=>ns.rem(9223372036854775808n,3n),/signed i64 BigInt required/);
+  assert.throws(()=>ns.rem(9223372036854775808n,3n),/ORES_I64_OVERFLOW/);
 });
 
 
