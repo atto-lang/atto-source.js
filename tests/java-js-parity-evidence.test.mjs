@@ -84,7 +84,7 @@ test('checked JS runtime overflow is visibly distinct from Java long wrapping mo
   // Java OresEvalRootNode.numeric uses long x+y (unchecked Java long arithmetic).
   const source='pub fnc main(): int {return 9223372036854775807 + 1;}';
   const ns=await import('data:text/javascript,'+encodeURIComponent(compileProgramV2(source)));
-  assert.throws(()=>ns.main(),/signed i64 BigInt required/);
+  assert.throws(()=>ns.main(),/ORES_I64_OVERFLOW/);
   assert.equal(BigInt.asIntN(64,9223372036854775807n+1n),-9223372036854775808n);
 });
 
