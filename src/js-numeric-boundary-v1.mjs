@@ -53,7 +53,7 @@ export async function executeJsNumericBoundaryProbes(){
       if(typeof result!=='bigint')throw Error('unexpected guest result type');
       kind='value';value=result.toString();
     } catch(error) {
-      if(error instanceof TypeError&&/Oreslang signed i64 BigInt required/.test(error.message))
+      if(error instanceof RangeError&&error.message.startsWith('ORES_I64_OVERFLOW:'))
         kind='checked-overflow';
       else if(error instanceof RangeError&&
         error.message.startsWith('ORES_I64_DIVISION_BY_ZERO:'))
