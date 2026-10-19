@@ -28,10 +28,24 @@ const probes=[
 ];
 export const NUMERIC_PROBES=Object.freeze(probes.map(([id,expression,expected_kind,expected_value])=>
   Object.freeze({id,expression,expected_kind,expected_value})));
+// Java/Graal checked-i64-v1 requires this *exact* first source line.
+// Never collect a "checked" witness from an unmarked, legacy-wrap source.
+export const CHECKED_I64_SOURCE_DIRECTIVE='// oreslang:checked-i64-v1\n';
+export function numericProbeGuestSource(expression) {
+  if(typeof expression!=='string'||!expression.length||
+      expression.includes('\n')||expression.includes('\r')||
+      expression.includes('\0'))
+    throw TypeError('invalid checked-i64 numeric witness expression');
+  return CHECKED_I64_SOURCE_DIRECTIVE+
+    'pub fnc main(): int {return '+expression+';}\n';
+}
 export function numericProbeSuiteSha256(){
   const h=createHash('sha256').update('oreslang-js-numeric-boundary-v1\0');
   for(const p of NUMERIC_PROBES) {
-    for(const field of [p.id,p.expression,p.expected_kind,p.expected_value??'']){
+    // Bind the suite identity to *actual executable Oreslang source bytes*,
+    // including the exact checked directive, not merely numeric expectations.
+    for(const field of [p.id,p.expression,p.expected_kind,p.expected_value??'',
+      numericProbeGuestSource(p.expression)]){
       const b=Buffer.from(field,'utf8');
       const n=Buffer.alloc(8);n.writeBigUInt64BE(BigInt(b.length));
       h.update(n).update(b);
@@ -44,7 +58,7 @@ export async function executeJsNumericBoundaryProbes(){
     throw Error('numeric probe oracle requires checked-i64 IR');
   const results=[];
   for(const p of NUMERIC_PROBES) {
-    const source='pub fnc main(): int {return '+p.expression+';}\n';
+    const source=numericProbeGuestSource(p.expression);
     const compiled=compileProgramV2(source);
     const namespace=await import('data:text/javascript,'+encodeURIComponent(compiled));
     let kind, value=null;
