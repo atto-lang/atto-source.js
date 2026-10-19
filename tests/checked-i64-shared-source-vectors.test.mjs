@@ -7,7 +7,7 @@ import {compileProgramV2} from '../src/program-v2.mjs';
 // 44224caf6f6c76dedff429a47d51edc926830fdc
 // No abstract div_trunc cases: Oreslang source '/' retains separate semantics.
 // These are real JS guest compiler tests, NOT Java/Graal/LLVM attestations.
-const SOURCE_HEADER='// oreslang:checked-i64-v1\\n';
+const SOURCE_HEADER='// oreslang:checked-i64-v1\n';
 const PINNED_SOURCE_DIGEST='b83276db9e770025291dd09b0837a55cd8fadc2a7f9fff4c2a78a2ea836c3044';
 const CASES=[
   ["literal-zero","0","value","0","none"],
@@ -49,7 +49,7 @@ const CASES=[
   ["intermediate-mul-overflow","((9223372036854775807 * 2) - 9223372036854775807)","error","integer_overflow","runtime"],
   ["precedence-tree","(1 + (2 * 3))","value","7","none"]
 ];
-const source=expr=>SOURCE_HEADER+'pub fnc main(): int { return '+expr+'; }\\n';
+const source=expr=>SOURCE_HEADER+'pub fnc main(): int { return '+expr+'; }\n';
 
 test('shared 38-source checked-i64 case text, kind and phase are pinned',()=>{
   assert.equal(CASES.length,38);
@@ -62,7 +62,7 @@ test('shared 38-source checked-i64 case text, kind and phase are pinned',()=>{
     assert.equal(row.length,5);
     row.forEach((value,index)=>{
       h.update(value,'utf8');
-      h.update(index===4?'\\n':'\\0','utf8');
+      h.update(index===4?'\n':'\0','utf8');
     });
   }
   assert.equal(h.digest('hex'),PINNED_SOURCE_DIGEST);
@@ -72,7 +72,7 @@ test('real JS guest/compiler matches 38 shared checked-i64 source vectors',async
   for(const [id,expr,kind,expected,phase] of CASES){
     await t.test(id,async()=>{
       const exactSource=source(expr);
-      assert.ok(exactSource.startsWith('// oreslang:checked-i64-v1\\n'));
+      assert.ok(exactSource.startsWith('// oreslang:checked-i64-v1\n'));
       if(phase==='compile'){
         assert.equal(kind,'error');
         assert.equal(expected,'integer_overflow');
