@@ -47,6 +47,28 @@ changed or configured consistently, the checked-versus-wrapping vectors
 are **known discrepancies**, not allowed skips or passing parity cases.
 Do not change a wire tag to pretend these semantics agree.
 
+## Checked numeric witness source identity (October 19, 2026)
+
+The 16-case `src/js-numeric-boundary-v1.mjs` reporter now compiles Oreslang
+source with the **exact first line** `// oreslang:checked-i64-v1\n`.
+Previously it generated unmarked source, which was unsuitable for comparing
+against Java's explicitly opted-in checked profile. The renderer admits only
+the 16 fixed audited expressions and rejects arbitrary external fragments.
+
+The numeric suite's SHA-256 includes the **complete emitted guest source bytes**
+for every probe, in addition to its ID, expression, category and expected
+value. Fields are each preceded by an unsigned 8-byte big-endian byte length.
+Pinned source-suite digest:
+`2400f20207799bf824342747d711249be612df7ed81266878e1f24b46dc130c0`.
+The digest is an integrity witness, **not** an authenticated checkout, actual
+Java/Graal execution, or cross-backend parity attestation.
+
+This is distinct from the conformance repository's 43-case mathematical
+contract and its separate 38-source-vector digest. Only *identical* source bytes
+under the same checked profile can be meaningfully compared across backends.
+Local Node 22 helper-level source/digest assertions do not replace running
+the complete JS compiler suite on an approved runner.
+
 ## CI and source-transfer policy
 
 1. Run source-repository Node 22 tests and record exact PR head, Git tree,
