@@ -33,7 +33,7 @@ test('numeric witness identifiers and oracle data have no duplicates or gaps',()
 test('overflow is checked before a subsequent expression can cancel it',async()=>{
  const source='pub fnc main(): int {return (9223372036854775807 + 1)-1;}';
  const m=await import('data:text/javascript,'+encodeURIComponent(compileProgramV2(source)));
- assert.throws(()=>m.main(),/signed i64 BigInt required/);
+ assert.throws(()=>m.main(),/ORES_I64_OVERFLOW/);
 });
 test('Java long arithmetic asIntN is a non-runtime explanatory oracle only',()=>{
  // This is NOT a Java Oreslang guest invocation. The divergent wrap
