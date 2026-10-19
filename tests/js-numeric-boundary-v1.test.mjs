@@ -24,6 +24,9 @@ test('numeric evidence source bytes require the exact checked Java-compatible fi
   }
  }
  assert.equal(numericProbeSuiteSha256(),h.digest('hex'));
+ assert.equal(numericProbeSuiteSha256(),
+  '2400f20207799bf824342747d711249be612df7ed81266878e1f24b46dc130c0',
+  'reviewed numeric source suite must not drift without updating this pin');
  // Arbitrary injected source, even without a newline, is not an eligible witness.
  for(const forged of ['43','43;} pub fnc evil(): int {return 1',
                        '\n',null,{},NUMERIC_PROBES[0].expression+'\r\n']){
