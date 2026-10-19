@@ -263,16 +263,18 @@ function inertReport(value,backend) {
       'java_js_semantic_parity_certified'
     ];
     const present=provenanceFields.filter(k=>Object.hasOwn(root,k));
-    if(present.length!==0&&present.length!==provenanceFields.length)
-      throw Error('incomplete JS execution metadata');
-    if(present.length) {
+    // Preserve an actionable diagnostic for malformed supplied Node versions
+    // even when the metadata bundle is otherwise incomplete.
+    if(Object.hasOwn(root,'node_version')) {
       // This remains self-reported, never a source/run attestation.
       const match=/^v([1-9][0-9]*)\.([0-9]+)\.([0-9]+)(?:[-+][A-Za-z0-9.-]+)?$/
         .exec(root.node_version);
       if(!match||!Number.isSafeInteger(Number(match[1]))||
          Number(match[1])<22)
-        throw Error('invalid or unsupported Node runtime version');
+        throw Error('invalid Node runtime version (requires Node 22+)');
     }
+    if(present.length!==0&&present.length!==provenanceFields.length)
+      throw Error('incomplete JS checkout identity or execution metadata');
   }
   return root;
 }
