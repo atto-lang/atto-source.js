@@ -108,8 +108,7 @@ format. The JSON parser does not establish source provenance, nor does
 JSON parsing on its own detect duplicate member names: independent evidence
 and producer controls remain necessary.
 
-When present, JS checkout commit and tree hashes must occur together,
-with a plausible Node version. These fields remain self-reported until
+When *any* JS checkout/provenance metadata is supplied, the six metadata fields (commit, tree, Node version, checked fixture count, and both false attestation flags) must appear together. The declared Node version must be Node 22 or newer. This is stricter structural admission, not runtime authentication. These fields remain self-reported until
 verified independently from the actual GitHub Actions run.
 
 ## Required release evidence
