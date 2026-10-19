@@ -32,10 +32,11 @@ export const NUMERIC_PROBES=Object.freeze(probes.map(([id,expression,expected_ki
 // Never collect a "checked" witness from an unmarked, legacy-wrap source.
 export const CHECKED_I64_SOURCE_DIRECTIVE='// oreslang:checked-i64-v1\n';
 export function numericProbeGuestSource(expression) {
-  if(typeof expression!=='string'||!expression.length||
-      expression.includes('\n')||expression.includes('\r')||
-      expression.includes('\0'))
-    throw TypeError('invalid checked-i64 numeric witness expression');
+  // Source receipts may only execute expressions in the audited inventory.
+  // Do not let an externally supplied value forge a new witness source.
+  if(typeof expression!=='string'||
+      !NUMERIC_PROBES.some(probe=>probe.expression===expression))
+    throw TypeError('unlisted checked-i64 numeric witness expression');
   return CHECKED_I64_SOURCE_DIRECTIVE+
     'pub fnc main(): int {return '+expression+';}\n';
 }
