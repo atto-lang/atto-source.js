@@ -21,8 +21,8 @@ function checked(n){return n>=MIN&&n<=MAX;}
 function compareOperation(fn,label,expected,args){
   if(checked(expected))assert.equal(fn(...args),expected,label+' '+args);
   else assert.throws(()=>fn(...args),error=>
-    error instanceof TypeError&&
-    /Oreslang signed i64 BigInt required/.test(error.message),
+    error instanceof RangeError&&
+    error.message.startsWith('ORES_I64_OVERFLOW:'),
     label+' overflow '+args);
 }
 function seededI64(){
@@ -81,13 +81,13 @@ test('linked JS per-node failures cannot be masked by cancellation or modulo',as
   const inline=compileProgramV2(DIRECTIVE+
     'pub fnc main(): int {return (9223372036854775807 + 1) - 1;}\n');
   const overflow=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(inline));
-  assert.throws(()=>overflow.main(),/Oreslang signed i64 BigInt required/);
+  assert.throws(()=>overflow.main(),/ORES_I64_OVERFLOW/);
   const mod=compileProgramV2(DIRECTIVE+
     'pub fnc main(): int {return (9223372036854775807 + 1) % 0;}\n');
   const modOverflow=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(mod));
   assert.throws(()=>modOverflow.main(),error=>
-    error instanceof TypeError&&/Oreslang signed i64 BigInt required/.test(error.message));
+    error instanceof RangeError&&error.message.startsWith('ORES_I64_OVERFLOW:'));
   // Foreign values cannot evade operand checking on any exported function.
   assert.throws(()=>ns.plus(Number.MAX_SAFE_INTEGER,1n),/Oreslang signed i64 BigInt required/);
-  assert.throws(()=>ns.times(MAX+1n,0n),/Oreslang signed i64 BigInt required/);
+  assert.throws(()=>ns.times(MAX+1n,0n),/ORES_I64_OVERFLOW/);
 });
