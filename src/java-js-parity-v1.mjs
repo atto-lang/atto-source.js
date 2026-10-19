@@ -254,13 +254,25 @@ function inertReport(value,backend) {
         throw Error('invalid JS checkout identity');
   }
   if(!java) {
-    const hasCommit=Object.hasOwn(root,'checkout_commit_sha');
-    const hasTree=Object.hasOwn(root,'checkout_tree_sha');
-    if(hasCommit!==hasTree)
-      throw Error('incomplete JS checkout identity');
-    if(Object.hasOwn(root,'node_version')&&
-       !/^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/.test(root.node_version))
-      throw Error('invalid Node runtime version');
+    // Either a raw in-process, explicitly non-attesting fixture report or
+    // the COMPLETE locally observed checkout/Node metadata set. Partial
+    // metadata can be inadvertently promoted by a downstream evidence reader.
+    const provenanceFields=[
+      'checkout_commit_sha','checkout_tree_sha','node_version',
+      'checked_fixture_count','github_run_authenticated',
+      'java_js_semantic_parity_certified'
+    ];
+    const present=provenanceFields.filter(k=>Object.hasOwn(root,k));
+    if(present.length!==0&&present.length!==provenanceFields.length)
+      throw Error('incomplete JS execution metadata');
+    if(present.length) {
+      // This remains self-reported, never a source/run attestation.
+      const match=/^v([1-9][0-9]*)\.([0-9]+)\.([0-9]+)(?:[-+][A-Za-z0-9.-]+)?$/
+        .exec(root.node_version);
+      if(!match||!Number.isSafeInteger(Number(match[1]))||
+         Number(match[1])<22)
+        throw Error('invalid or unsupported Node runtime version');
+    }
   }
   return root;
 }
