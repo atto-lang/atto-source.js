@@ -59,3 +59,20 @@ test('foreign JS guest operands cannot bypass signed-i64 guards',async()=>{
   assert.throws(()=>ns.rem(7n,0n),/ORES_I64_DIVISION_BY_ZERO/);
   assert.throws(()=>ns.rem(9223372036854775808n,3n),/signed i64 BigInt required/);
 });
+
+
+test('seeded 64-bit signed remainder differential vectors preserve exactness',async()=>{
+  const ns=await execute(HEADER+
+    'pub fnc rem(int a,int b): int {return a % b;}');
+  let seed=0x4a37e91d;
+  function next(){
+    seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;
+    return seed>>>0;
+  }
+  for(let i=0;i<512;i++){
+    const left=BigInt.asIntN(64,(BigInt(next())<<32n)|BigInt(next()));
+    let right=BigInt.asIntN(64,(BigInt(next())<<32n)|BigInt(next()));
+    if(right===0n)right=1n;
+    assert.equal(ns.rem(left,right),left%right,'deterministic vector '+i);
+  }
+});
