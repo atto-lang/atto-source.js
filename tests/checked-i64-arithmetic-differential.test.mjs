@@ -88,6 +88,14 @@ test('linked JS per-node failures cannot be masked by cancellation or modulo',as
   assert.throws(()=>modOverflow.main(),error=>
     error instanceof RangeError&&error.message.startsWith('ORES_I64_OVERFLOW:'));
   // Foreign values cannot evade operand checking on any exported function.
-  assert.throws(()=>ns.plus(Number.MAX_SAFE_INTEGER,1n),/Oreslang signed i64 BigInt required/);
+  assert.throws(()=>ns.plus(Number.MAX_SAFE_INTEGER,1n),error=>
+    error instanceof TypeError&&
+    error.message==='Oreslang signed i64 BigInt required');
+  assert.throws(()=>ns.remainder(7,0n),error=>
+    error instanceof TypeError&&
+    error.message==='Oreslang signed i64 BigInt required');
+  assert.throws(()=>ns.plus(MAX+1n,0n),error=>
+    error instanceof RangeError&&
+    error.message.startsWith('ORES_I64_OVERFLOW:'));
   assert.throws(()=>ns.times(MAX+1n,0n),/ORES_I64_OVERFLOW/);
 });
