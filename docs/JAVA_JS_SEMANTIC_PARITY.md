@@ -129,3 +129,18 @@ verified independently from the actual GitHub Actions run.
 The private cross-org Git tree mirror provides a valid route to test a
 **complete, SHA-identical JS tree**. It does not by itself authorize a Java
 runtime claim or prove source-to-binary provenance.
+
+
+## Checked remainder diagnostic hardening (October 19)
+
+The program-v2 backend now checks both BigInt operands before `%`, returns
+signed remainder including `MIN_I64 % -1 == 0`, and classifies zero-divisor
+failures with `ORES_I64_DIVISION_BY_ZERO` instead of accepting a generic V8
+RangeError message. The numeric probe adapter accepts only this explicit code.
+Java draft PR #956 now handles checked `%` and emits the corresponding
+provisional host failure code. **These codes are not yet a unified guest Error
+wire ABI.** The checked first-line source profile remains experimental; Java
+unmarked source retains its legacy wrapping behavior.
+
+The JS Node 22 suite and Java/Graal JUnit suite must both execute under
+approved source-repository CI before this is runtime parity evidence.
