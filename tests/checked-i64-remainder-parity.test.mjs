@@ -17,7 +17,7 @@ test('identical checked-profile Oreslang source accepts signed remainders',async
     ['-7 % 3','-1'],['7 % -3','1'],['-7 % -3','-1'],
     ['7 % 3','1'],['0 % -1','0'],
     ['-9223372036854775808 % -1','0'],
-    ['9223372036854775807 % 43','7']
+    ['9223372036854775807 % 43','41']
   ]){
     const ns=await execute(expr(body));
     assert.equal(ns.main(),BigInt(expected),body);
