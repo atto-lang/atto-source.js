@@ -60,3 +60,40 @@ test('the consolidated ingress stays size-bounded and never certifies external r
   assert.throws(()=>compareJavaAndJsJsonReports(proxy,JSON.stringify(java)),/missing or oversized/);
   assert.equal(traps,0);
 });
+
+
+test('checkout provenance metadata must be all-or-nothing and Node 22+',async()=>{
+  const js=await executeJsReferenceFixtures(),java=fakeJavaReport(js);
+  const tagged={
+    ...js,
+    checkout_commit_sha:'a'.repeat(40),
+    checkout_tree_sha:'b'.repeat(40),
+    node_version:process.version,
+    checked_fixture_count:REFERENCE_CASES.length,
+    github_run_authenticated:false,
+    java_js_semantic_parity_certified:false
+  };
+  const check=j=>compareJavaAndJsJsonReports(JSON.stringify(j),JSON.stringify(java));
+  assert.equal(check(tagged).cases_compared.length,10);
+  for(const field of [
+    'checkout_commit_sha','checkout_tree_sha','node_version',
+    'checked_fixture_count','github_run_authenticated',
+    'java_js_semantic_parity_certified'
+  ]){
+    const incomplete={...tagged};
+    delete incomplete[field];
+    assert.throws(()=>check(incomplete),/incomplete JS checkout identity or execution metadata/,field);
+  }
+  for(const value of ['v0.0.0','v20.11.1','v21.9.0','v022.1.0','v22.invalid.0']){
+    assert.throws(()=>check({...tagged,node_version:value}),/invalid Node runtime version/,value);
+  }
+  for(const change of [
+    {github_run_authenticated:true},
+    {java_js_semantic_parity_certified:true},
+    {checked_fixture_count:9}
+  ])assert.throws(()=>check({...tagged,...change}));
+  const verdict=check(tagged);
+  assert.equal(verdict.java_runner_authenticated,false);
+  assert.equal(verdict.source_to_binary_authenticated,false);
+  assert.equal(verdict.full_java_js_parity_certified,false);
+});
