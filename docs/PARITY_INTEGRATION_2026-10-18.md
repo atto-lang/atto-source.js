@@ -22,7 +22,7 @@ checkpoint, **not** proof that Java/GraalVM or LLVM code has been executed.
 
 `compareJavaAndJsJsonReports` accepts at most 64 KiB JS and 256 KiB Java
 JSON; the `compareJavaAndJsReports` live-object interface remains a
-**trusted in-process API only**. Neither validates GitHub signatures, source
+**trusted in-process API only**. When JS checkout metadata is present, all six receipt fields (commit, tree, Node runtime, fixture count, and the two explicitly false attestation flags) are required together, and the declared Node version must be 22 or newer. Missing fields are rejected, but self-reported fields are never authenticated. Neither validates GitHub signatures, source
 checkout authenticity, executable digests, Java runner allocation, or a
 Java ↔ JS parity claim.
 
