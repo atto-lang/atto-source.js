@@ -333,7 +333,7 @@ function resolveProgram(parsed) {
 function emitProgram(program) {
   const out=[
     '// experimental Oreslang program-v2, provisional signed-64 integer model',
-    'function _check(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang signed i64 BigInt required");return v;}',
+    'function _check(v){if(typeof v!=="bigint")throw new TypeError("Oreslang signed i64 BigInt required");if(v<-(1n<<63n)||v>(1n<<63n)-1n)throw new RangeError("ORES_I64_OVERFLOW: checked signed 64-bit overflow");return v;}',
     // Do not expose JS engine-specific "Division by zero" RangeError text as
     // an unclassified Oreslang guest failure. This is a provisional host-side
     // code, NOT the portable guest Error wire ABI or actor CONTROL signal.
