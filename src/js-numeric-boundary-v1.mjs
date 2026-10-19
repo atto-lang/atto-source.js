@@ -55,7 +55,8 @@ export async function executeJsNumericBoundaryProbes(){
     } catch(error) {
       if(error instanceof TypeError&&/Oreslang signed i64 BigInt required/.test(error.message))
         kind='checked-overflow';
-      else if(error instanceof RangeError&&/division by zero/i.test(error.message))
+      else if(error instanceof RangeError&&
+        error.message.startsWith('ORES_I64_DIVISION_BY_ZERO:'))
         kind='division-by-zero';
       else throw Error('unknown JS numeric failure '+p.id+': '+String(error));
     }
