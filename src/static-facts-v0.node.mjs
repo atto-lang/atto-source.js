@@ -16,6 +16,10 @@ export function staticFactsV0(source) {
       throw Error('invalid Unicode surrogate');
     }
   }
+  // The current scalar IR forgets the optional declared module header.
+  // Reject it instead of publishing a false __root__ namespace identity.
+  if (/\bmodule\b/.test(source))
+    throw Error('module namespace is not retained by scalar IR facts');
   const bytes = Buffer.from(source, 'utf8');
   if (bytes.length > 262144) throw Error('source exceeds JS compiler byte limit');
   const ir = compileToIR(source);
