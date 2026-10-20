@@ -147,3 +147,19 @@ unmarked source retains its legacy wrapping behavior.
 
 The JS Node 22 suite and Java/Graal JUnit suite must both execute under
 approved source-repository CI before this is runtime parity evidence.
+
+## Admission ordering and numeric materialization hardening (2026-10-20)
+
+The lexical grammar, duplicate-member, depth and value-count checks now finish
+before parsing the complete report into an object graph. A report exceeding the
+64-depth or 20,000-value limits must not reach full JSON.parse materialization.
+Overflowing JSON numbers such as 1e999 are rejected instead of becoming Infinity.
+The size limit counts UTF-8 bytes and requires a finite nonnegative integer budget.
+
+Eight helper suites cover exact accepted limits, the first rejected value/depth,
+escaped duplicate keys, malformed lexical forms, Unicode byte budgets, 512 seeded
+ordinary JSON round trips, and rejection before full graph creation. They passed
+against the exact candidate helper in an isolated V8 evaluation with a byte-count
+and assertion adapter. The original helper fails the new ordering and nonfinite
+regressions. This is helper-level execution only; full Node22 npm test/check and
+both parity commands, plus independent review, remain required before merge.

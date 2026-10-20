@@ -1,28 +1,28 @@
 /**
- * Validate externally supplied parity report JSON before comparing observations.
- * JSON.parse alone silently keeps the last occurrence of duplicate object keys.
- * This lexical second pass rejects duplicates, including escaped aliases, at
- * every nesting level. It is deliberately not provenance authentication.
+ * Bound and validate externally supplied parity JSON before materializing it.
+ * Duplicate keys (including escaped aliases), nonfinite numbers and excessive
+ * nesting/complexity are rejected. This does not authenticate report provenance.
  */
 export function parseStrictJsonReport(text,maximum,where) {
-  if(typeof text!=='string'||Buffer.byteLength(text,'utf8')>maximum)
+  if(typeof text!=='string'||!Number.isSafeInteger(maximum)||maximum<0||
+     Buffer.byteLength(text,'utf8')>maximum)
     throw Error(where+': missing or oversized JSON report');
-  let parsed;
-  try { parsed=JSON.parse(text); }
-  catch { throw Error(where+': invalid JSON report'); }
-
   let at=0,values=0;
   const fail=reason=>{throw Error(where+': '+reason);};
+  const invalid=()=>fail('invalid JSON report');
   const spaces=()=>{while(at<text.length&&/[ \t\r\n]/.test(text[at]))at++;};
   function quoted() {
-    if(text[at]!=='"')fail('invalid JSON string');
+    if(text[at]!=='"')invalid();
     const start=at++;
     while(at<text.length) {
       const ch=text[at++];
-      if(ch==='"')return JSON.parse(text.slice(start,at));
-      if(ch==='\\')at++; // JSON.parse has already validated escapes.
+      if(ch==='"') {
+        try {return JSON.parse(text.slice(start,at));}
+        catch {invalid();}
+      }
+      if(ch==='\\')at++;
     }
-    fail('unterminated JSON string');
+    invalid();
   }
   function value(depth) {
     if(depth>64||++values>20000)fail('JSON report depth or complexity exceeded');
@@ -37,12 +37,12 @@ export function parseStrictJsonReport(text,maximum,where) {
         if(seen.has(key))fail('duplicate JSON member');
         seen.add(key);
         spaces();
-        if(text[at++]!==':')fail('invalid JSON object');
+        if(text[at++]!==':')invalid();
         value(depth+1);
         spaces();
         if(text[at]===','){at++;continue;}
         if(text[at]==='}'){at++;return;}
-        fail('invalid JSON object');
+        invalid();
       }
     }
     if(text[at]==='[') {
@@ -53,15 +53,20 @@ export function parseStrictJsonReport(text,maximum,where) {
         spaces();
         if(text[at]===','){at++;continue;}
         if(text[at]===']'){at++;return;}
-        fail('invalid JSON array');
+        invalid();
       }
     }
     if(text[at]==='"') {quoted();return;}
     const start=at;
-    while(at<text.length&&!/[,}\]\s]/.test(text[at]))at++;
-    if(start===at)fail('invalid JSON value');
+    while(at<text.length&&!/[,}\]\x20\t\r\n]/.test(text[at]))at++;
+    const token=text.slice(start,at);
+    if(token==='true'||token==='false'||token==='null')return;
+    if(!/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/.test(token))invalid();
+    if(!Number.isFinite(Number(token)))fail('non-finite JSON number');
   }
   value(0);spaces();
-  if(at!==text.length)fail('invalid JSON trailing content');
-  return parsed;
+  if(at!==text.length)invalid();
+  // Only admitted, bounded text reaches full object/array materialization.
+  try {return JSON.parse(text);}
+  catch {invalid();}
 }
