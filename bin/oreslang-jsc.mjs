@@ -5,6 +5,7 @@ import {basename, dirname, join, resolve, isAbsolute} from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {TextDecoder} from 'node:util';
 import {compile, check} from '../src/compiler.mjs';
+import {compileProgramV2, checkProgramV2} from '../src/program-v2.mjs';
 
 const MAX_SOURCE_BYTES=262144;
 async function readSource(path) {
@@ -36,20 +37,24 @@ async function readSource(path) {
 
 let temp=null;
 try {
-  const args=process.argv.slice(2);
+  const rawArgs=process.argv.slice(2);
+  // Explicit experimental dialect flag. Default scalar-v1 behavior stays stable
+  // until cross-backend semantics and host ABI have been independently validated.
+  const extended=rawArgs[0]==='--program-v2';
+  const args=extended?rawArgs.slice(1):rawArgs;
   const checkOnly=args[0]==='--check';
   const input=checkOnly?args[1]:args[0];
   const extras=args.slice(checkOnly?2:1);
   if (!input || input.startsWith('--') || extras.length>1 ||
       (extras.length && !extras[0].startsWith('--out=')))
-    throw Error('usage: oreslang-jsc [--check] input.ores [--out=/absolute/output.mjs]');
+    throw Error('usage: oreslang-jsc [--program-v2] [--check] input.ores [--out=/absolute/output.mjs]');
   if (checkOnly && extras.length) throw Error('--check does not accept --out');
   const source=await readSource(resolve(input));
   if (checkOnly) {
-    check(source);
+    if (extended) checkProgramV2(source); else check(source);
     process.stdout.write('OK\n');
   } else {
-    const output=compile(source);
+    const output=extended?compileProgramV2(source):compile(source);
     if (!extras.length) process.stdout.write(output);
     else {
       const outputPath=extras[0].slice('--out='.length);

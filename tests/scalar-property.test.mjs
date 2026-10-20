@@ -21,7 +21,8 @@ test('250 deterministic property vectors: arithmetic, precedence, calls and sign
     pub fnc add(int a,int b): int { return a + b; }
     pub fnc sub(int a,int b): int { return a - b; }
     pub fnc mul(int a,int b): int { return a * b; }
-    pub fnc rem(int a,int b): int { return a % b; }\n    pub fnc nested(int a,int b): int { return add(mul(a,b), sub(a,b)); }
+    pub fnc rem(int a,int b): int { return a % b; }
+    pub fnc nested(int a,int b): int { return add(mul(a,b), sub(a,b)); }
     pub fnc precedence(int a,int b): int { return a + b * a - b; }
   `;
   const moduleCode=compile(source);
@@ -36,7 +37,8 @@ test('250 deterministic property vectors: arithmetic, precedence, calls and sign
     const a=value(),b=value();
     assert.equal(ns.add(a,b),wrap(a+b),'add iteration '+i);
     assert.equal(ns.sub(a,b),wrap(a-b),'sub iteration '+i);
-    assert.equal(ns.mul(a,b),wrap(a*b),'mul iteration '+i);\n    if(b!==0n) assert.equal(ns.rem(a,b),a%b,'rem iteration '+i);
+    assert.equal(ns.mul(a,b),wrap(a*b),'mul iteration '+i);
+    if(b!==0n) assert.equal(ns.rem(a,b),a%b,'rem iteration '+i);
     assert.equal(ns.nested(a,b),wrap(wrap(a*b)+wrap(a-b)),'nested iteration '+i);
     assert.equal(ns.precedence(a,b),wrap(wrap(a+wrap(b*a))-b),'precedence iteration '+i);
   }
