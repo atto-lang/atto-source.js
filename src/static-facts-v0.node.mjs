@@ -49,7 +49,9 @@ export function staticFactsV0(source) {
     }
   }
   ir.functions.forEach((fn, i) => walk(fn.body, i));
-  edges.sort((a,b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
+  // ASCII/UTF-16 ordinal order is stable across hosts and locales.
+  const cmp = (a,b) => a < b ? -1 : a > b ? 1 : 0;
+  edges.sort((a,b) => cmp(a.from,b.from) || cmp(a.to,b.to));
   return {
     version: 'ores-static-facts/v0',
     unit: 'sha256:' + createHash('sha256').update(bytes).digest('hex'),
