@@ -23,6 +23,8 @@ test('fail closed on duplicated static callsites and unsupported source', () => 
     /multiple callsites/);
   assert.throws(()=>staticFactsV0('fnc main():int{return missing(1);}'));
   assert.throws(()=>staticFactsV0('define actor Foo as end'));
+  assert.throws(()=>staticFactsV0('define module demo as pub fnc main():int{return 1;} end'),
+    /module namespace/);
   assert.throws(()=>staticFactsV0('\uFEFF'+src),/BOM/);
   assert.throws(()=>staticFactsV0(src+'\uD800'),/surrogate/);
   assert.throws(()=>staticFactsV0(src+'\0'),/NUL/);
