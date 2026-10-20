@@ -1,3 +1,4 @@
+import {createScalarIR, validateScalarIR} from './scalar-ir.mjs';
 /** Experimental fail-closed Oreslang scalar-to-ESM compiler. */
 const MAX_BYTES = 262144;
 const I64_MAX = (1n << 63n) - 1n;
@@ -105,61 +106,48 @@ class Parser {
     throw new CompileError('unexpected '+t.value,t);
   }
 }
-export function compile(source){
-  const fns=new Parser(lex(source)).parse();const byName=new Map();
-  fns.forEach((f,i)=>{if(byName.has(f.name))throw new CompileError('duplicate function '+f.name);byName.set(f.name,{i,arity:f.params.length});});
-  function lower(e,params,depth=0){
-    if(depth>384)throw new CompileError('expression depth limit during lowering');
-    if(e.kind==='int')return String(e.n)+'n';
-    if(e.kind==='var'){
-      const i=params.indexOf(e.name);if(i<0)throw new CompileError('unresolved identifier '+e.name);
-      return '_p'+i;
-    }
-    if(e.kind==='neg')return 'BigInt.asIntN(64,-('+lower(e.inner,params,depth+1)+'))';
-    if(e.kind==='binary')return 'BigInt.asIntN(64,('+lower(e.left,params,depth+1)+')'+e.op+'('+lower(e.right,params,depth+1)+'))';
-    if(e.kind==='call'){
-      const fn=byName.get(e.name);if(!fn)throw new CompileError('unresolved identifier '+e.name);
-      if(e.args.length!==fn.arity)throw new CompileError('arity mismatch for '+e.name);
-      return '_f'+fn.i+'('+e.args.map(a=>lower(a,params,depth+1)).join(',')+')';
-    }
-    throw new CompileError('invalid expression');
-  }
-  // With return-only, strict evaluation and no branches, a call cycle
-  // is unconditionally non-terminating. Refuse it until the backend has
-  // conditional control flow and an explicit execution/fuel budget.
-  const dependencies=fns.map(()=>new Set());
-  function gatherCalls(expr,into,depth=0) {
-    if(depth>384)throw new CompileError('expression depth limit during dependency scan');
-    if(expr.kind==='call') {
-      const callee=byName.get(expr.name);
-      if(!callee)throw new CompileError('unresolved identifier '+expr.name);
-      into.add(callee.i);
-      for(const arg of expr.args)gatherCalls(arg,into,depth+1);
-    }else if(expr.kind==='binary'){
-      gatherCalls(expr.left,into,depth+1);
-      gatherCalls(expr.right,into,depth+1);
-    }else if(expr.kind==='neg')gatherCalls(expr.inner,into,depth+1);
-  }
-  fns.forEach((fn,i)=>gatherCalls(fn.body,dependencies[i]));
-  const status=new Uint8Array(fns.length);
-  function verifyAcyclic(i) {
-    if(status[i]===1)throw new CompileError('unconditional recursive call cycle at '+fns[i].name);
-    if(status[i]===2)return;
-    status[i]=1;
-    for(const callee of dependencies[i])verifyAcyclic(callee);
-    status[i]=2;
-  }
-  fns.forEach((_,i)=>verifyAcyclic(i));
-  const out=['// Oreslang JS scalar subset. Signed i64 arithmetic follows the Java reference contract.',
-    'function _int(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang int requires a signed i64 BigInt");return v;}'];
-  fns.forEach((f,i)=>{
-    const params=f.params.map((_,j)=>'_p'+j);
-    const body=lower(f.body,f.params);
-    out.push('function _f'+i+'('+params.join(',')+'){');
-    params.forEach(p=>out.push('_int('+p+');'));
-    out.push('return '+body+';','}');
-  });
-  fns.forEach((f,i)=>{if(f.pub)out.push('export { _f'+i+' as '+f.name+' };');});
-  return out.join('\n')+'\n';
+// The isolated parser is a bootstrap adapter. Future language frontends
+// should produce this versioned IR instead of duplicating parser semantics.
+export function compileToIR(source) {
+  return createScalarIR(new Parser(lex(source)).parse());
 }
-export function check(source){compile(source);return true;}
+export function compileIR(input) {
+  const ir = validateScalarIR(input);
+  const fns = ir.functions;
+  function lower(e, depth = 0) {
+    if (depth > 384) throw new CompileError('expression depth limit during lowering');
+    if (e.kind === 'int') return e.value + 'n';
+    if (e.kind === 'param') return '_p' + e.index;
+    if (e.kind === 'neg') return 'BigInt.asIntN(64,-(' + lower(e.inner, depth+1) + '))';
+    if (e.kind === 'binary') {
+      return 'BigInt.asIntN(64,(' + lower(e.left, depth+1) + ')' + e.op + '(' +
+        lower(e.right, depth+1) + '))';
+    }
+    if (e.kind === 'call') {
+      return '_f' + e.target + '(' + e.args.map(arg => lower(arg, depth+1)).join(',') + ')';
+    }
+    throw new CompileError('invalid IR expression');
+  }
+  const out = [
+    '// Oreslang JS scalar subset. Signed i64 wrapping is PROVISIONAL, not proven Java parity.',
+    'function _int(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang int requires a signed i64 BigInt");return v;}'
+  ];
+  fns.forEach((f,i) => {
+    const params = f.params.map((_,j) => '_p' + j);
+    out.push('function _f' + i + '(' + params.join(',') + '){');
+    params.forEach(p => out.push('_int(' + p + ');'));
+    out.push('return ' + lower(f.body) + ';', '}');
+  });
+  // String-literal export names prevent ECMAScript keyword collisions.
+  fns.forEach((f,i) => {
+    if (f.pub) out.push('export { _f' + i + ' as ' + JSON.stringify(f.name) + ' };');
+  });
+  return out.join('\n') + '\n';
+}
+export function compile(source) {
+  return compileIR(compileToIR(source));
+}
+export function check(source) {
+  compile(source);
+  return true;
+}
