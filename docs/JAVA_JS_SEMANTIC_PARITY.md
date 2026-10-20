@@ -104,9 +104,12 @@ received reports. It accepts JSON **text**, enforces 64 KiB / 256 KiB input
 limits (JS / Graal), parses to inert data, and applies the same structural
 admission checks. The lower-level object comparator remains for trusted local
 data; arbitrary live proxies may invoke traps and are not a safe ingestion
-format. The JSON parser does not establish source provenance, nor does
-JSON parsing on its own detect duplicate member names: independent evidence
-and producer controls remain necessary.
+format. The JSON reader rejects duplicate object members at all nesting levels,
+including escaped spellings of the same member name. JSON input also has
+bounded bytes, nesting depth (64) and value count (20,000). These structural
+checks still do not establish authentic checkout, compiler-binary provenance
+or actual Java/Graal execution; independent evidence and producer controls
+remain necessary.
 
 When *any* JS checkout/provenance metadata is supplied, the six metadata fields (commit, tree, Node version, checked fixture count, and both false attestation flags) must appear together. The declared Node version must be Node 22 or newer. This is stricter structural admission, not runtime authentication. These fields remain self-reported until
 verified independently from the actual GitHub Actions run.
