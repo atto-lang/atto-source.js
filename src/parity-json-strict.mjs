@@ -34,7 +34,7 @@ export function parseStrictJsonReport(text,maximum,where) {
       for(;;) {
         spaces();
         const key=quoted();
-        if(seen.has(key))fail('duplicate JSON member '+JSON.stringify(key));
+        if(seen.has(key))fail('duplicate JSON member');
         seen.add(key);
         spaces();
         if(text[at++]!==':')fail('invalid JSON object');
