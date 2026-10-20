@@ -10,6 +10,28 @@ export const JAVA_FIXTURE_REVISION='e719222e2c4c8ff8eff5d3986ad1885bfc02bc7a';
 export const FIXTURE_AUTHORITY='ores-truffle-oreslang/oreslang-source.java';
 export const JS_PARITY_REPORT_FORMAT='oreslang-js-reference-fixtures-v1';
 
+// Independently reconstructed from the 19 files read by Java's
+// contracts/v1/semantics/run.py validate_suite() at JAVA_FIXTURE_REVISION.
+// Both JSON Schema and TypeSpec are included. Never accept arbitrary
+// well-formed 64-digit "suite digests" as evidence of matching sources.
+export const JAVA_SEMANTIC_SUITE_SHA256='6f1b0303b609a400d3ea1b6809a95bcf0d43061bacb4db2c1b8a9233f4528ec1';
+
+// The Java v1.1 manifest has fifteen required Graal cases. The JS backend
+// executes only a pinned subset of ten of these (see REFERENCE_CASES).
+// The remaining Java-only results cannot be promoted as JS parity evidence.
+export const JAVA_GRAAL_MANIFEST=Object.freeze([
+  ['native.add',42],['native.precedence',40],['native.forward',42],
+  ['native.owned-identifier',42],['native.underscores',42],['native.unary',42],
+  ['native.defer-lifo-cfg',111],['native.defer-field-return',42],
+  ['native.try-finally-return-snapshot',42],
+  ['diagnostic.unknown','unknown_name'],['diagnostic.arity','call_arity'],
+  ['diagnostic.duplicate','duplicate_declaration'],
+  ['diagnostic.overflow','integer_overflow'],
+  ['diagnostic.comment','unterminated_comment'],
+  ['ownership.mutable-borrow','ownership_violation']
+].map(([id,expected])=>Object.freeze({id,expected})));
+
+
 export const REFERENCE_CASES=Object.freeze([
   {id:'native.add',kind:'value',expected:'42',blob:'015f8b0f79aafa796a148d2adeff1574e8d6c491',
    source:'pub fnc main(): int { return 40 + 2; }\n'},
@@ -237,13 +259,25 @@ export function compareJavaAndJsReports(js,graal) {
     jsLookup.set(record.id,record);
   }
   if(!graal||graal.schema_version!=='1.1.0'||graal.backend!=='graal'||
-     !/^[a-f0-9]{64}$/.test(graal.suite_sha256??'')||
-     !/^[a-f0-9]{40}$/.test(graal.source_revision??'')||
+     graal.suite_sha256!==JAVA_SEMANTIC_SUITE_SHA256||
+     graal.source_revision!==JAVA_FIXTURE_REVISION||
      !Array.isArray(graal.results))throw Error('unverified Java report shape');
   const lookup=new Map();
   for(const r of graal.results) {
     if(!r||typeof r.id!=='string'||lookup.has(r.id))throw Error('duplicate/bad Java result');
     lookup.set(r.id,r);
+  }
+  if(lookup.size!==JAVA_GRAAL_MANIFEST.length)
+    throw Error('missing/pending/failed required Java suite inventory');
+  for(const {id,expected} of JAVA_GRAAL_MANIFEST) {
+    const observation=lookup.get(id);
+    if(!observation||observation.status!=='pass')
+      throw Error('missing/pending/failed Java suite case '+id);
+    if(typeof expected==='number') {
+      if(observation.observed_exit!==expected)
+        throw Error('backend value divergence: '+id);
+    } else if(observation.diagnostic_class!==expected)
+      throw Error('diagnostic-class divergence: '+id);
   }
   const checked=[];
   for(const caseInfo of REFERENCE_CASES) {

@@ -56,6 +56,40 @@ frontends, runtime helpers, IR semantics, tests, error taxonomy and LLVM/Wasm
 lowering consistently. If two intentional policies remain, they need
 **different explicit IR tags** and no silent fallback.
 
+## October 18 — pinned full Java semantic suite and explicit overflow probes
+
+The Java conformance runner's suite SHA-256 at the pinned reference commit is
+`6f1b0303b609a400d3ea1b6809a95bcf0d43061bacb4db2c1b8a9233f4528ec1`.
+This was independently reconstructed from **all 19 source files** named by
+`validate_suite()`: `cases.json`, `schema.json`,
+`report.schema.json`, `main.tsp`, and the fifteen `.ores` fixtures.
+The reconstruction uses the original Python runner's
+`oreslang-conformance-suite-v1.1` domain tag, length-delimited names and
+bytes in the documented order. Each Git blob's byte length was checked against
+the pinned Java commit before hashing.
+
+`compareJavaAndJsReports` now requires both that **exact digest and the
+pinned Java source revision**, and validates all **15 required Java manifest
+observations** before claiming a structural match on the ten overlapping
+Java/JS fixtures. Neither a fake SHA-shaped digest nor a partial ten-case
+Java report is accepted as an actual complete Java suite report. This is
+still only structural admission; a malicious actor can fabricate valid JSON.
+A verifier must independently authenticate the Java Actions run and compiler.
+
+`npm run parity:numeric-js` executes sixteen boundary probes under the real
+Node 22 Oreslang JS backend. It checks exact signed-i64 values, intermediate
+overflow, negation and multiplication overflow, modulo sign and zero-divisor
+behavior. It emits deterministic probe-suite SHA-256, actual Git checkout
+commit and tree identities, and explicitly sets
+`java_graal_execution_verified:false` and
+`cross_backend_arithmetic_parity_certified:false`.
+
+**Intentional release blocker:** Java's currently inspected `long` operator
+implementation appears to wrap, while JS uses checked signed-i64 arithmetic.
+The numeric JS probes do not assert Java guest behavior; no arithmetic
+parity may be claimed until a real compiler-checked Graal runtime executes
+equivalent boundary probes and the language standard chooses a policy.
+
 ## Required release evidence
 
 1. Verify Java compiler source checkout and built binary via a real GraalVM

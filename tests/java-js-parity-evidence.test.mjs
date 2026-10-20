@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {compileProgramV2} from '../src/program-v2.mjs';
 import {
   REFERENCE_CASES, JAVA_FIXTURE_REVISION, FIXTURE_AUTHORITY,
+  JAVA_SEMANTIC_SUITE_SHA256, JAVA_GRAAL_MANIFEST,
   gitBlobSha1, fixtureSuiteSha256, executeJsReferenceFixtures,
   compareJavaAndJsReports
 } from '../src/java-js-parity-v1.mjs';
@@ -28,13 +29,19 @@ function syntheticGraal(js){
   return {
     schema_version:'1.1.0',
     backend:'graal',
-    source_revision:'a'.repeat(40),
-    suite_sha256:'b'.repeat(64),
-    results:js.results.map(r=>({
-      id:r.id,status:'pass',
-      ...(r.kind==='value'?{observed_exit:Number(r.observed_int64)}:
-        {diagnostic_class:r.diagnostic_class})
-    }))
+    source_revision:JAVA_FIXTURE_REVISION,
+    suite_sha256:JAVA_SEMANTIC_SUITE_SHA256,
+    results:[
+      ...js.results.map(r=>({
+        id:r.id,status:'pass',
+        ...(r.kind==='value'?{observed_exit:Number(r.observed_int64)}:
+          {diagnostic_class:r.diagnostic_class})
+      })),
+      ...JAVA_GRAAL_MANIFEST.filter(x=>!js.results.some(y=>y.id===x.id))
+        .map(x=>({id:x.id,status:'pass',
+          ...(typeof x.expected==='number'?{observed_exit:x.expected}:
+            {diagnostic_class:x.expected})}))
+    ]
   };
 }
 test('external Graal comparison is structural only, never authentication or full parity',async()=>{
@@ -163,4 +170,29 @@ test('noncanonical metadata and counterfeit success flags fail closed',async()=>
   incomplete.results[0].status=undefined;
   assert.throws(()=>compareJavaAndJsReports(incomplete,graal));
   assert.equal(compareJavaAndJsReports(js,graal).cases_compared.length,10);
+});
+
+
+test('Java report must match pinned 19-file suite digest, revision and full 15-case inventory',async()=>{
+ const js=await executeJsReferenceFixtures();
+ const valid=syntheticGraal(js); // synthetic report validates structural admission ONLY
+ assert.equal(JAVA_SEMANTIC_SUITE_SHA256,
+   '6f1b0303b609a400d3ea1b6809a95bcf0d43061bacb4db2c1b8a9233f4528ec1');
+ assert.equal(JAVA_GRAAL_MANIFEST.length,15);
+ assert.equal(new Set(JAVA_GRAAL_MANIFEST.map(x=>x.id)).size,15);
+ assert.equal(valid.results.length,15);
+ assert.equal(compareJavaAndJsReports(js,valid).cases_compared.length,10);
+ const other=()=>structuredClone(valid);
+ let r=other();r.suite_sha256='a'.repeat(64);
+ assert.throws(()=>compareJavaAndJsReports(js,r),/unverified Java report shape/);
+ r=other();r.source_revision='a'.repeat(40);
+ assert.throws(()=>compareJavaAndJsReports(js,r),/unverified Java report shape/);
+ r=other();r.results=r.results.filter(x=>x.id!=='native.defer-field-return');
+ assert.throws(()=>compareJavaAndJsReports(js,r),/required Java suite inventory/);
+ r=other();r.results.find(x=>x.id==='native.defer-lifo-cfg').observed_exit=110;
+ assert.throws(()=>compareJavaAndJsReports(js,r),/backend value divergence/);
+ r=other();r.results.find(x=>x.id==='ownership.mutable-borrow').status='pending';
+ assert.throws(()=>compareJavaAndJsReports(js,r),/missing\/pending\/failed Java suite case/);
+ r=other();r.results.push({id:'forged.extra',status:'pass',observed_exit:42});
+ assert.throws(()=>compareJavaAndJsReports(js,r),/required Java suite inventory/);
 });
