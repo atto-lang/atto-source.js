@@ -3,6 +3,7 @@
  * A verified JS checkout is not evidence of Java/Graal execution.
  */
 import {createHash} from 'node:crypto';
+import {parseStrictJsonReport} from './parity-json-strict.mjs';
 import {compileProgramV2, ProgramCompileError} from './program-v2.mjs';
 import {PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 
@@ -280,22 +281,14 @@ function inertReport(value,backend) {
 }
 
 /**
- * Preferred external ingress. JSON.parse creates inert ordinary data objects;
- * the byte budget avoids unbounded parsing. This is validation, not proof of
+ * Preferred external ingress. Parse JSON with bounded size, nesting,
+ * complexity and unique-member admission. This is validation, not proof of
  * the origin or truthfulness of a report supplied by another party.
  */
 export function compareJavaAndJsJsonReports(jsJson,graalJson) {
-  function parseBounded(text,maximum,where) {
-    if(typeof text!=='string'||Buffer.byteLength(text,'utf8')>maximum)
-      throw Error(where+': missing or oversized JSON report');
-    let parsed;
-    try { parsed=JSON.parse(text); }
-    catch { throw Error(where+': invalid JSON report'); }
-    return parsed;
-  }
   return compareJavaAndJsReports(
-    parseBounded(jsJson,65536,'JS'),
-    parseBounded(graalJson,262144,'Java')
+    parseStrictJsonReport(jsJson,65536,'JS'),
+    parseStrictJsonReport(graalJson,262144,'Java')
   );
 }
 
