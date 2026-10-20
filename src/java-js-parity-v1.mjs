@@ -115,9 +115,26 @@ export async function executeJsReferenceFixtures() {
  * signature, runner provenance, guest execution, or language-wide parity.
  */
 export function compareJavaAndJsReports(js,graal) {
+  // No claim of provenance: this is a deliberately strict, structural
+  // comparison over JSON-shaped reports. Authenticate CI separately.
   if(!js||js.format!==JS_PARITY_REPORT_FORMAT||js.backend!=='js'||
-     js.fixture_suite_sha256!==fixtureSuiteSha256()||js.results?.length!==10)
+     js.fixture_authority!==FIXTURE_AUTHORITY||
+     js.fixture_authority_revision!==JAVA_FIXTURE_REVISION||
+     js.fixture_suite_sha256!==fixtureSuiteSha256()||
+     js.integer_model!==PROGRAM_IR_INT_MODEL||
+     js.execution!=='real-node-guest'||
+     js.provenance_authenticated!==false||
+     js.java_execution_verified!==false||
+     !Array.isArray(js.results)||js.results.length!==REFERENCE_CASES.length)
     throw Error('invalid or incomplete JS fixture report');
+
+  const jsLookup=new Map();
+  for(const record of js.results) {
+    if(!record||typeof record!=='object'||Array.isArray(record)||
+       typeof record.id!=='string'||jsLookup.has(record.id))
+      throw Error('duplicate/bad JS result');
+    jsLookup.set(record.id,record);
+  }
   if(!graal||graal.schema_version!=='1.1.0'||graal.backend!=='graal'||
      !/^[a-f0-9]{64}$/.test(graal.suite_sha256??'')||
      !/^[a-f0-9]{40}$/.test(graal.source_revision??'')||
@@ -129,11 +146,14 @@ export function compareJavaAndJsReports(js,graal) {
   }
   const checked=[];
   for(const caseInfo of REFERENCE_CASES) {
-    const ja=lookup.get(caseInfo.id), jsr=js.results.find(r=>r.id===caseInfo.id);
-    if(!ja||ja.status!=='pass'||!jsr||jsr.status!=='pass'||jsr.fixture_git_blob!==caseInfo.blob)
+    const ja=lookup.get(caseInfo.id), jsr=jsLookup.get(caseInfo.id);
+    if(!ja||ja.status!=='pass'||!jsr||jsr.status!=='pass'||
+       jsr.kind!==caseInfo.kind||jsr.fixture_git_blob!==caseInfo.blob)
       throw Error('missing/pending/failed required reference case: '+caseInfo.id);
     if(caseInfo.kind==='value') {
-      if(!Number.isSafeInteger(ja.observed_exit)||
+      if(typeof jsr.observed_int64!=='string'||
+         !/^(0|-?[1-9][0-9]*)$/.test(jsr.observed_int64)||
+         !Number.isSafeInteger(ja.observed_exit)||
          ja.observed_exit!==Number(jsr.observed_int64)||
          jsr.observed_int64!==caseInfo.expected)
         throw Error('backend value divergence: '+caseInfo.id);
