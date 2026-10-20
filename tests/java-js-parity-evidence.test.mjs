@@ -5,7 +5,7 @@ import {
   REFERENCE_CASES, JAVA_FIXTURE_REVISION, FIXTURE_AUTHORITY,
   JAVA_SEMANTIC_SUITE_SHA256, JAVA_GRAAL_MANIFEST,
   gitBlobSha1, fixtureSuiteSha256, executeJsReferenceFixtures,
-  compareJavaAndJsReports
+  compareJavaAndJsReports, compareJavaAndJsJsonReports
 } from '../src/java-js-parity-v1.mjs';
 
 test('ten independent Java fixture bytes are pinned and executed using real JS guest modules',async()=>{
@@ -195,4 +195,73 @@ test('Java report must match pinned 19-file suite digest, revision and full 15-c
  assert.throws(()=>compareJavaAndJsReports(js,r),/missing\/pending\/failed Java suite case/);
  r=other();r.results.push({id:'forged.extra',status:'pass',observed_exit:42});
  assert.throws(()=>compareJavaAndJsReports(js,r),/required Java suite inventory/);
+});
+
+
+test('successful reports reject contradictory values, diagnostic classes and error details',async()=>{
+  const js=await executeJsReferenceFixtures();
+  const java=syntheticGraal(js);
+  const copyJs=()=>structuredClone(js);
+  const copyJava=()=>structuredClone(java);
+  const cases=[
+    [()=>{const x=copyJs();x.results[0].diagnostic_class='unknown_name';return [x,java];}],
+    [()=>{const x=copyJs();delete x.results[0].observed_int64;return [x,java];}],
+    [()=>{const x=copyJs();x.results[5].observed_int64='42';return [x,java];}],
+    [()=>{const x=copyJs();delete x.results[5].diagnostic_class;return [x,java];}],
+    [()=>{const x=copyJava();x.results[0].diagnostic_class='unknown_name';return [js,x];}],
+    [()=>{const x=copyJava();delete x.results[0].observed_exit;return [js,x];}],
+    [()=>{const x=copyJava();x.results[5].observed_exit=42;return [js,x];}],
+    [()=>{const x=copyJava();delete x.results[5].diagnostic_class;return [js,x];}],
+    [()=>{const x=copyJava();x.results[0].detail='ERROR: guest never ran';return [js,x];}],
+    [()=>{const x=copyJava();x.results[10].detail='error: unknown parse';return [js,x];}]
+  ];
+  for(const [factory] of cases) {
+    const [a,b]=factory();
+    assert.throws(()=>compareJavaAndJsReports(a,b),/contradictory|success.*detail/);
+  }
+  assert.equal(compareJavaAndJsReports(js,java).cases_compared.length,10);
+});
+
+test('bounded text-only JSON ingress rejects hostile inputs and preserves non-attestation',async()=>{
+  const js=await executeJsReferenceFixtures();
+  const graal=syntheticGraal(js);
+  const verified=compareJavaAndJsJsonReports(JSON.stringify(js),JSON.stringify(graal));
+  assert.equal(verified.cases_compared.length,10);
+  assert.equal(verified.java_runner_authenticated,false);
+  assert.equal(verified.full_java_js_parity_certified,false);
+  assert.throws(()=>compareJavaAndJsJsonReports(js,JSON.stringify(graal)),
+    /missing or oversized JSON report/);
+  assert.throws(()=>compareJavaAndJsJsonReports('{invalid',JSON.stringify(graal)),
+    /invalid JSON report/);
+  assert.throws(()=>compareJavaAndJsJsonReports(' '.repeat(65537),JSON.stringify(graal)),
+    /missing or oversized JSON report/);
+  assert.throws(()=>compareJavaAndJsJsonReports(JSON.stringify(js),' '.repeat(262145)),
+    /missing or oversized JSON report/);
+  assert.throws(()=>compareJavaAndJsJsonReports(JSON.stringify(js),'null'),
+    /expected plain record/);
+  let traps=0;
+  const hostile=new Proxy({},{
+    get(){traps++;throw Error('foreign proxy trap');},
+    ownKeys(){traps++;throw Error('foreign proxy trap');}
+  });
+  assert.throws(()=>compareJavaAndJsJsonReports(hostile,JSON.stringify(graal)),
+    /missing or oversized JSON report/);
+  assert.equal(traps,0);
+});
+
+test('JSON report checkout commit and tree are an all-or-nothing pair',async()=>{
+  const js=await executeJsReferenceFixtures();
+  const graal=syntheticGraal(js);
+  assert.throws(()=>compareJavaAndJsReports({...js,checkout_commit_sha:'a'.repeat(40)},graal),
+    /incomplete JS checkout identity/);
+  assert.throws(()=>compareJavaAndJsReports({...js,checkout_tree_sha:'b'.repeat(40)},graal),
+    /incomplete JS checkout identity/);
+  assert.throws(()=>compareJavaAndJsReports({...js,node_version:'vNOTNODE'},graal),
+    /invalid Node runtime version/);
+  const tagged={...js,checkout_commit_sha:'a'.repeat(40),
+    checkout_tree_sha:'b'.repeat(40),node_version:process.version,
+    checked_fixture_count:10,github_run_authenticated:false,
+    java_js_semantic_parity_certified:false};
+  assert.equal(compareJavaAndJsJsonReports(JSON.stringify(tagged),
+    JSON.stringify(graal)).cases_compared.length,10);
 });
