@@ -1,3 +1,4 @@
+import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 /**
  * Experimental Oreslang program-to-ESM v2 slice:
  * flat runtime modules, private/public functions, qualified calls, integer matches.
@@ -101,7 +102,7 @@ class Parser {
     this.expect(';');this.expect('}');
     // Exporting a routine as a module object property would make a
     // direct-call-only routine first class. Leave this for runtime/ABI design.
-    if (moduleName !== null && pub && kind === 'routine') fail('public module routine requires host ABI design');
+    if (pub && kind === 'routine') fail('public routine cannot be exported');
     return {module:moduleName, name, kind, pub, params, body};
   }
   parse() {
@@ -222,7 +223,7 @@ function resolveProgram(parsed) {
   const {modules,functions}=parsed;
   const slots = new Map(), exports = new Set(), symbolKinds = new Map();
   functions.forEach((fn,i)=>{
-    const qualified=(fn.module===null?'root':fn.module)+'.'+fn.name;
+    const qualified=(fn.module===null?'@file/':'@module/'+fn.module+'/')+fn.name;
     const slot=qualified+'/'+fn.params.length;
     if(slots.has(slot)) fail('duplicate caller-visible arity '+slot);
     if(symbolKinds.has(qualified) && symbolKinds.get(qualified)!==fn.kind)
@@ -250,7 +251,7 @@ function resolveProgram(parsed) {
       case 'call': {
         const mod=expr.qualifier===null?owner.module:expr.qualifier;
         if(mod!==null && !modules.includes(mod)) fail('unknown module '+mod);
-        const key=(mod===null?'root':mod)+'.'+expr.name;
+        const key=(mod===null?'@file/':'@module/'+mod+'/')+expr.name;
         const target=slots.get(key+'/'+expr.args.length);
         if(target===undefined) {
           if(symbolKinds.has(key)) fail('call arity mismatch for '+key);
@@ -285,7 +286,7 @@ function resolveProgram(parsed) {
     colors[i]=1;for(const j of graph[i])visit(j); colors[i]=2;
   }
   resolved.forEach((_,i)=>visit(i));
-  return {modules,functions:resolved};
+  return {sourceNamespace:parsed.namespace,modules,functions:resolved};
 }
 function emitProgram(program) {
   const out=[
@@ -355,8 +356,20 @@ function emitProgram(program) {
   }
   return out.join('\n')+'\n';
 }
+export function compileToProgramIRV2(source) {
+  const program=resolveProgram(new Parser(tokenize(source)).parse());
+  return validateProgramIRV2({
+    schemaVersion:PROGRAM_IR_VERSION,
+    dialect:PROGRAM_IR_DIALECT,
+    integerModel:PROGRAM_IR_INT_MODEL,
+    ...program
+  });
+}
+export function compileProgramIRV2(ir) {
+  return emitProgram(validateProgramIRV2(ir));
+}
 export function compileProgramV2(source) {
-  return emitProgram(resolveProgram(new Parser(tokenize(source)).parse()));
+  return emitProgram(compileToProgramIRV2(source));
 }
 export function checkProgramV2(source) {
   compileProgramV2(source);

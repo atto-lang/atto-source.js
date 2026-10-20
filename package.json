@@ -14,8 +14,9 @@
     "./package-admission": "./src/package-admission.mjs",
     "./load-trusted-package.node": "./src/load-trusted-package.node.mjs",
     "./scalar-ir": "./src/scalar-ir.mjs",
-    "./program-v2": "./src/program-v2-audited.mjs",
-    "./multiple-inheritance": "./src/multiple-inheritance.mjs"
+    "./program-v2": "./src/program-v2.mjs",
+    "./multiple-inheritance": "./src/multiple-inheritance.mjs",
+    "./program-ir-v2": "./src/program-ir-v2.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
