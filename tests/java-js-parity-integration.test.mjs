@@ -97,3 +97,26 @@ test('checkout provenance metadata must be all-or-nothing and Node 22+',async()=
   assert.equal(verdict.source_to_binary_authenticated,false);
   assert.equal(verdict.full_java_js_parity_certified,false);
 });
+
+
+test('externally received parity JSON rejects duplicate members at root and result depths',async()=>{
+  const js=await executeJsReferenceFixtures(),java=fakeJavaReport(js);
+  const originalJs=JSON.stringify(js),originalJava=JSON.stringify(java);
+  const inject=(json,before,after)=>{
+    const changed=json.replace(before,after);
+    assert.notEqual(changed,json,'expected JSON fixture mutation must match');
+    return changed;
+  };
+  const alias=String.raw`{"\u0062ackend":"forged",`;
+  const invalid=[
+    [inject(originalJs,'{','{"backend":"forged",'),originalJava],
+    [inject(originalJs,'{',alias),originalJava],
+    [inject(originalJs,'"observed_int64":"42"',
+      '"observed_int64":"0","observed_int64":"42"'),originalJava],
+    [originalJs,inject(originalJava,'{','{"backend":"forged",')],
+    [originalJs,inject(originalJava,'"observed_exit":42',
+      '"observed_exit":0,"observed_exit":42')]
+  ];
+  for(const [j,g] of invalid)
+    assert.throws(()=>compareJavaAndJsJsonReports(j,g),/duplicate JSON member/);
+});

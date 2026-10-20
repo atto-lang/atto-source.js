@@ -104,9 +104,12 @@ received reports. It accepts JSON **text**, enforces 64 KiB / 256 KiB input
 limits (JS / Graal), parses to inert data, and applies the same structural
 admission checks. The lower-level object comparator remains for trusted local
 data; arbitrary live proxies may invoke traps and are not a safe ingestion
-format. The JSON parser does not establish source provenance, nor does
-JSON parsing on its own detect duplicate member names: independent evidence
-and producer controls remain necessary.
+format. The JSON reader rejects duplicate object members at all nesting levels,
+including escaped spellings of the same member name. JSON input also has
+bounded bytes, nesting depth (64) and value count (20,000). These structural
+checks still do not establish authentic checkout, compiler-binary provenance
+or actual Java/Graal execution; independent evidence and producer controls
+remain necessary.
 
 When *any* JS checkout/provenance metadata is supplied, the six metadata fields (commit, tree, Node version, checked fixture count, and both false attestation flags) must appear together. The declared Node version must be Node 22 or newer. This is stricter structural admission, not runtime authentication. These fields remain self-reported until
 verified independently from the actual GitHub Actions run.
@@ -144,3 +147,19 @@ unmarked source retains its legacy wrapping behavior.
 
 The JS Node 22 suite and Java/Graal JUnit suite must both execute under
 approved source-repository CI before this is runtime parity evidence.
+
+## Admission ordering and numeric materialization hardening (2026-10-20)
+
+The lexical grammar, duplicate-member, depth and value-count checks now finish
+before parsing the complete report into an object graph. A report exceeding the
+64-depth or 20,000-value limits must not reach full JSON.parse materialization.
+Overflowing JSON numbers such as 1e999 are rejected instead of becoming Infinity.
+The size limit counts UTF-8 bytes and requires a finite nonnegative integer budget.
+
+Eight helper suites cover exact accepted limits, the first rejected value/depth,
+escaped duplicate keys, malformed lexical forms, Unicode byte budgets, 512 seeded
+ordinary JSON round trips, and rejection before full graph creation. They passed
+against the exact candidate helper in an isolated V8 evaluation with a byte-count
+and assertion adapter. The original helper fails the new ordering and nonfinite
+regressions. This is helper-level execution only; full Node22 npm test/check and
+both parity commands, plus independent review, remain required before merge.
