@@ -90,7 +90,7 @@ test('IR cannot bypass private cross-module visibility',()=>{
  assert.throws(()=>compileProgramIRV2(update(ir,2,{kind:'call',target:0,args:[]})),/cross-module private call/);
 });
 
-test('bounded int property vectors exercise validated ESM, not only source compiler',async()=>{
+test('bounded checked-int property vectors exercise validated ESM, not only source compiler',async()=>{
  const source='define module math pub fnc add(int a,int b): int {return a+b;} end';
  const ir=compileToProgramIRV2(source);
  const ns=await import('data:text/javascript,'+encodeURIComponent(compileProgramIRV2(JSON.parse(JSON.stringify(ir)))));
@@ -99,7 +99,11 @@ test('bounded int property vectors exercise validated ESM, not only source compi
  for(let i=0;i<500;i++){
   const a=BigInt.asIntN(64,(BigInt(rand())<<32n)|BigInt(rand()));
   const b=BigInt.asIntN(64,(BigInt(rand())<<32n)|BigInt(rand()));
-  assert.equal(ns.math.add(a,b),BigInt.asIntN(64,a+b));
+  const expected=a+b;
+  if(expected>=-(1n<<63n) && expected<=(1n<<63n)-1n)
+    assert.equal(ns.math.add(a,b),expected);
+  else
+    assert.throws(()=>ns.math.add(a,b),/signed i64 BigInt required/);
  }
 });
 
