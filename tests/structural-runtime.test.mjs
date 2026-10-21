@@ -10,6 +10,8 @@ test('readonly structural width executes through compiler-indexed typed slots',(
  const x=d.createValue(t,[42n,'hello',true]);
  const p=d.compileView(t,view([fld('label','string'),fld('id','int')]));
  assert.equal(d.withView(x,p,v=>v.id+BigInt(v.label.length)),47n);
+ const inline=d.compileView(t,{kind:'record',readOnly:true,fields:[fld('id','int')]});
+ assert.equal(d.withView(x,inline,v=>v.id),42n); // inline anonymous type is structural
  assert.deepEqual(d.withView(x,p,v=>Object.keys(v).join(',')),'label,id');
  assert.equal(d.withView(x,p,v=>v.secret),undefined);
 });
