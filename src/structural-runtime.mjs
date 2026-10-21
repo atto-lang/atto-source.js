@@ -44,7 +44,7 @@ export function createStructuralDomain() {
   }
   const allowed = new Set(['int','string','bool']);
   function validField(f) {
-    onlyPlain(f);
+    exactRecord(f,['name','type','public'],['name','type','public']);
     if (!identifier.test(f.name) || excluded.has(f.name) || !allowed.has(f.type) || typeof f.public !== 'boolean')
       throw new TypeError('unsupported scalar field descriptor');
     return Object.freeze({name:f.name,type:f.type,public:f.public});
