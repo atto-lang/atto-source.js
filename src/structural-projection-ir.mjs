@@ -69,7 +69,10 @@ function literals(values,descriptors){
  * Accepts only a small validated subset of compiler-produced typed IR. Output
  * imports the existing branded structural runtime from this package.
  */
-export function compileStructuralProjectionIR(input,{portable=false}={}){
+export function compileStructuralProjectionIR(input,options={}){
+  record(options,['portable']);
+  const portable=Object.hasOwn(options,'portable')?options.portable:false;
+  if(typeof portable!=='boolean')fail('portable option must be boolean');
   record(input,['schemaVersion','kind','mode','carrier','view','slots','select'],
     ['schemaVersion','kind','mode','carrier','view','slots','select']);
   if(input.schemaVersion!==1||input.kind!=='readonly-scalar-projection'||
