@@ -65,8 +65,8 @@ export class WorkerMixedLayout {
   integrate(positionField,velocityField,dt){
     this.#live();
     if(positionField===velocityField || !Number.isFinite(dt) ||
-       !this.fields.some(f=>f.name===positionField&&f.type==="f64") ||
-       !this.fields.some(f=>f.name===velocityField&&f.type==="f64"))
+       this.#geometry.typeOf(positionField)!=="f64" ||
+       this.#geometry.typeOf(velocityField)!=="f64")
       throw new RangeError("integrate requires distinct f64 fields and finite dt");
     for(let row=0;row<this.rows;row++){
       this.write(row,positionField,this.read(row,positionField)+
