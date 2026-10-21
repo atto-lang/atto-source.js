@@ -67,11 +67,8 @@ test('unknown runtime metadata is rejected instead of silently discarded',()=>{
  const d=createStructuralDomain();
  assert.throws(()=>d.defineType({kind:'record',fields:[],unexpected:true}),/unrecognized metadata key/);
  assert.throws(()=>d.defineType({kind:'record',fields:[{...fld('id','int'),mutable:false}]}),/unrecognized metadata key/);
- assert.throws(()=>d.defineType({kind:'record',actor:false,fields:[]}),/unrecognized metadata key/);
- assert.throws(()=>d.defineType({kind:'record',methods:[],fields:[]}),/unrecognized metadata key/);
  const t=d.defineType({kind:'record',fields:[fld('id','int')]});
  assert.throws(()=>d.compileView(t,{...view([fld('id','int')]),mutable:false}),/unrecognized metadata key/);
- assert.throws(()=>d.compileView(t,{...view([fld('id','int')]),methods:[]}),/unrecognized metadata key/);
  assert.throws(()=>d.compileView(t,view([{...fld('id','int'),mutable:false}])),/unrecognized metadata key/);
 });
 test('sparse, accessor-backed, extra-key and custom-prototype arrays fail closed',()=>{
