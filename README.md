@@ -52,9 +52,26 @@ UTF-8, BOM-rejected and strictly JSON parsed (including duplicate-key
 rejection). The existing no-overwrite, no-artifact-on-rejection publication
 rules apply.
 
-The generated ESM imports
+The default generated ESM imports
 `@oreslang/source-js/structural-runtime` from the same package scope
-or an authorized browser import map. The selected readonly field is loaded
+or an authorized browser import map.
+
+For the **literal-only** profile, add `--portable` immediately after
+`--structural-ir` to emit dependency-free, standalone ESM:
+
+```sh
+node bin/oreslang-jsc.mjs --structural-ir --portable --check path/to/structural-ir.json
+node bin/oreslang-jsc.mjs --structural-ir --portable path/to/structural-ir.json --out=/absolute/path/program.mjs
+```
+
+Portable output constant-folds the selected field **after** proving readonly
+structural compatibility and checking every carrier slot. Only the selected
+canonical scalar literal is emitted; unused carrier values, including private
+fields, do not enter the output artifact. The module exports `main()`, and
+runs from an unrelated directory without this package installed. It does not
+create live structural views, accept dynamic instances or provide runtime
+borrow enforcement. This limitation must be revisited before nonliteral
+typed IR or guest-provided runtime data can use portable emission. The selected readonly field is loaded
 through a compiler-indexed primitive slot; `int` uses signed-i64 BigInt.
 The generator deliberately rejects private/missing fields, mismatched
 representations, mutable views, noncanonical integers, and hostile metadata.
