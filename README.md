@@ -110,8 +110,9 @@ node bin/oreslang-jsc.mjs --structural-source --check program.ores
 node bin/oreslang-jsc.mjs --structural-source program.ores --out=/absolute/program.mjs
 ```
 
-Anonymous inline `{ id: int }` parameters are readonly structural by default;
-the optional redundant `structural { id: int }` is accepted. Named
+Anonymous inline `{ id: int }`, `record{ id: int }` and
+`struct{ id: int }` parameters are readonly structural by default;
+the redundant `structural` prefix is also accepted for each. Named
 interface/trait parameters require explicit `structural`; nominal-by-default
 remains unchanged. Private fields, type mismatches, invalid i64 literals,
 mutable views, `await`, actors, methods, aggregation, source injection,
