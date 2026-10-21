@@ -1,5 +1,20 @@
 import {copyOwnedValue} from './worker-actor-copy.mjs';
 const PROTOCOL = 'ores.js.worker.v1';
+const UNSUPPORTED_PLACEMENT_KEYS = Object.freeze([
+  'placement','cpuAffinity','maxParallelTurns',
+  'accelerator','gpuDeviceId','maxGpuInFlight'
+]);
+
+export function rejectUnsupportedWorkerPlacement(options) {
+  if (!options || typeof options !== 'object')
+    throw new TypeError('worker actor options must be an object');
+  for (const key of UNSUPPORTED_PLACEMENT_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(options,key)) {
+      throw new TypeError(
+        'JavaScript Worker backend cannot guarantee CPU/GPU placement: ' + key);
+    }
+  }
+}
 export function createWorkerActorClient({worker, moduleUrl, exportName = 'receive', mode = 'handler', maxPending = 64}) {
   if (!worker || typeof worker.postMessage !== 'function' || typeof worker.terminate !== 'function')
     throw new TypeError('invalid Worker');
