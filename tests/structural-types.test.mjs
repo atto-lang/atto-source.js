@@ -150,3 +150,17 @@ test('unknown type descriptor keys fail closed at every structural proof layer',
    expect([field('key','int')])
  ),false);
 });
+
+
+test('optional structural shape names must be valid safe identifiers',()=>{
+ const publicId=field('id','int');
+ const target={kind:'interface',fields:[publicId],readOnly:true};
+ assert.equal(canBorrowStructural({kind:'class',name:123,fields:[publicId]},target),false);
+ assert.equal(canBorrowStructural({kind:'class',name:'__proto__',fields:[publicId]},target),false);
+ assert.equal(canBorrowStructural({kind:'class',fields:[publicId]},
+   {kind:'interface',name:123,fields:[publicId],readOnly:true}),false);
+ assert.equal(canBorrowStructural({kind:'class',fields:[publicId]},
+   {kind:'interface',name:'constructor',fields:[publicId],readOnly:true}),false);
+ assert.equal(canBorrowStructural({kind:'class',name:'Candidate',fields:[publicId]},
+   {kind:'interface',name:'HasId',fields:[publicId],readOnly:true}),true);
+});
