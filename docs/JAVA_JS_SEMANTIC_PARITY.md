@@ -26,10 +26,17 @@ are silently counted as passes.
 
 `compareJavaAndJsReports(js, graal)` accepts Java's v1.1 semantic report
 shape to compare ten matching per-fixture results. It rejects missing, pending
-or failed cases, duplicate IDs, wrong revision format, value/diagnostic
-differences, and wrong subset identities. It **cannot authenticate** the
+or failed cases, duplicate IDs, Java reports from a revision other than the
+exact pinned reference revision, value/diagnostic differences, falsified JS
+fixture identity/model metadata, and wrong subset identities. Both the JS
+and Java report inputs must use ordinary plain-data records and dense native
+arrays (not accessor-backed objects, subclasses or replaced Array methods). It **cannot authenticate** the
 supplied Java report: a synthetic JSON document can satisfy its checks.
-The comparison therefore always returns
+This is an object-shape and fixture-observation check only: a caller could
+still fabricate a fully valid data report. Proxies with executable JS traps are
+not a sandboxable JSON transport; ingest an actual JSON document at trusted
+service boundaries, and independently attest GitHub Actions source/build/run
+provenance. The comparison therefore always returns
 `java_runner_authenticated:false`,
 `source_to_binary_authenticated:false`,
 `full_java_js_parity_certified:false`, even for matching records.

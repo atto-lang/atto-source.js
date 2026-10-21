@@ -27,7 +27,8 @@ function record(v,keys,context) {
   return v;
 }
 function sequence(v,max,context){
-  if(!Array.isArray(v)||v.length>max)fail(context+': invalid array');
+  if(!Array.isArray(v)||Object.getPrototypeOf(v)!==Array.prototype||v.length>max)
+    fail(context+': invalid array');
   const own=Reflect.ownKeys(v);
   if(own.length!==v.length+1 || own.some(k=>k!=='length'&&(!/^(?:0|[1-9][0-9]*)$/.test(k)||Number(k)>=v.length)))
     fail(context+': unexpected array properties');

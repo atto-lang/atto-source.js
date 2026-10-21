@@ -38,7 +38,12 @@ function name(value, context) {
   return value;
 }
 function array(value, maximum, context) {
-  if (!Array.isArray(value) || value.length > maximum) fail(context + ': invalid array size');
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > maximum)
+    fail(context + ': invalid array size');
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== value.length + 1 ||
+      keys.some(k => k !== 'length' && (!/^(?:0|[1-9][0-9]*)$/.test(k) || Number(k) >= value.length)))
+    fail(context + ': unexpected array properties');
   for (let i = 0; i < value.length; i++) {
     const desc = Object.getOwnPropertyDescriptor(value, i);
     if (!desc || !Object.hasOwn(desc, 'value')) fail(context + ': sparse or accessor array');
@@ -46,7 +51,8 @@ function array(value, maximum, context) {
   return value;
 }
 function index(value, maximum, context) {
-  if (!Number.isSafeInteger(value) || value < 0 || value >= maximum) fail(context + ': out-of-range index');
+  if (!Number.isSafeInteger(value) || Object.is(value, -0) || value < 0 || value >= maximum)
+    fail(context + ': out-of-range index');
   return value;
 }
 function integer(value) {

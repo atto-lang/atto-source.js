@@ -76,7 +76,7 @@ test('report comparison fails closed on mismatched, missing, pending and counter
   assert.throws(()=>compareJavaAndJsReports({...js,results:js.results.slice(1)},graal),
     /invalid or incomplete JS fixture report/);
   invalid=structuredClone(js);invalid.results[0].fixture_git_blob='0'.repeat(40);
-  assert.throws(()=>compareJavaAndJsReports(invalid,graal),/missing\/pending\/failed/);
+  assert.throws(()=>compareJavaAndJsReports(invalid,graal),/missing\/pending\/failed required reference case/);
 });
 
 test('checked JS runtime overflow is visibly distinct from Java long wrapping model',async()=>{

@@ -320,8 +320,9 @@ export function compareJavaAndJsReports(js,graal) {
      graal.source_revision!==JAVA_FIXTURE_REVISION||
      !Array.isArray(graal.results))throw Error('unverified Java report shape');
   const lookup=new Map();
-  for(const r of graal.results) {
-    if(!r||typeof r.id!=='string'||lookup.has(r.id))throw Error('duplicate/bad Java result');
+  for(const r of graal.results){
+    if(typeof r.id!=='string'||lookup.has(r.id))
+      throw Error('duplicate/bad Java result');
     lookup.set(r.id,r);
   }
   if(lookup.size!==JAVA_GRAAL_MANIFEST.length)
