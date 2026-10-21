@@ -36,7 +36,7 @@ test('tuple slots are exact and mutable fixed arrays invariant',()=>{
  assert.equal(canBorrowStructural({kind:'fixed-array',elements:['int','string']},{...t('int','string'),readOnly:true}),false);
  const derived={kind:'nominal',name:'Derived',args:[],ancestors:['Base']};
  const base={kind:'nominal',name:'Base',args:[]};
- assert.equal(canAssignNominal(t(derived),t(base)),true);
+ assert.equal(canAssignNominal(t(derived),t(base)),false); // inline ancestor hints are untrusted
  assert.equal(canAssignNominal({kind:'fixed-array',elements:[derived]},{kind:'fixed-array',elements:[base]}),false);
  assert.equal(canAssignNominal({kind:'fixed-array',elements:['int'],readOnly:true},{kind:'fixed-array',elements:['int']}),false);
 });
@@ -54,7 +54,8 @@ test('nominal receiver method variance is sound',()=>{
  const child={kind:'nominal',name:'Child',args:[],ancestors:['Base']};
  const actual={name:'handle',generics:[],params:[{type:base}],result:child,public:true};
  const contract={name:'handle',generics:[],params:[{type:child}],result:base};
- assert.equal(canImplementMethod(actual,contract),true);
+ assert.equal(canImplementMethod(actual,contract),false); // no sealed inheritance proof yet
+ assert.equal(canImplementMethod({...actual,result:base},{...contract,params:[{type:base}]}),true);
  assert.equal(canImplementMethod(contract,actual),false);
  assert.equal(canImplementMethod({...actual,name:'other'},contract),false);
 });
