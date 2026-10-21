@@ -21,6 +21,13 @@ export function createStructuralDomain() {
     }
     return x;
   }
+  function exactRecord(x, allowed, required=[]) {
+    onlyPlain(x);
+    const keys=Reflect.ownKeys(x);
+    if(keys.some(k=>!allowed.includes(k)) || required.some(k=>!Object.hasOwn(x,k)))
+      throw new TypeError('missing or unrecognized metadata key');
+    return x;
+  }
   function denseDataArray(input, max=128) {
     if (!Array.isArray(input) || input.length > max || Object.getPrototypeOf(input) !== Array.prototype)
       throw new TypeError('untrusted array metadata');
