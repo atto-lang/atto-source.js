@@ -53,7 +53,7 @@ test('nominal receiver method variance is sound',()=>{
  const base={kind:'nominal',name:'Base',args:[]};
  const child={kind:'nominal',name:'Child',args:[],ancestors:['Base']};
  const actual={name:'handle',generics:[],params:[{type:base}],result:child,public:true};
- const contract={name:'handle',generics:[],params:[{type:child}],result:base};
+ const contract={name:'handle',generics:[],params:[{type:child}],result:base,public:true};
  assert.equal(canImplementMethod(actual,contract),false); // no sealed inheritance proof yet
  assert.equal(canImplementMethod({...actual,result:base},{...contract,params:[{type:base}]}),true);
  assert.equal(canImplementMethod(contract,actual),false);
@@ -80,8 +80,19 @@ test('accessor-backed nested metadata arrays never execute or establish a proof'
  assert.equal(canBorrowStructural({kind:'record',fields:[],methods},expect([])),false);
  const params=[{type:'int'}];
  Object.defineProperty(params,'0',{get(){called++;return {type:'int'};},enumerable:true});
- assert.equal(canImplementMethod({name:'echo',params,generics:[],result:'int',public:true},{name:'echo',params:[{type:'int'}],generics:[],result:'int'}),false);
+ assert.equal(canImplementMethod({name:'echo',params,generics:[],result:'int',public:true},{name:'echo',params:[{type:'int'}],generics:[],result:'int',public:true}),false);
  assert.equal(called,0);
+});
+test('ignored structural descriptor flags are rejected instead of normalized away',()=>{
+ const source=shape('record',[field('id','int')]);
+ assert.equal(canBorrowStructural(source,expect([{...field('id','int'),mutable:false}])),false);
+ assert.equal(canBorrowStructural(shape('record',[{...field('id','int'),hidden:true}]),expect([field('id','int')])),false);
+ assert.equal(canBorrowStructural(source,expect([field('id','int',false)])),false);
+ const good=method('U',[v('U')],v('U'));
+ const required=method('T',[v('T')],v('T'));
+ assert.equal(canImplementMethod({...good,unexpected:true},required),false);
+ assert.equal(canImplementMethod(good,{...required,public:false}),false);
+ assert.equal(canImplementMethod({...good,params:[{type:v('U'),mutable:'false'}]},required),false);
 });
 test('generic signature proof requires dense ordinary parameter and binder metadata',()=>{
  const good={name:'echo',params:[{type:{kind:'var',name:'U'}}],generics:['U'],result:{kind:'var',name:'U'},public:true};
