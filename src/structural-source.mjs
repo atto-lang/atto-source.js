@@ -112,9 +112,8 @@ class Parser {
     if(this.t.kind!=='string')fail('string expected',t);
     this.pos++;return t.value;
   }
-  projection(contract){
-    this.expect('fnc');const fnName=this.id();this.expect('(');
-    const explicit=this.eat('structural');let view,mode;
+  structuralParameter(contract){
+    const explicit=this.eat('structural');
     // Anonymous record and struct contracts are structural with or without
     // the redundant contextual keyword. Named contracts remain opt-in.
     const anonymousKind=['record','struct'].includes(this.t.value)?this.id():null;
@@ -125,15 +124,26 @@ class Parser {
           fields.push(this.fieldDescriptor(true));}while(this.eat(','));
         this.expect('}');
       }
-      view={kind:anonymousKind||'record',readOnly:true,fields};mode='inline-anonymous';
-    }else{
-      if(anonymousKind)fail('anonymous aggregate type requires {',this.t);
-      const t=this.t,requested=this.id();
-      if(!explicit)fail('nominal named parameter needs explicit structural',t);
-      if(!contract||requested!==contract.name)fail('unknown structural contract',t);
-      view={kind:contract.kind,readOnly:true,fields:contract.fields};mode='explicit';
+      return {view:{kind:anonymousKind||'record',readOnly:true,fields},mode:'inline-anonymous'};
     }
-    const arg=this.id();this.expect(')');this.expect(':');const result=this.type();
+    if(anonymousKind)fail('anonymous aggregate type requires {',this.t);
+    const t=this.t,requested=this.id();
+    if(!explicit)fail('nominal named parameter needs explicit structural',t);
+    if(!contract||requested!==contract.name)fail('unknown structural contract',t);
+    return {view:{kind:contract.kind,readOnly:true,fields:contract.fields},mode:'explicit'};
+  }
+  projection(contract){
+    this.expect('fnc');const fnName=this.id();this.expect('(');
+    let arg,parameter;
+    // Canonical Oreslang accepts both type-first and name-first parameter
+    // declarations. Structural semantics must not depend on declaration order.
+    if(this.t.kind==='id'&&this.tokens[this.pos+1]?.value===':'){
+      arg=this.id();this.expect(':');parameter=this.structuralParameter(contract);
+    }else{
+      parameter=this.structuralParameter(contract);arg=this.id();
+    }
+    const {view,mode}=parameter;
+    this.expect(')');this.expect(':');const result=this.type();
     this.expect('{');this.expect('return');this.expect(arg);this.expect('.');const select=this.id();
     this.expect(';');this.expect('}');
     const selected=view.fields.find(f=>f.name===select);
