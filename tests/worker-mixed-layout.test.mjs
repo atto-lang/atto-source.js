@@ -83,3 +83,30 @@ test("native f64 integration updates only selected data and preserves integer co
   assert.throws(()=>store.integrate("id","vel",0.1),/distinct f64/);
   store.retire();
 });
+
+test("mixed field authority survives Array/Map prototype mutation",()=>{
+  const store=new WorkerMixedLayout({fields:[
+    {name:"pos",type:"f64"},{name:"vel",type:"f64"}
+  ],rows:2,layout:"soa"});
+  store.write(0,"pos",1);store.write(0,"vel",4);
+  const oldSome=Array.prototype.some;
+  const oldHas=Map.prototype.has;
+  const oldGet=Map.prototype.get;
+  const oldSet=Map.prototype.set;
+  let actual;
+  try {
+    Array.prototype.some=()=>{throw new Error("hijacked array scan");};
+    Map.prototype.has=()=>{throw new Error("hijacked map lookup");};
+    Map.prototype.get=()=>{throw new Error("hijacked map getter");};
+    Map.prototype.set=()=>{throw new Error("hijacked map setter");};
+    store.integrate("pos","vel",0.25);
+    actual=store.read(0,"pos");
+  } finally {
+    Array.prototype.some=oldSome;
+    Map.prototype.has=oldHas;
+    Map.prototype.get=oldGet;
+    Map.prototype.set=oldSet;
+    store.retire();
+  }
+  assert.equal(actual,2);
+});
