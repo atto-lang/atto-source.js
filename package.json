@@ -22,7 +22,8 @@
     "./static-facts-v0.node": "./src/static-facts-v0.node.mjs",
     "./structural-types": "./src/structural-types.mjs",
     "./structural-runtime": "./src/structural-runtime.mjs",
-    "./structural-projection-ir": "./src/structural-projection-ir.mjs"
+    "./structural-projection-ir": "./src/structural-projection-ir.mjs",
+    "./structural-source": "./src/structural-source.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
