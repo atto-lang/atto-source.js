@@ -1,5 +1,8 @@
-import {createWorkerActorClient} from './worker-actor-client.mjs';
-export function spawnBrowserActor({moduleUrl, exportName = 'receive', mode = 'handler', maxPending = 64, WorkerCtor = globalThis.Worker}) {
+import {createWorkerActorClient,rejectUnsupportedWorkerPlacement} from './worker-actor-client.mjs';
+export function spawnBrowserActor(options) {
+  rejectUnsupportedWorkerPlacement(options);
+  const {moduleUrl, exportName = 'receive', mode = 'handler',
+    maxPending = 64, WorkerCtor = globalThis.Worker} = options;
   if (typeof WorkerCtor !== 'function') throw new Error('module Web Workers unavailable');
   const url = new URL(moduleUrl, globalThis.location?.href);
   // By default, allow only same-origin trusted modules (including same-origin blobs).
