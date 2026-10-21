@@ -36,7 +36,8 @@ function lex(src) {
       if(!/^[0-9]+(?:_[0-9]+)*$/.test(s))throw new CompileError('invalid integer literal',loc);
       if (s.length > 64) throw new CompileError('integer literal length limit',loc);
       add('int',s,loc);
-    }else if('(){}:,;+-*/%=.'.includes(src[i])){add('sym',src[i],loc);advance();}
+    }else if(src.startsWith('->',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
+    else if('(){}:,;+-*/%=.'.includes(src[i])){add('sym',src[i],loc);advance();}
     else throw new CompileError('unsupported character',loc);
   }
   out.push({kind:'eof',value:'<eof>',line,col});return out;
@@ -59,8 +60,18 @@ class Parser {
         do{if(params.length>=128)throw new CompileError('parameter limit');this.expect('int');const v=this.id();if(params.includes(v))throw new CompileError('duplicate parameter '+v);params.push(v);}while(this.match(','));
         this.expect(')');
       }
-      this.expect(':');this.expect('int');this.expect('{');this.expect('return');
-      const body=this.expr();this.expect(';');this.expect('}');functions.push({name,params,body,pub});
+      // The bootstrap parser only supports int functions with a single
+      // return expression. Support canonical arrow/end spellings without
+      // pretending to support arbitrary statement bodies or async functions.
+      const arrow=this.match('->');
+      if(!arrow)this.expect(':');
+      this.expect('int');
+      const braced=this.match('{');
+      if(!braced&&!arrow)throw new CompileError('expected { for colon function body',this.peek());
+      if(!braced){if(!this.match('as'))this.match('::');}
+      this.expect('return');
+      const body=this.expr();this.expect(';');this.expect(braced?'}':'end');
+      functions.push({name,params,body,pub});
     }
     if(module)this.expect('end');
     if(this.peek().kind!=='eof')throw new CompileError('trailing tokens',this.peek());

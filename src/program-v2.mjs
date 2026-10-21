@@ -105,8 +105,8 @@ function tokenize(source) {
       }
       if (number.length > 64 || !/^[0-9]+(?:_[0-9]+)*$/.test(number)) fail('invalid int literal',start);
       emit('int',number,start);
-    } else if (source.startsWith('->',pos)) {
-      emit('sym','->',start); advance(); advance();
+    } else if (source.startsWith('->',pos) || source.startsWith('::',pos)) {
+      emit('sym',source.slice(pos,pos+2),start); advance(); advance();
     } else if ('(){}:,;+-*/%=.'.includes(c)) {
       emit('sym',c,start); advance();
     } else fail('unsupported character',start);
@@ -139,9 +139,17 @@ class Parser {
       } while(this.eat(','));
       this.expect(')');
     }
-    this.expect(':');this.expect('int');this.expect('{');this.expect('return');
+    // Function delimiter and body form are syntax only: the existing
+    // typed, bounded, return-expression-only IR contract is unchanged.
+    const arrow=this.eat('->');
+    if(!arrow)this.expect(':');
+    this.expect('int');
+    const braced=this.eat('{');
+    if(!braced&&!arrow)fail('expected { for colon function body',this.peek());
+    if(!braced){if(!this.eat('as'))this.eat('::');}
+    this.expect('return');
     const body = this.expression();
-    this.expect(';');this.expect('}');
+    this.expect(';');this.expect(braced?'}':'end');
     // Exporting a routine as a module object property would make a
     // direct-call-only routine first class. Leave this for runtime/ABI design.
     if (pub && kind === 'routine') fail('public routine cannot be exported');
