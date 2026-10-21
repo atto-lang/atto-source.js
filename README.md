@@ -31,6 +31,39 @@ end
 
 An arrow signature may also use `{ ... }`. These syntactic aliases do **not** add full function bodies, `void` functions, tasks, actors, async/await, classes, generic parameters, ownership lowering or nonblocking I/O. All remain unsupported and are rejected; this backend is **not** a general Oreslang transpiler. The two numeric models also remain different (scalar-v1 provisional wrapping vs program-v2 provisional checked i64), so source syntax compatibility does **not** establish semantic parity with Java/LLVM. See `tests/function-syntax-parity.test.mjs`.
 
+## Structural typed IR → ESM (experimental, fail closed)
+
+The `--structural-ir` CLI mode connects the typed-IR structural projection
+compiler to the existing branded readonly runtime. It is a **small compiler
+generated IR** profile, *not* an Oreslang `.ores` source parser or full
+class/trait/interface implementation.
+
+```sh
+node bin/oreslang-jsc.mjs --structural-ir --check path/to/structural-ir.json
+node bin/oreslang-jsc.mjs --structural-ir path/to/structural-ir.json --out=/absolute/path/program.mjs
+```
+
+The JSON contract requires `schemaVersion:1`, `kind:"readonly-scalar-projection"`,
+a statically known record/class/struct carrier, public readonly view shape,
+typed scalar slots, and a selected member. Explicit views use `mode:"explicit"`;
+anonymous inline readonly record views use `mode:"inline-anonymous"` with no
+redundant `structural` keyword. Source input is bounded to 256 KiB, fatal
+UTF-8, BOM-rejected and strictly JSON parsed (including duplicate-key
+rejection). The existing no-overwrite, no-artifact-on-rejection publication
+rules apply.
+
+The generated ESM imports
+`@oreslang/source-js/structural-runtime` from the same package scope
+or an authorized browser import map. The selected readonly field is loaded
+through a compiler-indexed primitive slot; `int` uses signed-i64 BigInt.
+The generator deliberately rejects private/missing fields, mismatched
+representations, mutable views, noncanonical integers, and hostile metadata.
+
+This feature **does not** authorize guest code execution inside the host,
+provide an actor security sandbox, lower generic methods/nested aggregates,
+or establish GraalVM/LLVM/Wasm/.NET parity. Node and browser end-to-end
+conformance must be recorded separately from source-free reference tests.
+
 ## Security boundary
 
 This is a code generator, **not a sandbox**. An ES module, Node worker thread or Node vm context is not a secure boundary for malicious guests. Only bundle the generated JS as a trusted artifact. This backend currently has no actor runtime, capability enforcement, process isolation, native pointers, async/await, channels, objects, collections, exceptions or host I/O. Do not promote it to an untrusted host.
