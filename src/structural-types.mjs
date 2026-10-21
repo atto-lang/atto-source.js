@@ -153,7 +153,8 @@ function structural(actual, wanted, depth) {
   if (!af || !bf || !am || !bm) return false;
   for (const [k, need] of bf) {
     const have = af.get(k);
-    if (!have || have.public !== true || !assign(have.type, need.type, depth + 1)) return false;
+    if (need.public !== true || !have || have.public !== true ||
+        !assign(have.type, need.type, depth + 1)) return false;
   }
   for (const [key, need] of bm) if (!methodCompatible(am.get(key), need)) return false;
   return true;
