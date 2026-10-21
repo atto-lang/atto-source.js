@@ -48,3 +48,16 @@ test('slot literals cannot inject source code or coerce numeric slots',()=>{
  assert.throws(()=>compileStructuralProjectionIR(ir({slots:['9223372036854775808','hello',true]})),/out of range/);
  assert.throws(()=>compileStructuralProjectionIR(ir({slots:['42','hello','true']})),/bool slot/);
 });
+
+
+test('compile options are exact plain data and never execute accessors',()=>{
+ let reads=0;
+ const options={};
+ Object.defineProperty(options,'portable',{enumerable:true,get(){reads++;return true;}});
+ assert.throws(()=>compileStructuralProjectionIR(ir(),options),/accessor denied/);
+ assert.equal(reads,0);
+ assert.throws(()=>compileStructuralProjectionIR(ir(),{portable:'false'}),/portable option must be boolean/);
+ assert.throws(()=>compileStructuralProjectionIR(ir(),{portable:false,unexpected:true}),/unrecognized metadata key/);
+ assert.doesNotThrow(()=>compileStructuralProjectionIR(ir(),{portable:false}));
+ assert.match(compileStructuralProjectionIR(ir(),{portable:true}),/standalone static typed-IR projection/);
+});
