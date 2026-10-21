@@ -164,3 +164,18 @@ test('optional structural shape names must be valid safe identifiers',()=>{
  assert.equal(canBorrowStructural({kind:'class',name:'Candidate',fields:[publicId]},
    {kind:'interface',name:'HasId',fields:[publicId],readOnly:true}),true);
 });
+
+
+test('nominal shape assignment validates methods and field visibility metadata',()=>{
+ const good={kind:'class',name:'C',fields:[field('x','int')]};
+ assert.equal(canAssignNominal({...good,methods:[{bogus:true}]},good),false);
+ assert.equal(canAssignNominal(
+   {...good,methods:[{name:'m',params:[],result:'int',public:true,async:'false'}]},
+   good
+ ),false);
+ assert.equal(canAssignNominal(
+   {kind:'class',name:'C',fields:[field('x','int',false)]},
+   {kind:'class',name:'C',fields:[field('x','int',true)]}
+ ),false);
+ assert.equal(canAssignNominal(good,good),true);
+});
