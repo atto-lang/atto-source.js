@@ -93,6 +93,12 @@ test('ignored structural descriptor flags are rejected instead of normalized awa
  assert.equal(canImplementMethod({...good,unexpected:true},required),false);
  assert.equal(canImplementMethod(good,{...required,public:false}),false);
  assert.equal(canImplementMethod({...good,params:[{type:v('U'),mutable:'false'}]},required),false);
+ assert.equal(canImplementMethod({...good,static:'true'},required),false);
+ assert.equal(canImplementMethod({...good,abstract:'false'},required),false);
+ assert.equal(canImplementMethod({...good,async:'false'},required),false);
+ assert.equal(canImplementMethod(good,{...required,static:'false'}),false);
+ assert.equal(canImplementMethod(good,{...required,abstract:'false'}),false);
+ assert.equal(canImplementMethod(good,{...required,async:'false'}),false);
 });
 test('generic signature proof requires dense ordinary parameter and binder metadata',()=>{
  const good={name:'echo',params:[{type:{kind:'var',name:'U'}}],generics:['U'],result:{kind:'var',name:'U'},public:true};
