@@ -119,3 +119,18 @@ test('bounded parser returns checked-IR profile and existing output remains unto
   assert.equal(await readFile(out,'utf8'),'untouched');
   assert.throws(()=>parseStructuralProjectionSource(named+'\n/* unterminated'),/unterminated|expected/);
 }));
+
+
+test('exported structural parser returns only typed-IR-valid programs',()=>{
+  const duplicate=named.replace(
+    'pub val string label = "hi";',
+    'pub val string label = "hi";\n pub val int id = 7;'
+  );
+  const huge=named.replace('id = 42','id = 99999999999999999999');
+  const reserved=named.replaceAll('id','__proto__');
+  const privateMismatch=named.replace('pub val int id','val int id');
+  assert.throws(()=>parseStructuralProjectionSource(duplicate),/invalid scalar field descriptor/);
+  assert.throws(()=>parseStructuralProjectionSource(huge),/signed i64 literal out of range/);
+  assert.throws(()=>parseStructuralProjectionSource(reserved),/invalid scalar field descriptor|carrier kind\/identity/);
+  assert.throws(()=>parseStructuralProjectionSource(privateMismatch),/structural shape proof failed/);
+});
