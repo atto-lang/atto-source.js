@@ -117,3 +117,30 @@ test('deterministic 25000 random shape trials preserve readonly/subset property'
   assert.equal(canBorrowStructural(source,expect([field(fields[chosen].name,fields[chosen].type==='int'?'float':'int')])),false);
  }
 });
+
+
+test('unknown type descriptor keys fail closed at every structural proof layer',()=>{
+ const publicId=field('id','int');
+ assert.equal(canBorrowStructural(
+   {kind:'record',fields:[publicId],unexpected:'ignored'},
+   {kind:'record',readOnly:true,fields:[publicId]}
+ ),false);
+ assert.equal(canAssignNominal(
+   {kind:'nominal',name:'X',args:[],unexpected:true},
+   {kind:'nominal',name:'X',args:[]}
+ ),false);
+ assert.equal(canAssignNominal(
+   {kind:'tuple',elements:['int'],unexpected:true},
+   {kind:'tuple',elements:['int']}
+ ),false);
+ assert.equal(canImplementMethod(
+   {name:'echo',params:[{type:{kind:'nominal',name:'Box',args:[],unexpected:true}}],
+    generics:[],result:'int',public:true},
+   {name:'echo',params:[{type:{kind:'nominal',name:'Box',args:[]}}],
+    generics:[],result:'int',public:true}
+ ),false);
+ assert.equal(canBorrowStructural(
+   {kind:'entry',args:['int','string'],unexpected:true},
+   expect([field('key','int')])
+ ),false);
+});
