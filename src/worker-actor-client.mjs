@@ -1,5 +1,29 @@
 // Portable host client for dedicated browser or Node workers (trusted modules only).
 const PROTOCOL = 'ores.js.worker.v1';
+// This profile is copy-only. structuredClone alone preserves SharedArrayBuffer
+// aliases, so reject every shared-memory descendant, including Map/Set contents.
+function assertOwnedClone(value) {
+  const seen = new WeakSet();
+  let count = 0;
+  function visit(node, depth) {
+    if (node === null || typeof node !== 'object') return;
+    if (++count > 8192 || depth > 64) throw new RangeError('actor message complexity exceeded');
+    if (typeof SharedArrayBuffer !== 'undefined') {
+      if (node instanceof SharedArrayBuffer ||
+          (ArrayBuffer.isView(node) && node.buffer instanceof SharedArrayBuffer))
+        throw new TypeError('shared-memory actor message forbidden in copy-only profile');
+    }
+    if (seen.has(node)) return;
+    seen.add(node);
+    if (node instanceof Map) for (const [k,v] of node) {visit(k,depth+1);visit(v,depth+1);}
+    else if (node instanceof Set) for (const v of node) visit(v,depth+1);
+    else for (const key of Reflect.ownKeys(node)) {
+      const desc = Object.getOwnPropertyDescriptor(node,key);
+      if (desc && Object.hasOwn(desc,'value')) visit(desc.value,depth+1);
+    }
+  }
+  visit(value,0);
+}
 export function createWorkerActorClient({worker, moduleUrl, exportName = 'receive', mode = 'handler', maxPending = 64}) {
   if (!worker || typeof worker.postMessage !== 'function' || typeof worker.terminate !== 'function')
     throw new TypeError('invalid Worker');
@@ -52,12 +76,19 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
     if (closed) return Promise.reject(new Error('actor closed'));
     if (pending.size >= maxPending) return Promise.reject(new Error('actor mailbox capacity exceeded'));
     if (!Number.isSafeInteger(nextId)) return Promise.reject(new Error('actor message id exhausted'));
+    // Take ownership at admission, not after the Worker startup handshake.
+    // This prevents callers from mutating an outstanding queued delivery.
+    let snapshot;
+    try {
+      snapshot = structuredClone(value);
+      assertOwnedClone(snapshot);
+    } catch (error) {return Promise.reject(error);}
     const id = nextId++;
     return new Promise((resolve,reject) => {
       pending.set(id,{resolve,reject,reply});
       void readyPromise.then(() => {
         if (!pending.has(id) || closed) return;
-        try {worker.postMessage({protocol:PROTOCOL,kind:'deliver',id,reply,value});}
+        try {worker.postMessage({protocol:PROTOCOL,kind:'deliver',id,reply,value:snapshot});}
         catch (error) {pending.delete(id);reject(error);}
       },reject);
     });
