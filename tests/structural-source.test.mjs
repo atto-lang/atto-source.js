@@ -35,16 +35,30 @@ async function execute(dir,name,source,{portable=false}={}) {
   if(portable)assert.doesNotMatch(await readFile(out,'utf8'),/\b(?:import|require)\b|@oreslang\/source-js/);
   return (await import(pathToFileURL(out).href)).main();
 }
-test('real Oreslang source lowers named structural interface to executable ESM',()=>work(async dir=>{
-  assert.equal(await execute(dir,'named',named),42n);
+test('real Oreslang source lowers named structural interface in both parameter orders',()=>work(async dir=>{
+  assert.equal(await execute(dir,'named-type-first',named),42n);
+  assert.equal(await execute(dir,'named-name-first',
+    named.replace('structural HasId value','value: structural HasId')),42n);
 }));
-test('anonymous readonly field shape accepts absent and redundant structural keyword',()=>work(async dir=>{
-  assert.equal(await execute(dir,'anonymous',inline),-42n);
-  assert.equal(await execute(dir,'redundant',inline.replace('take({','take(structural {')),-42n);
-  assert.equal(await execute(dir,'struct-anonymous',inline.replace('take({','take(struct{')),-42n);
-  assert.equal(await execute(dir,'struct-redundant',inline.replace('take({','take(structural struct{')),-42n);
-  assert.equal(await execute(dir,'record-anonymous',inline.replace('take({','take(record{')),-42n);
-  assert.equal(await execute(dir,'record-redundant',inline.replace('take({','take(structural record{')),-42n);
+test('anonymous readonly field shape accepts both parameter orders and redundant structural',()=>work(async dir=>{
+  assert.equal(await execute(dir,'anonymous-type-first',inline),-42n);
+  assert.equal(await execute(dir,'anonymous-name-first',
+    inline.replace('take({ id: int } value)','take(value: { id: int })')),-42n);
+  assert.equal(await execute(dir,'redundant-type-first',inline.replace('take({','take(structural {')),-42n);
+  assert.equal(await execute(dir,'redundant-name-first',
+    inline.replace('take({ id: int } value)','take(value: structural { id: int })')),-42n);
+  assert.equal(await execute(dir,'struct-type-first',inline.replace('take({','take(struct{')),-42n);
+  assert.equal(await execute(dir,'struct-name-first',
+    inline.replace('take({ id: int } value)','take(value: struct{ id: int })')),-42n);
+  assert.equal(await execute(dir,'struct-redundant-type-first',inline.replace('take({','take(structural struct{')),-42n);
+  assert.equal(await execute(dir,'struct-redundant-name-first',
+    inline.replace('take({ id: int } value)','take(value: structural struct{ id: int })')),-42n);
+  assert.equal(await execute(dir,'record-type-first',inline.replace('take({','take(record{')),-42n);
+  assert.equal(await execute(dir,'record-name-first',
+    inline.replace('take({ id: int } value)','take(value: record{ id: int })')),-42n);
+  assert.equal(await execute(dir,'record-redundant-type-first',inline.replace('take({','take(structural record{')),-42n);
+  assert.equal(await execute(dir,'record-redundant-name-first',
+    inline.replace('take({ id: int } value)','take(value: structural record{ id: int })')),-42n);
 }));
 test('standalone portable ESM from actual source has no runtime package dependency',()=>work(async dir=>{
   assert.equal(await execute(dir,'portable-named',named,{portable:true}),42n);
@@ -67,6 +81,7 @@ test('unsupported ownership, private members, numeric coercion, async and source
   const invalid=[
     named.replace('pub val int id','val int id'),
     named.replace('structural HasId','HasId'),
+    named.replace('structural HasId value','value: HasId'),
     named.replace('value.id;','value.secret;'),
     named.replace('value.id;','value.id = 5;'),
     named.replace('value.id;','await value.id;'),
