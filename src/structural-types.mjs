@@ -61,7 +61,8 @@ function assign(a, b, depth = 0, aBind = [], bBind = []) {
       assign(x, b.args[i], depth + 1, aBind, bBind) && assign(b.args[i], x, depth + 1, bBind, aBind));
   }
   if (a.kind === 'tuple' || b.kind === 'tuple' || a.kind === 'fixed-array' || b.kind === 'fixed-array') {
-    if (a.kind !== b.kind || !arr(a.elements) || !arr(b.elements) || a.elements.length !== b.elements.length) return false;
+    if (a.kind !== b.kind || !arr(a.elements) || !arr(b.elements) || a.elements.length !== b.elements.length ||
+        (a.kind === 'fixed-array' && a.readOnly === true && b.readOnly !== true)) return false;
     return a.elements.every((x, i) => assign(x, b.elements[i], depth + 1, aBind, bBind) &&
       (a.kind !== 'fixed-array' || assign(b.elements[i], x, depth + 1, bBind, aBind)));
   }
@@ -71,8 +72,11 @@ function assign(a, b, depth = 0, aBind = [], bBind = []) {
     if (a.kind !== b.kind) return false;
     if (a.kind === 'struct' && a.name !== b.name) return false;
   }
+  if (a.kind !== b.kind || (a.readOnly === true && b.readOnly !== true)) return false;
+  if (new Set(['class','trait','interface','contract']).has(a.kind) &&
+      (!name(a.name) || a.name !== b.name)) return false;
   const af = fieldMap(a), bf = fieldMap(b);
-  if (!af || !bf || a.kind !== b.kind || af.size !== bf.size) return false;
+  if (!af || !bf || af.size !== bf.size) return false;
   for (const [k, expected] of bf) {
     const actual = af.get(k);
     if (!actual || !assign(actual.type, expected.type, depth + 1, aBind, bBind)) return false;
