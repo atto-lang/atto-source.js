@@ -63,6 +63,14 @@ test('adversarial getter metadata never executes and mutable input cannot mutate
  expected.fields[0].name='other';
  assert.equal(d.withView(d.createValue(t,[7n]),p,v=>v.id),7n);
 });
+test('unknown runtime metadata is rejected instead of silently discarded',()=>{
+ const d=createStructuralDomain();
+ assert.throws(()=>d.defineType({kind:'record',fields:[],unexpected:true}),/unrecognized metadata key/);
+ assert.throws(()=>d.defineType({kind:'record',fields:[{...fld('id','int'),mutable:false}]}),/unrecognized metadata key/);
+ const t=d.defineType({kind:'record',fields:[fld('id','int')]});
+ assert.throws(()=>d.compileView(t,{...view([fld('id','int')]),mutable:false}),/unrecognized metadata key/);
+ assert.throws(()=>d.compileView(t,view([{...fld('id','int'),mutable:false}])),/unrecognized metadata key/);
+});
 test('sparse, accessor-backed, extra-key and custom-prototype arrays fail closed',()=>{
  const d=createStructuralDomain();
  const sparse=Array(1);
