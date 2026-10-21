@@ -22,8 +22,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Test Rust repository policy tooling
-        run: cargo test --manifest-path tools/repo-policy/Cargo.toml --all-targets
+        run: cargo test --locked --manifest-path tools/repo-policy/Cargo.toml --all-targets
       - name: Verify declaration-only manifest (not a runtime parity claim)
-        run: cargo run --quiet --manifest-path tools/repo-policy/Cargo.toml --bin verify-integration-manifest -- --repository-root .
+        run: cargo run --quiet --locked --manifest-path tools/repo-policy/Cargo.toml --bin verify-integration-manifest -- --repository-root .
       - name: Enforce organization no-Python policy
-        run: cargo run --quiet --manifest-path tools/repo-policy/Cargo.toml --bin no-python-check -- .
+        run: cargo run --quiet --locked --manifest-path tools/repo-policy/Cargo.toml --bin no-python-check -- .
