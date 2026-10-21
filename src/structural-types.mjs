@@ -43,7 +43,8 @@ function fieldMap(shape) {
   if (!plain(shape) || !arr(shape.fields ?? [])) return null;
   const map = new Map();
   for (const f of shape.fields ?? []) {
-    if (!plain(f) || !name(f.name) || !typedesc(f.type) || map.has(f.name)) return null;
+    if (!exact(f,['name','type','public'],['name','type','public']) ||
+        !name(f.name) || !typedesc(f.type) || typeof f.public !== 'boolean' || map.has(f.name)) return null;
     map.set(f.name, f);
   }
   return map;
