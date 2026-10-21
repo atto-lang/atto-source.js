@@ -56,7 +56,9 @@ function assign(a, b, depth = 0, aBind = [], bBind = []) {
   if (a.kind === 'nominal' || b.kind === 'nominal') {
     if (a.kind !== 'nominal' || b.kind !== 'nominal' || !name(a.name) || !name(b.name)) return false;
     if (!arr(a.args ?? []) || !arr(b.args ?? []) || (a.args ?? []).length !== (b.args ?? []).length) return false;
-    const nominalProof = a.name === b.name || (arr(a.ancestors ?? []) && (a.ancestors ?? []).includes(b.name));
+    // Untrusted inline ancestors cannot certify inheritance; only exact
+    // nominal equality is admitted until a sealed compiler hierarchy is wired.
+    const nominalProof = a.name === b.name;
     return nominalProof && (a.args ?? []).every((x, i) =>
       assign(x, b.args[i], depth + 1, aBind, bBind) && assign(b.args[i], x, depth + 1, bBind, aBind));
   }
