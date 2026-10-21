@@ -45,7 +45,7 @@ The fixture compiles Oreslang via `compileProgramV2`, imports the generated ESM 
 - Bounded outstanding messages via `maxPending`. `request()` resolves only after explicit `self.respond(value)` **and** `self.done()`; `tell()` needs `done()` without any reply entitlement.
 - Ordinary JS handler return values **never** become an implicit actor reply. Missing done/reply and handler errors fail that delivery; subsequent messages may proceed.
 - `mode:'call'` adapts only synchronous transpiled scalar functions using `{args:[...]}`, explicitly turning the callable return into a response; it is **not Oreslang actor lowering**.
-- `close()` terminates the Worker, rejects pending requests, and prevents new admissions. Structured cloning copies message content; transfer ownership and raw pointers are unsupported.
+- `close()` terminates the Worker, rejects pending requests, and prevents new admissions. Copy-only snapshotting occurs at request admission and at self.respond(); SharedArrayBuffer and shared typed views are rejected even inside Map/Set, and transfer ownership and raw pointers remain unsupported.
 - A Worker is **not an adversarial JavaScript sandbox**. Only trusted code and pinned modules may be loaded. Strong isolation needs a separate OS/process security boundary.
 
 ## Limitations and release gates
