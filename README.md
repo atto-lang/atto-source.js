@@ -111,11 +111,12 @@ node bin/oreslang-jsc.mjs --structural-source program.ores --out=/absolute/progr
 node bin/oreslang-jsc.mjs --structural-source --portable program.ores --out=/absolute/portable.mjs
 ```
 
-Anonymous inline `{ id: int }`, `record{ id: int }` and
-`struct{ id: int }` parameters are readonly structural by default;
-the redundant `structural` prefix is also accepted for each. Named
-interface/trait parameters require explicit `structural`; nominal-by-default
-remains unchanged. Private fields, type mismatches, invalid i64 literals,
+Both type-first (`structural HasId value`) and name-first
+(`value: structural HasId`) parameter declarations are accepted. Anonymous
+inline `{ id: int }`, `record{ id: int }` and `struct{ id: int }` parameters
+are readonly structural by default in either declaration order; the redundant
+`structural` prefix is also accepted for each. Named interface/trait
+parameters require explicit `structural`; nominal-by-default remains unchanged. Private fields, type mismatches, invalid i64 literals,
 mutable views, `await`, actors, methods, aggregation, source injection,
 and all unsupported constructs fail closed **before artifact publication**.
 No general Oreslang source/compiler parity, browser worker parity, or security
