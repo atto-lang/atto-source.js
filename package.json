@@ -22,7 +22,9 @@
     "./static-facts-v0.node": "./src/static-facts-v0.node.mjs",
     "./actor-host.browser": "./src/actor-host.browser.mjs",
     "./actor-host.node": "./src/actor-host.node.mjs",
-    "./worker-actor-client": "./src/worker-actor-client.mjs"
+    "./worker-actor-client": "./src/worker-actor-client.mjs",
+    "./worker-layout-f64": "./src/worker-layout-f64.mjs",
+    "./actor-compressed32": "./src/actor-compressed32.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
@@ -33,7 +35,7 @@
     "parity:js": "node bin/js-semantic-parity-report.mjs",
     "parity:numeric-js": "node bin/js-numeric-boundary-report.mjs",
     "static-facts:smoke": "node bin/oreslang-jsc.mjs --static-facts tests/fixtures/forward-call.ores",
-    "test:workers": "node --test tests/worker-node.test.mjs",
+    "test:workers": "node --test tests/worker-node.test.mjs tests/worker-layout-node.test.mjs tests/actor-compressed32.test.mjs",
     "test:browser": "node scripts/browser-worker-smoke.mjs"
   }
 }
