@@ -20,6 +20,11 @@ function plain(x) {
   return true;
 }
 const name = s => typeof s === 'string' && /^[A-Za-z_][A-Za-z_0-9]{0,127}$/.test(s) && !RESERVED.has(s);
+function exact(x, allowed, required=[]) {
+  if (!plain(x)) return false;
+  const keys=Reflect.ownKeys(x);
+  return keys.every(k=>allowed.includes(k)) && required.every(k=>owns(x,k));
+}
 function arr(v) {
   if (!Array.isArray(v) || v.length > 256 || Object.getPrototypeOf(v) !== Array.prototype) return false;
   const keys = Reflect.ownKeys(v);
