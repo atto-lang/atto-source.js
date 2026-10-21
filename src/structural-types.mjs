@@ -58,6 +58,7 @@ function validTypeObject(t) {
       arr(t.args) && t.args.length === 2;
   if (SHAPES.has(t.kind))
     return exact(t,['kind','name','fields','methods','actor','mutable','readOnly'],['kind','fields']) &&
+      (!owns(t,'name') || name(t.name)) &&
       arr(t.fields) && (t.methods === undefined || arr(t.methods));
   return false;
 }
