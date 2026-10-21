@@ -369,10 +369,7 @@ mod tests {
             let mut value: serde_json::Value =
                 serde_json::from_slice(&valid_manifest("oreslang-source.java")).unwrap();
             value["upstreams"] = upstreams;
-            assert_reject(
-                &serde_json::to_vec(&value).unwrap(),
-                "oreslang-source.java",
-            );
+            assert_reject(&serde_json::to_vec(&value).unwrap(), "oreslang-source.java");
         }
     }
 
@@ -418,10 +415,7 @@ mod tests {
         let mut value: serde_json::Value =
             serde_json::from_slice(&valid_manifest("oreslang-source.java")).unwrap();
         value["note"] = json!("CI parity is asserted.");
-        assert_reject(
-            &serde_json::to_vec(&value).unwrap(),
-            "oreslang-source.java",
-        );
+        assert_reject(&serde_json::to_vec(&value).unwrap(), "oreslang-source.java");
     }
 
     #[cfg(unix)]
