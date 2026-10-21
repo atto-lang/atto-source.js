@@ -23,14 +23,16 @@ async function work(fn){
   try {return await fn(dir);}finally{await rm(dir,{recursive:true,force:true});}
 }
 const missing=path=>assert.rejects(access(path),{code:'ENOENT'});
-async function execute(dir,name,source) {
+async function execute(dir,name,source,{portable=false}={}) {
   const src=join(dir,name+'.ores'),out=join(dir,name+'.mjs');
   await writeFile(src,source);
-  assert.equal(run('--structural-source','--check',src).status,0);
+  const flags=portable?['--structural-source','--portable']:['--structural-source'];
+  assert.equal(run(...flags,'--check',src).status,0);
   await missing(out);
-  const result=run('--structural-source',src,'--out='+out);
+  const result=run(...flags,src,'--out='+out);
   assert.equal(result.status,0,result.stderr);
   assert.equal(await readFile(src,'utf8'),source);
+  if(portable)assert.doesNotMatch(await readFile(out,'utf8'),/\b(?:import|require)\b|@oreslang\/source-js/);
   return (await import(pathToFileURL(out).href)).main();
 }
 test('real Oreslang source lowers named structural interface to executable ESM',()=>work(async dir=>{
@@ -43,6 +45,10 @@ test('anonymous readonly field shape accepts absent and redundant structural key
   assert.equal(await execute(dir,'struct-redundant',inline.replace('take({','take(structural struct{')),-42n);
   assert.equal(await execute(dir,'record-anonymous',inline.replace('take({','take(record{')),-42n);
   assert.equal(await execute(dir,'record-redundant',inline.replace('take({','take(structural record{')),-42n);
+}));
+test('standalone portable ESM from actual source has no runtime package dependency',()=>work(async dir=>{
+  assert.equal(await execute(dir,'portable-named',named,{portable:true}),42n);
+  assert.equal(await execute(dir,'portable-inline',inline,{portable:true}),-42n);
 }));
 test('selected signed i64/bool/string physical slots remain strict',()=>work(async dir=>{
   const bool=
