@@ -105,9 +105,11 @@ function tokenize(source) {
       }
       if (number.length > 64 || !/^[0-9]+(?:_[0-9]+)*$/.test(number)) fail('invalid int literal',start);
       emit('int',number,start);
+    } else if (['<=','>=','==','!='].some(op=>source.startsWith(op,pos))) {
+      emit('sym',source.slice(pos,pos+2),start); advance(); advance();
     } else if (source.startsWith('->',pos) || source.startsWith('::',pos)) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
-    } else if ('(){}:,;+-*/%=.'.includes(c)) {
+    } else if ('(){}:,;+-*/%=.<>'.includes(c)) {
       emit('sym',c,start); advance();
     } else fail('unsupported character',start);
   }
@@ -115,7 +117,7 @@ function tokenize(source) {
   return result;
 }
 class Parser {
-  constructor(tokens) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;}
+  constructor(tokens) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;}
   peek() {return this.tokens[this.i];}
   eat(s) {if(this.peek().value === s) {this.i++; return true;} return false;}
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
@@ -139,21 +141,71 @@ class Parser {
       } while(this.eat(','));
       this.expect(')');
     }
-    // Function delimiter and body form are syntax only: the existing
-    // typed, bounded, return-expression-only IR contract is unchanged.
+    // Bound source-level control flow to total-returning integer functions.
+    // This is a freestanding core slice, not generic statement lowering.
     const arrow=this.eat('->');
     if(!arrow)this.expect(':');
     this.expect('int');
     const braced=this.eat('{');
     if(!braced&&!arrow)fail('expected { for colon function body',this.peek());
     if(!braced){if(!this.eat('as'))this.eat('::');}
-    this.expect('return');
-    const body = this.expression();
-    this.expect(';');this.expect(braced?'}':'end');
+    const statements=this.statementSequence([braced?'}':'end']);
+    this.expect(braced?'}':'end');
+    const body=this.lowerStatements(statements,null);
+    if(!body)fail('int function requires a return on every path');
     // Exporting a routine as a module object property would make a
     // direct-call-only routine first class. Leave this for runtime/ABI design.
     if (pub && kind === 'routine') fail('public routine cannot be exported');
     return {module:moduleName, name, kind, pub, params, body};
+  }
+  statementSequence(terminators,depth=0) {
+    if(depth>64)fail('conditional nesting budget exceeded',this.peek());
+    const statements=[];
+    while(this.peek().kind!=='eof'&&!terminators.includes(this.peek().value)) {
+      if(++this.statementNodes>MAX_TOKENS)fail('statement budget exceeded',this.peek());
+      if(this.eat('return')) {
+        const body=this.expression();
+        this.expect(';');
+        statements.push({kind:'return',body});
+      } else if(this.eat('if')) {
+        const left=this.expression(), op=this.peek().value;
+        if(!['<','>','<=','>=','==','!='].includes(op))
+          fail('integer if condition requires a comparison',this.peek());
+        this.i++;
+        const right=this.expression();
+        this.expect(';');this.expect('do');
+        const yes=this.statementSequence(['else','fi'],depth+1);
+        const no=this.eat('else')?this.statementSequence(['fi'],depth+1):[];
+        this.expect('fi');
+        statements.push({kind:'branch',condition:{kind:'compare',op,left,right},yes,no});
+      } else fail('unsupported statement in int function',this.peek());
+    }
+    if(this.peek().kind==='eof')fail('unterminated function or conditional',this.peek());
+    return statements;
+  }
+  returnsOnAllPaths(stmts) {
+    if(!stmts.length)return false;
+    const last=stmts[stmts.length-1];
+    return last.kind==='return'||
+      (last.kind==='branch'&&this.returnsOnAllPaths(last.yes)&&this.returnsOnAllPaths(last.no));
+  }
+  lowerStatements(stmts,fallback) {
+    let result=fallback;
+    for(let i=stmts.length-1;i>=0;i--) {
+      const stmt=stmts[i];
+      if(i<stmts.length-1 &&
+         (stmt.kind==='return' ||
+          (this.returnsOnAllPaths(stmt.yes||[])&&this.returnsOnAllPaths(stmt.no||[]))))
+        fail('unreachable statement after terminating return/if');
+      if(stmt.kind==='return')result=stmt.body;
+      else {
+        const yes=this.lowerStatements(stmt.yes,result);
+        const no=this.lowerStatements(stmt.no,result);
+        if(!yes||!no)fail('int function requires return on every if branch');
+        result={kind:'if',condition:stmt.condition,yes,no};
+      }
+    }
+    return result;
   }
   parse() {
     // Oreslang's flat source namespace is compile-time package metadata,
@@ -298,6 +350,9 @@ function resolveProgram(parsed) {
       }
       case 'neg': return {kind:'neg',inner:resolve(expr.inner,owner,depth+1)};
       case 'binary': return {kind:'binary',op:expr.op,left:resolve(expr.left,owner,depth+1),right:resolve(expr.right,owner,depth+1)};
+      case 'compare': return {kind:'compare',op:expr.op,left:resolve(expr.left,owner,depth+1),right:resolve(expr.right,owner,depth+1)};
+      case 'if': return {kind:'if',condition:resolve(expr.condition,owner,depth+1),
+        yes:resolve(expr.yes,owner,depth+1),no:resolve(expr.no,owner,depth+1)};
       case 'call': {
         const mod=expr.qualifier===null?owner.module:expr.qualifier;
         if(mod!==null && !modules.includes(mod)) fail('unknown module '+mod);
@@ -319,7 +374,8 @@ function resolveProgram(parsed) {
   const graph=resolved.map(()=>new Set());
   function inspect(expr,owner) {
     if(expr.kind==='call') {graph[owner].add(expr.target);expr.args.forEach(a=>inspect(a,owner));}
-    else if(expr.kind==='binary') {inspect(expr.left,owner);inspect(expr.right,owner);}
+    else if(expr.kind==='binary'||expr.kind==='compare') {inspect(expr.left,owner);inspect(expr.right,owner);}
+    else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='neg') inspect(expr.inner,owner);
     else if(expr.kind==='match') {
       inspect(expr.subject,owner);expr.arms.forEach(a=>inspect(a.body,owner));
@@ -358,6 +414,9 @@ function emitProgram(program) {
       case 'binary':
         if(expr.op==='%')return '_rem(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
         return '_check(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
+      case 'compare':return '(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
+      case 'if':return '(('+emitExpr(expr.condition,depth+1)+')?('+
+        emitExpr(expr.yes,depth+1)+'):('+emitExpr(expr.no,depth+1)+'))';
       case 'call':return '_f'+expr.target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
       case 'match': {
         // _subject is evaluated exactly once. A branch returns immediately,
