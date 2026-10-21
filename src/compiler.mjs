@@ -105,6 +105,18 @@ class Parser {
     if(this.match('+'))return this.expr(30);
     if(this.match('(')){const v=this.expr();this.expect(')');return v;}
     if(t.kind==='int'){this.pos++;const n=BigInt(t.value.replaceAll('_',''));if(n>I64_MAX)throw new CompileError('positive int outside signed i64',t);return {kind:'int',n};}
+    if(t.kind==='id' && t.value==='rt'){
+      this.pos++;
+      const op=this.peek();
+      if(op.kind!=='id')throw new CompileError('expected runtime operation after rt',op);
+      if(['ref','unref','deref','raw'].includes(op.value))
+        throw new CompileError('pointer-style runtime operation rt '+op.value+' is not valid Oreslang source',op);
+      if(op.value==='borrow' && this.ts[this.pos+1]?.value==='mut')
+        throw new CompileError("legacy 'rt borrow mut' is not valid Oreslang; use 'rt mut borrow value'",op);
+      if(op.value==='mut' && this.ts[this.pos+1]?.value!=='borrow')
+        throw new CompileError("'rt mut' only supports borrowing; use 'rt mut borrow value'",op);
+      throw new CompileError('runtime ownership operation requires typed lowering in the JS scalar backend',op);
+    }
     if(t.kind==='id'){
       this.pos++;
       if(this.match('(')){
