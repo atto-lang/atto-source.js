@@ -11,7 +11,7 @@ const profile=await mkdtemp(join(tmpdir(),'ores-js-browser-'));
 const server=createServer(async(req,res)=>{
   try {
     const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);
-    const path=resolve(root,pathname.replace(/^\///,''));
+    const path=resolve(root,pathname.startsWith('/')?pathname.slice(1):pathname);
     if(!path.startsWith(root+sep)){res.writeHead(403);res.end();return;}
     const body=await readFile(path);
     res.setHeader('Content-Type',extname(path)==='.html'?'text/html; charset=utf-8':'text/javascript; charset=utf-8');
