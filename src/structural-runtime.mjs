@@ -51,10 +51,14 @@ export function createStructuralDomain() {
   }
   function defineType(metadata) {
     exactRecord(metadata,['kind','name','actor','fields','methods'],['kind','fields']);
-    if (!['record','class','struct'].includes(metadata.kind) || metadata.actor === true ||
+    if (!['record','class','struct'].includes(metadata.kind) ||
+        (metadata.actor !== undefined && metadata.actor !== false) ||
+        (metadata.kind==='record' && metadata.name !== undefined) ||
         !Array.isArray(metadata.fields) || metadata.fields.length>128 ||
-        (metadata.methods !== undefined && (!Array.isArray(metadata.methods) || metadata.methods.length)))
+        (metadata.methods !== undefined && !Array.isArray(metadata.methods)))
       throw new TypeError('unsupported typed scalar carrier');
+    if(metadata.methods !== undefined && denseDataArray(metadata.methods,0).length !== 0)
+      throw new TypeError('unsupported typed scalar carrier methods');
     const fields = denseDataArray(metadata.fields).map(validField);
     if (new Set(fields.map(x=>x.name)).size !== fields.length) throw new TypeError('duplicate field');
     if (metadata.kind!=='record' && (!identifier.test(metadata.name) || excluded.has(metadata.name)))
@@ -84,10 +88,12 @@ export function createStructuralDomain() {
   function compileView(token, expected) {
     const def=types.get(token);
     exactRecord(expected,['kind','readOnly','fields','methods'],['kind','readOnly','fields']);
-    if(!def || expected.readOnly !== true || expected.mutable === true ||
+    if(!def || expected.readOnly !== true ||
        !Array.isArray(expected.fields) || expected.fields.length>128 ||
-       (expected.methods !== undefined && (!Array.isArray(expected.methods) || expected.methods.length)))
+       (expected.methods !== undefined && !Array.isArray(expected.methods)))
       throw new TypeError('unsupported view plan');
+    if(expected.methods !== undefined && denseDataArray(expected.methods,0).length !== 0)
+      throw new TypeError('unsupported view plan methods');
     const fields=denseDataArray(expected.fields).map(validField);
     if(fields.some(f=>!f.public) || new Set(fields.map(x=>x.name)).size!==fields.length)
       throw new TypeError('invalid view fields');
