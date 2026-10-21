@@ -15,6 +15,9 @@ test('readonly width only; no nominal erosion or numeric reinterpretation',()=>{
  assert.equal(canBorrowStructural(extra,{...expect([field('id','int')]),readOnly:false}),false);
  assert.equal(canBorrowStructural(extra,{...expect([]),mutable:true}),false);
  assert.equal(canAssignNominal(extra,expect([field('id','int')])),false);
+ assert.equal(canAssignNominal({...extra,name:'First'}, {...extra,name:'Second'}),false);
+ assert.equal(canAssignNominal({...extra,name:'First'}, {...extra,name:'First'}),true);
+ assert.equal(canAssignNominal(shape('record',[field('x','int')],{readOnly:true}),shape('record',[field('x','int')])),false);
  assert.equal(canBorrowStructural({...extra,actor:true},expect([])),false);
  assert.equal(canBorrowStructural(shape('class',[field('id','int',false)]),expect([field('id','int')])),false);
  assert.equal(canBorrowStructural('int',expect([])),false);
@@ -35,6 +38,7 @@ test('tuple slots are exact and mutable fixed arrays invariant',()=>{
  const base={kind:'nominal',name:'Base',args:[]};
  assert.equal(canAssignNominal(t(derived),t(base)),true);
  assert.equal(canAssignNominal({kind:'fixed-array',elements:[derived]},{kind:'fixed-array',elements:[base]}),false);
+ assert.equal(canAssignNominal({kind:'fixed-array',elements:['int'],readOnly:true},{kind:'fixed-array',elements:['int']}),false);
 });
 test('generic method alpha-equivalence and nested invariance',()=>{
  assert.equal(canImplementMethod(method('U',[v('U')],v('U')),method('T',[v('T')],v('T'))),true);
