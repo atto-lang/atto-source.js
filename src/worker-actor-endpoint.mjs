@@ -17,7 +17,10 @@ export function installWorkerActorEndpoint({subscribe, post}) {
         const self = Object.freeze({
           respond(value) {
             if (completed || claimed || !frame.reply) throw new Error('reply unavailable or already claimed');
-            claimed = true; response = value;
+            // Snapshot the owned response when claimed; later handler
+            // mutation must not change what the requester receives.
+            response = structuredClone(value);
+            claimed = true;
           },
           done() {
             if (completed) throw new Error('delivery already completed');
