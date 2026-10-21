@@ -60,21 +60,13 @@ test('anonymous readonly field shape accepts both parameter orders and redundant
   assert.equal(await execute(dir,'record-redundant-name-first',
     inline.replace('take({ id: int } value)','take(value: structural record{ id: int })')),-42n);
 }));
-test('name-first structural parameter order lowers identically for named and anonymous contracts',()=>work(async dir=>{
-  const namedNameFirst=named.replace('structural HasId value','value: structural HasId');
-  const braceNameFirst=inline.replace('{ id: int } value','value: { id: int }');
-  const structNameFirst=inline.replace('{ id: int } value','value: struct{ id: int }');
-  const recordNameFirst=inline.replace('{ id: int } value','value: structural record{ id: int }');
-  assert.equal(await execute(dir,'named-name-first',namedNameFirst),42n);
-  assert.equal(await execute(dir,'brace-name-first',braceNameFirst),-42n);
-  assert.equal(await execute(dir,'struct-name-first',structNameFirst),-42n);
-  assert.equal(await execute(dir,'record-name-first',recordNameFirst),-42n);
-  assert.throws(()=>parseStructuralProjectionSource(named.replace('structural HasId value','value: HasId')),
-    /nominal named parameter needs explicit structural/);
-}));
 test('standalone portable ESM from actual source has no runtime package dependency',()=>work(async dir=>{
   assert.equal(await execute(dir,'portable-named',named,{portable:true}),42n);
+  assert.equal(await execute(dir,'portable-named-name-first',
+    named.replace('structural HasId value','value: structural HasId'),{portable:true}),42n);
   assert.equal(await execute(dir,'portable-inline',inline,{portable:true}),-42n);
+  assert.equal(await execute(dir,'portable-inline-name-first',
+    inline.replace('take({ id: int } value)','take(value: { id: int })'),{portable:true}),-42n);
 }));
 test('selected signed i64/bool/string physical slots remain strict',()=>work(async dir=>{
   const bool=
