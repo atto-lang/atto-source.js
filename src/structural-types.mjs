@@ -53,10 +53,19 @@ function methodsMap(shape) {
   if (!plain(shape) || !arr(shape.methods ?? [])) return null;
   const map = new Map();
   for (const m of shape.methods ?? []) {
-    if (!plain(m) || !name(m.name) || !arr(m.params) || !arr(m.generics ?? []) || map.has(m.name + '/' + m.params.length)) return null;
+    if (!exact(m,['name','params','generics','result','public','static','abstract','async'],
+               ['name','params','result','public']) ||
+        !name(m.name) || !arr(m.params) || !arr(m.generics ?? []) ||
+        typeof m.public !== 'boolean' ||
+        (owns(m,'static') && typeof m.static !== 'boolean') ||
+        (owns(m,'abstract') && typeof m.abstract !== 'boolean') ||
+        (owns(m,'async') && typeof m.async !== 'boolean') ||
+        map.has(m.name + '/' + m.params.length)) return null;
     if (!(m.generics ?? []).every(name) || new Set(m.generics ?? []).size !== (m.generics ?? []).length) return null;
     if (!typedesc(m.result)) return null;
-    for (const p of m.params) if (!plain(p) || !typedesc(p.type)) return null;
+    for (const p of m.params)
+      if (!exact(p,['type','mutable'],['type']) || !typedesc(p.type) ||
+          (owns(p,'mutable') && typeof p.mutable !== 'boolean')) return null;
     map.set(m.name + '/' + m.params.length, m);
   }
   return map;
