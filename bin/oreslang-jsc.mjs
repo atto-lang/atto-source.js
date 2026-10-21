@@ -8,6 +8,7 @@ import {compile, check} from '../src/compiler.mjs';
 import {staticFactsV0} from '../src/static-facts-v0.node.mjs';
 import {compileProgramV2, checkProgramV2} from '../src/program-v2.mjs';
 import {compileStructuralProjectionIR} from '../src/structural-projection-ir.mjs';
+import {compileStructuralProjectionSource} from '../src/structural-source.mjs';
 import {parseStrictJsonReport} from '../src/parity-json-strict.mjs';
 
 const MAX_SOURCE_BYTES=262144;
@@ -49,28 +50,30 @@ try {
   // until cross-backend semantics and host ABI have been independently validated.
   const extended=rawArgs[0]==='--program-v2';
   const structural=rawArgs[0]==='--structural-ir';
+  const structuralSource=rawArgs[0]==='--structural-source';
   const portable=structural&&rawArgs[1]==='--portable';
-  const args=extended||structural?rawArgs.slice(portable?2:1):rawArgs;
+  const args=extended||structural||structuralSource?rawArgs.slice(portable?2:1):rawArgs;
   const checkOnly=args[0]==='--check';
   const factOnly=args[0]==='--static-facts';
-  if (factOnly && (extended||structural)) throw Error('facts mode does not admit structural/program-v2 dialect');
+  if (factOnly && (extended||structural||structuralSource)) throw Error('facts mode does not admit structural/program-v2 dialect');
   const input=checkOnly||factOnly?args[1]:args[0];
   const extras=args.slice(checkOnly||factOnly?2:1);
   if (!input || input.startsWith('--') || extras.length>1 ||
       (extras.length && !extras[0].startsWith('--out=')))
-    throw Error('usage: oreslang-jsc [--program-v2|--structural-ir [--portable]] [--check] input.ores|input.json [--out=/absolute/output.mjs]');
+    throw Error('usage: oreslang-jsc [--program-v2|--structural-ir [--portable]|--structural-source] [--check] input.ores|input.json [--out=/absolute/output.mjs]');
   if ((checkOnly||factOnly) && extras.length) throw Error('check/facts modes do not accept --out');
-  const source=await readSource(resolve(input), {rejectBom:factOnly||structural});
+  const source=await readSource(resolve(input), {rejectBom:factOnly||structural||structuralSource});
   if (factOnly) {
     process.stdout.write(JSON.stringify(staticFactsV0(source))+'\n');
   } else if (checkOnly) {
     if (structural) compileStructuralProjectionIR(parseStrictJsonReport(source,MAX_SOURCE_BYTES,'structural typed IR'),{portable});
+    else if (structuralSource) compileStructuralProjectionSource(source);
     else if (extended) checkProgramV2(source); else check(source);
     process.stdout.write('OK\n');
   } else {
     const output=structural
       ?compileStructuralProjectionIR(parseStrictJsonReport(source,MAX_SOURCE_BYTES,'structural typed IR'),{portable})
-      :(extended?compileProgramV2(source):compile(source));
+      :(structuralSource?compileStructuralProjectionSource(source):(extended?compileProgramV2(source):compile(source)));
     if (!extras.length) process.stdout.write(output);
     else {
       const outputPath=extras[0].slice('--out='.length);
