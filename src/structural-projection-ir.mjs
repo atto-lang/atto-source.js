@@ -69,7 +69,7 @@ function literals(values,descriptors){
  * Accepts only a small validated subset of compiler-produced typed IR. Output
  * imports the existing branded structural runtime from this package.
  */
-export function compileStructuralProjectionIR(input){
+export function compileStructuralProjectionIR(input,{portable=false}={}){
   record(input,['schemaVersion','kind','mode','carrier','view','slots','select'],
     ['schemaVersion','kind','mode','carrier','view','slots','select']);
   if(input.schemaVersion!==1||input.kind!=='readonly-scalar-projection'||
@@ -91,6 +91,21 @@ export function compileStructuralProjectionIR(input){
     fail('selected member is not in readonly view');
   if(!canBorrowStructural(carrier,view))fail('structural shape proof failed');
   const slotExpressions=literals(input.slots,carrier.fields);
+  if(portable){
+    // This IR admits literal scalar slots and a single selected field only.
+    // Type proof is complete before code emission; the projection can therefore
+    // be constant-folded without a host runtime, retaining checked BigInt i64.
+    // Do not serialize any unused, possibly private carrier slots into ESM.
+    const selected=carrier.fields.findIndex(f=>f.name===input.select);
+    if(selected<0)fail('proved projection has no carrier slot');
+    return [
+      '// Oreslang standalone static typed-IR projection. NOT general source-language lowering.',
+      'export function main(){',
+      '  return '+slotExpressions[selected]+';',
+      '}',
+      ''
+    ].join('\n');
+  }
   return [
     '// Oreslang experimental *typed-IR* readonly structural scalar projection, not source-language parity.',
     "import {createStructuralDomain} from '@oreslang/source-js/structural-runtime';",
