@@ -60,3 +60,20 @@ test('Node worker rejects non-file source and oversized mailbox configuration',(
   assert.throws(()=>spawnNodeActor({moduleUrl:'data:text/javascript,export{}'}),/trusted file/);
   assert.throws(()=>spawnNodeActor({moduleUrl,maxPending:0}),/invalid mailbox limit/);
 });
+
+test('Worker actor copy-only admission snapshots and forbids SAB',async()=>{
+  const actor=spawnNodeActor({moduleUrl});
+  try {
+    const payload={n:1};
+    const pending=actor.request({type:'echo',payload});
+    payload.n=999;
+    assert.deepEqual(await pending,{n:1});
+    assert.deepEqual(await actor.request({type:'reply-snapshot'}),{n:1});
+    if(typeof SharedArrayBuffer==='function') {
+      await assert.rejects(
+        actor.request({type:'echo',payload:new SharedArrayBuffer(8)}),/shared-memory/);
+      await assert.rejects(
+        actor.request({type:'echo',payload:new Map([['bad',new Uint8Array(new SharedArrayBuffer(8))]])}),/shared-memory/);
+    }
+  } finally {await actor.close();}
+});
