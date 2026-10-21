@@ -50,7 +50,7 @@ export function createStructuralDomain() {
     return Object.freeze({name:f.name,type:f.type,public:f.public});
   }
   function defineType(metadata) {
-    exactRecord(metadata,['kind','name','fields'],['kind','fields']);
+    exactRecord(metadata,['kind','name','actor','fields','methods'],['kind','fields']);
     if (!['record','class','struct'].includes(metadata.kind) ||
         (metadata.actor !== undefined && metadata.actor !== false) ||
         (metadata.kind==='record' && metadata.name !== undefined) ||
