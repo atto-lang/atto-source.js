@@ -49,7 +49,8 @@ try {
   // until cross-backend semantics and host ABI have been independently validated.
   const extended=rawArgs[0]==='--program-v2';
   const structural=rawArgs[0]==='--structural-ir';
-  const args=extended||structural?rawArgs.slice(1):rawArgs;
+  const portable=structural&&rawArgs[1]==='--portable';
+  const args=extended||structural?rawArgs.slice(portable?2:1):rawArgs;
   const checkOnly=args[0]==='--check';
   const factOnly=args[0]==='--static-facts';
   if (factOnly && (extended||structural)) throw Error('facts mode does not admit structural/program-v2 dialect');
@@ -57,18 +58,18 @@ try {
   const extras=args.slice(checkOnly||factOnly?2:1);
   if (!input || input.startsWith('--') || extras.length>1 ||
       (extras.length && !extras[0].startsWith('--out=')))
-    throw Error('usage: oreslang-jsc [--program-v2|--structural-ir] [--check] input.ores|input.json [--out=/absolute/output.mjs]');
+    throw Error('usage: oreslang-jsc [--program-v2|--structural-ir [--portable]] [--check] input.ores|input.json [--out=/absolute/output.mjs]');
   if ((checkOnly||factOnly) && extras.length) throw Error('check/facts modes do not accept --out');
   const source=await readSource(resolve(input), {rejectBom:factOnly||structural});
   if (factOnly) {
     process.stdout.write(JSON.stringify(staticFactsV0(source))+'\n');
   } else if (checkOnly) {
-    if (structural) compileStructuralProjectionIR(parseStrictJsonReport(source,MAX_SOURCE_BYTES,'structural typed IR'));
+    if (structural) compileStructuralProjectionIR(parseStrictJsonReport(source,MAX_SOURCE_BYTES,'structural typed IR'),{portable});
     else if (extended) checkProgramV2(source); else check(source);
     process.stdout.write('OK\n');
   } else {
     const output=structural
-      ?compileStructuralProjectionIR(parseStrictJsonReport(source,MAX_SOURCE_BYTES,'structural typed IR'))
+      ?compileStructuralProjectionIR(parseStrictJsonReport(source,MAX_SOURCE_BYTES,'structural typed IR'),{portable})
       :(extended?compileProgramV2(source):compile(source));
     if (!extras.length) process.stdout.write(output);
     else {
