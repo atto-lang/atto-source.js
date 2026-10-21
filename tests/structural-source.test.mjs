@@ -39,6 +39,10 @@ test('real Oreslang source lowers named structural interface to executable ESM',
 test('anonymous readonly field shape accepts absent and redundant structural keyword',()=>work(async dir=>{
   assert.equal(await execute(dir,'anonymous',inline),-42n);
   assert.equal(await execute(dir,'redundant',inline.replace('take({','take(structural {')),-42n);
+  assert.equal(await execute(dir,'struct-anonymous',inline.replace('take({','take(struct{')),-42n);
+  assert.equal(await execute(dir,'struct-redundant',inline.replace('take({','take(structural struct{')),-42n);
+  assert.equal(await execute(dir,'record-anonymous',inline.replace('take({','take(record{')),-42n);
+  assert.equal(await execute(dir,'record-redundant',inline.replace('take({','take(structural record{')),-42n);
 }));
 test('selected signed i64/bool/string physical slots remain strict',()=>work(async dir=>{
   const bool=
