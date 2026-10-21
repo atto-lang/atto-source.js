@@ -20,16 +20,17 @@ async function isolated(fn){
   const dir=await mkdtemp(join(tmpdir(),'ores-js-portable-'));
   try{return await fn(dir);}finally{await rm(dir,{recursive:true,force:true});}
 }
+let imported=0;
 async function evaluate(ir,dir){
   const src=compileStructuralProjectionIR(ir,{portable:true});
-  const filename=join(dir,'portable.mjs');
+  const filename=join(dir,'portable-'+(++imported)+'.mjs');
   await writeFile(filename,src,{mode:0o600});
   return {src,value:(await import(pathToFileURL(filename).href)).main()};
 }
 test('portable ESM executes outside the source-js package without dependency resolution',()=>isolated(async dir=>{
   const {src,value}=await evaluate(fixture(),dir);
   assert.equal(value,42n);
-  assert.doesNotMatch(src,/\\bimport\\b|@oreslang\\/source-js/);
+  assert.doesNotMatch(src,/\bimport\b|@oreslang\/source-js/);
   assert.doesNotMatch(src,/PRIVATE_VALUE_NEVER_IN_BUNDLE|hello/);
 }));
 test('validated anonymous readonly record projects string and blocks injection',()=>isolated(async dir=>{
@@ -45,8 +46,6 @@ test('portable i64 boundaries and bool preserve exact scalar representation',()=
   for(const number of ['-9223372036854775808','9223372036854775807','0']){
     const {value}=await evaluate(fixture({slots:[number,'hello','hidden']}),dir);
     assert.equal(value,BigInt(number));
-    // Different data URL avoids ESM cache within one temp path.
-    await rm(join(dir,'portable.mjs'));
   }
   const bool=fixture({carrier:{kind:'record',fields:[field('ok','bool')]},
     view:{kind:'record',readOnly:true,fields:[field('ok','bool')]},slots:[false],select:'ok'});
@@ -76,7 +75,7 @@ test('CLI --structural-ir --portable publishes standalone ESM atomically',()=>is
     {encoding:'utf8',timeout:15000});
   assert.equal(emit.status,0,emit.stderr);
   const src=await readFile(out,'utf8');
-  assert.doesNotMatch(src,/\\bimport\\b|PRIVATE_VALUE_NEVER_IN_BUNDLE/);
+  assert.doesNotMatch(src,/\bimport\b|PRIVATE_VALUE_NEVER_IN_BUNDLE/);
   assert.equal((await import(pathToFileURL(out).href)).main(),42n);
   const repeat=spawnSync(process.execPath,[cli,'--structural-ir','--portable',json,'--out='+out],
     {encoding:'utf8',timeout:15000});
