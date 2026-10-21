@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Oreslang freestanding core in browser</title>
+<pre id="result">RUNNING</pre>
+<script type="module">
+import {compileFreestandingCore} from '../src/freestanding-core.mjs';
+const display=document.querySelector('#result');
+let url;
+try {
+  const input=await fetch('./fixtures/freestanding-core-java.ores',{cache:'no-store'});
+  if(!input.ok)throw Error('failed to load canonical core source');
+  const esm=compileFreestandingCore(await input.text());
+  // ESM has no host imports. The Blob module is trusted test output only.
+  url=URL.createObjectURL(new Blob([esm],{type:'text/javascript'}));
+  const {core}=await import(url);
+  const eq=(got,want,label)=>{if(got!==want)throw Error(label+': '+got);};
+  eq(core.min_int(10n,20n),10n,'min');
+  eq(core.max_int(-10n,-20n),-10n,'max');
+  eq(core.clamp_int(20n,0n,10n),10n,'clamp');
+  eq(core.clamp_int(9007199254740993n,9007199254740992n,9007199254740994n),9007199254740993n,'full-width int');
+  if(Object.getPrototypeOf(core)!==null||!Object.isFrozen(core))throw Error('module isolation');
+  display.textContent='PASS_BROWSER_FREESTANDING_CORE';
+} catch(error) {
+  display.textContent='FAIL_BROWSER_FREESTANDING_CORE: '+String(error);
+} finally {if(url)URL.revokeObjectURL(url);}
+</script>
