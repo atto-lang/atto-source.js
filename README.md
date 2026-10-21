@@ -31,6 +31,12 @@ end
 
 An arrow signature may also use `{ ... }`. These syntactic aliases do **not** add full function bodies, `void` functions, tasks, actors, async/await, classes, generic parameters, ownership lowering or nonblocking I/O. All remain unsupported and are rejected; this backend is **not** a general Oreslang transpiler. The two numeric models also remain different (scalar-v1 provisional wrapping vs program-v2 provisional checked i64), so source syntax compatibility does **not** establish semantic parity with Java/LLVM. See `tests/function-syntax-parity.test.mjs`.
 
+## Browser and Node.js ESM + experimental Worker actors
+
+The scalar/program-v2 transpiler emits ESM that can be imported in Node and browsers. This repository now includes a **trusted-host serial Worker reference**: `spawnNodeActor()` uses Node `worker_threads` and `spawnBrowserActor()` uses browser module Web Workers. A transpiled public scalar function can execute in either Worker using `mode:'call'`; ordinary trusted JS handlers require explicit `self.respond()` and `self.done()`.
+
+This does **not** implement Oreslang `define actor` lowering or actor ownership/isolation parity. Neither JS Workers nor Wasm's existing host-side actor reference constitute an untrusted JS sandbox. See [JS vs Wasm and browser/Node test instructions](docs/JS_BROWSER_NODE_WORKERS.md), `tests/worker-node.test.mjs`, and `tests/browser-worker-smoke.html`.
+
 ## Security boundary
 
 This is a code generator, **not a sandbox**. An ES module, Node worker thread or Node vm context is not a secure boundary for malicious guests. Only bundle the generated JS as a trusted artifact. This backend currently has no actor runtime, capability enforcement, process isolation, native pointers, async/await, channels, objects, collections, exceptions or host I/O. Do not promote it to an untrusted host.
