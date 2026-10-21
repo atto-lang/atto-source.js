@@ -20,7 +20,19 @@ function plain(x) {
   return true;
 }
 const name = s => typeof s === 'string' && /^[A-Za-z_][A-Za-z_0-9]{0,127}$/.test(s) && !RESERVED.has(s);
-const arr = v => Array.isArray(v) && v.length <= 256 && Object.keys(v).length === v.length;
+function arr(v) {
+  if (!Array.isArray(v) || v.length > 256 || Object.getPrototypeOf(v) !== Array.prototype) return false;
+  const keys = Reflect.ownKeys(v);
+  if (keys.length !== v.length + 1) return false;
+  for (const key of keys) {
+    if (key === 'length') continue;
+    if (typeof key !== 'string' || !/^(?:0|[1-9][0-9]*)$/.test(key) ||
+        Number(key) >= v.length) return false;
+    const descriptor = Object.getOwnPropertyDescriptor(v, key);
+    if (!descriptor || !owns(descriptor, 'value')) return false;
+  }
+  return true;
+}
 function typedesc(t) { return typeof t === 'string' ? PRIMITIVES.has(t) : plain(t); }
 function fieldMap(shape) {
   if (!plain(shape) || !arr(shape.fields ?? [])) return null;
@@ -86,6 +98,15 @@ function assign(a, b, depth = 0, aBind = [], bBind = []) {
   return true;
 }
 function methodCompatible(actual, contract) {
+  if (!plain(actual) || !plain(contract) ||
+      !arr(actual.params) || !arr(contract.params) ||
+      !arr(actual.generics ?? []) || !arr(contract.generics ?? []) ||
+      !(actual.generics ?? []).every(name) || !(contract.generics ?? []).every(name) ||
+      new Set(actual.generics ?? []).size !== (actual.generics ?? []).length ||
+      new Set(contract.generics ?? []).size !== (contract.generics ?? []).length ||
+      !typedesc(actual.result) || !typedesc(contract.result)) return false;
+  for (const p of [...actual.params, ...contract.params])
+    if (!plain(p) || !typedesc(p.type)) return false;
   if (!plain(actual) || !plain(contract) || !name(actual.name) || actual.name !== contract.name ||
       actual.public !== true || actual.static === true || actual.abstract === true ||
       (actual.async === true) !== (contract.async === true)) return false;
