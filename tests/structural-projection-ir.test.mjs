@@ -19,6 +19,7 @@ test('actual ESM executes readonly named structural projection',async()=>{
 });
 test('anonymous inline record projection does not require redundant structural keyword',async()=>{
  assert.equal(await run(ir({mode:'inline-anonymous',view:{kind:'record',readOnly:true,fields:[f('id','int')]}})),42n);
+ assert.equal(await run(ir({mode:'inline-anonymous',view:{kind:'struct',readOnly:true,fields:[f('id','int')]}})),42n);
 });
 test('mismatched/private/unsound views reject before artifact emission',()=>{
  assert.throws(()=>compileStructuralProjectionIR(ir({view:{kind:'interface',readOnly:true,fields:[f('secret','bool')]},select:'secret'})),/shape proof failed/);
