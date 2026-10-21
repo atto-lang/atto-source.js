@@ -1,0 +1,85 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {WorkerMixedLayout} from "../src/worker-mixed-layout.mjs";
+import {MixedLayoutGeometry} from "../src/mixed-layout-geometry.mjs";
+
+const fields=[{name:"id",type:"u32"},{name:"x",type:"f64"},
+  {name:"flag",type:"bool"},{name:"next",type:"ref32"}];
+const cases=[
+  ["aos",{},72,72],
+  ["soa",{},51,56],
+  ["aosoa",{tileWidth:4},144,144],
+  ["soaos",{groups:[["id","flag"],["x","next"]]},72,72]
+];
+test("all mixed-width physical layouts preserve values, offsets and alignment",()=>{
+  for(const [layout,opts,payload,allocation] of cases){
+    const rows=layout==="aosoa"?5:3;
+    const store=new WorkerMixedLayout({fields,rows,layout,...opts});
+    assert.equal(store.payloadBytes,payload);
+    assert.equal(store.byteLength,allocation);
+    const occupied=new Set();
+    for(let row=0;row<rows;row++){
+      store.write(row,"id",4294967295-row);
+      store.write(row,"x",row===0?-0:row===1?NaN:row+0.25);
+      store.write(row,"flag",row%2===0);
+      store.write(row,"next",row+1);
+      for(const field of store.fields){
+        const a=store.address(row,field.name);
+        assert.equal(a.absoluteByteOffset % field.alignment,0);
+        for(let i=0;i<field.bytes;i++){
+          const key=a.absoluteByteOffset+i;
+          assert.equal(occupied.has(key),false,"two fields alias physical bytes");
+          occupied.add(key);
+        }
+      }
+    }
+    assert.equal(store.read(0,"id"),0xffffffff);
+    assert.equal(Object.is(store.read(0,"x"),-0),true);
+    assert.equal(Number.isNaN(store.read(1,"x")),true);
+    assert.equal(store.read(2,"flag"),true);
+    assert.equal(store.read(rows-1,"next"),rows);
+    assert.throws(()=>store.write(0,"id",-1),/unsigned/);
+    assert.throws(()=>store.write(0,"next",0x1_0000_0000),/unsigned/);
+    assert.throws(()=>store.write(0,"flag",1),/bool/);
+    assert.throws(()=>store.write(0,"x","12"),/f64/);
+    assert.throws(()=>store.address(rows,"id"),/bounds/);
+    assert.throws(()=>store.address(0,"constructor"),/bounds/);
+    assert.equal("buffer" in store,false);
+    store.retire();store.retire();
+    assert.throws(()=>store.read(0,"id"),/retired/);
+  }
+});
+test("SoAoS grouped stride differs from SoA and AoSoA partial tile is fenced",()=>{
+  const soa=new MixedLayoutGeometry({fields,rows:3,layout:"soa"});
+  const soaos=new MixedLayoutGeometry({fields,rows:3,layout:"soaos",groups:[["id","flag"],["x","next"]]});
+  const aosoa=new MixedLayoutGeometry({fields,rows:5,layout:"aosoa",tileWidth:4});
+  assert.deepEqual(soaos.address(2,"next"),{segment:1,byteOffset:40,absoluteByteOffset:64,type:"ref32"});
+  assert.equal(soa.address(2,"x").byteOffset,16);
+  assert.equal(aosoa.address(4,"id").byteOffset,72);
+  assert.throws(()=>aosoa.address(5,"id"),/bounds/);
+  assert.equal(Object.isFrozen(soaos.segments),true);
+  assert.equal(Object.isFrozen(soaos.fields),true);
+  assert.throws(()=>{soaos.segments[0].bytes=0;},TypeError);
+});
+test("hostile geometry is rejected before allocation",()=>{
+  const base={fields,rows:3,layout:"soa"};
+  for(const patch of [
+    {maxBytes:50},{fields:[{name:"id",type:"u32"},{name:"id",type:"f64"}]},
+    {fields:[{name:"wrong",type:"Object"}]},
+    {fields:[{name:"__proto__",type:"u32"},{name:"x",type:"f64"}],groups:undefined,layout:"invalid"},
+    {rows:-1},{layout:"aosoa",tileWidth:3},
+    {layout:"soaos",groups:[["id"],["x"]]},
+    {layout:"soaos",groups:[["id","x"],["x","flag","next"]]}
+  ]) assert.throws(()=>new WorkerMixedLayout({...base,...patch}));
+});
+test("native f64 integration updates only selected data and preserves integer columns",()=>{
+  const fields=[{name:"id",type:"u32"},{name:"pos",type:"f64"},
+    {name:"vel",type:"f64"},{name:"flag",type:"bool"}];
+  const store=new WorkerMixedLayout({fields,rows:5,layout:"soaos",groups:[["id","flag"],["pos","vel"]]});
+  for(let r=0;r<5;r++){store.write(r,"id",r+10);store.write(r,"pos",r*10);store.write(r,"vel",r+0.5);store.write(r,"flag",true);}
+  store.integrate("pos","vel",0.25);
+  assert.deepEqual(store.snapshot("pos"),Array.from({length:5},(_,r)=>r*10+(r+0.5)*0.25));
+  for(let r=0;r<5;r++){assert.equal(store.read(r,"id"),r+10);assert.equal(store.read(r,"flag"),true);}
+  assert.throws(()=>store.integrate("id","vel",0.1),/distinct f64/);
+  store.retire();
+});
