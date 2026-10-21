@@ -166,9 +166,18 @@ class Parser {
       view:projection.view,slots:carrier.slots,select:projection.select};
   }
 }
-/** Returns a deliberately restricted compiler-produced projection IR. */
-export function parseStructuralProjectionSource(source){return new Parser(tokenize(source)).parse();}
+function parseStructuralProjectionSourceUnchecked(source){
+  return new Parser(tokenize(source)).parse();
+}
+/** Returns a deliberately restricted, typed-IR-validated projection IR. */
+export function parseStructuralProjectionSource(source){
+  const ir=parseStructuralProjectionSourceUnchecked(source);
+  // Reuse the authoritative typed-IR gate so the exported parser never returns
+  // metadata that the next compiler stage would reject.
+  compileStructuralProjectionIR(ir,{portable:true});
+  return ir;
+}
 /** Source -> checked typed IR -> trusted ESM. No JS host-object shape inference. */
 export function compileStructuralProjectionSource(source,options={}){
-  return compileStructuralProjectionIR(parseStructuralProjectionSource(source),options);
+  return compileStructuralProjectionIR(parseStructuralProjectionSourceUnchecked(source),options);
 }
