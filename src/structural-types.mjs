@@ -8,6 +8,11 @@ const RESERVED = new Set(['__proto__', 'prototype', 'constructor']);
 const SHAPES = new Set(['record', 'struct', 'contract', 'interface', 'trait', 'class']);
 const PRIMITIVES = new Set(['int', 'float', 'decimal', 'complex', 'bool', 'string', 'void', 'null']);
 const owns = (x, k) => Object.hasOwn(x, k);
+function validCapabilityFlags(x) {
+  return (!owns(x,'actor') || typeof x.actor === 'boolean') &&
+    (!owns(x,'mutable') || typeof x.mutable === 'boolean') &&
+    (!owns(x,'readOnly') || typeof x.readOnly === 'boolean');
+}
 function plain(x) {
   if (x === null || typeof x !== 'object' || Array.isArray(x)) return false;
   const proto = Object.getPrototypeOf(x);
@@ -78,6 +83,8 @@ function eqGeneric(a, b, leftBind, rightBind) {
 }
 function assign(a, b, depth = 0, aBind = [], bBind = []) {
   if (depth > MAX_DEPTH || !typedesc(a) || !typedesc(b)) return false;
+  if ((typeof a === 'object' && !validCapabilityFlags(a)) ||
+      (typeof b === 'object' && !validCapabilityFlags(b))) return false;
   if (primitive(a) || primitive(b)) return typeof a === 'string' && a === b;
   if (a.kind === 'var' || b.kind === 'var') return eqGeneric(a, b, aBind, bBind);
   if (a.kind === 'nominal' || b.kind === 'nominal') {
@@ -140,7 +147,8 @@ function methodCompatible(actual, contract) {
   return assign(actual.result, contract.result, 0, ag, bg);
 }
 function structural(actual, wanted, depth) {
-  if (depth > MAX_DEPTH || !plain(actual) || !plain(wanted)) return false;
+  if (depth > MAX_DEPTH || !plain(actual) || !plain(wanted) ||
+      !validCapabilityFlags(actual) || !validCapabilityFlags(wanted)) return false;
   if (actual.actor === true || wanted.actor === true || wanted.mutable === true || wanted.readOnly !== true) return false;
   if (wanted.kind === 'tuple') return actual.kind === 'tuple' && assign(actual, wanted, depth);
   if (!SHAPES.has(wanted.kind) || !SHAPES.has(actual.kind) && actual.kind !== 'entry') return false;
