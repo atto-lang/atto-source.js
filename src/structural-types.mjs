@@ -139,8 +139,13 @@ function assign(a, b, depth = 0, aBind = [], bBind = []) {
 }
 function methodCompatible(actual, contract) {
   const methodKeys=['name','params','generics','result','public','static','abstract','async'];
+  const validMethodFlags=m=>
+    (!owns(m,'static') || typeof m.static === 'boolean') &&
+    (!owns(m,'abstract') || typeof m.abstract === 'boolean') &&
+    (!owns(m,'async') || typeof m.async === 'boolean');
   if (!exact(actual,methodKeys,['name','params','result','public']) ||
       !exact(contract,methodKeys,['name','params','result','public']) ||
+      !validMethodFlags(actual) || !validMethodFlags(contract) ||
       !arr(actual.params) || !arr(contract.params) ||
       !arr(actual.generics ?? []) || !arr(contract.generics ?? []) ||
       !(actual.generics ?? []).every(name) || !(contract.generics ?? []).every(name) ||
