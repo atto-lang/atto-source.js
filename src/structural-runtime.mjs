@@ -87,7 +87,7 @@ export function createStructuralDomain() {
   }
   function compileView(token, expected) {
     const def=types.get(token);
-    exactRecord(expected,['kind','readOnly','fields'],['kind','readOnly','fields']);
+    exactRecord(expected,['kind','readOnly','fields','methods'],['kind','readOnly','fields']);
     if(!def || expected.readOnly !== true ||
        !Array.isArray(expected.fields) || expected.fields.length>128 ||
        (expected.methods !== undefined && !Array.isArray(expected.methods)))
