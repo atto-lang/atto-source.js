@@ -71,7 +71,9 @@ fields, do not enter the output artifact. The module exports `main()`, and
 runs from an unrelated directory without this package installed. It does not
 create live structural views, accept dynamic instances or provide runtime
 borrow enforcement. This limitation must be revisited before nonliteral
-typed IR or guest-provided runtime data can use portable emission. The selected readonly field is loaded
+typed IR or guest-provided runtime data can use portable emission.
+
+In the default runtime-bound path, the selected readonly field is loaded
 through a compiler-indexed primitive slot; `int` uses signed-i64 BigInt.
 The generator deliberately rejects private/missing fields, mismatched
 representations, mutable views, noncanonical integers, and hostile metadata.
