@@ -82,8 +82,8 @@ export function compileStructuralProjectionIR(input,{portable=false}={}){
   record(input.view,['kind','readOnly','fields'],['kind','readOnly','fields']);
   if(!['record','interface','trait','class','contract'].includes(input.view.kind)||
      input.view.readOnly!==true||
-     (input.mode==='inline-anonymous'&&input.view.kind!=='record'))
-    fail('view must be readonly; only anonymous records are implicitly structural');
+     (input.mode==='inline-anonymous'&&!['record','struct'].includes(input.view.kind)))
+    fail('view must be readonly; only anonymous record/struct contracts are implicitly structural');
   const carrier={kind:input.carrier.kind,fields:fields(input.carrier.fields,false)};
   if(input.carrier.kind!=='record')carrier.name=input.carrier.name;
   const view={kind:input.view.kind,readOnly:true,fields:fields(input.view.fields,true)};
