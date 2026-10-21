@@ -108,6 +108,7 @@ pub fnc main(): int { return take(new Candidate()); }
 ```sh
 node bin/oreslang-jsc.mjs --structural-source --check program.ores
 node bin/oreslang-jsc.mjs --structural-source program.ores --out=/absolute/program.mjs
+node bin/oreslang-jsc.mjs --structural-source --portable program.ores --out=/absolute/portable.mjs
 ```
 
 Anonymous inline `{ id: int }`, `record{ id: int }` and
@@ -118,7 +119,10 @@ remains unchanged. Private fields, type mismatches, invalid i64 literals,
 mutable views, `await`, actors, methods, aggregation, source injection,
 and all unsupported constructs fail closed **before artifact publication**.
 No general Oreslang source/compiler parity, browser worker parity, or security
-sandbox is claimed. The main scalar-v1 and program-v2 CLI modes are unchanged.
+sandbox is claimed. The optional `--portable` flag emits a standalone ESM module by constant-folding
+this statically proven single-scalar projection. That output requires no Node
+package import, but has **not** yet passed an actual browser execution gate.
+The main scalar-v1 and program-v2 CLI modes are unchanged.
 
 ## Security boundary
 
