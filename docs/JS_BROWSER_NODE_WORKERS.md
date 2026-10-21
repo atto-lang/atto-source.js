@@ -53,3 +53,20 @@ The fixture compiles Oreslang via `compileProgramV2`, imports the generated ESM 
 NOT yet supported: Oreslang `define actor` source lowering, typed `ActorRef<T>`, `self.send/forward`, supervision, actor groups, mailbox persistence, capability enforcement, memory arenas, transfer ownership, borrow checking, actor hot reload, select/channels, WASI/WIT, full core/alloc/stdlib transpilation, cross-backend message ABI.
 
 Next: (1) shared versioned typed IR; (2) compiler-checked actor message/reply/ownership lowering; (3) compare Wasm owned-message envelope v1 with JS structured-clone rather than conflating them; (4) run exact Node 22 + real browser module Worker CI; (5) Java/LLVM/Wasm/JS cross-backend conformance evidence.
+
+
+## CPU/GPU placement parity boundary
+
+Browser module Workers and Node `worker_threads` do not provide Oreslang with a
+portable, enforceable OS logical-CPU/NUMA pinning primitive, and this backend
+does not own a GPU device broker. The actor host adapters therefore reject
+placement-related options (`placement`, `cpuAffinity`, `maxParallelTurns`,
+`accelerator`, `gpuDeviceId`, `maxGpuInFlight`) instead of silently ignoring
+them. Worker creation is an execution/isolation boundary, **not** evidence of
+CPU cache affinity or GPU residency.
+
+Relative backend parity means the observable contract must be explicit:
+Java/LLVM may eventually enforce trusted-host carrier/device placement, while
+JS must report unsupported hard placement until a host-specific authority can
+prove it. Source lowering must never translate `GPU_REQUIRED` or hard CPU
+placement into an ordinary Worker and claim success.
