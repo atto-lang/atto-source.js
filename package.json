@@ -19,7 +19,10 @@
     "./program-ir-v2": "./src/program-ir-v2.mjs",
     "./java-js-parity-v1": "./src/java-js-parity-v1.mjs",
     "./js-numeric-boundary-v1": "./src/js-numeric-boundary-v1.mjs",
-    "./static-facts-v0.node": "./src/static-facts-v0.node.mjs"
+    "./static-facts-v0.node": "./src/static-facts-v0.node.mjs",
+    "./actor-host.browser": "./src/actor-host.browser.mjs",
+    "./actor-host.node": "./src/actor-host.node.mjs",
+    "./worker-actor-client": "./src/worker-actor-client.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
@@ -29,6 +32,7 @@
     "check": "node bin/oreslang-jsc.mjs --check tests/fixtures/arithmetic.ores",
     "parity:js": "node bin/js-semantic-parity-report.mjs",
     "parity:numeric-js": "node bin/js-numeric-boundary-report.mjs",
-    "static-facts:smoke": "node bin/oreslang-jsc.mjs --static-facts tests/fixtures/forward-call.ores"
+    "static-facts:smoke": "node bin/oreslang-jsc.mjs --static-facts tests/fixtures/forward-call.ores",
+    "test:workers": "node --test tests/worker-node.test.mjs"
   }
 }
