@@ -115,6 +115,9 @@ class Parser {
   projection(contract){
     this.expect('fnc');const fnName=this.id();this.expect('(');
     const explicit=this.eat('structural');let view,mode;
+    // Anonymous record and struct contracts are structural with or without
+    // the redundant contextual keyword. Named contracts remain opt-in.
+    const anonymousKind=['record','struct'].includes(this.t.value)?this.id():null;
     if(this.eat('{')){
       const fields=[];
       if(!this.eat('}')){
@@ -122,8 +125,9 @@ class Parser {
           fields.push(this.fieldDescriptor(true));}while(this.eat(','));
         this.expect('}');
       }
-      view={kind:'record',readOnly:true,fields};mode='inline-anonymous';
+      view={kind:anonymousKind||'record',readOnly:true,fields};mode='inline-anonymous';
     }else{
+      if(anonymousKind)fail('anonymous aggregate type requires {',this.t);
       const t=this.t,requested=this.id();
       if(!explicit)fail('nominal named parameter needs explicit structural',t);
       if(!contract||requested!==contract.name)fail('unknown structural contract',t);
