@@ -6,6 +6,11 @@ export async function receive(message, self) {
     case 'sleep':
       await new Promise(resolve => setTimeout(resolve, message.ms));
       self.respond(message.n); self.done(); return;
+    case 'echo':
+      self.respond(message.payload); self.done(); return;
+    case 'reply-snapshot': {
+      const payload={n:1};self.respond(payload);payload.n=999;self.done();return;
+    }
     case 'tell':
       self.done(); return;
     case 'crash':
