@@ -19,7 +19,8 @@
     "./program-ir-v2": "./src/program-ir-v2.mjs",
     "./java-js-parity-v1": "./src/java-js-parity-v1.mjs",
     "./js-numeric-boundary-v1": "./src/js-numeric-boundary-v1.mjs",
-    "./static-facts-v0.node": "./src/static-facts-v0.node.mjs"
+    "./static-facts-v0.node": "./src/static-facts-v0.node.mjs",
+    "./structural-types": "./src/structural-types.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
