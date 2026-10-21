@@ -131,10 +131,12 @@ function assign(a, b, depth = 0, aBind = [], bBind = []) {
   if (new Set(['class','trait','interface','contract']).has(a.kind) &&
       (!name(a.name) || a.name !== b.name)) return false;
   const af = fieldMap(a), bf = fieldMap(b);
-  if (!af || !bf || af.size !== bf.size) return false;
+  const am = methodsMap(a), bm = methodsMap(b);
+  if (!af || !bf || !am || !bm || af.size !== bf.size) return false;
   for (const [k, expected] of bf) {
     const actual = af.get(k);
-    if (!actual || !assign(actual.type, expected.type, depth + 1, aBind, bBind)) return false;
+    if (!actual || actual.public !== expected.public ||
+        !assign(actual.type, expected.type, depth + 1, aBind, bBind)) return false;
   }
   return true;
 }
