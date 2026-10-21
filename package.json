@@ -21,7 +21,8 @@
     "./js-numeric-boundary-v1": "./src/js-numeric-boundary-v1.mjs",
     "./static-facts-v0.node": "./src/static-facts-v0.node.mjs",
     "./structural-types": "./src/structural-types.mjs",
-    "./structural-runtime": "./src/structural-runtime.mjs"
+    "./structural-runtime": "./src/structural-runtime.mjs",
+    "./structural-projection-ir": "./src/structural-projection-ir.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
