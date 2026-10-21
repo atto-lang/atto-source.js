@@ -43,7 +43,25 @@ function arr(v) {
   }
   return true;
 }
-function typedesc(t) { return typeof t === 'string' ? PRIMITIVES.has(t) : plain(t); }
+function validTypeObject(t) {
+  if (!plain(t) || typeof t.kind !== 'string' || !validCapabilityFlags(t)) return false;
+  if (t.kind === 'var')
+    return exact(t,['kind','name'],['kind','name']) && name(t.name);
+  if (t.kind === 'nominal')
+    return exact(t,['kind','name','args'],['kind','name','args']) &&
+      name(t.name) && arr(t.args);
+  if (t.kind === 'tuple' || t.kind === 'fixed-array')
+    return exact(t,['kind','elements','readOnly','mutable'],['kind','elements']) &&
+      arr(t.elements);
+  if (t.kind === 'entry')
+    return exact(t,['kind','args','actor','mutable','readOnly'],['kind','args']) &&
+      arr(t.args) && t.args.length === 2;
+  if (SHAPES.has(t.kind))
+    return exact(t,['kind','name','fields','methods','actor','mutable','readOnly'],['kind','fields']) &&
+      arr(t.fields) && (t.methods === undefined || arr(t.methods));
+  return false;
+}
+function typedesc(t) { return typeof t === 'string' ? PRIMITIVES.has(t) : validTypeObject(t); }
 function fieldMap(shape) {
   if (!plain(shape) || !arr(shape.fields ?? [])) return null;
   const map = new Map();
@@ -147,8 +165,7 @@ function methodCompatible(actual, contract) {
   return assign(actual.result, contract.result, 0, ag, bg);
 }
 function structural(actual, wanted, depth) {
-  if (depth > MAX_DEPTH || !plain(actual) || !plain(wanted) ||
-      !validCapabilityFlags(actual) || !validCapabilityFlags(wanted)) return false;
+  if (depth > MAX_DEPTH || !validTypeObject(actual) || !validTypeObject(wanted)) return false;
   if (actual.actor === true || wanted.actor === true || wanted.mutable === true || wanted.readOnly !== true) return false;
   if (wanted.kind === 'tuple') return actual.kind === 'tuple' && assign(actual, wanted, depth);
   if (!SHAPES.has(wanted.kind) || !SHAPES.has(actual.kind) && actual.kind !== 'entry') return false;
