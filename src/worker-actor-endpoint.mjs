@@ -1,3 +1,4 @@
+import {copyOwnedValue} from './worker-actor-copy.mjs';
 // Trusted host reference adapter, NOT general Oreslang actor lowering or a sandbox.
 // One serial execution lane per Worker. Reply requires respond() then done().
 const PROTOCOL = 'ores.js.worker.v1';
@@ -19,7 +20,7 @@ export function installWorkerActorEndpoint({subscribe, post}) {
             if (completed || claimed || !frame.reply) throw new Error('reply unavailable or already claimed');
             // Snapshot the owned response when claimed; later handler
             // mutation must not change what the requester receives.
-            response = structuredClone(value);
+            response = copyOwnedValue(value);
             claimed = true;
           },
           done() {
