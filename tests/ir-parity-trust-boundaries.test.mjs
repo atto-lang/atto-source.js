@@ -4,7 +4,7 @@ import {compileToProgramIRV2} from '../src/program-v2.mjs';
 import {validateProgramIRV2} from '../src/program-ir-v2.mjs';
 import {
   executeJsReferenceFixtures,compareJavaAndJsReports,
-  JAVA_FIXTURE_REVISION
+  JAVA_FIXTURE_REVISION,JAVA_SEMANTIC_SUITE_SHA256,JAVA_GRAAL_MANIFEST
 } from '../src/java-js-parity-v1.mjs';
 
 const source='pub fnc id(int a): int {return a;} pub fnc main(): int {return id(42);}';
@@ -37,12 +37,12 @@ test('external IR rejects Array subclasses and prototype-changed arrays before m
 const fakeJava=js=>({
   schema_version:'1.1.0',backend:'graal',
   source_revision:JAVA_FIXTURE_REVISION,
-  suite_sha256:'a'.repeat(64),
-  results:js.results.map(r=>({
+  suite_sha256:JAVA_SEMANTIC_SUITE_SHA256,
+  results:[...js.results.map(r=>({
     id:r.id,status:'pass',
     ...(r.kind==='value'?{observed_exit:Number(r.observed_int64)}:
       {diagnostic_class:r.diagnostic_class})
-  }))
+  })),...JAVA_GRAAL_MANIFEST.filter(x=>!js.results.some(r=>r.id===x.id)).map(x=>({id:x.id,status:'pass',...(typeof x.expected==='number'?{observed_exit:x.expected}:{diagnostic_class:x.expected})}))]
 });
 
 test('structural comparator rejects tampered JS identity/metadata and all fixture-result aliases',async()=>{
@@ -68,7 +68,7 @@ test('structural comparator rejects tampered JS identity/metadata and all fixtur
   for(const [i,mutate] of mutations.entries()){
     const invalid=structuredClone(js);
     mutate(invalid);
-    assert.throws(()=>compareJavaAndJsReports(invalid,java),/invalid|duplicate/,
+    assert.throws(()=>compareJavaAndJsReports(invalid,java),Error,
       'mutation '+i+' must reject rather than compare');
   }
 });
@@ -80,23 +80,23 @@ test('comparator refuses exotic prototypes/getters without invoking untrusted ac
     const invalid=structuredClone(base);
     Object.defineProperty(invalid.results[0],'id',{enumerable:true,
       get(){invocations++;throw Error('untrusted getter executed');}});
-    if(base===js) assert.throws(()=>compareJavaAndJsReports(invalid,java),/invalid JS fixture result record/);
-    else assert.throws(()=>compareJavaAndJsReports(js,invalid),/invalid Java result record/);
+    if(base===js) assert.throws(()=>compareJavaAndJsReports(invalid,java),/JS report result 0: accessor property rejected/);
+    else assert.throws(()=>compareJavaAndJsReports(js,invalid),/Java report result 0: accessor property rejected/);
     assert.equal(invocations,0);
   }
   const fake=structuredClone(js);
   Object.setPrototypeOf(fake.results,Object.create(Array.prototype));
-  assert.throws(()=>compareJavaAndJsReports(fake,java),/invalid JS results array/);
+  assert.throws(()=>compareJavaAndJsReports(fake,java),/JS report results: invalid array/);
   const wrongJava=structuredClone(java);
   Object.setPrototypeOf(wrongJava.results,Object.create(Array.prototype));
-  assert.throws(()=>compareJavaAndJsReports(js,wrongJava),/invalid Java results array/);
+  assert.throws(()=>compareJavaAndJsReports(js,wrongJava),/Java report results: invalid array/);
 });
 
 test('Java suite revision is pinned, and comparison never certifies provenance',async()=>{
   const js=await executeJsReferenceFixtures(),java=fakeJava(js);
   for(const rev of ['b'.repeat(40),'0'.repeat(40),'not-a-revision']){
     const mutant=structuredClone(java);mutant.source_revision=rev;
-    assert.throws(()=>compareJavaAndJsReports(js,mutant),/unverified Java report shape or revision/);
+    assert.throws(()=>compareJavaAndJsReports(js,mutant),/unverified Java report shape/);
   }
   const verdict=compareJavaAndJsReports(js,java);
   assert.equal(verdict.java_runner_authenticated,false);

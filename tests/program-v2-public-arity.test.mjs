@@ -54,7 +54,12 @@ test('exported checked i64 arithmetic rejects overflow instead of silently wrapp
  ].join('\n');
  const ns=await import('data:text/javascript,'+encodeURIComponent(compileProgramV2(checked)));
  for(const name of ['add','subtract','multiply','negate']){
-  assert.throws(()=>ns[name](),/signed i64 BigInt required/,name);
+  assert.throws(
+   ()=>ns[name](),
+   (error)=>error instanceof RangeError &&
+     error.message==='ORES_I64_OVERFLOW: checked signed 64-bit overflow',
+   name
+  );
  }
  assert.equal((await import('data:text/javascript,'+encodeURIComponent(
   compileProgramV2('pub fnc safe(): int {return 9223372036854775807-1;}')))).safe(),

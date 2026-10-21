@@ -36,11 +36,11 @@ test('checked i64 ops reject actual overflows including cancelled intermediate o
   assert.equal(ns.math.sub(MIN,0n),MIN);
   assert.equal(ns.math.mul(-1n,MAX),-MAX);
   assert.equal(ns.math.rem(MIN,-1n),0n);
-  assert.throws(()=>ns.math.add(MAX,1n),/signed i64 BigInt required/);
-  assert.throws(()=>ns.math.sub(MIN,1n),/signed i64 BigInt required/);
-  assert.throws(()=>ns.math.mul(MAX,2n),/signed i64 BigInt required/);
-  assert.throws(()=>ns.math.neg(MIN),/signed i64 BigInt required/);
-  assert.throws(()=>ns.math.cancel(MAX,1n),/signed i64 BigInt required/);
+  assert.throws(()=>ns.math.add(MAX,1n),/ORES_I64_OVERFLOW/);
+  assert.throws(()=>ns.math.sub(MIN,1n),/ORES_I64_OVERFLOW/);
+  assert.throws(()=>ns.math.mul(MAX,2n),/ORES_I64_OVERFLOW/);
+  assert.throws(()=>ns.math.neg(MIN),/ORES_I64_OVERFLOW/);
+  assert.throws(()=>ns.math.cancel(MAX,1n),/ORES_I64_OVERFLOW/);
   assert.throws(()=>ns.math.rem(1n,0n),RangeError);
   assert.throws(()=>ns.math.add(Number.MAX_SAFE_INTEGER,1n),/signed i64 BigInt required/);
 });
@@ -62,7 +62,7 @@ test('deterministic i64 operation oracle rejects rather than wraps 1200 random v
     for(const op of ops){
       const result=op.expected(a,b);
       if(within(result)) assert.equal(ns.math[op.name](a,b),result);
-      else assert.throws(()=>ns.math[op.name](a,b),/signed i64 BigInt required/);
+      else assert.throws(()=>ns.math[op.name](a,b),/ORES_I64_OVERFLOW/);
       assertions++;
     }
   }

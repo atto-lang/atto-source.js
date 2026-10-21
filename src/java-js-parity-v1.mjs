@@ -3,12 +3,35 @@
  * A verified JS checkout is not evidence of Java/Graal execution.
  */
 import {createHash} from 'node:crypto';
+import {parseStrictJsonReport} from './parity-json-strict.mjs';
 import {compileProgramV2, ProgramCompileError} from './program-v2.mjs';
 import {PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 
 export const JAVA_FIXTURE_REVISION='e719222e2c4c8ff8eff5d3986ad1885bfc02bc7a';
 export const FIXTURE_AUTHORITY='ores-truffle-oreslang/oreslang-source.java';
 export const JS_PARITY_REPORT_FORMAT='oreslang-js-reference-fixtures-v1';
+
+// Independently reconstructed from the 19 files read by Java's
+// contracts/v1/semantics/run.py validate_suite() at JAVA_FIXTURE_REVISION.
+// Both JSON Schema and TypeSpec are included. Never accept arbitrary
+// well-formed 64-digit "suite digests" as evidence of matching sources.
+export const JAVA_SEMANTIC_SUITE_SHA256='6f1b0303b609a400d3ea1b6809a95bcf0d43061bacb4db2c1b8a9233f4528ec1';
+
+// The Java v1.1 manifest has fifteen required Graal cases. The JS backend
+// executes only a pinned subset of ten of these (see REFERENCE_CASES).
+// The remaining Java-only results cannot be promoted as JS parity evidence.
+export const JAVA_GRAAL_MANIFEST=Object.freeze([
+  ['native.add',42],['native.precedence',40],['native.forward',42],
+  ['native.owned-identifier',42],['native.underscores',42],['native.unary',42],
+  ['native.defer-lifo-cfg',111],['native.defer-field-return',42],
+  ['native.try-finally-return-snapshot',42],
+  ['diagnostic.unknown','unknown_name'],['diagnostic.arity','call_arity'],
+  ['diagnostic.duplicate','duplicate_declaration'],
+  ['diagnostic.overflow','integer_overflow'],
+  ['diagnostic.comment','unterminated_comment'],
+  ['ownership.mutable-borrow','ownership_violation']
+].map(([id,expected])=>Object.freeze({id,expected})));
+
 
 export const REFERENCE_CASES=Object.freeze([
   {id:'native.add',kind:'value',expected:'42',blob:'015f8b0f79aafa796a148d2adeff1574e8d6c491',
@@ -114,86 +137,223 @@ export async function executeJsReferenceFixtures() {
  * This is STRUCTURAL comparison only; it never attests Java checkout/build,
  * signature, runner provenance, guest execution, or language-wide parity.
  */
-function dataRecord(v,where){
-  if(v===null||typeof v!=='object'||Array.isArray(v)||
-     (Object.getPrototypeOf(v)!==Object.prototype&&Object.getPrototypeOf(v)!==null))
-    throw Error('invalid '+where+' record');
-  for(const key of Reflect.ownKeys(v)) {
-    if(typeof key!=='string'||!Object.hasOwn(Object.getOwnPropertyDescriptor(v,key),'value'))
-      throw Error('invalid '+where+' record');
+
+// External report objects must be inert JSON-like values, not objects with
+// getters, inherited properties, sparse arrays, symbols or unexpected fields.
+// This prevents the comparator itself from invoking ordinary accessors.
+// JavaScript proxies remain a host-trust boundary: use parsed JSON for
+// independently received reports, never arbitrary foreign live objects.
+const JS_REPORT_FIELDS=[
+  'format','backend','fixture_authority','fixture_authority_revision',
+  'fixture_suite_sha256','integer_model','execution',
+  'provenance_authenticated','java_execution_verified','results',
+  'checkout_commit_sha','checkout_tree_sha','node_version',
+  'checked_fixture_count','github_run_authenticated',
+  'java_js_semantic_parity_certified'
+];
+const JS_REQUIRED=JS_REPORT_FIELDS.slice(0,10);
+const JAVA_REPORT_FIELDS=['schema_version','backend','suite_sha256','source_revision','results'];
+const JS_RESULT_FIELDS=['id','fixture_git_blob','kind','status','observed_int64','diagnostic_class'];
+const JAVA_RESULT_FIELDS=['id','status','observed_exit','diagnostic_class','detail'];
+function inertRecord(value,allowed,required,where) {
+  if(value===null||typeof value!=='object'||Array.isArray(value))
+    throw Error(where+': expected plain record');
+  const proto=Object.getPrototypeOf(value);
+  if(proto!==Object.prototype&&proto!==null)
+    throw Error(where+': non-plain record');
+  const keys=Reflect.ownKeys(value);
+  if(keys.length<required.length||keys.length>allowed.length||
+     keys.some(key=>typeof key!=='string'||!allowed.includes(key)))
+    throw Error(where+': unexpected/missing fields');
+  const copy=Object.create(null);
+  for(const key of keys) {
+    const descriptor=Object.getOwnPropertyDescriptor(value,key);
+    if(!descriptor||!Object.hasOwn(descriptor,'value'))
+      throw Error(where+': accessor property rejected');
+    copy[key]=descriptor.value;
   }
-  return v;
+  for(const key of required)if(!Object.hasOwn(copy,key))
+    throw Error(where+': required field missing');
+  return copy;
 }
-function dataArray(v,where,max){
-  if(!Array.isArray(v)||Object.getPrototypeOf(v)!==Array.prototype||v.length>max)
-    throw Error('invalid '+where+' array');
-  const keys=Reflect.ownKeys(v);
-  if(keys.length!==v.length+1)throw Error('invalid '+where+' array');
-  for(let i=0;i<v.length;i++)
-    if(!Object.hasOwn(Object.getOwnPropertyDescriptor(v,String(i))??{},'value'))
-      throw Error('invalid '+where+' array');
-  return v;
+function inertArray(value,max,where) {
+  if(!Array.isArray(value)||Object.getPrototypeOf(value)!==Array.prototype||
+     value.length>max)throw Error(where+': invalid array');
+  const keys=Reflect.ownKeys(value);
+  if(keys.length!==value.length+1||
+     keys.some(key=>key!=='length'&&
+       (typeof key!=='string'||!/^(0|[1-9][0-9]*)$/.test(key)||
+        Number(key)>=value.length)))
+    throw Error(where+': sparse, accessor or extended array');
+  const copy=[];
+  for(let i=0;i<value.length;i++) {
+    const descriptor=Object.getOwnPropertyDescriptor(value,i);
+    if(!descriptor||!Object.hasOwn(descriptor,'value'))
+      throw Error(where+': sparse or accessor element');
+    copy.push(descriptor.value);
+  }
+  return copy;
+}
+function inertReport(value,backend) {
+  const java=backend==='graal';
+  const where=java?'Java report':'JS report';
+  const root=inertRecord(value,
+    java?JAVA_REPORT_FIELDS:JS_REPORT_FIELDS,
+    java?JAVA_REPORT_FIELDS:JS_REQUIRED,where);
+  const records=inertArray(root.results,java?256:REFERENCE_CASES.length,where+' results');
+  root.results=records.map((v,i)=>{
+    const fieldset=java?JAVA_RESULT_FIELDS:JS_RESULT_FIELDS;
+    const required=java?['id','status']:['id','fixture_git_blob','kind','status'];
+    const record=inertRecord(v,fieldset,required,where+' result '+i);
+    for(const [key,val] of Object.entries(record)) {
+      if(typeof val!=='string'&&typeof val!=='number')
+        throw Error(where+' result '+i+': non-JSON scalar '+key);
+      if(typeof val==='string'&&val.length>700)
+        throw Error(where+' result '+i+': oversized field '+key);
+      if(typeof val==='number'&&(!Number.isSafeInteger(val)||Object.is(val,-0)))
+        throw Error(where+' result '+i+': noncanonical number '+key);
+    }
+    // A "pass" must carry exactly the observation appropriate for its
+    // declared case. Reject conflicting extra outcomes rather than ignoring
+    // them (including fake success records with an error in `detail`).
+    const hasValue=Object.hasOwn(record,java?'observed_exit':'observed_int64');
+    const hasDiagnostic=Object.hasOwn(record,'diagnostic_class');
+    if(record.status==='pass') {
+      if(java) {
+        if(hasValue===hasDiagnostic)
+          throw Error(where+' result '+i+': contradictory pass observations');
+        if(Object.hasOwn(record,'detail')&&record.detail!=='')
+          throw Error(where+' result '+i+': successful case contains error detail');
+      } else if(record.kind==='value') {
+        if(!hasValue||hasDiagnostic)
+          throw Error(where+' result '+i+': contradictory value observation');
+      } else if(record.kind==='diagnostic') {
+        if(hasValue||!hasDiagnostic)
+          throw Error(where+' result '+i+': contradictory diagnostic observation');
+      } else {
+        throw Error(where+' result '+i+': unknown result kind');
+      }
+    }
+    return record;
+  });
+  for(const [key,val] of Object.entries(root)) {
+    if(key==='results')continue;
+    if(!['string','boolean','number'].includes(typeof val)||
+       typeof val==='string'&&val.length>128||
+       typeof val==='number'&&(!Number.isSafeInteger(val)||Object.is(val,-0)))
+      throw Error(where+': invalid metadata '+key);
+  }
+  if(!java) {
+    for(const flag of ['github_run_authenticated','java_js_semantic_parity_certified'])
+      if(Object.hasOwn(root,flag)&&root[flag]!==false)
+        throw Error('invalid or contradictory JS authentication flag');
+    if(Object.hasOwn(root,'checked_fixture_count')&&
+       root.checked_fixture_count!==REFERENCE_CASES.length)
+      throw Error('invalid JS fixture count');
+    for(const field of ['checkout_commit_sha','checkout_tree_sha'])
+      if(Object.hasOwn(root,field)&&!/^[a-f0-9]{40}$/.test(root[field]))
+        throw Error('invalid JS checkout identity');
+  }
+  if(!java) {
+    // Either a raw in-process, explicitly non-attesting fixture report or
+    // the COMPLETE locally observed checkout/Node metadata set. Partial
+    // metadata can be inadvertently promoted by a downstream evidence reader.
+    const provenanceFields=[
+      'checkout_commit_sha','checkout_tree_sha','node_version',
+      'checked_fixture_count','github_run_authenticated',
+      'java_js_semantic_parity_certified'
+    ];
+    const present=provenanceFields.filter(k=>Object.hasOwn(root,k));
+    // Preserve an actionable diagnostic for malformed supplied Node versions
+    // even when the metadata bundle is otherwise incomplete.
+    if(Object.hasOwn(root,'node_version')) {
+      // This remains self-reported, never a source/run attestation.
+      const match=/^v([1-9][0-9]*)\.([0-9]+)\.([0-9]+)(?:[-+][A-Za-z0-9.-]+)?$/
+        .exec(root.node_version);
+      if(!match||!Number.isSafeInteger(Number(match[1]))||
+         Number(match[1])<22)
+        throw Error('invalid Node runtime version (requires Node 22+)');
+    }
+    if(present.length!==0&&present.length!==provenanceFields.length)
+      throw Error('incomplete JS checkout identity or execution metadata');
+  }
+  return root;
 }
 
 /**
- * Compare Java's existing semantic-report v1.1 shape to JS observations.
- * Strict on observed subsets and identity, but deliberately NON-ATTESTING.
- * No caller-supplied JSON can verify its own provenance.
+ * Preferred external ingress. Parse JSON with bounded size, nesting,
+ * complexity and unique-member admission. This is validation, not proof of
+ * the origin or truthfulness of a report supplied by another party.
  */
+export function compareJavaAndJsJsonReports(jsJson,graalJson) {
+  return compareJavaAndJsReports(
+    parseStrictJsonReport(jsJson,65536,'JS'),
+    parseStrictJsonReport(graalJson,262144,'Java')
+  );
+}
+
 export function compareJavaAndJsReports(js,graal) {
-  dataRecord(js,'JS report');
-  if(js.format!==JS_PARITY_REPORT_FORMAT||js.backend!=='js'||
+  js=inertReport(js,'js');
+  graal=inertReport(graal,'graal');
+  // No claim of provenance: this is a deliberately strict, structural
+  // comparison over JSON-shaped reports. Authenticate CI separately.
+  if(!js||js.format!==JS_PARITY_REPORT_FORMAT||js.backend!=='js'||
      js.fixture_authority!==FIXTURE_AUTHORITY||
      js.fixture_authority_revision!==JAVA_FIXTURE_REVISION||
+     js.fixture_suite_sha256!==fixtureSuiteSha256()||
      js.integer_model!==PROGRAM_IR_INT_MODEL||
      js.execution!=='real-node-guest'||
-     js.provenance_authenticated!==false||js.java_execution_verified!==false||
-     js.fixture_suite_sha256!==fixtureSuiteSha256())
+     js.provenance_authenticated!==false||
+     js.java_execution_verified!==false||
+     !Array.isArray(js.results)||js.results.length!==REFERENCE_CASES.length)
     throw Error('invalid or incomplete JS fixture report');
-  dataArray(js.results,'JS results',10);
-  if(js.results.length!==REFERENCE_CASES.length)
-    throw Error('invalid or incomplete JS fixture report');
-  const local=new Map();
-  for(const r of js.results){
-    dataRecord(r,'JS fixture result');
-    if(typeof r.id!=='string'||local.has(r.id))
-      throw Error('duplicate/bad JS result');
-    local.set(r.id,r);
-  }
-  for(const c of REFERENCE_CASES){
-    const r=local.get(c.id);
-    if(!r||r.status!=='pass'||r.kind!==c.kind||r.fixture_git_blob!==c.blob||
-       (c.kind==='value' ? r.observed_int64!==c.expected ||
-          Object.hasOwn(r,'diagnostic_class') :
-          r.diagnostic_class!==c.expected || Object.hasOwn(r,'observed_int64')))
-      throw Error('invalid or incomplete JS fixture report: '+c.id);
-  }
 
-  dataRecord(graal,'Java report');
-  if(graal.schema_version!=='1.1.0'||graal.backend!=='graal'||
-     !/^[a-f0-9]{64}$/.test(graal.suite_sha256??'')||
-     graal.source_revision!==JAVA_FIXTURE_REVISION)
-    throw Error('unverified Java report shape or revision');
-  dataArray(graal.results,'Java results',512);
+  const jsLookup=new Map();
+  for(const record of js.results) {
+    if(!record||typeof record!=='object'||Array.isArray(record)||
+       typeof record.id!=='string'||jsLookup.has(record.id))
+      throw Error('duplicate/bad JS result');
+    jsLookup.set(record.id,record);
+  }
+  if(!graal||graal.schema_version!=='1.1.0'||graal.backend!=='graal'||
+     graal.suite_sha256!==JAVA_SEMANTIC_SUITE_SHA256||
+     graal.source_revision!==JAVA_FIXTURE_REVISION||
+     !Array.isArray(graal.results))throw Error('unverified Java report shape');
   const lookup=new Map();
   for(const r of graal.results){
-    dataRecord(r,'Java result');
     if(typeof r.id!=='string'||lookup.has(r.id))
       throw Error('duplicate/bad Java result');
     lookup.set(r.id,r);
   }
+  if(lookup.size!==JAVA_GRAAL_MANIFEST.length)
+    throw Error('missing/pending/failed required Java suite inventory');
+  for(const {id,expected} of JAVA_GRAAL_MANIFEST) {
+    const observation=lookup.get(id);
+    if(!observation||observation.status!=='pass')
+      throw Error('missing/pending/failed Java suite case '+id);
+    if(typeof expected==='number') {
+      if(observation.observed_exit!==expected)
+        throw Error('backend value divergence: '+id);
+    } else if(observation.diagnostic_class!==expected)
+      throw Error('diagnostic-class divergence: '+id);
+  }
   const checked=[];
-  for(const c of REFERENCE_CASES){
-    const ja=lookup.get(c.id),jr=local.get(c.id);
-    if(!ja||ja.status!=='pass')
-      throw Error('missing/pending/failed required reference case: '+c.id);
-    if(c.kind==='value'){
-      if(!Number.isSafeInteger(ja.observed_exit)||
-         ja.observed_exit!==Number(jr.observed_int64))
-        throw Error('backend value divergence: '+c.id);
-    } else if(ja.diagnostic_class!==c.expected)
-      throw Error('diagnostic-class divergence: '+c.id);
-    checked.push(c.id);
+  for(const caseInfo of REFERENCE_CASES) {
+    const ja=lookup.get(caseInfo.id), jsr=jsLookup.get(caseInfo.id);
+    if(!ja||ja.status!=='pass'||!jsr||jsr.status!=='pass'||
+       jsr.kind!==caseInfo.kind||jsr.fixture_git_blob!==caseInfo.blob)
+      throw Error('missing/pending/failed required reference case: '+caseInfo.id);
+    if(caseInfo.kind==='value') {
+      if(typeof jsr.observed_int64!=='string'||
+         !/^(0|-?[1-9][0-9]*)$/.test(jsr.observed_int64)||
+         !Number.isSafeInteger(ja.observed_exit)||
+         ja.observed_exit!==Number(jsr.observed_int64)||
+         jsr.observed_int64!==caseInfo.expected)
+        throw Error('backend value divergence: '+caseInfo.id);
+    } else if(ja.diagnostic_class!==caseInfo.expected||
+              jsr.diagnostic_class!==caseInfo.expected)
+      throw Error('diagnostic-class divergence: '+caseInfo.id);
+    checked.push(caseInfo.id);
   }
   return {
     structural_result:'MATCHING_FIXTURE_RESULTS_ONLY',

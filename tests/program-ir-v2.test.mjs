@@ -103,7 +103,7 @@ test('bounded checked-int property vectors exercise validated ESM, not only sour
   if(expected>=-(1n<<63n) && expected<=(1n<<63n)-1n)
     assert.equal(ns.math.add(a,b),expected);
   else
-    assert.throws(()=>ns.math.add(a,b),/signed i64 BigInt required/);
+    assert.throws(()=>ns.math.add(a,b),/ORES_I64_OVERFLOW/);
  }
 });
 

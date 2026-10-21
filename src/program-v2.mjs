@@ -16,8 +16,50 @@ export class ProgramCompileError extends Error {
 }
 const fail = (message, loc) => {throw new ProgramCompileError(message, loc);};
 
+/**
+ * Align source-profile negotiation with Java CheckedI64SourceHeader.
+ * Provisional JS arithmetic stays checked for unmarked source too, but a
+ * malformed or displaced explicit opt-in must never be silently ignored.
+ * Only actual line-comment tokens count; block/quoted lookalikes do not.
+ */
+function requireWellFormedCheckedI64Header(source) {
+  const directive='// oreslang:checked-i64-v1\n';
+  const prefix='oreslang:checked-i64';
+  const enabled=source.startsWith(directive);
+  let depth=0,quote=null;
+  for(let i=0;i<source.length;){
+    const ch=source[i], next=source[i+1];
+    if(quote!==null) {
+      if(ch==='\\'&&i+1<source.length){i+=2;continue;}
+      if(ch===quote)quote=null;
+      i++;
+      continue;
+    }
+    if(depth!==0) {
+      if(ch==='/'&&next==='*'){depth++;i+=2;continue;}
+      if(ch==='*'&&next==='/'){depth--;i+=2;continue;}
+      i++;
+      continue;
+    }
+    if(ch==='"'||ch==="'"){quote=ch;i++;continue;}
+    if(ch==='/'&&next==='*'){depth=1;i+=2;continue;}
+    if(ch==='/'&&next==='/'){
+      const end=source.indexOf('\n',i);
+      const stop=end<0?source.length:end;
+      let marker=i+2;
+      while(marker<stop&&' \t\r\v\f'.includes(source[marker]))marker++;
+      if(source.startsWith(prefix,marker)&&(!enabled||i!==0))
+        fail('checked-i64-v1: malformed, duplicated, displaced or unsupported directive');
+      i=end<0?stop:end+1;
+      continue;
+    }
+    i++;
+  }
+  return enabled;
+}
 function tokenize(source) {
   if (typeof source !== 'string' || new TextEncoder().encode(source).length > MAX_BYTES) fail('oversized or invalid source');
+  requireWellFormedCheckedI64Header(source);
   const result = [];
   let pos = 0, line = 1, col = 1;
   function advance() {
@@ -291,7 +333,11 @@ function resolveProgram(parsed) {
 function emitProgram(program) {
   const out=[
     '// experimental Oreslang program-v2, provisional signed-64 integer model',
-    'function _check(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang signed i64 BigInt required");return v;}'
+    'function _check(v){if(typeof v!=="bigint")throw new TypeError("Oreslang signed i64 BigInt required");if(v<-(1n<<63n)||v>(1n<<63n)-1n)throw new RangeError("ORES_I64_OVERFLOW: checked signed 64-bit overflow");return v;}',
+    // Do not expose JS engine-specific "Division by zero" RangeError text as
+    // an unclassified Oreslang guest failure. This is a provisional host-side
+    // code, NOT the portable guest Error wire ABI or actor CONTROL signal.
+    'function _rem(a,b){_check(a);_check(b);if(b===0n)throw new RangeError("ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit remainder by zero");return _check(a%b);}'
   ];
   function emitExpr(expr,depth=0) {
     if(depth > MAX_DEPTH) fail('codegen depth exceeded');
@@ -301,7 +347,9 @@ function emitProgram(program) {
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
-      case 'binary':return '_check(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
+      case 'binary':
+        if(expr.op==='%')return '_rem(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
+        return '_check(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
       case 'call':return '_f'+expr.target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
       case 'match': {
         // _subject is evaluated exactly once. A branch returns immediately,
