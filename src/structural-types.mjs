@@ -123,7 +123,8 @@ function methodCompatible(actual, contract) {
   for (const p of [...actual.params, ...contract.params])
     if (!plain(p) || !typedesc(p.type)) return false;
   if (!plain(actual) || !plain(contract) || !name(actual.name) || actual.name !== contract.name ||
-      actual.public !== true || actual.static === true || actual.abstract === true ||
+      actual.public !== true || contract.public !== true ||
+      actual.static === true || actual.abstract === true ||
       (actual.async === true) !== (contract.async === true)) return false;
   const ag = actual.generics ?? [], bg = contract.generics ?? [];
   if (ag.length !== bg.length || actual.params.length !== contract.params.length) return false;
