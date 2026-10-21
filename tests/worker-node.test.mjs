@@ -61,6 +61,18 @@ test('Node worker rejects non-file source and oversized mailbox configuration',(
   assert.throws(()=>spawnNodeActor({moduleUrl,maxPending:0}),/invalid mailbox limit/);
 });
 
+test('Node worker fails closed on CPU/GPU placement requests',()=>{
+  assert.throws(
+    ()=>spawnNodeActor({moduleUrl,placement:{cpuAffinity:'PREFER_SAME_CORE'}}),
+    /cannot guarantee CPU\/GPU placement: placement/);
+  assert.throws(
+    ()=>spawnNodeActor({moduleUrl,cpuAffinity:'PREFER_SAME_CORE'}),
+    /cannot guarantee CPU\/GPU placement: cpuAffinity/);
+  assert.throws(
+    ()=>spawnNodeActor({moduleUrl,accelerator:'GPU_REQUIRED',gpuDeviceId:'gpu0'}),
+    /cannot guarantee CPU\/GPU placement: accelerator/);
+});
+
 test('Worker actor copy-only admission snapshots and forbids SAB',async()=>{
   const actor=spawnNodeActor({moduleUrl});
   try {
