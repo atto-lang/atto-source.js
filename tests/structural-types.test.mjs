@@ -68,6 +68,32 @@ test('safe failure on untrusted metadata, getters, cycles, arbitrary host object
  assert.equal(canBorrowStructural({kind:'class',fields:[field('__proto__','int')]},expect([])),false);
  assert.equal(canBorrowStructural(new Date(),expect([])),false);
 });
+
+test('accessor-backed nested metadata arrays never execute or establish a proof',()=>{
+ let called=0;
+ const fields=[{name:'id',type:'int',public:true}];
+ Object.defineProperty(fields,'0',{get(){called++;return {name:'id',type:'int',public:true};},enumerable:true});
+ const target=expect([field('id','int')]);
+ assert.equal(canBorrowStructural(shape('record',fields),target),false);
+ const methods=[{name:'echo',params:[],generics:[],result:'int',public:true}];
+ Object.defineProperty(methods,'0',{get(){called++;return {name:'echo',params:[],generics:[],result:'int',public:true};},enumerable:true});
+ assert.equal(canBorrowStructural({kind:'record',fields:[],methods},expect([])),false);
+ const params=[{type:'int'}];
+ Object.defineProperty(params,'0',{get(){called++;return {type:'int'};},enumerable:true});
+ assert.equal(canImplementMethod({name:'echo',params,generics:[],result:'int',public:true},{name:'echo',params:[{type:'int'}],generics:[],result:'int'}),false);
+ assert.equal(called,0);
+});
+test('generic signature proof requires dense ordinary parameter and binder metadata',()=>{
+ const good={name:'echo',params:[{type:{kind:'var',name:'U'}}],generics:['U'],result:{kind:'var',name:'U'},public:true};
+ const expected={...good,generics:['T'],params:[{type:{kind:'var',name:'T'}}],result:{kind:'var',name:'T'}};
+ assert.equal(canImplementMethod(good,expected),true);
+ assert.equal(canImplementMethod({...good,generics:['U','U']},expected),false);
+ const sparse=[,{type:'int'}];
+ assert.equal(canImplementMethod({...good,params:sparse},{...expected,params:[{type:'int'},{type:'int'}]}),false);
+ const weird=Object.setPrototypeOf([...(good.generics)],null);
+ assert.equal(canImplementMethod({...good,generics:weird},expected),false);
+});
+
 test('deterministic 25000 random shape trials preserve readonly/subset property',()=>{
  let seed=0x5eed1234;
  const random=()=>((seed=(Math.imul(seed,1664525)+1013904223)>>>0)>>>8)/16777216;
