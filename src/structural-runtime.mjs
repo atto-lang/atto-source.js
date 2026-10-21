@@ -50,7 +50,7 @@ export function createStructuralDomain() {
     return Object.freeze({name:f.name,type:f.type,public:f.public});
   }
   function defineType(metadata) {
-    exactRecord(metadata,['kind','name','actor','fields','methods'],['kind','fields']);
+    exactRecord(metadata,['kind','name','fields'],['kind','fields']);
     if (!['record','class','struct'].includes(metadata.kind) ||
         (metadata.actor !== undefined && metadata.actor !== false) ||
         (metadata.kind==='record' && metadata.name !== undefined) ||
@@ -87,7 +87,7 @@ export function createStructuralDomain() {
   }
   function compileView(token, expected) {
     const def=types.get(token);
-    exactRecord(expected,['kind','readOnly','fields','methods'],['kind','readOnly','fields']);
+    exactRecord(expected,['kind','readOnly','fields'],['kind','readOnly','fields']);
     if(!def || expected.readOnly !== true ||
        !Array.isArray(expected.fields) || expected.fields.length>128 ||
        (expected.methods !== undefined && !Array.isArray(expected.methods)))
