@@ -159,6 +159,6 @@ class Parser {
 /** Returns a deliberately restricted compiler-produced projection IR. */
 export function parseStructuralProjectionSource(source){return new Parser(tokenize(source)).parse();}
 /** Source -> checked typed IR -> trusted ESM. No JS host-object shape inference. */
-export function compileStructuralProjectionSource(source){
-  return compileStructuralProjectionIR(parseStructuralProjectionSource(source));
+export function compileStructuralProjectionSource(source,{portable=false}={}){
+  return compileStructuralProjectionIR(parseStructuralProjectionSource(source),{portable});
 }
