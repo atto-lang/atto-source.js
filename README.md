@@ -83,6 +83,42 @@ provide an actor security sandbox, lower generic methods/nested aggregates,
 or establish GraalVM/LLVM/Wasm/.NET parity. Node and browser end-to-end
 conformance must be recorded separately from source-free reference tests.
 
+## Bounded structural Oreslang source → ESM (experimental)
+
+Use `--structural-source` to compile **real `.ores` source**, with no
+intermediate user-authored JSON. This separate opt-in dialect parses a tightly
+limited subset of one optional interface/trait, one class with literal
+`int`/`bool`/`string` fields, one scalar-field projection function, and
+one public `main` that calls it. The returned typed IR is validated by the
+same checked projection generator and branded readonly runtime as
+`--structural-ir`.
+
+```ores
+define interface HasId
+  id: int;
+end
+define class Candidate as
+  pub val int id = 42;
+  pub val string extra = "x";
+end
+fnc take(structural HasId value): int { return value.id; }
+pub fnc main(): int { return take(new Candidate()); }
+```
+
+```sh
+node bin/oreslang-jsc.mjs --structural-source --check program.ores
+node bin/oreslang-jsc.mjs --structural-source program.ores --out=/absolute/program.mjs
+```
+
+Anonymous inline `{ id: int }` parameters are readonly structural by default;
+the optional redundant `structural { id: int }` is accepted. Named
+interface/trait parameters require explicit `structural`; nominal-by-default
+remains unchanged. Private fields, type mismatches, invalid i64 literals,
+mutable views, `await`, actors, methods, aggregation, source injection,
+and all unsupported constructs fail closed **before artifact publication**.
+No general Oreslang source/compiler parity, browser worker parity, or security
+sandbox is claimed. The main scalar-v1 and program-v2 CLI modes are unchanged.
+
 ## Security boundary
 
 This is a code generator, **not a sandbox**. An ES module, Node worker thread or Node vm context is not a secure boundary for malicious guests. Only bundle the generated JS as a trusted artifact. This backend currently has no actor runtime, capability enforcement, process isolation, native pointers, async/await, channels, objects, collections, exceptions or host I/O. Do not promote it to an untrusted host.
