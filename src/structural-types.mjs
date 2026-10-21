@@ -113,7 +113,9 @@ function assign(a, b, depth = 0, aBind = [], bBind = []) {
   return true;
 }
 function methodCompatible(actual, contract) {
-  if (!plain(actual) || !plain(contract) ||
+  const methodKeys=['name','params','generics','result','public','static','abstract','async'];
+  if (!exact(actual,methodKeys,['name','params','result','public']) ||
+      !exact(contract,methodKeys,['name','params','result','public']) ||
       !arr(actual.params) || !arr(contract.params) ||
       !arr(actual.generics ?? []) || !arr(contract.generics ?? []) ||
       !(actual.generics ?? []).every(name) || !(contract.generics ?? []).every(name) ||
@@ -121,7 +123,8 @@ function methodCompatible(actual, contract) {
       new Set(contract.generics ?? []).size !== (contract.generics ?? []).length ||
       !typedesc(actual.result) || !typedesc(contract.result)) return false;
   for (const p of [...actual.params, ...contract.params])
-    if (!plain(p) || !typedesc(p.type)) return false;
+    if (!exact(p,['type','mutable'],['type']) || !typedesc(p.type) ||
+        (owns(p,'mutable') && typeof p.mutable !== 'boolean')) return false;
   if (!plain(actual) || !plain(contract) || !name(actual.name) || actual.name !== contract.name ||
       actual.public !== true || contract.public !== true ||
       actual.static === true || actual.abstract === true ||
