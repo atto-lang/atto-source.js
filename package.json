@@ -31,6 +31,7 @@
     "parity:js": "node bin/js-semantic-parity-report.mjs",
     "parity:numeric-js": "node bin/js-numeric-boundary-report.mjs",
     "static-facts:smoke": "node bin/oreslang-jsc.mjs --static-facts tests/fixtures/forward-call.ores",
-    "test:core": "node --test tests/freestanding-core.test.mjs"
+    "test:core": "node --test tests/freestanding-core.test.mjs",
+    "test:core-browser": "node scripts/browser-core-smoke.mjs"
   }
 }
