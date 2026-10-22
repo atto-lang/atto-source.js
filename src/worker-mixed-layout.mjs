@@ -2,6 +2,10 @@ import {MixedLayoutGeometry} from "./mixed-layout-geometry.mjs";
 
 // Worker-private heterogeneous payloads. Neither the backing ArrayBuffer nor
 // a live DataView/TypedArray is ever returned to guest or host callers.
+const nativeInteger = Number.isInteger;
+const nativeFinite = Number.isFinite;
+const NativeArray = Array;
+const arrayPush = Array.prototype.push;
 const NativeBuffer=ArrayBuffer;
 const NativeDataView=DataView;
 const NativeUint8Array=Uint8Array;
@@ -48,7 +52,7 @@ export class WorkerMixedLayout {
     const p=this.address(row,field),at=p.absoluteByteOffset;
     switch(p.type){
       case "u32":case "ref32":
-        if(!Number.isInteger(value)||value<0||value>0xffffffff)
+        if(!nativeInteger(value)||value<0||value>0xffffffff)
           throw new RangeError("u32/ref32 must be an unsigned 32-bit word");
         putU32.call(this.#view,at,value,true);return;
       case "f64":
@@ -64,7 +68,7 @@ export class WorkerMixedLayout {
   // Numeric ECS-style kernel, without intermediate boxed row objects.
   integrate(positionField,velocityField,dt){
     this.#live();
-    if(positionField===velocityField || !Number.isFinite(dt) ||
+    if(positionField===velocityField || !nativeFinite(dt) ||
        this.#geometry.typeOf(positionField)!=="f64" ||
        this.#geometry.typeOf(velocityField)!=="f64")
       throw new RangeError("integrate requires distinct f64 fields and finite dt");
@@ -76,8 +80,8 @@ export class WorkerMixedLayout {
 
   snapshot(field){
     this.#live();
-    const result=[];
-    for(let row=0;row<this.rows;row++)result.push(this.read(row,field));
+    const result=new NativeArray();
+    for(let row=0;row<this.rows;row++)arrayPush.call(result,this.read(row,field));
     return result;
   }
 
