@@ -357,34 +357,68 @@ class Parser {
   }
   matchExpression() {
     const subject=this.expression();
-    this.eat('over'); // compatibility with documented compact match syntax
-    const arms=[], seen=new Set(); let wildcard=false;
-    while(this.peek().value !== 'end' && this.peek().kind !== 'eof') {
-      let isDefault=false, value=null;
-      if(this.eat('else')) isDefault=true;
-      else {
+    this.eat('over');
+    const braced=this.eat('{');
+    const arms=[],seen=new Set();
+    let family=null,wildcard=false;
+    const ended=()=>braced?this.peek().value==='}':this.peek().value==='end';
+    while(!ended()&&this.peek().kind!=='eof') {
+      let tag=null, bind=null, value=null;
+      if(this.eat('else')) {
+        if(family==='adt')fail('ADT match requires exhaustive named variants, not else');
+        family='int';tag='wildcard';
+      } else {
         this.expect('on');
-        if(this.eat('_')) isDefault=true;
-        else value=this.integer(this.eat('-'));
+        const at=this.peek();
+        if(this.eat('_')){
+          if(family==='adt')fail('ADT match forbids wildcard');
+          family='int';tag='wildcard';
+        } else if(['Some','None','Ok','Err'].includes(at.value)){
+          if(family==='int')fail('cannot mix integer and ADT patterns',at);
+          family='adt';tag=this.name();
+          if(tag==='None') {
+            if(this.peek().value==='(')fail('None has no payload',this.peek());
+          } else {
+            this.expect('(');bind=this.name();this.expect(')');
+            if(bind==='_'||['None','Some','Ok','Err'].includes(bind))
+              fail('unsupported ADT payload binding name',at);
+          }
+        } else {
+          if(family==='adt')fail('cannot mix ADT and integer patterns',at);
+          family='int';tag='integer';
+          value=this.integer(this.eat('-'));
+        }
       }
-      if(wildcard) fail('unreachable arm after wildcard',this.peek());
-      if(isDefault) wildcard=true;
-      else {
-        if(seen.has(value)) fail('duplicate scalar pattern');
-        seen.add(value);
-      }
+      if(wildcard)fail('unreachable arm after wildcard',this.peek());
+      if(tag==='wildcard')wildcard=true;
+      const key=tag==='integer'?'int:'+value:tag;
+      if(seen.has(key))fail('duplicate match pattern '+key);
+      seen.add(key);
       this.eat('->');
       this.expect('{');
-      // A match expression yields its arm expression, not a statement return.
-      if(this.peek().value === 'return') fail('return inside expression match is invalid');
+      // Existing Oreslang ADT fixture uses statement-looking return bodies
+      // inside a match expression. Treat that spelling as an expression arm.
+      if(this.peek().value==='return') {
+        if(family!=='adt')fail('return in scalar expression match is unsupported');
+        this.i++;
+      }
       const body=this.expression();
       this.expect(';');this.expect('}');
-      arms.push({value, body});
-      if (arms.length > 256) fail('match arm limit');
+      arms.push({tag,bind,value,body});
+      if(arms.length>256)fail('match arm limit');
     }
-    this.expect('end');
-    if (!wildcard) fail('scalar int match requires exhaustive wildcard/else');
-    return {kind:'match',subject,arms};
+    this.expect(braced?'}':'end');
+    if(family==='adt') {
+      const tags=new Set(arms.map(arm=>arm.tag));
+      const option=tags.has('Some')||tags.has('None');
+      const required=option?['Some','None']:['Ok','Err'];
+      if(arms.length!==2||required.some(tag=>!tags.has(tag)))
+        fail('non-exhaustive or mixed ADT variants; expected '+required.join('/') );
+      return {kind:'adtMatch',adt:option?'option<int>':'result<int,int>',
+        subject,arms:arms.map(arm=>({tag:arm.tag,bind:arm.bind,body:arm.body}))};
+    }
+    if(!wildcard)fail('scalar int match requires exhaustive wildcard/else');
+    return {kind:'match',subject,arms:arms.map(arm=>({value:arm.value,body:arm.body}))};
   }
 }
 function resolveProgram(parsed) {
