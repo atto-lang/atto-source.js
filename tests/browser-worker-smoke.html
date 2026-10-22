@@ -49,6 +49,40 @@ try {
   assert(browserPosition[1]===11,'browser Worker dense layout kernel failed');
   assert(await layoutActor.request({type:'geometry',row:1,field:1})===24,
     'browser Worker SoAoS physical geometry drift');
+  // The same mixed-width schema must execute inside a real browser Worker,
+  // rather than merely produce geometry in the host Node test process.
+  const mixedActor=spawnBrowserActor({
+    moduleUrl:new URL('./fixtures/worker-mixed-handler.mjs',import.meta.url).href
+  });
+  actors.push(mixedActor);
+  await mixedActor.ready;
+  const mixedSchema=[
+    {name:'id',type:'u32'}, {name:'x',type:'f64'},
+    {name:'flag',type:'bool'}, {name:'next',type:'ref32'}
+  ];
+  const mixedInfo=await mixedActor.request({
+    type:'init',options:{rows:3,layout:'soaos',fields:mixedSchema,
+      groups:[['id','flag'],['x','next']]}
+  });
+  assert(mixedInfo.bytes===72,'mixed browser Worker SoAoS physical byte extent');
+  await mixedActor.request({type:'write',row:0,field:'id',value:4294967295});
+  await mixedActor.request({type:'write',row:1,field:'x',value:-0});
+  await mixedActor.request({type:'write',row:2,field:'flag',value:true});
+  await mixedActor.request({type:'write',row:2,field:'next',value:17});
+  assert(await mixedActor.request({type:'read',row:0,field:'id'})===4294967295,
+    'mixed browser Worker unsigned scalar');
+  assert(Object.is(await mixedActor.request({type:'read',row:1,field:'x'}),-0),
+    'mixed browser Worker preserves signed zero');
+  assert(await mixedActor.request({type:'read',row:2,field:'flag'})===true,
+    'mixed browser Worker canonical boolean');
+  assert(await mixedActor.request({type:'read',row:2,field:'next'})===17,
+    'mixed browser Worker encoded reference word');
+  await mixedActor.request({type:'retire'});
+  let staleDenied=false;
+  try {await mixedActor.request({type:'read',row:0,field:'id'});}
+  catch(error) {staleDenied=/retired/.test(String(error));}
+  assert(staleDenied,'retired mixed browser Worker should not expose memory');
+
   result.textContent='PASS_BROWSER_ESM_WORKER';
 } catch(error) {
   result.textContent='FAIL_BROWSER_ESM_WORKER: '+String(error);
