@@ -30,3 +30,4 @@ jobs:
         env:
           CHROME_BIN: google-chrome
         run: npm run test:core-browser
+

@@ -85,3 +85,4 @@ try {
   if(!exited)await Promise.race([new Promise(r=>chrome.once('exit',r)),sleep(1500)]);
   await rm(profile,{recursive:true,force:true,maxRetries:6,retryDelay:150}).catch(()=>{});
 }
+

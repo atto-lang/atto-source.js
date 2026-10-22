@@ -59,6 +59,19 @@ test('fail-closed: unsupported language features and syntax',()=>{
  ];
  for (const source of invalid) assert.throws(()=>compile(source),/error:/,source);
 });
+test('pointer-style source syntax and legacy mutable borrow fail closed',()=>{
+ assert.throws(()=>compile('pub fnc main(): int { return rt ref value; }'),/pointer-style runtime operation/);
+ assert.throws(()=>compile('pub fnc main(): int { return rt deref value; }'),/pointer-style runtime operation/);
+ assert.throws(()=>compile('pub fnc main(): int { return rt borrow mut value; }'),/legacy 'rt borrow mut'/);
+ assert.throws(()=>compile('pub fnc main(): int { return rt mut borrow value; }'),/runtime ownership operation requires typed lowering/);
+ for(const source of [
+  'pub fnc main(): int { return &value; }',
+  'pub fnc main(): int { return &mut value; }',
+  'pub fnc main(): int { return *value; }',
+  'pub fnc main(): Pointer<int> { return value; }'
+ ]) assert.throws(()=>compile(source),/error:/,source);
+});
+
 test('source cannot inject arbitrary JS or host API access',async()=>{
  const value=await moduleFrom('pub fnc constructor(): int { return 7; }');
  assert.equal(value.constructor(),7n);

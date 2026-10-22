@@ -73,3 +73,4 @@ The experimental IR v2 adds optional, **paired** `paramTypes` / `returnType` fie
 6. A JS `strict-aot`/hard-real-time profile must still fail closed unless explicitly admitted; transpiled ESM and managed GC are not proofs of those constraints.
 
 The schema now admits `compare` and `if` expression nodes as additive experimental program IR v2 variants, with strict expected boolean/int checking in the validator. Other consumers must negotiate the new variants; the IR remains backend-local and is not the shared authoritative typed IR.
+

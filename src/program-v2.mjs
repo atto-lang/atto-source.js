@@ -540,3 +540,4 @@ export function checkProgramV2(source) {
   compileProgramV2(source);
   return true;
 }
+

@@ -25,3 +25,4 @@ export function checkFreestandingCore(source) {
   compileFreestandingCore(source);
   return true;
 }
+
