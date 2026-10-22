@@ -132,21 +132,29 @@ export function validateProgramIRV2(input) {
         return {kind:'param',index:expr.index};
       case 'neg':
         record(expr,['kind','inner'],'neg');
-        return {kind:'neg',inner:node(expr.inner,owner,depth+1)};
+        if(expected!=='int')fail('int negation in boolean context');
+        return {kind:'neg',inner:node(expr.inner,owner,depth+1,'int')};
+      case 'not':
+        record(expr,['kind','inner'],'not');
+        if(expected!=='bool')fail('boolean negation in integer context');
+        return {kind:'not',inner:node(expr.inner,owner,depth+1,'bool')};
       case 'binary':
         record(expr,['kind','op','left','right'],'binary');
+        if(expected!=='int')fail('arithmetic in boolean context');
         if(!['+','-','*','%'].includes(expr.op))fail('unsupported binary operator');
         return {kind:'binary',op:expr.op,
           left:node(expr.left,owner,depth+1),right:node(expr.right,owner,depth+1)};
       case 'compare':
         record(expr,['kind','op','left','right'],'compare');
+        if(expected!=='bool')fail('comparison in integer context');
         if(!['<','>','<=','>=','==','!='].includes(expr.op))fail('unsupported comparator');
         return {kind:'compare',op:expr.op,left:node(expr.left,owner,depth+1),
           right:node(expr.right,owner,depth+1)};
       case 'if':
         record(expr,['kind','condition','yes','no'],'if');
         return {kind:'if',condition:node(expr.condition,owner,depth+1,'bool'),
-          yes:node(expr.yes,owner,depth+1),no:node(expr.no,owner,depth+1)};
+          yes:node(expr.yes,owner,depth+1,expected),
+          no:node(expr.no,owner,depth+1,expected)};
       case 'call': {
         record(expr,['kind','target','args'],'call');
         if(!Number.isSafeInteger(expr.target)||Object.is(expr.target,-0)||expr.target<0||expr.target>=headers.length)
