@@ -32,6 +32,27 @@ Serve the repository root over local HTTP(S), for example `python3 -m http.serve
 
 This is a browser test fixture, **not yet actual external browser CI evidence**; a clean headless Chromium/browser run must complete before a browser verification claim. Blob compilation is for local trusted tests; production deployment should use pinned prebuilt ESM and CSP, not compile arbitrary untrusted Oreslang in-page.
 
+## Explicit closed-world core import for portable applications
+
+The linker API `compileLinkedFreestandingCore({coreSource,appSource})` accepts a **caller-supplied validated source string** for the existing core module and one pure integer application. The application must begin exactly with:
+
+```ores
+import module core from "core";
+pub fnc answer(): int {return core.clamp_int(42,0,10);}
+```
+
+The legacy import string `"std/core"` is also admitted as a compatibility alias; it does **not** enable hosted `std`. The source-independent linker validates `coreSource` through the freestanding source compiler, combines the two inputs in one bounded closed-world compiler invocation, and resolves actual core function names, visibility and arity in typed IR. The resulting ESM has **no runtime imports** and can be executed in Node or a browser. This is a bootstrap linkage design, not a general import system: additional modules, namespaces, host API calls, cycles, reflection, dynamic loading and OS-specific `std` are rejected.
+
+Node CLI:
+
+```sh
+node bin/oreslang-jsc.mjs --linked-core --core=/absolute/core.ores --check tests/fixtures/core-linked-app.ores
+node bin/oreslang-jsc.mjs --linked-core --core=/absolute/core.ores tests/fixtures/core-linked-app.ores --out=/tmp/linked-core.mjs
+node -e 'import("file:///tmp/linked-core.mjs").then(m=>console.log(m.sample(42n)))'
+```
+
+The browser ESM smoke now exercises a **linked app** as well as the standalone core module. The CLI is a Node-based **build-time** tool, not a runtime dependency of browser core. Neither linked code nor standalone core has a browser/Node API import. Source-relative path resolution and full library module graphs remain separate compiler work.
+
 ## Architecture and future proof gates
 
 1. The currently named `oreslang-source.java/stdlib/core.ores` and its `std/core` import are **legacy source layout/API**. Moving it to `core/` must be coordinated with import resolver and consumers; this change does **not** silently move or duplicate the authoritative source.
