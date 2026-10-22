@@ -123,6 +123,31 @@ This adds `adtMatch` and `capture` nodes to the **backend-local** experimental p
 
 Run `npm run test:core-adt-match`; the real browser ESM smoke additionally compiles and imports both the standalone ADT-match core fixture and a statically linked application. Actual Node/Chromium CI receipts remain required for merge.
 
+## SHA-pinned portable matching conformance (experimental)
+
+The focused portable match contract is authored in
+[platform-conformance #156](https://github.com/ores-truffle-oreslang/oreslang-platform-conformance/pull/156),
+and is included in this JS branch as **exact Git blob copies**, requiring no cross-org checkout token:
+`tests/fixtures/conformance-option-result-match-i64-v0.ores` (Git blob
+`248e8e95896315a203b3a729e079241d8b53d7de`) and
+`tests/fixtures/conformance-option-result-match-i64-v0.json` (Git blob
+`7400986b537d57bf5ae2c26988caffabf6ab6632`).
+
+Run `npm run test:core-adt-conformance` on **Node 22**. It validates pinned
+file identity, compiles the exact pure fixture into ESM, executes 27 signed-i64
+value vectors (including nested captures and four selected-arm-only poison
+cases), and checks nine invalid programs against distinct **semantic**
+diagnostics. The local browser fixture server permits only the specifically
+named JSON contract file; the real browser smoke executes the same 27 positive
+and nine negative cases. The full `npm test` and pinned workflow step also
+include these tests.
+
+These are JS target admission checks, not proof of JVM/LLVM/Wasm compatibility.
+The workflow must actually execute on the **exact integration head**, and the
+backend-local `adtMatch`/`capture` IR is not a shared binary/wire ABI.
+No cross-backend parity, generic ADT, or main-branch merge claim follows from
+these copies or the isolated V8 harness.
+
 ## Architecture and future proof gates
 
 1. The currently named `oreslang-source.java/stdlib/core.ores` and its `std/core` import are **legacy source layout/API**. Moving it to `core/` must be coordinated with import resolver and consumers; this change does **not** silently move or duplicate the authoritative source.
