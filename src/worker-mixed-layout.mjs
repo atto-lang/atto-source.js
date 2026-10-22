@@ -35,8 +35,9 @@ export class WorkerMixedLayout {
   address(row,field){this.#live();return this.#geometry.address(row,field);}
 
   read(row,field) {
-    const p=this.address(row,field),at=p.absoluteByteOffset;
-    switch(p.type){
+    this.#live();
+    const at=this.#geometry.offsetAt(row,field);
+    switch(this.#geometry.typeOf(field)){
       case "u32":case "ref32":return getU32.call(this.#view,at,true);
       case "f64":return getF64.call(this.#view,at,true);
       case "bool":return getU8.call(this.#view,at)!==0;
@@ -45,8 +46,9 @@ export class WorkerMixedLayout {
   }
 
   write(row,field,value){
-    const p=this.address(row,field),at=p.absoluteByteOffset;
-    switch(p.type){
+    this.#live();
+    const at=this.#geometry.offsetAt(row,field);
+    switch(this.#geometry.typeOf(field)){
       case "u32":case "ref32":
         if(!Number.isInteger(value)||value<0||value>0xffffffff)
           throw new RangeError("u32/ref32 must be an unsigned 32-bit word");
@@ -68,9 +70,13 @@ export class WorkerMixedLayout {
        this.#geometry.typeOf(positionField)!=="f64" ||
        this.#geometry.typeOf(velocityField)!=="f64")
       throw new RangeError("integrate requires distinct f64 fields and finite dt");
+    // Resolve primitive cell offsets directly; no frozen address records,
+    // boxed row snapshots or temporary arrays in the ECS inner loop.
     for(let row=0;row<this.rows;row++){
-      this.write(row,positionField,this.read(row,positionField)+
-        this.read(row,velocityField)*dt);
+      const p=this.#geometry.offsetAt(row,positionField);
+      const v=this.#geometry.offsetAt(row,velocityField);
+      putF64.call(this.#view,p,
+        getF64.call(this.#view,p,true)+getF64.call(this.#view,v,true)*dt,true);
     }
   }
 
