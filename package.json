@@ -20,7 +20,8 @@
     "./java-js-parity-v1": "./src/java-js-parity-v1.mjs",
     "./js-numeric-boundary-v1": "./src/js-numeric-boundary-v1.mjs",
     "./static-facts-v0.node": "./src/static-facts-v0.node.mjs",
-    "./freestanding-core": "./src/freestanding-core.mjs"
+    "./freestanding-core": "./src/freestanding-core.mjs",
+    "./core-static-link": "./src/core-static-link.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
@@ -32,6 +33,8 @@
     "parity:numeric-js": "node bin/js-numeric-boundary-report.mjs",
     "static-facts:smoke": "node bin/oreslang-jsc.mjs --static-facts tests/fixtures/forward-call.ores",
     "test:core": "node --test tests/freestanding-core.test.mjs",
-    "test:core-browser": "node scripts/browser-core-smoke.mjs"
+    "test:core-browser": "node scripts/browser-core-smoke.mjs",
+    "test:core-linked": "node --test tests/core-static-link.test.mjs",
+    "test:core-linked-browser": "node scripts/browser-core-smoke.mjs linked"
   }
 }
