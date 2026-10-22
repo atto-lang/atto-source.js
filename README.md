@@ -39,6 +39,12 @@ The JS experimental program-v2 compiler now has a fail-closed `--freestanding-co
 
 Run `node bin/oreslang-jsc.mjs --freestanding-core --check tests/fixtures/freestanding-core-java.ores` and `npm run test:core`. For an in-browser ESM test serve the repo root and visit `tests/core-browser-smoke.html`. See [freestanding core and browser admission](docs/FREESTANDING_CORE_BROWSER.md). The rest of `core`, `alloc`, actor source lowering, and hosted `std` do **not** yet transpile in this experimental backend.
 
+## Import pure `core` into JS browser/Node programs
+
+Use `import module core from "core";` at the start of a pure integer Oreslang program, then call `core.min_int`, `core.max_int`, or `core.clamp_int`. The new `--core-linked` mode requires an explicitly trusted `--core-source=/absolute/core.ores`; it validates that pure source and compiles the complete program to **one ESM file with no host imports**. For a browser build, call the host-neutral `compileCoreLinkedProgram(appSource, coreSource)` with authenticated source bytes. Legacy `"std/core"` is a source compatibility alias only.
+
+See [static core linking and Node/browser tests](docs/JS_STATIC_CORE_LINK.md). This is an experimental single-import, integer-only bridge, not a general module loader or full typed frontend. Hosted `std`, actor Worker adapters and optional `alloc` remain outside `core`.
+
 ## Security boundary
 
 This is a code generator, **not a sandbox**. An ES module, Node worker thread or Node vm context is not a secure boundary for malicious guests. Only bundle the generated JS as a trusted artifact. This backend currently has no actor runtime, capability enforcement, process isolation, native pointers, async/await, channels, objects, collections, exceptions or host I/O. Do not promote it to an untrusted host.
