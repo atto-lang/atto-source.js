@@ -522,8 +522,26 @@ function emitProgram(program) {
   }
   if(program.functions.some(fn=>fn.returnType==='bool'||fn.paramTypes?.includes('bool')))
     out.push('function _checkbool(v){if(typeof v!=="boolean")throw new TypeError("Oreslang bool required");return v;}');
+  // Intrinsics may be nested entirely within an int-returning function
+  // without appearing in its public signature. Include helpers based on
+  // both typed signatures and the entire already-validated expression DAG.
+  function usesPortableRuntime(expr) {
+    switch(expr.kind) {
+      case 'intrinsic':return true;
+      case 'call':return expr.args.some(usesPortableRuntime);
+      case 'binary':case 'compare':
+        return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
+      case 'if':return usesPortableRuntime(expr.condition)||
+        usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
+      case 'neg':case 'not':return usesPortableRuntime(expr.inner);
+      case 'match':return usesPortableRuntime(expr.subject)||
+        expr.arms.some(arm=>usesPortableRuntime(arm.body));
+      default:return false;
+    }
+  }
   if(program.functions.some(fn=>['option<int>','result<int,int>'].includes(fn.returnType)||
-      fn.paramTypes?.some(t=>['option<int>','result<int,int>'].includes(t)))) {
+      fn.paramTypes?.some(t=>['option<int>','result<int,int>'].includes(t))||
+      usesPortableRuntime(fn.body))) {
     out.push(
       'function _tag(k,v){const x=Object.create(null);Object.defineProperty(x,"kind",{value:k,enumerable:true});Object.defineProperty(x,"value",{value:v,enumerable:true});return Object.freeze(x);}',
       'function _checktag(x,types){if(!x||typeof x!=="object"||Object.getPrototypeOf(x)!==null||!Object.isFrozen(x))throw new TypeError("Oreslang tagged value required");const keys=Reflect.ownKeys(x);if(keys.length!==2||!keys.includes("kind")||!keys.includes("value"))throw new TypeError("Oreslang tagged value shape required");const kd=Object.getOwnPropertyDescriptor(x,"kind"),vd=Object.getOwnPropertyDescriptor(x,"value");if(!kd||!vd||!Object.hasOwn(kd,"value")||!Object.hasOwn(vd,"value")||!kd.enumerable||!vd.enumerable||!types.includes(kd.value))throw new TypeError("Oreslang tagged value type required");if(kd.value==="None"){if(vd.value!==null)throw new TypeError("Oreslang None payload must be null");}else _check(vd.value);return x;}',
