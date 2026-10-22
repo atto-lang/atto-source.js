@@ -80,6 +80,13 @@ export function validateProgramIRV2(input) {
     if(f.kind==='routine'&&f.pub)fail('public routine cannot be exported');
     const params=sequence(f.params,128,'parameters').map(p=>ident(p,'parameter'));
     if(new Set(params).size!==params.length)fail('duplicate parameters');
+    const paramTypes=typed?sequence(f.paramTypes,128,'paramTypes'):params.map(()=>'int');
+    if(paramTypes.length!==params.length||
+       paramTypes.some(t=>t!=='int'&&t!=='bool'))fail('unsupported function parameter type');
+    const returnType=typed?f.returnType:'int';
+    if(returnType!=='int'&&returnType!=='bool')fail('unsupported function return type');
+    if(typed&&returnType!=='bool'&&!paramTypes.includes('bool'))
+      fail('redundant typed metadata on int-only function');
     const slot=(module===null?'@file/':'@module/'+module+'/')+name+'/'+params.length;
     if(slots.has(slot))fail('duplicate caller-visible method arity '+slot);
     const family=slot.slice(0,slot.lastIndexOf('/'));
@@ -88,7 +95,8 @@ export function validateProgramIRV2(input) {
     symbolKinds.set(family,f.kind);
     slots.add(slot);
     if(module===null&&f.pub)exportNames.add(name);
-    return {module,name,kind:f.kind,pub:f.pub,params};
+    return {module,name,kind:f.kind,pub:f.pub,params,
+      ...(typed?{paramTypes:[...paramTypes],returnType}: {})};
   });
   // Export-name collisions are legal only for overloads of the same root
   // function, and NEVER between a runtime module object and a root function.
