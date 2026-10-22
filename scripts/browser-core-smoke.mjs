@@ -65,7 +65,10 @@ try {
     socket.send(JSON.stringify({id,method,params}));
   });
   await send('Page.enable');await send('Runtime.enable');
-  await send('Page.navigate',{url:'http://127.0.0.1:'+server.address().port+'/tests/core-browser-smoke.html'});
+  const linked=process.argv[2]==='linked';
+  if(process.argv.length>3||(process.argv[2]&&!linked))throw Error('usage: browser-core-smoke [linked]');
+  const fixture=linked?'tests/core-linked-browser-smoke.html':'tests/core-browser-smoke.html';
+  await send('Page.navigate',{url:'http://127.0.0.1:'+server.address().port+'/'+fixture});
   let result='';
   for(let i=0;i<120;i++){
     await sleep(100);
@@ -76,7 +79,8 @@ try {
     if(result.startsWith('PASS_')||result.startsWith('FAIL_'))break;
   }
   console.log('Freestanding core real browser ESM: '+(result||'<no result>'));
-  if(result!=='PASS_BROWSER_FREESTANDING_CORE')throw Error('browser core test failed');
+  const expected=linked?'PASS_BROWSER_CORE_LINKED':'PASS_BROWSER_FREESTANDING_CORE';
+  if(result!==expected)throw Error('browser core test failed: '+result);
 } finally {
   socket?.close();
   chrome.kill('SIGTERM');
