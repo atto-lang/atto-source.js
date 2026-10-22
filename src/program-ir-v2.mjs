@@ -67,7 +67,15 @@ export function validateProgramIRV2(input) {
   if(!moduleNames.length && !sourceFunctions.length)fail('empty program');
   const slots=new Set(),symbolKinds=new Map(),exportNames=new Set(moduleNames);
   const headers=sourceFunctions.map(f=>{
-    record(f,['module','name','kind','pub','params','body'],'function');
+    // Reject nulls and non-records before any optional-key introspection.
+    // The full record(...) admission below checks plain prototypes and every
+    // exact own-data field before reading function metadata.
+    if(f===null||typeof f!=='object'||Array.isArray(f))
+      fail('function: expected plain data object');
+    const keys=Reflect.ownKeys(f);
+    const typed=keys.includes('paramTypes')||keys.includes('returnType');
+    record(f,typed?['module','name','kind','pub','params','body','paramTypes','returnType']:
+      ['module','name','kind','pub','params','body'],'function');
     const module=f.module===null?null:ident(f.module,'owner module');
     if(module!==null && !seenModules.has(module))fail('missing owner module '+module);
     const name=ident(f.name,'function name');
@@ -76,6 +84,13 @@ export function validateProgramIRV2(input) {
     if(f.kind==='routine'&&f.pub)fail('public routine cannot be exported');
     const params=sequence(f.params,128,'parameters').map(p=>ident(p,'parameter'));
     if(new Set(params).size!==params.length)fail('duplicate parameters');
+    const paramTypes=typed?sequence(f.paramTypes,128,'paramTypes'):params.map(()=>'int');
+    if(paramTypes.length!==params.length||
+       paramTypes.some(t=>t!=='int'&&t!=='bool'))fail('unsupported function parameter type');
+    const returnType=typed?f.returnType:'int';
+    if(returnType!=='int'&&returnType!=='bool')fail('unsupported function return type');
+    if(typed&&returnType!=='bool'&&!paramTypes.includes('bool'))
+      fail('redundant typed metadata on int-only function');
     const slot=(module===null?'@file/':'@module/'+module+'/')+name+'/'+params.length;
     if(slots.has(slot))fail('duplicate caller-visible method arity '+slot);
     const family=slot.slice(0,slot.lastIndexOf('/'));
@@ -84,7 +99,8 @@ export function validateProgramIRV2(input) {
     symbolKinds.set(family,f.kind);
     slots.add(slot);
     if(module===null&&f.pub)exportNames.add(name);
-    return {module,name,kind:f.kind,pub:f.pub,params};
+    return {module,name,kind:f.kind,pub:f.pub,params,
+      ...(typed?{paramTypes:[...paramTypes],returnType}: {})};
   });
   // Export-name collisions are legal only for overloads of the same root
   // function, and NEVER between a runtime module object and a root function.
@@ -97,46 +113,64 @@ export function validateProgramIRV2(input) {
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid expression');
     const desc=Object.getOwnPropertyDescriptor(expr,'kind');
     if(!desc||!Object.hasOwn(desc,'value'))fail('invalid expression kind');
-    // The IR has two static types in this slice: int values and boolean
-    // comparisons used exclusively in conditions. Never permit JS truthiness.
-    if(expected==='bool'&&desc.value!=='compare')fail('if condition requires boolean comparison');
-    if(expected==='int'&&desc.value==='compare')fail('comparison cannot be used as int');
+    // No implicit truthiness or numeric coercions, including in supplied IR.
+    if(expected==='bool'&&['int','neg','binary'].includes(desc.value))
+      fail('boolean expression required');
+    if(expected==='int'&&['bool','compare','not'].includes(desc.value))
+      fail('boolean value cannot be used as int');
     switch(desc.value) {
       case 'int':
         record(expr,['kind','value'],'int');
+        if(expected!=='int')fail('boolean expected, got int');
         return {kind:'int',value:int(expr.value)};
+      case 'bool':
+        record(expr,['kind','value'],'bool');
+        if(expected!=='bool'||typeof expr.value!=='boolean')fail('invalid bool literal/type');
+        return {kind:'bool',value:expr.value};
       case 'param':
         record(expr,['kind','index'],'param');
         if(!Number.isSafeInteger(expr.index)||Object.is(expr.index,-0)||expr.index<0||expr.index>=headers[owner].params.length)
           fail('out-of-bounds parameter');
+        if((headers[owner].paramTypes?.[expr.index]??'int')!==expected)
+          fail('parameter type mismatch');
         return {kind:'param',index:expr.index};
       case 'neg':
         record(expr,['kind','inner'],'neg');
-        return {kind:'neg',inner:node(expr.inner,owner,depth+1)};
+        if(expected!=='int')fail('int negation in boolean context');
+        return {kind:'neg',inner:node(expr.inner,owner,depth+1,'int')};
+      case 'not':
+        record(expr,['kind','inner'],'not');
+        if(expected!=='bool')fail('boolean negation in integer context');
+        return {kind:'not',inner:node(expr.inner,owner,depth+1,'bool')};
       case 'binary':
         record(expr,['kind','op','left','right'],'binary');
+        if(expected!=='int')fail('arithmetic in boolean context');
         if(!['+','-','*','%'].includes(expr.op))fail('unsupported binary operator');
         return {kind:'binary',op:expr.op,
           left:node(expr.left,owner,depth+1),right:node(expr.right,owner,depth+1)};
       case 'compare':
         record(expr,['kind','op','left','right'],'compare');
+        if(expected!=='bool')fail('comparison in integer context');
         if(!['<','>','<=','>=','==','!='].includes(expr.op))fail('unsupported comparator');
         return {kind:'compare',op:expr.op,left:node(expr.left,owner,depth+1),
           right:node(expr.right,owner,depth+1)};
       case 'if':
         record(expr,['kind','condition','yes','no'],'if');
         return {kind:'if',condition:node(expr.condition,owner,depth+1,'bool'),
-          yes:node(expr.yes,owner,depth+1),no:node(expr.no,owner,depth+1)};
+          yes:node(expr.yes,owner,depth+1,expected),
+          no:node(expr.no,owner,depth+1,expected)};
       case 'call': {
         record(expr,['kind','target','args'],'call');
         if(!Number.isSafeInteger(expr.target)||Object.is(expr.target,-0)||expr.target<0||expr.target>=headers.length)
           fail('invalid call target');
         const target=headers[expr.target];
+        if((target.returnType??'int')!==expected)fail('call return type mismatch');
         const args=sequence(expr.args,128,'call args');
         if(args.length!==target.params.length)fail('call arity mismatch');
         if(target.module!==headers[owner].module && !target.pub)fail('cross-module private call');
         graph[owner].add(expr.target);
-        return {kind:'call',target:expr.target,args:args.map(a=>node(a,owner,depth+1))};
+        return {kind:'call',target:expr.target,args:args.map((a,i)=>
+          node(a,owner,depth+1,target.paramTypes?.[i]??'int'))};
       }
       case 'match': {
         record(expr,['kind','subject','arms'],'match');
@@ -157,7 +191,7 @@ export function validateProgramIRV2(input) {
             if(literals.has(value))fail('duplicate scalar pattern');
             literals.add(value);
           }
-          return {value,body:node(arm.body,owner,depth+1)};
+          return {value,body:node(arm.body,owner,depth+1,expected)};
         });
         if(!wildcard)fail('non-exhaustive int match');
         return {kind:'match',subject,arms:checked};
@@ -165,7 +199,7 @@ export function validateProgramIRV2(input) {
       default:fail('unsupported expression kind');
     }
   }
-  const functions=headers.map((f,i)=>({...f,body:node(sourceFunctions[i].body,i)}));
+  const functions=headers.map((f,i)=>({...f,body:node(sourceFunctions[i].body,i,0,f.returnType??'int')}));
   const color=new Uint8Array(headers.length);
   function visit(i) {
     if(color[i]===1)fail('recursive call graph unsupported pending fuel');

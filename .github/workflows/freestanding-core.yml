@@ -20,6 +20,10 @@ jobs:
         run: npm test
       - name: Test core CLI specifically
         run: npm run test:core
+      - name: Run explicit closed-world core application link and CLI checks
+        run: npm run test:core-link
+      - name: Verify typed boolean portable core
+        run: npm run test:core-bool
       - name: Verify a real Chrome executable
         run: google-chrome --version
       - name: Compile and execute canonical core in browser

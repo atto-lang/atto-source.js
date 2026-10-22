@@ -28,9 +28,40 @@ npm run test:core
 
 ## Browser verification
 
-Serve the repository root over local HTTP(S), for example `python3 -m http.server 8000`, then open `http://localhost:8000/tests/core-browser-smoke.html`. The browser fixture fetches the **same pinned Oreslang source**, compiles with the host-neutral JS library, imports the resulting trusted Blob ESM, runs representative integer operations, and prints `PASS_BROWSER_FREESTANDING_CORE` only on success.
+Run `npm run serve:browser` (a local-only Node.js fixture server), then open `http://127.0.0.1:8000/tests/core-browser-smoke.html`. This avoids Python scripts and does not load any hosted Node API into Oreslang core. The browser fixture fetches the **same pinned Oreslang source**, compiles with the host-neutral JS library, imports the resulting trusted Blob ESM, runs representative integer operations, and prints `PASS_BROWSER_FREESTANDING_CORE` only on success.
 
 This is a browser test fixture, **not yet actual external browser CI evidence**; a clean headless Chromium/browser run must complete before a browser verification claim. Blob compilation is for local trusted tests; production deployment should use pinned prebuilt ESM and CSP, not compile arbitrary untrusted Oreslang in-page.
+
+## Explicit closed-world core import for portable applications
+
+The linker API `compileLinkedFreestandingCore({coreSource,appSource})` accepts a **caller-supplied validated source string** for the existing core module and one pure integer application. The application must begin exactly with:
+
+```ores
+import module core from "core";
+pub fnc answer(): int {return core.clamp_int(42,0,10);}
+```
+
+The legacy import string `"std/core"` is also admitted as a compatibility alias; it does **not** enable hosted `std`. The source-independent linker validates `coreSource` through the freestanding source compiler, combines the two inputs in one bounded closed-world compiler invocation, and resolves actual core function names, visibility and arity in typed IR. The resulting ESM has **no runtime imports** and can be executed in Node or a browser. This is a bootstrap linkage design, not a general import system: additional modules, namespaces, host API calls, cycles, reflection, dynamic loading and OS-specific `std` are rejected.
+
+Node CLI:
+
+```sh
+node bin/oreslang-jsc.mjs --linked-core --core=/absolute/core.ores --core-sha256=YOUR_PINNED_64_HEX_DIGITS --check tests/fixtures/core-linked-app.ores
+node bin/oreslang-jsc.mjs --linked-core --core=/absolute/core.ores tests/fixtures/core-linked-app.ores --out=/tmp/linked-core.mjs
+node -e 'import("file:///tmp/linked-core.mjs").then(m=>console.log(m.sample(42n)))'
+```
+
+The optional `--core-sha256=HEX` build-time argument verifies SHA-256 of the decoded exact UTF-8 core source bytes before code generation. For reviewed/release builds, supply a pinned digest; no digest means source identity remains caller-controlled. This is **not** a binary provenance or complete supply-chain attestation.
+
+The browser ESM smoke now exercises a **linked app** as well as the standalone core module. The development fixture server binds only to `127.0.0.1`, serves a limited `/tests/` and `/src/` allowlist of ESM/HTML/Oreslang source extensions, and is **not** for production hosting. The CLI is a Node-based **build-time** tool, not a runtime dependency of browser core. Neither linked code nor standalone core has a browser/Node API import. Source-relative path resolution and full library module graphs remain separate compiler work.
+
+## Experimental boolean core values
+
+The source compiler now recognizes **first-class `bool` parameters and return values** using explicit `bool` types, `true`/`false` constants, `!` boolean negation, signed integer comparisons returning `bool`, boolean-returning function calls, and `if predicate; do ... else ... fi` guards. The validated IR demands strict input types, and generated ESM rejects JavaScript numeric truthiness (`1`, `0`, `1n`) at the boolean ABI boundary. Boolean `if` results and arguments are statically checked before emission. Only integer comparisons are admitted so far; boolean `==` and generic `Any` equality, boolean `and/or`, `Option<T>`, and `Result<T,E>` are separate follow-ups.
+
+The experimental IR v2 adds optional, **paired** `paramTypes` / `returnType` fields to function declarations containing `bool`, plus `bool` and `not` expression nodes. Legacy integer-only IR records remain structurally unchanged. This is an additive version-2 **backend-private migration format**, not yet an independently reviewed shared typed-IR contract. Other tools must negotiate the extended shape before consuming it.
+
+`tests/fixtures/core-boolean.ores` is an explicitly **synthetic Oreslang portability fixture**. It is not the authoritative Java `core.ores` library, whose unchanged source still compiles to the identical integer ESM. `tests/core-boolean.test.mjs` compiles and runs pure typed boolean code, cross-module closed-world calls and adversarial IR mutations. The browser smoke also transpiles and imports the bool fixture. Generated boolean ESM has no Node, OS, filesystem, network or browser host imports; JavaScript GC remains normal.
 
 ## Architecture and future proof gates
 

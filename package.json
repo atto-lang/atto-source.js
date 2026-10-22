@@ -23,7 +23,8 @@
     "./actor-host.browser": "./src/actor-host.browser.mjs",
     "./actor-host.node": "./src/actor-host.node.mjs",
     "./worker-actor-client": "./src/worker-actor-client.mjs",
-    "./freestanding-core": "./src/freestanding-core.mjs"
+    "./freestanding-core": "./src/freestanding-core.mjs",
+    "./freestanding-core-link": "./src/freestanding-core-link.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
@@ -37,6 +38,9 @@
     "test:workers": "node --test tests/worker-node.test.mjs",
     "test:browser": "node scripts/browser-worker-smoke.mjs",
     "test:core": "node --test tests/freestanding-core.test.mjs",
-    "test:core-browser": "node scripts/browser-core-smoke.mjs"
+    "test:core-browser": "node scripts/browser-core-smoke.mjs",
+    "test:core-link": "node --test tests/core-linked-application.test.mjs",
+    "serve:browser": "node scripts/serve-browser-fixtures.mjs",
+    "test:core-bool": "node --test tests/core-boolean.test.mjs"
   }
 }

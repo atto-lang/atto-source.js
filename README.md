@@ -43,7 +43,15 @@ The JS experimental program-v2 compiler now has a fail-closed `--freestanding-co
 
 `core` cannot depend on `std`, host I/O, timers, Web Workers or Node APIs. `alloc` is an optional explicitly admitted tier; OS-specific `std` implementations are optional target providers. Browser `std` adapters may exist, but the browser does not inherit Linux/Windows assumptions. Note: JavaScript's underlying heap/GC is allowed; freestanding is a **source dependency/effect restriction**, not a JS zero-GC claim.
 
-Run `node bin/oreslang-jsc.mjs --freestanding-core --check tests/fixtures/freestanding-core-java.ores` and `npm run test:core`. For an in-browser ESM test serve the repo root and visit `tests/core-browser-smoke.html`. See [freestanding core and browser admission](docs/FREESTANDING_CORE_BROWSER.md). The rest of `core`, `alloc`, actor source lowering, and hosted `std` do **not** yet transpile in this experimental backend.
+Run `node bin/oreslang-jsc.mjs --freestanding-core --check tests/fixtures/freestanding-core-java.ores` and `npm run test:core`.
+
+An experimental **closed-world core linker** is available for pure applications. A source beginning `import module core from "core";` (or legacy `"std/core"`) can call public core functions without introducing runtime imports or hosted `std` dependencies. Example: `node bin/oreslang-jsc.mjs --linked-core --core=/absolute/core.ores tests/fixtures/core-linked-app.ores --out=/tmp/ores-app.mjs`; see `npm run test:core-link`. This linker is deliberately limited to pure integer functions and exactly one supplied core source. For an in-browser ESM test, run `npm run serve:browser` (Node-only development server, no Python) and visit `http://127.0.0.1:8000/tests/core-browser-smoke.html`. See [freestanding core and browser admission](docs/FREESTANDING_CORE_BROWSER.md). The rest of `core`, `alloc`, actor source lowering, and hosted `std` do **not** yet transpile in this experimental backend.
+
+## Typed boolean core subset
+
+The experimental program-v2 and `--freestanding-core` backend now also support first-class `bool`: typed params/results, `true`/`false` literals, `!`, int comparisons producing bool, boolean function calls, and boolean `if` guards. Unlike JavaScript, Oreslang accepts **only** `true`/`false` at a boolean ABI. An integer is never treated as truthy. Legacy integer-only IR and the emitted ESM for the existing authoritative `core.ores` remain unchanged.
+
+Run `npm run test:core-bool`; the browser ESM smoke also covers pure boolean compilation. The source is still an **experimental narrow subset**: `Option`/`Result`, records, full comparison/equality generics, and actor declarations are not yet supported.
 
 ## Security boundary
 
