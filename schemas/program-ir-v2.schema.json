@@ -105,8 +105,48 @@
         },
         "body": {
           "$ref": "#/$defs/expr"
+        },
+        "paramTypes": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "enum": [
+              "int",
+              "bool"
+            ]
+          }
+        },
+        "returnType": {
+          "enum": [
+            "int",
+            "bool"
+          ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "paramTypes"
+                ]
+              },
+              {
+                "required": [
+                  "returnType"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "paramTypes",
+              "returnType"
+            ]
+          }
+        }
+      ]
     },
     "expr": {
       "oneOf": [
@@ -290,6 +330,38 @@
               "items": {
                 "$ref": "#/$defs/arm"
               }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "bool"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "inner"
+          ],
+          "properties": {
+            "kind": {
+              "const": "not"
+            },
+            "inner": {
+              "$ref": "#/$defs/expr"
             }
           }
         }
