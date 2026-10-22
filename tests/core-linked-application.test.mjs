@@ -7,6 +7,8 @@ import {resolve,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {compileLinkedFreestandingCore,checkLinkedFreestandingCore}
   from '../src/freestanding-core-link.mjs';
+import {compileLinkedFreestandingCore as compileViaPublicExport}
+  from '@oreslang/source-js/freestanding-core-link';
 
 const corePath=resolve('tests/fixtures/freestanding-core-java.ores');
 const appPath=resolve('tests/fixtures/core-linked-app.ores');
@@ -21,6 +23,7 @@ const app=(body,library='core')=>'import module core from "'+library+'";\n'+body
 test('Node runs a pure app statically linked against real Oreslang core',async()=>{
   const input=await read();
   assert.equal(checkLinkedFreestandingCore(input),true);
+  assert.equal(compileViaPublicExport(input),compileLinkedFreestandingCore(input));
   const generated=compileLinkedFreestandingCore(input);
   assert.doesNotMatch(generated,/^\s*import\s/m);
   const mod=await esmModule(input);
