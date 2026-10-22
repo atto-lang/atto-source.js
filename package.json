@@ -35,6 +35,7 @@
     "test:core": "node --test tests/freestanding-core.test.mjs",
     "test:core-browser": "node scripts/browser-core-smoke.mjs",
     "test:core-link": "node --test tests/core-linked-application.test.mjs",
-    "serve:browser": "node scripts/serve-browser-fixtures.mjs"
+    "serve:browser": "node scripts/serve-browser-fixtures.mjs",
+    "test:core-bool": "node --test tests/core-boolean.test.mjs"
   }
 }
