@@ -6,7 +6,7 @@ import {extname,resolve,sep} from 'node:path';
 
 const root=resolve(fileURLToPath(new URL('../',import.meta.url)));
 const port=Number(process.env.ORES_BROWSER_FIXTURE_PORT??'8000');
-if(!Number.isSafeInteger(port)||port<1024||port>65535)
+if(!Number.isSafeInteger(port)||port<0||port>65535)
   throw new Error('invalid local fixture port');
 const types={'.html':'text/html; charset=utf-8',
              '.mjs':'text/javascript; charset=utf-8',
@@ -39,5 +39,5 @@ const server=createServer(async(request,response)=>{
   }
 });
 server.listen(port,'127.0.0.1',()=>{
-  console.log('Local browser fixtures: http://127.0.0.1:'+port+'/tests/core-browser-smoke.html');
+  console.log('Local browser fixtures: http://127.0.0.1:'+server.address().port+'/tests/core-browser-smoke.html');
 });
