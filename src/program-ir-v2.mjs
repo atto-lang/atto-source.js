@@ -109,7 +109,8 @@ export function validateProgramIRV2(input) {
     fail('file export conflicts with runtime module '+header.name);
   const graph=headers.map(()=>new Set());
   let nodes=0;
-  function node(expr,owner,depth=0,expected='int'){
+  const captureSlots=headers.map(()=>new Set());
+  function node(expr,owner,depth=0,expected='int',active=[]){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('expression complexity exceeded');
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid expression');
     const desc=Object.getOwnPropertyDescriptor(expr,'kind');
@@ -130,6 +131,12 @@ export function validateProgramIRV2(input) {
         record(expr,['kind','value'],'bool');
         if(expected!=='bool'||typeof expr.value!=='boolean')fail('invalid bool literal/type');
         return {kind:'bool',value:expr.value};
+      case 'capture':
+        record(expr,['kind','slot'],'capture');
+        if(expected!=='int'||!Number.isSafeInteger(expr.slot)||expr.slot<0||
+           !active.includes(expr.slot))
+          fail('ADT capture outside its typed payload scope');
+        return {kind:'capture',slot:expr.slot};
       case 'param':
         record(expr,['kind','index'],'param');
         if(!Number.isSafeInteger(expr.index)||Object.is(expr.index,-0)||expr.index<0||expr.index>=headers[owner].params.length)
@@ -140,28 +147,28 @@ export function validateProgramIRV2(input) {
       case 'neg':
         record(expr,['kind','inner'],'neg');
         if(expected!=='int')fail('int negation in boolean context');
-        return {kind:'neg',inner:node(expr.inner,owner,depth+1,'int')};
+        return {kind:'neg',inner:node(expr.inner,owner,depth+1,'int',active)};
       case 'not':
         record(expr,['kind','inner'],'not');
         if(expected!=='bool')fail('boolean negation in integer context');
-        return {kind:'not',inner:node(expr.inner,owner,depth+1,'bool')};
+        return {kind:'not',inner:node(expr.inner,owner,depth+1,'bool',active)};
       case 'binary':
         record(expr,['kind','op','left','right'],'binary');
         if(expected!=='int')fail('arithmetic in boolean context');
         if(!['+','-','*','%'].includes(expr.op))fail('unsupported binary operator');
         return {kind:'binary',op:expr.op,
-          left:node(expr.left,owner,depth+1),right:node(expr.right,owner,depth+1)};
+          left:node(expr.left,owner,depth+1,'int',active),right:node(expr.right,owner,depth+1,'int',active)};
       case 'compare':
         record(expr,['kind','op','left','right'],'compare');
         if(expected!=='bool')fail('comparison in integer context');
         if(!['<','>','<=','>=','==','!='].includes(expr.op))fail('unsupported comparator');
-        return {kind:'compare',op:expr.op,left:node(expr.left,owner,depth+1),
-          right:node(expr.right,owner,depth+1)};
+        return {kind:'compare',op:expr.op,left:node(expr.left,owner,depth+1,'int',active),
+          right:node(expr.right,owner,depth+1,'int',active)};
       case 'if':
         record(expr,['kind','condition','yes','no'],'if');
-        return {kind:'if',condition:node(expr.condition,owner,depth+1,'bool'),
-          yes:node(expr.yes,owner,depth+1,expected),
-          no:node(expr.no,owner,depth+1,expected)};
+        return {kind:'if',condition:node(expr.condition,owner,depth+1,'bool',active),
+          yes:node(expr.yes,owner,depth+1,expected,active),
+          no:node(expr.no,owner,depth+1,expected,active)};
       case 'call': {
         record(expr,['kind','target','args'],'call');
         if(!Number.isSafeInteger(expr.target)||Object.is(expr.target,-0)||expr.target<0||expr.target>=headers.length)
@@ -173,7 +180,7 @@ export function validateProgramIRV2(input) {
         if(target.module!==headers[owner].module && !target.pub)fail('cross-module private call');
         graph[owner].add(expr.target);
         return {kind:'call',target:expr.target,args:args.map((a,i)=>
-          node(a,owner,depth+1,target.paramTypes?.[i]??'int'))};
+          node(a,owner,depth+1,target.paramTypes?.[i]??'int',active))};
       }
       case 'intrinsic': {
         record(expr,['kind','name','args'],'intrinsic');
@@ -195,11 +202,39 @@ export function validateProgramIRV2(input) {
         const args=sequence(expr.args,2,'intrinsic args');
         if(args.length!==types.length)fail('intrinsic arity mismatch');
         return {kind:'intrinsic',name:expr.name,
-          args:args.map((argument,i)=>node(argument,owner,depth+1,types[i]))};
+          args:args.map((argument,i)=>node(argument,owner,depth+1,types[i],active))};
+      }
+      case 'adtMatch': {
+        record(expr,['kind','adt','subject','arms'],'ADT match');
+        if(expr.adt!=='option<int>'&&expr.adt!=='result<int,int>')
+          fail('unknown ADT match type');
+        const subject=node(expr.subject,owner,depth+1,expr.adt,active);
+        const variants=expr.adt==='option<int>'?['Some','None']:['Ok','Err'];
+        const arms=sequence(expr.arms,2,'ADT match arms');
+        if(arms.length!==2)fail('non-exhaustive ADT match');
+        const seen=new Set(),checked=[];
+        for(const arm of arms){
+          record(arm,['tag','slot','body'],'ADT match arm');
+          if(!variants.includes(arm.tag)||seen.has(arm.tag))
+            fail('ADT match has duplicate or inappropriate variant');
+          seen.add(arm.tag);
+          const payload=arm.tag!=='None';
+          if(payload) {
+            if(!Number.isSafeInteger(arm.slot)||arm.slot<0||arm.slot>LIMIT_NODES||
+               captureSlots[owner].has(arm.slot)||active.includes(arm.slot))
+              fail('invalid or repeated ADT payload slot');
+            captureSlots[owner].add(arm.slot);
+          } else if(arm.slot!==null)fail('None arm cannot bind a payload');
+          const scopes=payload?[...active,arm.slot]:active;
+          checked.push({tag:arm.tag,slot:arm.slot,
+            body:node(arm.body,owner,depth+1,expected,scopes)});
+        }
+        if(seen.size!==2)fail('non-exhaustive ADT match');
+        return {kind:'adtMatch',adt:expr.adt,subject,arms:checked};
       }
       case 'match': {
         record(expr,['kind','subject','arms'],'match');
-        const subject=node(expr.subject,owner,depth+1);
+        const subject=node(expr.subject,owner,depth+1,'int',active);
         const arms=sequence(expr.arms,256,'match arms');
         if(!arms.length)fail('empty match');
         let wildcard=false;
@@ -216,7 +251,7 @@ export function validateProgramIRV2(input) {
             if(literals.has(value))fail('duplicate scalar pattern');
             literals.add(value);
           }
-          return {value,body:node(arm.body,owner,depth+1,expected)};
+          return {value,body:node(arm.body,owner,depth+1,expected,active)};
         });
         if(!wildcard)fail('non-exhaustive int match');
         return {kind:'match',subject,arms:checked};
