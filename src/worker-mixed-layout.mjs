@@ -43,7 +43,11 @@ export class WorkerMixedLayout {
     switch(p.type){
       case "u32":case "ref32":return getU32.call(this.#view,at,true);
       case "f64":return getF64.call(this.#view,at,true);
-      case "bool":return getU8.call(this.#view,at)!==0;
+      case "bool": {
+        const encoded=getU8.call(this.#view,at);
+        if (encoded > 1) throw new RangeError("noncanonical bool byte in actor storage");
+        return encoded === 1;
+      }
       default:throw new Error("unsupported mixed scalar");
     }
   }
