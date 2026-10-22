@@ -35,7 +35,8 @@ test('Node local fixture server exposes browser ESM inputs but not arbitrary rep
     assert.equal(vectors.status,200);
     assert.match(vectors.headers.get('content-type'),/application\/json/);
     assert.equal((await vectors.json()).testVectors.length,27);
-    for(const bad of ['/src/private.json','/tests/private.json']){
+    for(const bad of ['/src/private.json','/tests/private.json',
+      '/tests/fixtures/unlisted.json']){
       const response=await fetch(url+bad);
       assert.equal(response.status,403,bad);
     }
