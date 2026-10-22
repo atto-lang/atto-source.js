@@ -67,7 +67,11 @@ export function validateProgramIRV2(input) {
   if(!moduleNames.length && !sourceFunctions.length)fail('empty program');
   const slots=new Set(),symbolKinds=new Map(),exportNames=new Set(moduleNames);
   const headers=sourceFunctions.map(f=>{
-    record(f,['module','name','kind','pub','params','body'],'function');
+    const typed=Object.hasOwn(f,'paramTypes')||Object.hasOwn(f,'returnType');
+    record(f,typed?['module','name','kind','pub','params','body','paramTypes','returnType']:
+      ['module','name','kind','pub','params','body'],'function');
+    if(typed&&(!Object.hasOwn(f,'paramTypes')||!Object.hasOwn(f,'returnType')))
+      fail('typed function requires both paramTypes and returnType');
     const module=f.module===null?null:ident(f.module,'owner module');
     if(module!==null && !seenModules.has(module))fail('missing owner module '+module);
     const name=ident(f.name,'function name');
