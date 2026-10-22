@@ -47,6 +47,10 @@ The experimental program-v2 and `--freestanding-core` backend now also support f
 
 Run `npm run test:core-bool`; the browser ESM smoke also covers pure boolean compilation. The source is still an **experimental narrow subset**: `Option`/`Result`, records, full comparison/equality generics, and actor declarations are not yet supported.
 
+## Experimental pure Option / Result integer ADTs
+
+The portable JS ESM backend now compiles concrete `Option<int>` and `Result<int,int>` pure functions via `Option.some/none/is_some/unwrap_or` and `Result.ok/err/is_ok/unwrap_or/unwrap_err_or`. Values are immutable tagged records, runtime-checked on external JS ingress, not authority tokens. These are **not yet generic ADT implementations**. `npm run test:core-option-result` covers strict type checks, malicious payload rejection and linked application behavior; the real browser smoke also exercises them. See [the freestanding portability contract](docs/FREESTANDING_CORE_BROWSER.md).
+
 ## Security boundary
 
 This is a code generator, **not a sandbox**. An ES module, Node worker thread or Node vm context is not a secure boundary for malicious guests. Only bundle the generated JS as a trusted artifact. This backend currently has no actor runtime, capability enforcement, process isolation, native pointers, async/await, channels, objects, collections, exceptions or host I/O. Do not promote it to an untrusted host.
