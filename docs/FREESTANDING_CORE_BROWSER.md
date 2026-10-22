@@ -46,10 +46,12 @@ The legacy import string `"std/core"` is also admitted as a compatibility alias;
 Node CLI:
 
 ```sh
-node bin/oreslang-jsc.mjs --linked-core --core=/absolute/core.ores --check tests/fixtures/core-linked-app.ores
+node bin/oreslang-jsc.mjs --linked-core --core=/absolute/core.ores --core-sha256=YOUR_PINNED_64_HEX_DIGITS --check tests/fixtures/core-linked-app.ores
 node bin/oreslang-jsc.mjs --linked-core --core=/absolute/core.ores tests/fixtures/core-linked-app.ores --out=/tmp/linked-core.mjs
 node -e 'import("file:///tmp/linked-core.mjs").then(m=>console.log(m.sample(42n)))'
 ```
+
+The optional `--core-sha256=HEX` build-time argument verifies SHA-256 of the decoded exact UTF-8 core source bytes before code generation. For reviewed/release builds, supply a pinned digest; no digest means source identity remains caller-controlled. This is **not** a binary provenance or complete supply-chain attestation.
 
 The browser ESM smoke now exercises a **linked app** as well as the standalone core module. The CLI is a Node-based **build-time** tool, not a runtime dependency of browser core. Neither linked code nor standalone core has a browser/Node API import. Source-relative path resolution and full library module graphs remain separate compiler work.
 
