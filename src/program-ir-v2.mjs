@@ -67,11 +67,15 @@ export function validateProgramIRV2(input) {
   if(!moduleNames.length && !sourceFunctions.length)fail('empty program');
   const slots=new Set(),symbolKinds=new Map(),exportNames=new Set(moduleNames);
   const headers=sourceFunctions.map(f=>{
-    const typed=Object.hasOwn(f,'paramTypes')||Object.hasOwn(f,'returnType');
+    // Reject nulls and non-records before any optional-key introspection.
+    // The full record(...) admission below checks plain prototypes and every
+    // exact own-data field before reading function metadata.
+    if(f===null||typeof f!=='object'||Array.isArray(f))
+      fail('function: expected plain data object');
+    const keys=Reflect.ownKeys(f);
+    const typed=keys.includes('paramTypes')||keys.includes('returnType');
     record(f,typed?['module','name','kind','pub','params','body','paramTypes','returnType']:
       ['module','name','kind','pub','params','body'],'function');
-    if(typed&&(!Object.hasOwn(f,'paramTypes')||!Object.hasOwn(f,'returnType')))
-      fail('typed function requires both paramTypes and returnType');
     const module=f.module===null?null:ident(f.module,'owner module');
     if(module!==null && !seenModules.has(module))fail('missing owner module '+module);
     const name=ident(f.name,'function name');
