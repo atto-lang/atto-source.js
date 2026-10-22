@@ -26,6 +26,8 @@ jobs:
         run: npm run test:core-bool
       - name: Validate concrete Option/Result core types and tagged ABI
         run: npm run test:core-option-result
+      - name: Validate exhaustive ADT match, payload scope, and forged IR negatives
+        run: npm run test:core-adt-match
       - name: Verify a real Chrome executable
         run: google-chrome --version
       - name: Compile and execute canonical core in browser

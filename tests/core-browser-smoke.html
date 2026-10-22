@@ -6,7 +6,7 @@
 import {compileFreestandingCore} from '../src/freestanding-core.mjs';
 import {compileLinkedFreestandingCore} from '../src/freestanding-core-link.mjs';
 const display=document.querySelector('#result');
-let url,linkedUrl,boolUrl,adtUrl,adtLinkedUrl;
+let url,linkedUrl,boolUrl,adtUrl,adtLinkedUrl,matchUrl,matchLinkedUrl;
 try {
   const input=await fetch('./fixtures/freestanding-core-java.ores',{cache:'no-store'});
   if(!input.ok)throw Error('failed to load canonical core source');
@@ -71,8 +71,30 @@ try {
   eq(adtLinked.positive_or_zero(-7n),0n,'linked ADT Option');
   eq(adtLinked.negative_is_error(-7n),true,'linked ADT Result');
   eq(adtLinked.checked_value(-7n),42n,'linked ADT fallback');
+  const matchSourceResponse=await fetch('./fixtures/core-adt-match.ores',{cache:'no-store'});
+  if(!matchSourceResponse.ok)throw Error('missing ADT match source');
+  const matchSource=await matchSourceResponse.text();
+  matchUrl=URL.createObjectURL(new Blob([compileFreestandingCore(matchSource)],{type:'text/javascript'}));
+  const matcher=(await import(matchUrl)).core;
+  eq(matcher.add_one(matcher.into_option(41n)),42n,'match Some capture');
+  eq(matcher.add_one(matcher.into_option(-1n)),0n,'match None');
+  eq(matcher.extract_result(matcher.into_result(-9n)),9n,'match Err capture');
+  eq(matcher.nested(matcher.into_option(4n)),8n,'nested ADT capture');
+  let matchRejected=false;
+  try{matcher.add_one({kind:'Some',value:41n});}
+  catch(error){matchRejected=/tagged value/.test(String(error));}
+  if(!matchRejected)throw Error('ADT match accepted malformed JS object');
+  const matchAppResp=await fetch('./fixtures/core-adt-match-linked-app.ores',{cache:'no-store'});
+  if(!matchAppResp.ok)throw Error('missing ADT match application');
+  matchLinkedUrl=URL.createObjectURL(new Blob([compileLinkedFreestandingCore({
+    coreSource:matchSource,appSource:await matchAppResp.text()
+  })],{type:'text/javascript'}));
+  const matchedApp=await import(matchLinkedUrl);
+  eq(matchedApp.sample(41n),42n,'linked Some pattern');
+  eq(matchedApp.result(-9n),9n,'linked Err pattern');
+  eq(matchedApp.nested(4n),8n,'linked nested ADT pattern');
   display.textContent='PASS_BROWSER_FREESTANDING_CORE';
 } catch(error) {
   display.textContent='FAIL_BROWSER_FREESTANDING_CORE: '+String(error);
-} finally {if(url)URL.revokeObjectURL(url);if(linkedUrl)URL.revokeObjectURL(linkedUrl);if(boolUrl)URL.revokeObjectURL(boolUrl);if(adtUrl)URL.revokeObjectURL(adtUrl);if(adtLinkedUrl)URL.revokeObjectURL(adtLinkedUrl);}
+} finally {if(url)URL.revokeObjectURL(url);if(linkedUrl)URL.revokeObjectURL(linkedUrl);if(boolUrl)URL.revokeObjectURL(boolUrl);if(adtUrl)URL.revokeObjectURL(adtUrl);if(adtLinkedUrl)URL.revokeObjectURL(adtLinkedUrl);if(matchUrl)URL.revokeObjectURL(matchUrl);if(matchLinkedUrl)URL.revokeObjectURL(matchLinkedUrl);}
 </script>

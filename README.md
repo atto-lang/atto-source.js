@@ -51,6 +51,10 @@ Run `npm run test:core-bool`; the browser ESM smoke also covers pure boolean com
 
 The portable JS ESM backend now compiles concrete `Option<int>` and `Result<int,int>` pure functions via `Option.some/none/is_some/unwrap_or` and `Result.ok/err/is_ok/unwrap_or/unwrap_err_or`. Values are immutable tagged records, runtime-checked on external JS ingress, not authority tokens. These are **not yet generic ADT implementations**. `npm run test:core-option-result` covers strict type checks, malicious payload rejection and linked application behavior; the real browser smoke also exercises them. See [the freestanding portability contract](docs/FREESTANDING_CORE_BROWSER.md).
 
+## Exhaustive ADT match (experimental)
+
+The freestanding JS ESM backend now accepts `match option over { on Some(n) { return n; } on None { return 0; } }` and the equivalent `Ok(n)/Err(e)` case for concrete `Option<int>` and `Result<int,int>`, including nested matches and strictly scoped payload bindings. Non-exhaustive or duplicate arms, wrong variant families, payload shadowing and forged IR captures fail closed. Run `npm run test:core-adt-match`. See [the freestanding core contract](docs/FREESTANDING_CORE_BROWSER.md). Generic ADTs and full cross-backend matching remain separate tasks.
+
 ## Security boundary
 
 This is a code generator, **not a sandbox**. An ES module, Node worker thread or Node vm context is not a secure boundary for malicious guests. Only bundle the generated JS as a trusted artifact. This backend currently has no actor runtime, capability enforcement, process isolation, native pointers, async/await, channels, objects, collections, exceptions or host I/O. Do not promote it to an untrusted host.

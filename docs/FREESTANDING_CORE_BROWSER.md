@@ -57,7 +57,7 @@ The browser ESM smoke now exercises a **linked app** as well as the standalone c
 
 ## Experimental boolean core values
 
-**Constructor spelling:** The experimental JS backend now recognizes the canonical Oreslang `Some(value)`, bare `None`, `Ok(value)` and `Err(error)` used by the shared value-match fixtures. Explicit `Option.some/none` and `Result.ok/err` intrinsics remain available in this prototype for pure static calls. Exhaustive destructuring `match Some(x) / None` is **not** implemented in this PR, even though another conformance fixture documents that language shape; that gap remains a separate parity blocker. See [shared pending contract PR #153](https://github.com/ores-truffle-oreslang/oreslang-platform-conformance/pull/153).
+**Constructor spelling:** The experimental JS backend now recognizes the canonical Oreslang `Some(value)`, bare `None`, `Ok(value)` and `Err(error)` used by the shared value-match fixtures. Explicit `Option.some/none` and `Result.ok/err` intrinsics remain available in this prototype for pure static calls. The exact concrete `Some(x)/None` and `Ok(x)/Err(e)` expression pattern match forms are now implemented in the stacked ADT-match PR; generic/nominal patterns and cross-backend parity remain separate blockers. See [shared pending contract PR #153](https://github.com/ores-truffle-oreslang/oreslang-platform-conformance/pull/153).
 
 The source compiler now recognizes **first-class `bool` parameters and return values** using explicit `bool` types, `true`/`false` constants, `!` boolean negation, signed integer comparisons returning `bool`, boolean-returning function calls, and `if predicate; do ... else ... fi` guards. The validated IR demands strict input types, and generated ESM rejects JavaScript numeric truthiness (`1`, `0`, `1n`) at the boolean ABI boundary. Boolean `if` results and arguments are statically checked before emission. Only integer comparisons are admitted so far; boolean `==` and generic `Any` equality, boolean `and/or`, `Option<T>`, and `Result<T,E>` are separate follow-ups.
 
@@ -96,7 +96,32 @@ Generated ESM is freestanding: it requires no `process`, filesystem, browser DOM
 
 `tests/fixtures/core-option-result.ores` is a **synthetic integration fixture**, not the authoritative `oreslang-source.java/stdlib/core.ores`, which still generates its unchanged 1,662-byte integer ESM. Run `npm run test:core-option-result`; the actual browser smoke also includes the standalone concrete ADT module and a linked Oreslang application that calls it.
 
-**Not implemented here:** generic ADTs, `Option<bool>`, nominal algebraic type declarations, exhaustive `match Some(x)/None` / `Ok(x)/Err(e)` destructuring, reflection, generated zorde serializers, typed `ActorRef`, ownership/borrowing proofs, Java/LLVM/Wasm binary ABI equivalence, or full core/alloc/std. These must remain explicit future validation gates.
+**Not implemented here:** generic ADTs, `Option<bool>`, nominal algebraic type declarations, user-defined enum/pattern matching, reflection, generated Zorde serializers, typed `ActorRef`, ownership/borrowing proofs, Java/LLVM/Wasm binary ABI equivalence, or full core/alloc/std. Only concrete exhaustive `Option<int>` and `Result<int,int>` expression matches are supported in this experimental backend.
+
+## Exhaustive concrete Option/Result pattern matching
+
+The experimental browser-safe JS core now lowers **exhaustive** ADT expression matches with explicit payload bindings:
+
+```ores
+pub fnc compute(Option<int> value): int {
+  return match value over {
+    on Some(n) { return n + 1; }
+    on None { return 0; }
+  };
+}
+pub fnc error_magnitude(Result<int,int> value): int {
+  return match value over {
+    on Ok(n) { return n; }
+    on Err(e) { return -e; }
+  };
+}
+```
+
+The compiler requires exactly both variants for each concrete ADT: `Some/None` or `Ok/Err`. Repeated, missing, mixed, wildcard, or ill-typed patterns are errors. A bound name is scoped **only to its arm**, and may not shadow parameters or enclosing captures in this narrow slice. Nested matches capture lexical outer payloads safely, with unique internal capture slots validated in IR and codegen. The subject is evaluated once; branches are lazy. The same existing frozen, null-prototype tagged-value ABI is verified before matching, and no host APIs or `std` services are required.
+
+This adds `adtMatch` and `capture` nodes to the **backend-local** experimental program IR v2. It is not user-defined or generic enum matching, not complete `Option<T>` / `Result<T,E>`, and **not** proof of Java/LLVM/Wasm compiler parity. The syntax follows the shared pending `Some(n)/None` value-match fixture, but only the concrete `int` specializations are implemented. The separate conformance vectors in [platform-conformance PR #153](https://github.com/ores-truffle-oreslang/oreslang-platform-conformance/pull/153) remain design-pending until backend execution.
+
+Run `npm run test:core-adt-match`; the real browser ESM smoke additionally compiles and imports both the standalone ADT-match core fixture and a statically linked application. Actual Node/Chromium CI receipts remain required for merge.
 
 ## Architecture and future proof gates
 

@@ -245,7 +245,7 @@ class Parser {
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'call':case 'intrinsic':for(const arg of expr.args)add(arg);break;
-        case 'match':
+        case 'match':case 'adtMatch':
           add(expr.subject);
           for(const arm of expr.arms)add(arm.body);
           break;
@@ -357,34 +357,68 @@ class Parser {
   }
   matchExpression() {
     const subject=this.expression();
-    this.eat('over'); // compatibility with documented compact match syntax
-    const arms=[], seen=new Set(); let wildcard=false;
-    while(this.peek().value !== 'end' && this.peek().kind !== 'eof') {
-      let isDefault=false, value=null;
-      if(this.eat('else')) isDefault=true;
-      else {
+    this.eat('over');
+    const braced=this.eat('{');
+    const arms=[],seen=new Set();
+    let family=null,wildcard=false;
+    const ended=()=>braced?this.peek().value==='}':this.peek().value==='end';
+    while(!ended()&&this.peek().kind!=='eof') {
+      let tag=null, bind=null, value=null;
+      if(this.eat('else')) {
+        if(family==='adt')fail('ADT match requires exhaustive named variants, not else');
+        family='int';tag='wildcard';
+      } else {
         this.expect('on');
-        if(this.eat('_')) isDefault=true;
-        else value=this.integer(this.eat('-'));
+        const at=this.peek();
+        if(this.eat('_')){
+          if(family==='adt')fail('ADT match forbids wildcard');
+          family='int';tag='wildcard';
+        } else if(['Some','None','Ok','Err'].includes(at.value)){
+          if(family==='int')fail('cannot mix integer and ADT patterns',at);
+          family='adt';tag=this.name();
+          if(tag==='None') {
+            if(this.peek().value==='(')fail('None has no payload',this.peek());
+          } else {
+            this.expect('(');bind=this.name();this.expect(')');
+            if(bind==='_'||['None','Some','Ok','Err'].includes(bind))
+              fail('unsupported ADT payload binding name',at);
+          }
+        } else {
+          if(family==='adt')fail('cannot mix ADT and integer patterns',at);
+          family='int';tag='integer';
+          value=this.integer(this.eat('-'));
+        }
       }
-      if(wildcard) fail('unreachable arm after wildcard',this.peek());
-      if(isDefault) wildcard=true;
-      else {
-        if(seen.has(value)) fail('duplicate scalar pattern');
-        seen.add(value);
-      }
+      if(wildcard)fail('unreachable arm after wildcard',this.peek());
+      if(tag==='wildcard')wildcard=true;
+      const key=tag==='integer'?'int:'+value:tag;
+      if(seen.has(key))fail('duplicate match pattern '+key);
+      seen.add(key);
       this.eat('->');
       this.expect('{');
-      // A match expression yields its arm expression, not a statement return.
-      if(this.peek().value === 'return') fail('return inside expression match is invalid');
+      // Existing Oreslang ADT fixture uses statement-looking return bodies
+      // inside a match expression. Treat that spelling as an expression arm.
+      if(this.peek().value==='return') {
+        if(family!=='adt')fail('return in scalar expression match is unsupported');
+        this.i++;
+      }
       const body=this.expression();
       this.expect(';');this.expect('}');
-      arms.push({value, body});
-      if (arms.length > 256) fail('match arm limit');
+      arms.push({tag,bind,value,body});
+      if(arms.length>256)fail('match arm limit');
     }
-    this.expect('end');
-    if (!wildcard) fail('scalar int match requires exhaustive wildcard/else');
-    return {kind:'match',subject,arms};
+    this.expect(braced?'}':'end');
+    if(family==='adt') {
+      const tags=new Set(arms.map(arm=>arm.tag));
+      const option=tags.has('Some')||tags.has('None');
+      const required=option?['Some','None']:['Ok','Err'];
+      if(arms.length!==2||required.some(tag=>!tags.has(tag)))
+        fail('non-exhaustive or mixed ADT variants; expected '+required.join('/') );
+      return {kind:'adtMatch',adt:option?'option<int>':'result<int,int>',
+        subject,arms:arms.map(arm=>({tag:arm.tag,bind:arm.bind,body:arm.body}))};
+    }
+    if(!wildcard)fail('scalar int match requires exhaustive wildcard/else');
+    return {kind:'match',subject,arms:arms.map(arm=>({value:arm.value,body:arm.body}))};
   }
 }
 function resolveProgram(parsed) {
@@ -404,21 +438,23 @@ function resolveProgram(parsed) {
     if(exports.has(m)) fail('module/function export conflict '+m);
     exports.add(m);
   });
-  let nodeCount=0;
-  function resolve(expr,owner,depth=0) {
+  let nodeCount=0, nextCaptureSlot=0;
+  function resolve(expr,owner,depth=0,bindings=[]) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
       case 'int':case 'bool':return expr;
       case 'variable': {
+        const captured=bindings.findLast(b=>b.name===expr.name);
+        if(captured)return {kind:'capture',slot:captured.slot};
         const index=owner.params.indexOf(expr.name);
         if(index<0) fail('unresolved identifier '+expr.name);
         return {kind:'param',index};
       }
-      case 'neg':case 'not':return {kind:expr.kind,inner:resolve(expr.inner,owner,depth+1)};
-      case 'binary': return {kind:'binary',op:expr.op,left:resolve(expr.left,owner,depth+1),right:resolve(expr.right,owner,depth+1)};
-      case 'compare': return {kind:'compare',op:expr.op,left:resolve(expr.left,owner,depth+1),right:resolve(expr.right,owner,depth+1)};
-      case 'if': return {kind:'if',condition:resolve(expr.condition,owner,depth+1),
-        yes:resolve(expr.yes,owner,depth+1),no:resolve(expr.no,owner,depth+1)};
+      case 'neg':case 'not':return {kind:expr.kind,inner:resolve(expr.inner,owner,depth+1,bindings)};
+      case 'binary': return {kind:'binary',op:expr.op,left:resolve(expr.left,owner,depth+1,bindings),right:resolve(expr.right,owner,depth+1,bindings)};
+      case 'compare': return {kind:'compare',op:expr.op,left:resolve(expr.left,owner,depth+1,bindings),right:resolve(expr.right,owner,depth+1,bindings)};
+      case 'if': return {kind:'if',condition:resolve(expr.condition,owner,depth+1,bindings),
+        yes:resolve(expr.yes,owner,depth+1,bindings),no:resolve(expr.no,owner,depth+1,bindings)};
       case 'call': {
         if(expr.qualifier==='Option'||expr.qualifier==='Result'){
           const key=expr.qualifier+'.'+expr.name;
@@ -436,7 +472,7 @@ function resolveProgram(parsed) {
           const sig=signatures[key];
           if(!sig)fail('unknown portable constructor/intrinsic '+key);
           if(expr.args.length!==sig[0])fail('intrinsic arity mismatch '+key);
-          return {kind:'intrinsic',name:key,args:expr.args.map(a=>resolve(a,owner,depth+1))};
+          return {kind:'intrinsic',name:key,args:expr.args.map(a=>resolve(a,owner,depth+1,bindings))};
         }
         const mod=expr.qualifier===null?owner.module:expr.qualifier;
         if(mod!==null && !modules.includes(mod)) fail('unknown module '+mod);
@@ -447,10 +483,25 @@ function resolveProgram(parsed) {
           fail('unresolved callable '+key);
         }
         if(expr.qualifier!==null && mod!==owner.module && !functions[target].pub) fail('private module member '+key);
-        return {kind:'call',target,args:expr.args.map(a=>resolve(a,owner,depth+1))};
+        return {kind:'call',target,args:expr.args.map(a=>resolve(a,owner,depth+1,bindings))};
       }
-      case 'match': return {kind:'match',subject:resolve(expr.subject,owner,depth+1),
-        arms:expr.arms.map(arm=>({value:arm.value,body:resolve(arm.body,owner,depth+1)}))};
+      case 'match': return {kind:'match',subject:resolve(expr.subject,owner,depth+1,bindings),
+        arms:expr.arms.map(arm=>({value:arm.value,body:resolve(arm.body,owner,depth+1,bindings)}))};
+      case 'adtMatch': {
+        const subject=resolve(expr.subject,owner,depth+1,bindings);
+        const arms=expr.arms.map(arm=>{
+          let slot=null,scope=bindings;
+          if(arm.bind!==null){
+            if(owner.params.includes(arm.bind)||bindings.some(b=>b.name===arm.bind))
+              fail('ADT payload binding shadows an existing name '+arm.bind);
+            if(nextCaptureSlot>=MAX_TOKENS)fail('ADT capture slot budget exceeded');
+            slot=nextCaptureSlot++;
+            scope=[...bindings,{name:arm.bind,slot}];
+          }
+          return {tag:arm.tag,slot,body:resolve(arm.body,owner,depth+1,scope)};
+        });
+        return {kind:'adtMatch',adt:expr.adt,subject,arms};
+      }
       default: fail('unsupported expression node');
     }
   }
@@ -462,7 +513,7 @@ function resolveProgram(parsed) {
     else if(expr.kind==='binary'||expr.kind==='compare') {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='neg'||expr.kind==='not') inspect(expr.inner,owner);
-    else if(expr.kind==='match') {
+    else if(expr.kind==='match'||expr.kind==='adtMatch') {
       inspect(expr.subject,owner);expr.arms.forEach(a=>inspect(a.body,owner));
     }
   }
@@ -494,6 +545,7 @@ function emitProgram(program) {
       case 'int': return expr.value+'n';
       case 'bool': return expr.value?'true':'false';
       case 'param':return '_p'+expr.index;
+      case 'capture':return '_v'+expr.slot;
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
@@ -516,6 +568,17 @@ function emitProgram(program) {
         const target=funcs[expr.name];
         if(!target)fail('unsupported portable intrinsic');
         return target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
+      }
+      case 'adtMatch': {
+        const check=expr.adt==='option<int>'?'_checkoption':'_checkresult';
+        const lines=['(()=>{const _subject='+emitExpr(expr.subject,depth+1)+';'+check+'(_subject);switch(_subject.kind){'];
+        for(const arm of expr.arms){
+          lines.push('case '+JSON.stringify(arm.tag)+':{');
+          if(arm.slot!==null)lines.push('const _v'+arm.slot+'=_subject.value;');
+          lines.push('return '+emitExpr(arm.body,depth+1)+';}');
+        }
+        lines.push('default:throw new TypeError("Oreslang ADT match illegal tag");}})()');
+        return lines.join('');
       }
       case 'match': {
         // _subject is evaluated exactly once. A branch returns immediately,
@@ -547,6 +610,7 @@ function emitProgram(program) {
       case 'neg':case 'not':return usesPortableRuntime(expr.inner);
       case 'match':return usesPortableRuntime(expr.subject)||
         expr.arms.some(arm=>usesPortableRuntime(arm.body));
+      case 'adtMatch':return true;
       default:return false;
     }
   }
