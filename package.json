@@ -34,6 +34,7 @@
     "static-facts:smoke": "node bin/oreslang-jsc.mjs --static-facts tests/fixtures/forward-call.ores",
     "test:core": "node --test tests/freestanding-core.test.mjs",
     "test:core-browser": "node scripts/browser-core-smoke.mjs",
-    "test:core-link": "node --test tests/core-linked-application.test.mjs"
+    "test:core-link": "node --test tests/core-linked-application.test.mjs",
+    "serve:browser": "node scripts/serve-browser-fixtures.mjs"
   }
 }
