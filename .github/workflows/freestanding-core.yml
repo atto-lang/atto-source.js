@@ -26,3 +26,9 @@ jobs:
         env:
           CHROME_BIN: google-chrome
         run: npm run test:core-browser
+      - name: Compile exact pure core plus consumer via Node CLI
+        run: npm run test:core-linked
+      - name: Compile/import linked core in real Chrome
+        env:
+          CHROME_BIN: google-chrome
+        run: npm run test:core-linked-browser
