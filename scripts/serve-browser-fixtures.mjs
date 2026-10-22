@@ -31,7 +31,7 @@ const server=createServer(async(request,response)=>{
       'X-Content-Type-Options':'nosniff',
       // The fixture deliberately tests generated Blob ESM. CSP admits only
       // localhost scripts and their temporary generated module URL.
-      'Content-Security-Policy':"default-src 'none'; script-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:; style-src 'none'; base-uri 'none'; object-src 'none'"});
+      'Content-Security-Policy':"default-src 'none'; script-src 'self' 'unsafe-inline' blob:; connect-src 'self'; worker-src 'self' blob:; style-src 'none'; base-uri 'none'; object-src 'none'"});
     response.end(request.method==='HEAD'?undefined:content);
   }catch(error){
     response.writeHead(error?.code==='ENOENT'?404:400);
