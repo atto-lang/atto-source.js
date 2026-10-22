@@ -24,7 +24,7 @@ const server=createServer(async(request,response)=>{
     const ext=extname(file);
     if(!file.startsWith(root+sep)||!Object.hasOwn(types,ext)||
        !/^\/(?:src\/|tests\/)/.test(path)||
-       (ext==='.json'&&!path.startsWith('/tests/fixtures/'))) {
+       (ext==='.json'&&path!=='/tests/fixtures/conformance-option-result-match-i64-v0.json')) {
       response.writeHead(403);response.end();return;
     }
     const content=await readFile(file);
