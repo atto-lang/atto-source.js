@@ -2,7 +2,7 @@
 import {open, writeFile, link, lstat, unlink} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {basename, dirname, join, resolve, isAbsolute} from 'node:path';
-import {randomBytes} from 'node:crypto';
+import {randomBytes,createHash} from 'node:crypto';
 import {TextDecoder} from 'node:util';
 import {compile, check} from '../src/compiler.mjs';
 import {staticFactsV0} from '../src/static-facts-v0.node.mjs';
@@ -51,12 +51,18 @@ try {
   const freestanding=rawArgs[0]==='--freestanding-core';
   const linkedCore=rawArgs[0]==='--linked-core';
   let args=(extended||freestanding||linkedCore)?rawArgs.slice(1):rawArgs;
-  let coreInput=null;
+  let coreInput=null,coreSha256=null;
   if(linkedCore) {
     if(!args[0]?.startsWith('--core=')||args[0].length<8)
       throw Error('linked-core requires --core=/path/to/core.ores before app input');
     coreInput=args[0].slice('--core='.length);
     args=args.slice(1);
+    if(args[0]?.startsWith('--core-sha256=')) {
+      coreSha256=args[0].slice('--core-sha256='.length);
+      if(!/^[a-f0-9]{64}$/.test(coreSha256))
+        throw Error('core-sha256 requires 64 lowercase hex digits');
+      args=args.slice(1);
+    }
   }
   const checkOnly=args[0]==='--check';
   const factOnly=args[0]==='--static-facts';
@@ -65,10 +71,13 @@ try {
   const extras=args.slice(checkOnly||factOnly?2:1);
   if (!input || input.startsWith('--') || extras.length>1 ||
       (extras.length && !extras[0].startsWith('--out=')))
-    throw Error('usage: oreslang-jsc [--program-v2|--freestanding-core|--linked-core --core=/absolute/core.ores] [--check] input.ores [--out=/absolute/output.mjs]');
+    throw Error('usage: oreslang-jsc [--program-v2|--freestanding-core|--linked-core --core=/absolute/core.ores [--core-sha256=HEX]] [--check] input.ores [--out=/absolute/output.mjs]');
   if ((checkOnly||factOnly) && extras.length) throw Error('check/facts modes do not accept --out');
   const source=await readSource(resolve(input), {rejectBom:factOnly});
   const coreSource=linkedCore?await readSource(resolve(coreInput)):null;
+  if(coreSha256!==null &&
+     createHash('sha256').update(coreSource,'utf8').digest('hex')!==coreSha256)
+    throw Error('linked core SHA-256 mismatch');
   if (factOnly) {
     process.stdout.write(JSON.stringify(staticFactsV0(source))+'\n');
   } else if (checkOnly) {
