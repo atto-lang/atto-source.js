@@ -2,16 +2,16 @@
 define module core as
   pub fnc positive(int x): Option<int> {
     if x > 0; do
-      return Option.some(x);
+      return Some(x);
     else
-      return Option.none();
+      return None;
     fi
   }
   pub fnc negative(int x): Result<int,int> {
     if x < 0; do
-      return Result.err(x);
+      return Err(x);
     else
-      return Result.ok(x);
+      return Ok(x);
     fi
   }
   pub fnc fallback(Option<int> x,int defaultValue): int {
