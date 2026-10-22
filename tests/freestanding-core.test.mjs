@@ -116,3 +116,15 @@ test('CLI --freestanding-core emits executable Node ESM; legacy compiler fails c
     assert.notEqual(rejected.status,0);
   }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('conditional fall-through cannot exponentially amplify IR trees',async()=>{
+  const source=n=>'define module core pub fnc f(int x): int {'+
+    'if x < 1; do fi '.repeat(n)+'return x;} end';
+  const valid=await moduleFrom(source(8));
+  assert.equal(valid.core.f(7n),7n);
+  // An attacker can express an exponentially large lowered tree using only
+  // a short sequence of empty ifs. Refuse it before resolve/JSON/codegen.
+  for(const n of [14,20,40])
+    assert.throws(()=>compileFreestandingCore(source(n)),
+      /expanded conditional IR node budget exceeded/,String(n));
+});
