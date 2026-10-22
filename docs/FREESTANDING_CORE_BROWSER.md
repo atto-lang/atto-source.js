@@ -96,7 +96,7 @@ Generated ESM is freestanding: it requires no `process`, filesystem, browser DOM
 
 `tests/fixtures/core-option-result.ores` is a **synthetic integration fixture**, not the authoritative `oreslang-source.java/stdlib/core.ores`, which still generates its unchanged 1,662-byte integer ESM. Run `npm run test:core-option-result`; the actual browser smoke also includes the standalone concrete ADT module and a linked Oreslang application that calls it.
 
-**Not implemented here:** generic ADTs, `Option<bool>`, nominal algebraic type declarations, exhaustive `match Some(x)/None` / `Ok(x)/Err(e)` destructuring, reflection, generated zorde serializers, typed `ActorRef`, ownership/borrowing proofs, Java/LLVM/Wasm binary ABI equivalence, or full core/alloc/std. These must remain explicit future validation gates.
+**Not implemented here:** generic ADTs, `Option<bool>`, nominal algebraic type declarations, user-defined enum/pattern matching, reflection, generated Zorde serializers, typed `ActorRef`, ownership/borrowing proofs, Java/LLVM/Wasm binary ABI equivalence, or full core/alloc/std. Only concrete exhaustive `Option<int>` and `Result<int,int>` expression matches are supported in this experimental backend.
 
 ## Exhaustive concrete Option/Result pattern matching
 
