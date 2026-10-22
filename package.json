@@ -20,6 +20,9 @@
     "./java-js-parity-v1": "./src/java-js-parity-v1.mjs",
     "./js-numeric-boundary-v1": "./src/js-numeric-boundary-v1.mjs",
     "./static-facts-v0.node": "./src/static-facts-v0.node.mjs",
+    "./actor-host.browser": "./src/actor-host.browser.mjs",
+    "./actor-host.node": "./src/actor-host.node.mjs",
+    "./worker-actor-client": "./src/worker-actor-client.mjs",
     "./freestanding-core": "./src/freestanding-core.mjs"
   },
   "bin": {
@@ -31,6 +34,8 @@
     "parity:js": "node bin/js-semantic-parity-report.mjs",
     "parity:numeric-js": "node bin/js-numeric-boundary-report.mjs",
     "static-facts:smoke": "node bin/oreslang-jsc.mjs --static-facts tests/fixtures/forward-call.ores",
+    "test:workers": "node --test tests/worker-node.test.mjs",
+    "test:browser": "node scripts/browser-worker-smoke.mjs",
     "test:core": "node --test tests/freestanding-core.test.mjs",
     "test:core-browser": "node scripts/browser-core-smoke.mjs"
   }

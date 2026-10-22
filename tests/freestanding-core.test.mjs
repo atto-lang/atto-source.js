@@ -148,3 +148,4 @@ test('deterministic signed-i64 min/max/clamp property vectors',async()=>{
     assert.equal(core.clamp_int(value,left,right),want);
   }
 });
+

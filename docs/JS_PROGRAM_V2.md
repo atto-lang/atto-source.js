@@ -94,3 +94,4 @@ Required next vertical slices:
 5. Execute exact-revision Node and Java/LLVM differential tests with actual CI runner steps/logs. Zero-step Actions failures do not count as tests.
 
 Audit gate: exported file-root routines must remain direct-call-only and cannot be ESM values.
+
