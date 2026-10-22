@@ -25,6 +25,8 @@ export class WorkerMixedLayout {
 
   constructor(options) {
     this.#geometry=new MixedLayoutGeometry(options);
+    if(this.#geometry.rows===0 || this.#geometry.byteLength===0)
+      throw new RangeError("actor store requires nonzero storage");
     this.#buffer=new NativeBuffer(this.#geometry.byteLength);
     this.#view=new NativeDataView(this.#buffer);
   }
