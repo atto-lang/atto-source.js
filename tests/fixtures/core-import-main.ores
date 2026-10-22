@@ -1,0 +1,10 @@
+// Core is resolved at compile-time, never through a Node or browser host import.
+import module core from "core";
+
+pub fnc bounded(int value): int {
+  return core.clamp_int(value, 0, 10);
+}
+
+pub fnc compose(int value): int {
+  return core.max_int(core.min_int(value, 20), 0);
+}
