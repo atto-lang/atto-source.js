@@ -109,18 +109,26 @@ export function validateProgramIRV2(input) {
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid expression');
     const desc=Object.getOwnPropertyDescriptor(expr,'kind');
     if(!desc||!Object.hasOwn(desc,'value'))fail('invalid expression kind');
-    // The IR has two static types in this slice: int values and boolean
-    // comparisons used exclusively in conditions. Never permit JS truthiness.
-    if(expected==='bool'&&desc.value!=='compare')fail('if condition requires boolean comparison');
-    if(expected==='int'&&desc.value==='compare')fail('comparison cannot be used as int');
+    // No implicit truthiness or numeric coercions, including in supplied IR.
+    if(expected==='bool'&&['int','neg','binary'].includes(desc.value))
+      fail('boolean expression required');
+    if(expected==='int'&&['bool','compare','not'].includes(desc.value))
+      fail('boolean value cannot be used as int');
     switch(desc.value) {
       case 'int':
         record(expr,['kind','value'],'int');
+        if(expected!=='int')fail('boolean expected, got int');
         return {kind:'int',value:int(expr.value)};
+      case 'bool':
+        record(expr,['kind','value'],'bool');
+        if(expected!=='bool'||typeof expr.value!=='boolean')fail('invalid bool literal/type');
+        return {kind:'bool',value:expr.value};
       case 'param':
         record(expr,['kind','index'],'param');
         if(!Number.isSafeInteger(expr.index)||Object.is(expr.index,-0)||expr.index<0||expr.index>=headers[owner].params.length)
           fail('out-of-bounds parameter');
+        if((headers[owner].paramTypes?.[expr.index]??'int')!==expected)
+          fail('parameter type mismatch');
         return {kind:'param',index:expr.index};
       case 'neg':
         record(expr,['kind','inner'],'neg');
