@@ -160,11 +160,13 @@ export function validateProgramIRV2(input) {
         if(!Number.isSafeInteger(expr.target)||Object.is(expr.target,-0)||expr.target<0||expr.target>=headers.length)
           fail('invalid call target');
         const target=headers[expr.target];
+        if((target.returnType??'int')!==expected)fail('call return type mismatch');
         const args=sequence(expr.args,128,'call args');
         if(args.length!==target.params.length)fail('call arity mismatch');
         if(target.module!==headers[owner].module && !target.pub)fail('cross-module private call');
         graph[owner].add(expr.target);
-        return {kind:'call',target:expr.target,args:args.map(a=>node(a,owner,depth+1))};
+        return {kind:'call',target:expr.target,args:args.map((a,i)=>
+          node(a,owner,depth+1,target.paramTypes?.[i]??'int'))};
       }
       case 'match': {
         record(expr,['kind','subject','arms'],'match');
@@ -185,7 +187,7 @@ export function validateProgramIRV2(input) {
             if(literals.has(value))fail('duplicate scalar pattern');
             literals.add(value);
           }
-          return {value,body:node(arm.body,owner,depth+1)};
+          return {value,body:node(arm.body,owner,depth+1,expected)};
         });
         if(!wildcard)fail('non-exhaustive int match');
         return {kind:'match',subject,arms:checked};
@@ -193,7 +195,7 @@ export function validateProgramIRV2(input) {
       default:fail('unsupported expression kind');
     }
   }
-  const functions=headers.map((f,i)=>({...f,body:node(sourceFunctions[i].body,i)}));
+  const functions=headers.map((f,i)=>({...f,body:node(sourceFunctions[i].body,i,f.returnType??'int')}));
   const color=new Uint8Array(headers.length);
   function visit(i) {
     if(color[i]===1)fail('recursive call graph unsupported pending fuel');
