@@ -411,9 +411,11 @@ class Parser {
     if(family==='adt') {
       const tags=new Set(arms.map(arm=>arm.tag));
       const option=tags.has('Some')||tags.has('None');
+      const result=tags.has('Ok')||tags.has('Err');
+      if(option&&result)fail('cannot mix Option and Result variant patterns');
       const required=option?['Some','None']:['Ok','Err'];
       if(arms.length!==2||required.some(tag=>!tags.has(tag)))
-        fail('non-exhaustive or mixed ADT variants; expected '+required.join('/') );
+        fail('non-exhaustive ADT match; expected '+required.join('/'));
       return {kind:'adtMatch',adt:option?'option<int>':'result<int,int>',
         subject,arms:arms.map(arm=>({tag:arm.tag,bind:arm.bind,body:arm.body}))};
     }
