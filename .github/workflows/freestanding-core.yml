@@ -24,6 +24,8 @@ jobs:
         run: npm run test:core-link
       - name: Verify typed boolean portable core
         run: npm run test:core-bool
+      - name: Validate concrete Option/Result core types and tagged ABI
+        run: npm run test:core-option-result
       - name: Verify a real Chrome executable
         run: google-chrome --version
       - name: Compile and execute canonical core in browser

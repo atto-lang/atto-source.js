@@ -57,11 +57,46 @@ The browser ESM smoke now exercises a **linked app** as well as the standalone c
 
 ## Experimental boolean core values
 
+**Constructor spelling:** The experimental JS backend now recognizes the canonical Oreslang `Some(value)`, bare `None`, `Ok(value)` and `Err(error)` used by the shared value-match fixtures. Explicit `Option.some/none` and `Result.ok/err` intrinsics remain available in this prototype for pure static calls. Exhaustive destructuring `match Some(x) / None` is **not** implemented in this PR, even though another conformance fixture documents that language shape; that gap remains a separate parity blocker. See [shared pending contract PR #153](https://github.com/ores-truffle-oreslang/oreslang-platform-conformance/pull/153).
+
 The source compiler now recognizes **first-class `bool` parameters and return values** using explicit `bool` types, `true`/`false` constants, `!` boolean negation, signed integer comparisons returning `bool`, boolean-returning function calls, and `if predicate; do ... else ... fi` guards. The validated IR demands strict input types, and generated ESM rejects JavaScript numeric truthiness (`1`, `0`, `1n`) at the boolean ABI boundary. Boolean `if` results and arguments are statically checked before emission. Only integer comparisons are admitted so far; boolean `==` and generic `Any` equality, boolean `and/or`, `Option<T>`, and `Result<T,E>` are separate follow-ups.
 
 The experimental IR v2 adds optional, **paired** `paramTypes` / `returnType` fields to function declarations containing `bool`, plus `bool` and `not` expression nodes. Legacy integer-only IR records remain structurally unchanged. This is an additive version-2 **backend-private migration format**, not yet an independently reviewed shared typed-IR contract. Other tools must negotiate the extended shape before consuming it.
 
 `tests/fixtures/core-boolean.ores` is an explicitly **synthetic Oreslang portability fixture**. It is not the authoritative Java `core.ores` library, whose unchanged source still compiles to the identical integer ESM. `tests/core-boolean.test.mjs` compiles and runs pure typed boolean code, cross-module closed-world calls and adversarial IR mutations. The browser smoke also transpiles and imports the bool fixture. Generated boolean ESM has no Node, OS, filesystem, network or browser host imports; JavaScript GC remains normal.
+
+## Portable concrete Option/Result values (experimental)
+
+This PR extends the pure, closed-world browser/Node JavaScript compiler with **concrete** `Option<int>` and `Result<int,int>` values. These are intentionally *not yet polymorphic* `Option<T>` / `Result<T,E>`; a shared compiler type and ownership model is required before claiming generic ADT parity.
+
+Portable source intrinsics available in this slice:
+
+```ores
+pub fnc maybe(int x): Option<int> {
+  if x > 0; do return Option.some(x);
+  else return Option.none(); fi
+}
+pub fnc extract(Option<int> value): int {
+  return Option.unwrap_or(value,0);
+}
+pub fnc compute(int x): Result<int,int> {
+  if x < 0; do return Result.err(x);
+  else return Result.ok(x); fi
+}
+pub fnc test(Result<int,int> value): bool {
+  return Result.is_ok(value);
+}
+```
+
+This subset also supports `Option.is_some`, `Result.unwrap_or` and `Result.unwrap_err_or`. The intrinsics are compiler-resolved, not runtime ESM imports or extensible host functions. The parser forbids user modules called `Option` or `Result` from shadowing these reserved operations.
+
+The JS wire *representation* is an immutable null-prototype record with enumerable own data properties `kind` and `value`. `Some`, `Ok` and `Err` contain a **checked signed-i64 BigInt**; `None` contains `null`. The ABI checks the shape, frozen state, tags and payload before accepting a value passed in from JS. Correctly shaped values are ordinary transferable **data**, not unforgeable authority tokens or actor-owned handles. No zero-GC, untrusted JS sandbox, cross-backend message serialization, or zero-copy ownership is claimed.
+
+Generated ESM is freestanding: it requires no `process`, filesystem, browser DOM, Web Workers, Wasm host import, dynamic `import` or `std` capability. The standalone core source and linked applications use the same typed IR, and helper functions are emitted on **actual intrinsic use**, even if every public signature remains `int`. Type-confused and forged IR intrinsic operators reject before emission.
+
+`tests/fixtures/core-option-result.ores` is a **synthetic integration fixture**, not the authoritative `oreslang-source.java/stdlib/core.ores`, which still generates its unchanged 1,662-byte integer ESM. Run `npm run test:core-option-result`; the actual browser smoke also includes the standalone concrete ADT module and a linked Oreslang application that calls it.
+
+**Not implemented here:** generic ADTs, `Option<bool>`, nominal algebraic type declarations, exhaustive `match Some(x)/None` / `Ok(x)/Err(e)` destructuring, reflection, generated zorde serializers, typed `ActorRef`, ownership/borrowing proofs, Java/LLVM/Wasm binary ABI equivalence, or full core/alloc/std. These must remain explicit future validation gates.
 
 ## Architecture and future proof gates
 

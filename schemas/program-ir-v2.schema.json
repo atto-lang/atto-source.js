@@ -112,14 +112,18 @@
           "items": {
             "enum": [
               "int",
-              "bool"
+              "bool",
+              "option<int>",
+              "result<int,int>"
             ]
           }
         },
         "returnType": {
           "enum": [
             "int",
-            "bool"
+            "bool",
+            "option<int>",
+            "result<int,int>"
           ]
         }
       },
@@ -362,6 +366,40 @@
             },
             "inner": {
               "$ref": "#/$defs/expr"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name",
+            "args"
+          ],
+          "properties": {
+            "kind": {
+              "const": "intrinsic"
+            },
+            "name": {
+              "enum": [
+                "Option.some",
+                "Option.none",
+                "Option.is_some",
+                "Option.unwrap_or",
+                "Result.ok",
+                "Result.err",
+                "Result.is_ok",
+                "Result.unwrap_or",
+                "Result.unwrap_err_or"
+              ]
+            },
+            "args": {
+              "type": "array",
+              "maxItems": 2,
+              "items": {
+                "$ref": "#/$defs/expr"
+              }
             }
           }
         }

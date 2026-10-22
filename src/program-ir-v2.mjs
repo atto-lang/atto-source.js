@@ -85,11 +85,12 @@ export function validateProgramIRV2(input) {
     const params=sequence(f.params,128,'parameters').map(p=>ident(p,'parameter'));
     if(new Set(params).size!==params.length)fail('duplicate parameters');
     const paramTypes=typed?sequence(f.paramTypes,128,'paramTypes'):params.map(()=>'int');
+    const types=['int','bool','option<int>','result<int,int>'];
     if(paramTypes.length!==params.length||
-       paramTypes.some(t=>t!=='int'&&t!=='bool'))fail('unsupported function parameter type');
+       paramTypes.some(t=>!types.includes(t)))fail('unsupported function parameter type');
     const returnType=typed?f.returnType:'int';
-    if(returnType!=='int'&&returnType!=='bool')fail('unsupported function return type');
-    if(typed&&returnType!=='bool'&&!paramTypes.includes('bool'))
+    if(!types.includes(returnType))fail('unsupported function return type');
+    if(typed&&returnType==='int'&&paramTypes.every(t=>t==='int'))
       fail('redundant typed metadata on int-only function');
     const slot=(module===null?'@file/':'@module/'+module+'/')+name+'/'+params.length;
     if(slots.has(slot))fail('duplicate caller-visible method arity '+slot);
@@ -116,8 +117,10 @@ export function validateProgramIRV2(input) {
     // No implicit truthiness or numeric coercions, including in supplied IR.
     if(expected==='bool'&&['int','neg','binary'].includes(desc.value))
       fail('boolean expression required');
-    if(expected==='int'&&['bool','compare','not'].includes(desc.value))
-      fail('boolean value cannot be used as int');
+    if(expected!=='bool'&&['bool','compare','not'].includes(desc.value))
+      fail('boolean value cannot be used as non-bool');
+    if(expected!=='int'&&['int','neg','binary'].includes(desc.value))
+      fail('integer expression cannot be used as non-int');
     switch(desc.value) {
       case 'int':
         record(expr,['kind','value'],'int');
@@ -171,6 +174,28 @@ export function validateProgramIRV2(input) {
         graph[owner].add(expr.target);
         return {kind:'call',target:expr.target,args:args.map((a,i)=>
           node(a,owner,depth+1,target.paramTypes?.[i]??'int'))};
+      }
+      case 'intrinsic': {
+        record(expr,['kind','name','args'],'intrinsic');
+        const signatures={
+          'Option.some':[['int'],'option<int>'],
+          'Option.none':[[],'option<int>'],
+          'Option.is_some':[['option<int>'],'bool'],
+          'Option.unwrap_or':[['option<int>','int'],'int'],
+          'Result.ok':[['int'],'result<int,int>'],
+          'Result.err':[['int'],'result<int,int>'],
+          'Result.is_ok':[['result<int,int>'],'bool'],
+          'Result.unwrap_or':[['result<int,int>','int'],'int'],
+          'Result.unwrap_err_or':[['result<int,int>','int'],'int']
+        };
+        if(typeof expr.name!=='string'||!Object.hasOwn(signatures,expr.name))
+          fail('unknown portable intrinsic');
+        const [types,result]=signatures[expr.name];
+        if(expected!==result)fail('intrinsic return type mismatch');
+        const args=sequence(expr.args,2,'intrinsic args');
+        if(args.length!==types.length)fail('intrinsic arity mismatch');
+        return {kind:'intrinsic',name:expr.name,
+          args:args.map((argument,i)=>node(argument,owner,depth+1,types[i]))};
       }
       case 'match': {
         record(expr,['kind','subject','arms'],'match');

@@ -126,6 +126,19 @@ class Parser {
     if (t.kind !== 'id' || !TOKEN_NAME.test(t.value)) fail('identifier expected',t);
     this.i++; return t.value;
   }
+  valueType() {
+    if(this.eat('int'))return 'int';
+    if(this.eat('bool'))return 'bool';
+    if(this.eat('Option')){
+      this.expect('<');this.expect('int');this.expect('>');
+      return 'option<int>';
+    }
+    if(this.eat('Result')){
+      this.expect('<');this.expect('int');this.expect(',');this.expect('int');this.expect('>');
+      return 'result<int,int>';
+    }
+    fail('unsupported scalar type (int, bool, Option<int>, Result<int,int>)',this.peek());
+  }
   functions(moduleName) {
     const pub = this.eat('pub'), start=this.peek();
     if (!this.eat('fnc') && !this.eat('routine')) fail('unsupported declaration',start);
@@ -135,9 +148,7 @@ class Parser {
     if (!this.eat(')')) {
       do {
         if (params.length >= 128) fail('parameter limit',this.peek());
-        const type=this.peek().value;
-        if(type!=='int'&&type!=='bool')fail('only int/bool parameters supported',this.peek());
-        this.i++;
+        const type=this.valueType();
         const p = this.name();
         if (params.includes(p)) fail('duplicate parameter ' + p);
         params.push(p); paramTypes.push(type);
@@ -148,9 +159,7 @@ class Parser {
     // This is a freestanding core slice, not generic statement lowering.
     const arrow=this.eat('->');
     if(!arrow)this.expect(':');
-    const returnType=this.peek().value;
-    if(returnType!=='int'&&returnType!=='bool')fail('only int/bool returns supported',this.peek());
-    this.i++;
+    const returnType=this.valueType();
     const braced=this.eat('{');
     if(!braced&&!arrow)fail('expected { for colon function body',this.peek());
     if(!braced){if(!this.eat('as'))this.eat('::');}
@@ -165,7 +174,7 @@ class Parser {
     const fn={module:moduleName, name, kind, pub, params, body};
     // Keep the historical integer-only IR exactly stable for old consumers.
     // New typed fields are an all-or-nothing additive extension for bool.
-    if(returnType==='bool'||paramTypes.includes('bool')){
+    if(returnType!=='int'||paramTypes.some(type=>type!=='int')){
       fn.paramTypes=paramTypes;fn.returnType=returnType;
     }
     return fn;
@@ -235,7 +244,7 @@ class Parser {
         case 'neg':case 'not':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
-        case 'call':for(const arg of expr.args)add(arg);break;
+        case 'call':case 'intrinsic':for(const arg of expr.args)add(arg);break;
         case 'match':
           add(expr.subject);
           for(const arm of expr.arms)add(arm.body);
@@ -259,6 +268,8 @@ class Parser {
     while (this.peek().kind !== 'eof') {
       if (this.eat('define')) {
         this.expect('module'); const name=this.name();
+        if(name==='Option'||name==='Result')
+          fail('reserved portable intrinsic module name '+name);
         if (usedModules.has(name)) fail('duplicate module ' + name);
         usedModules.add(name); this.eat('as');
         modules.push(name);
@@ -321,6 +332,8 @@ class Parser {
     if(this.eat('.')) {qualifier=first; symbol=this.name();}
     if (!this.eat('(')) {
       if (qualifier) fail('bare module properties not yet supported',token);
+      // Existing Oreslang Option constructor spelling: bare None.
+      if(first==='None')return {kind:'call',qualifier:'Option',name:'none',args:[]};
       return {kind:'variable', name:first};
     }
     const args=[];
@@ -330,6 +343,15 @@ class Parser {
         args.push(this.expression());
       } while(this.eat(','));
       this.expect(')');
+    }
+    // Canonical Oreslang constructors also work as pure aliases for the
+    // same statically checked intrinsics; don't introduce any new host API.
+    if(qualifier===null){
+      const constructors={Some:['Option','some'],Ok:['Result','ok'],Err:['Result','err']};
+      if(Object.hasOwn(constructors,symbol)){
+        const [scope,name]=constructors[symbol];
+        return {kind:'call',qualifier:scope,name,args};
+      }
     }
     return {kind:'call',qualifier,name:symbol,args};
   }
@@ -398,6 +420,24 @@ function resolveProgram(parsed) {
       case 'if': return {kind:'if',condition:resolve(expr.condition,owner,depth+1),
         yes:resolve(expr.yes,owner,depth+1),no:resolve(expr.no,owner,depth+1)};
       case 'call': {
+        if(expr.qualifier==='Option'||expr.qualifier==='Result'){
+          const key=expr.qualifier+'.'+expr.name;
+          const signatures={
+            'Option.some':[1,'option<int>'],
+            'Option.none':[0,'option<int>'],
+            'Option.is_some':[1,'bool'],
+            'Option.unwrap_or':[2,'int'],
+            'Result.ok':[1,'result<int,int>'],
+            'Result.err':[1,'result<int,int>'],
+            'Result.is_ok':[1,'bool'],
+            'Result.unwrap_or':[2,'int'],
+            'Result.unwrap_err_or':[2,'int']
+          };
+          const sig=signatures[key];
+          if(!sig)fail('unknown portable constructor/intrinsic '+key);
+          if(expr.args.length!==sig[0])fail('intrinsic arity mismatch '+key);
+          return {kind:'intrinsic',name:key,args:expr.args.map(a=>resolve(a,owner,depth+1))};
+        }
         const mod=expr.qualifier===null?owner.module:expr.qualifier;
         if(mod!==null && !modules.includes(mod)) fail('unknown module '+mod);
         const key=(mod===null?'@file/':'@module/'+mod+'/')+expr.name;
@@ -418,6 +458,7 @@ function resolveProgram(parsed) {
   const graph=resolved.map(()=>new Set());
   function inspect(expr,owner) {
     if(expr.kind==='call') {graph[owner].add(expr.target);expr.args.forEach(a=>inspect(a,owner));}
+    else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
     else if(expr.kind==='binary'||expr.kind==='compare') {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='neg'||expr.kind==='not') inspect(expr.inner,owner);
@@ -464,6 +505,18 @@ function emitProgram(program) {
       case 'if':return '(('+emitExpr(expr.condition,depth+1)+')?('+
         emitExpr(expr.yes,depth+1)+'):('+emitExpr(expr.no,depth+1)+'))';
       case 'call':return '_f'+expr.target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
+      case 'intrinsic': {
+        const funcs={
+          'Option.some':'_some','Option.none':'_none',
+          'Option.is_some':'_is_some','Option.unwrap_or':'_option_or',
+          'Result.ok':'_ok','Result.err':'_err',
+          'Result.is_ok':'_is_ok','Result.unwrap_or':'_result_or',
+          'Result.unwrap_err_or':'_error_or'
+        };
+        const target=funcs[expr.name];
+        if(!target)fail('unsupported portable intrinsic');
+        return target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
+      }
       case 'match': {
         // _subject is evaluated exactly once. A branch returns immediately,
         // so no fallthrough and unmatched arm expressions stay lazy.
@@ -480,10 +533,52 @@ function emitProgram(program) {
   }
   if(program.functions.some(fn=>fn.returnType==='bool'||fn.paramTypes?.includes('bool')))
     out.push('function _checkbool(v){if(typeof v!=="boolean")throw new TypeError("Oreslang bool required");return v;}');
+  // Intrinsics may be nested entirely within an int-returning function
+  // without appearing in its public signature. Include helpers based on
+  // both typed signatures and the entire already-validated expression DAG.
+  function usesPortableRuntime(expr) {
+    switch(expr.kind) {
+      case 'intrinsic':return true;
+      case 'call':return expr.args.some(usesPortableRuntime);
+      case 'binary':case 'compare':
+        return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
+      case 'if':return usesPortableRuntime(expr.condition)||
+        usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
+      case 'neg':case 'not':return usesPortableRuntime(expr.inner);
+      case 'match':return usesPortableRuntime(expr.subject)||
+        expr.arms.some(arm=>usesPortableRuntime(arm.body));
+      default:return false;
+    }
+  }
+  if(program.functions.some(fn=>['option<int>','result<int,int>'].includes(fn.returnType)||
+      fn.paramTypes?.some(t=>['option<int>','result<int,int>'].includes(t))||
+      usesPortableRuntime(fn.body))) {
+    out.push(
+      'function _tag(k,v){const x=Object.create(null);Object.defineProperty(x,"kind",{value:k,enumerable:true});Object.defineProperty(x,"value",{value:v,enumerable:true});return Object.freeze(x);}',
+      'function _checktag(x,types){if(!x||typeof x!=="object"||Object.getPrototypeOf(x)!==null||!Object.isFrozen(x))throw new TypeError("Oreslang tagged value required");const keys=Reflect.ownKeys(x);if(keys.length!==2||!keys.includes("kind")||!keys.includes("value"))throw new TypeError("Oreslang tagged value shape required");const kd=Object.getOwnPropertyDescriptor(x,"kind"),vd=Object.getOwnPropertyDescriptor(x,"value");if(!kd||!vd||!Object.hasOwn(kd,"value")||!Object.hasOwn(vd,"value")||!kd.enumerable||!vd.enumerable||!types.includes(kd.value))throw new TypeError("Oreslang tagged value type required");if(kd.value==="None"){if(vd.value!==null)throw new TypeError("Oreslang None payload must be null");}else _check(vd.value);return x;}',
+      'function _checkoption(v){return _checktag(v,["Some","None"]);}',
+      'function _checkresult(v){return _checktag(v,["Ok","Err"]);}',
+      'function _some(v){return _tag("Some",_check(v));}',
+      'function _none(){return _tag("None",null);}',
+      'function _ok(v){return _tag("Ok",_check(v));}',
+      'function _err(v){return _tag("Err",_check(v));}',
+      'function _is_some(v){return _checkoption(v).kind==="Some";}',
+      'function _is_ok(v){return _checkresult(v).kind==="Ok";}',
+      'function _option_or(v,d){_check(d);const x=_checkoption(v);return x.kind==="Some"?x.value:d;}',
+      'function _result_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Ok"?x.value:d;}',
+      'function _error_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Err"?x.value:d;}'
+    );
+  }
   program.functions.forEach((fn,i)=>{
     const params=fn.params.map((_,j)=>'_p'+j);
     out.push('function _f'+i+'('+params.join(',')+'){');
-    params.forEach((p,j)=>out.push((fn.paramTypes?.[j]==='bool'?'_checkbool':'_check')+'('+p+');'));
+    params.forEach((p,j)=>{
+      const type=fn.paramTypes?.[j]??'int';
+      const check={int:'_check',bool:'_checkbool','option<int>':'_checkoption',
+        'result<int,int>':'_checkresult'}[type];
+      if(!check)fail('unsupported portable parameter type');
+      out.push(check+'('+p+');');
+    });
     out.push('return '+emitExpr(fn.body)+';','}');
   });
   let dispatcherNumber=0;
