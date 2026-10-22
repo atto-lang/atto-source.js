@@ -28,7 +28,7 @@ npm run test:core
 
 ## Browser verification
 
-Serve the repository root over local HTTP(S), for example `python3 -m http.server 8000`, then open `http://localhost:8000/tests/core-browser-smoke.html`. The browser fixture fetches the **same pinned Oreslang source**, compiles with the host-neutral JS library, imports the resulting trusted Blob ESM, runs representative integer operations, and prints `PASS_BROWSER_FREESTANDING_CORE` only on success.
+Run `npm run serve:browser` (a local-only Node.js fixture server), then open `http://127.0.0.1:8000/tests/core-browser-smoke.html`. This avoids Python scripts and does not load any hosted Node API into Oreslang core. The browser fixture fetches the **same pinned Oreslang source**, compiles with the host-neutral JS library, imports the resulting trusted Blob ESM, runs representative integer operations, and prints `PASS_BROWSER_FREESTANDING_CORE` only on success.
 
 This is a browser test fixture, **not yet actual external browser CI evidence**; a clean headless Chromium/browser run must complete before a browser verification claim. Blob compilation is for local trusted tests; production deployment should use pinned prebuilt ESM and CSP, not compile arbitrary untrusted Oreslang in-page.
 
@@ -53,7 +53,7 @@ node -e 'import("file:///tmp/linked-core.mjs").then(m=>console.log(m.sample(42n)
 
 The optional `--core-sha256=HEX` build-time argument verifies SHA-256 of the decoded exact UTF-8 core source bytes before code generation. For reviewed/release builds, supply a pinned digest; no digest means source identity remains caller-controlled. This is **not** a binary provenance or complete supply-chain attestation.
 
-The browser ESM smoke now exercises a **linked app** as well as the standalone core module. The CLI is a Node-based **build-time** tool, not a runtime dependency of browser core. Neither linked code nor standalone core has a browser/Node API import. Source-relative path resolution and full library module graphs remain separate compiler work.
+The browser ESM smoke now exercises a **linked app** as well as the standalone core module. The development fixture server binds only to `127.0.0.1`, serves a limited `/tests/` and `/src/` allowlist of ESM/HTML/Oreslang source extensions, and is **not** for production hosting. The CLI is a Node-based **build-time** tool, not a runtime dependency of browser core. Neither linked code nor standalone core has a browser/Node API import. Source-relative path resolution and full library module graphs remain separate compiler work.
 
 ## Architecture and future proof gates
 
