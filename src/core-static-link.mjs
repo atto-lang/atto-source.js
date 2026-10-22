@@ -13,20 +13,45 @@ export class CoreLinkError extends Error {
   }
 }
 
-// The directive must be the first non-whitespace source content. No arbitrary
+// The directive must be the first non-comment source content. No arbitrary
 // path resolution or transitive package imports are admitted in this profile.
-// Legacy std/core is accepted as a source-level alias only, never as a host
-// runtime import. A real module resolver must replace this single-import seam.
-const CORE_DIRECTIVE=/^\s*import[ \t]+module[ \t]+core[ \t]+from[ \t]+"(?:core|std\/core)"[ \t]*;/;
+// Legacy std/core is a source-only alias, not a host runtime import.
+const CORE_DIRECTIVE=/^import[ \t]+module[ \t]+core[ \t]+from[ \t]+"(?:core|std\/core)"[ \t]*;/;
 const DIRECTIVE_COUNT=262144;
+function leadingTrivia(source) {
+  let i=0;
+  while(i<source.length){
+    if(/\s/.test(source[i])){i++;continue;}
+    if(source.startsWith('//',i)){
+      const end=source.indexOf('\n',i+2);
+      i=end<0?source.length:end+1;
+      continue;
+    }
+    if(source.startsWith('/*',i)){
+      i+=2;let depth=1;
+      while(i<source.length&&depth>0){
+        if(source.startsWith('/*',i)){
+          if(++depth>64)throw new CoreLinkError('comment nesting exceeded');
+          i+=2;
+        }else if(source.startsWith('*/',i)){depth--;i+=2;}
+        else i++;
+      }
+      if(depth)throw new CoreLinkError('unterminated source comment');
+      continue;
+    }
+    break;
+  }
+  return i;
+}
 export function compileToCoreLinkedIR(applicationSource,coreSource) {
   if(typeof applicationSource!=='string'||typeof coreSource!=='string')
     throw new CoreLinkError('source inputs must be strings');
   // The standard parser enforces byte budgets, strict declarations, exact
   // signatures, duplicate-module rejection and typed call resolution.
-  const match=CORE_DIRECTIVE.exec(applicationSource);
+  const offset=leadingTrivia(applicationSource);
+  const match=CORE_DIRECTIVE.exec(applicationSource.slice(offset));
   if(!match)throw new CoreLinkError('expected leading import module core from "core";');
-  const body=applicationSource.slice(match[0].length);
+  const body=applicationSource.slice(offset+match[0].length);
   if(!body.trim())throw new CoreLinkError('application has no declarations');
   if(applicationSource.length+coreSource.length>DIRECTIVE_COUNT)
     throw new CoreLinkError('combined source exceeds linker size budget');
