@@ -109,7 +109,7 @@ function tokenize(source) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
     } else if (source.startsWith('->',pos) || source.startsWith('::',pos)) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
-    } else if ('(){}:,;+-*/%=.<>'.includes(c)) {
+    } else if ('(){}:,;+-*/%=.<>!'.includes(c)) {
       emit('sym',c,start); advance();
     } else fail('unsupported character',start);
   }
@@ -131,13 +131,16 @@ class Parser {
     if (!this.eat('fnc') && !this.eat('routine')) fail('unsupported declaration',start);
     const kind = this.tokens[this.i-1].value, name = this.name();
     this.expect('(');
-    const params = [];
+    const params = [], paramTypes = [];
     if (!this.eat(')')) {
       do {
         if (params.length >= 128) fail('parameter limit',this.peek());
-        this.expect('int'); const p = this.name();
+        const type=this.peek().value;
+        if(type!=='int'&&type!=='bool')fail('only int/bool parameters supported',this.peek());
+        this.i++;
+        const p = this.name();
         if (params.includes(p)) fail('duplicate parameter ' + p);
-        params.push(p);
+        params.push(p); paramTypes.push(type);
       } while(this.eat(','));
       this.expect(')');
     }
@@ -145,7 +148,9 @@ class Parser {
     // This is a freestanding core slice, not generic statement lowering.
     const arrow=this.eat('->');
     if(!arrow)this.expect(':');
-    this.expect('int');
+    const returnType=this.peek().value;
+    if(returnType!=='int'&&returnType!=='bool')fail('only int/bool returns supported',this.peek());
+    this.i++;
     const braced=this.eat('{');
     if(!braced&&!arrow)fail('expected { for colon function body',this.peek());
     if(!braced){if(!this.eat('as'))this.eat('::');}
@@ -157,7 +162,13 @@ class Parser {
     // Exporting a routine as a module object property would make a
     // direct-call-only routine first class. Leave this for runtime/ABI design.
     if (pub && kind === 'routine') fail('public routine cannot be exported');
-    return {module:moduleName, name, kind, pub, params, body};
+    const fn={module:moduleName, name, kind, pub, params, body};
+    // Keep the historical integer-only IR exactly stable for old consumers.
+    // New typed fields are an all-or-nothing additive extension for bool.
+    if(returnType==='bool'||paramTypes.includes('bool')){
+      fn.paramTypes=paramTypes;fn.returnType=returnType;
+    }
+    return fn;
   }
   statementSequence(terminators,depth=0) {
     if(depth>64)fail('conditional nesting budget exceeded',this.peek());
@@ -169,16 +180,12 @@ class Parser {
         this.expect(';');
         statements.push({kind:'return',body});
       } else if(this.eat('if')) {
-        const left=this.expression(), op=this.peek().value;
-        if(!['<','>','<=','>=','==','!='].includes(op))
-          fail('integer if condition requires a comparison',this.peek());
-        this.i++;
-        const right=this.expression();
+        const condition=this.expression();
         this.expect(';');this.expect('do');
         const yes=this.statementSequence(['else','fi'],depth+1);
         const no=this.eat('else')?this.statementSequence(['fi'],depth+1):[];
         this.expect('fi');
-        statements.push({kind:'branch',condition:{kind:'compare',op,left,right},yes,no});
+        statements.push({kind:'branch',condition,yes,no});
       } else fail('unsupported statement in int function',this.peek());
     }
     if(this.peek().kind==='eof')fail('unterminated function or conditional',this.peek());
@@ -224,8 +231,8 @@ class Parser {
         if(total>MAX_TOKENS)fail('expanded conditional IR node budget exceeded');
       }
       switch(expr.kind){
-        case 'int':case 'variable':break;
-        case 'neg':add(expr.inner);break;
+        case 'int':case 'bool':case 'variable':break;
+        case 'neg':case 'not':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'call':for(const arg of expr.args)add(arg);break;
@@ -284,15 +291,19 @@ class Parser {
       while (true) {
         const op = this.peek().value;
         if (op === '/') fail('division unsupported in provisional int profile',this.peek());
-        const prec=op==='*'||op==='%'?20:op==='+'||op==='-'?10:-1;
+        const compare=['<','>','<=','>=','==','!='].includes(op);
+        const prec=op==='*'||op==='%'?20:op==='+'||op==='-'?10:compare?5:-1;
         if (prec < min) break;
         this.i++;
-        left={kind:'binary',op,left,right:this.expression(prec+1)};
+        left={kind:compare?'compare':'binary',op,left,right:this.expression(prec+1)};
       }
       return left;
     } finally {this.depth--;}
   }
   primary() {
+    if(this.eat('!'))return {kind:'not',inner:this.expression(30)};
+    if(this.eat('true'))return {kind:'bool',value:true};
+    if(this.eat('false'))return {kind:'bool',value:false};
     if (this.eat('-')) {
       if(this.peek().kind === 'int') return {kind:'int',value:this.integer(true)};
       return {kind:'neg',inner:this.expression(30)};
@@ -375,13 +386,13 @@ function resolveProgram(parsed) {
   function resolve(expr,owner,depth=0) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
-      case 'int': return expr;
+      case 'int':case 'bool':return expr;
       case 'variable': {
         const index=owner.params.indexOf(expr.name);
         if(index<0) fail('unresolved identifier '+expr.name);
         return {kind:'param',index};
       }
-      case 'neg': return {kind:'neg',inner:resolve(expr.inner,owner,depth+1)};
+      case 'neg':case 'not':return {kind:expr.kind,inner:resolve(expr.inner,owner,depth+1)};
       case 'binary': return {kind:'binary',op:expr.op,left:resolve(expr.left,owner,depth+1),right:resolve(expr.right,owner,depth+1)};
       case 'compare': return {kind:'compare',op:expr.op,left:resolve(expr.left,owner,depth+1),right:resolve(expr.right,owner,depth+1)};
       case 'if': return {kind:'if',condition:resolve(expr.condition,owner,depth+1),
@@ -409,7 +420,7 @@ function resolveProgram(parsed) {
     if(expr.kind==='call') {graph[owner].add(expr.target);expr.args.forEach(a=>inspect(a,owner));}
     else if(expr.kind==='binary'||expr.kind==='compare') {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
-    else if(expr.kind==='neg') inspect(expr.inner,owner);
+    else if(expr.kind==='neg'||expr.kind==='not') inspect(expr.inner,owner);
     else if(expr.kind==='match') {
       inspect(expr.subject,owner);expr.arms.forEach(a=>inspect(a.body,owner));
     }
@@ -440,10 +451,12 @@ function emitProgram(program) {
     if(depth > MAX_DEPTH) fail('codegen depth exceeded');
     switch(expr.kind) {
       case 'int': return expr.value+'n';
+      case 'bool': return expr.value?'true':'false';
       case 'param':return '_p'+expr.index;
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
+      case 'not':return '!('+emitExpr(expr.inner,depth+1)+')';
       case 'binary':
         if(expr.op==='%')return '_rem(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
         return '_check(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
@@ -465,10 +478,12 @@ function emitProgram(program) {
       default: fail('unsupported codegen expression');
     }
   }
+  if(program.functions.some(fn=>fn.returnType==='bool'||fn.paramTypes?.includes('bool')))
+    out.push('function _checkbool(v){if(typeof v!=="boolean")throw new TypeError("Oreslang bool required");return v;}');
   program.functions.forEach((fn,i)=>{
     const params=fn.params.map((_,j)=>'_p'+j);
     out.push('function _f'+i+'('+params.join(',')+'){');
-    params.forEach(p=>out.push('_check('+p+');'));
+    params.forEach((p,j)=>out.push((fn.paramTypes?.[j]==='bool'?'_checkbool':'_check')+'('+p+');'));
     out.push('return '+emitExpr(fn.body)+';','}');
   });
   let dispatcherNumber=0;
