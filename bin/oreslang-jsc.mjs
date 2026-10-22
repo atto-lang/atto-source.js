@@ -8,6 +8,7 @@ import {compile, check} from '../src/compiler.mjs';
 import {staticFactsV0} from '../src/static-facts-v0.node.mjs';
 import {compileProgramV2, checkProgramV2} from '../src/program-v2.mjs';
 import {compileFreestandingCore,checkFreestandingCore} from '../src/freestanding-core.mjs';
+import {compileCoreLinkedProgram,checkCoreLinkedProgram} from '../src/core-static-link.mjs';
 
 const MAX_SOURCE_BYTES=262144;
 async function readSource(path, {rejectBom = false} = {}) {
@@ -48,30 +49,43 @@ try {
   // until cross-backend semantics and host ABI have been independently validated.
   const extended=rawArgs[0]==='--program-v2';
   const freestanding=rawArgs[0]==='--freestanding-core';
-  const args=(extended||freestanding)?rawArgs.slice(1):rawArgs;
+  const coreLinked=rawArgs[0]==='--core-linked';
+  const args=(extended||freestanding||coreLinked)?rawArgs.slice(1):rawArgs;
   const checkOnly=args[0]==='--check';
   const factOnly=args[0]==='--static-facts';
-  if (factOnly && (extended||freestanding)) throw Error('facts mode does not admit alternate dialects');
+  if (factOnly && (extended||freestanding||coreLinked)) throw Error('facts mode does not admit alternate dialects');
   const input=checkOnly||factOnly?args[1]:args[0];
   const extras=args.slice(checkOnly||factOnly?2:1);
-  if (!input || input.startsWith('--') || extras.length>1 ||
-      (extras.length && !extras[0].startsWith('--out=')))
-    throw Error('usage: oreslang-jsc [--program-v2|--freestanding-core] [--check] input.ores [--out=/absolute/output.mjs]');
-  if ((checkOnly||factOnly) && extras.length) throw Error('check/facts modes do not accept --out');
+  const usage='usage: oreslang-jsc [--program-v2|--freestanding-core|--core-linked] [--check] input.ores [--core-source=/absolute/core.ores] [--out=/absolute/output.mjs]';
+  if (!input || input.startsWith('--')) throw Error(usage);
+  const coreOptions=extras.filter(x=>x.startsWith('--core-source='));
+  const outputOptions=extras.filter(x=>x.startsWith('--out='));
+  if (coreLinked) {
+    if(coreOptions.length!==1 || outputOptions.length>1 ||
+       extras.length!==coreOptions.length+outputOptions.length || (checkOnly && outputOptions.length))
+      throw Error(usage);
+  } else if(extras.length>1 || coreOptions.length ||
+            (extras.length && outputOptions.length!==1) ||
+            ((checkOnly||factOnly) && extras.length)) throw Error(usage);
+  const corePath=coreLinked?coreOptions[0].slice('--core-source='.length):null;
+  if(coreLinked && (!corePath || !isAbsolute(corePath)))throw Error('--core-source requires an absolute path');
   const source=await readSource(resolve(input), {rejectBom:factOnly});
+  const coreSource=coreLinked?await readSource(resolve(corePath),{rejectBom:true}):null;
   if (factOnly) {
     process.stdout.write(JSON.stringify(staticFactsV0(source))+'\n');
   } else if (checkOnly) {
-    if (freestanding) checkFreestandingCore(source);
+    if (coreLinked) checkCoreLinkedProgram(source,coreSource);
+    else if (freestanding) checkFreestandingCore(source);
     else if (extended) checkProgramV2(source);
     else check(source);
     process.stdout.write('OK\n');
   } else {
-    const output=freestanding?compileFreestandingCore(source):
+    const output=coreLinked?compileCoreLinkedProgram(source,coreSource):
+      freestanding?compileFreestandingCore(source):
       extended?compileProgramV2(source):compile(source);
-    if (!extras.length) process.stdout.write(output);
+    if (!outputOptions.length) process.stdout.write(output);
     else {
-      const outputPath=extras[0].slice('--out='.length);
+      const outputPath=outputOptions[0].slice('--out='.length);
       if (!outputPath || !isAbsolute(outputPath))
         throw Error('--out requires an absolute destination path');
       const dest=resolve(outputPath);
