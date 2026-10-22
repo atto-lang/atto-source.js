@@ -33,3 +33,11 @@ jobs:
         run: cargo test --manifest-path tools/integration-manifest-check/Cargo.toml
       - name: Verify declaration-only manifest (not a runtime parity claim)
         run: cargo run --quiet --manifest-path tools/integration-manifest-check/Cargo.toml
+      - name: Test Rust-only repository policy
+        run: |
+          rustc --edition=2021 -D warnings --test tools/no-python-check.rs -o /tmp/no-python-tests
+          /tmp/no-python-tests
+      - name: Enforce Rust-only repository tooling
+        run: |
+          rustc --edition=2021 -D warnings tools/no-python-check.rs -o /tmp/no-python-check
+          /tmp/no-python-check .
