@@ -5,6 +5,7 @@ import {spawnSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {resolve,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {createHash} from 'node:crypto';
 import {compileLinkedFreestandingCore,checkLinkedFreestandingCore}
   from '../src/freestanding-core-link.mjs';
 import {compileLinkedFreestandingCore as compileViaPublicExport}
@@ -83,13 +84,20 @@ test('CLI builds a linked application as a usable local ESM and rejects missing 
   const cli=resolve('bin/oreslang-jsc.mjs');
   try {
     const out=join(folder,'app.mjs'),options=['--linked-core','--core='+corePath];
-    const checks=spawnSync(process.execPath,[cli,...options,'--check',appPath],{encoding:'utf8'});
+    const digest=createHash('sha256').update(await readFile(corePath)).digest('hex');
+    const pinned=[...options,'--core-sha256='+digest];
+    const checks=spawnSync(process.execPath,[cli,...pinned,'--check',appPath],{encoding:'utf8'});
     assert.equal(checks.status,0,checks.stderr);
-    const generated=spawnSync(process.execPath,[cli,...options,appPath,'--out='+out],{encoding:'utf8'});
+    const generated=spawnSync(process.execPath,[cli,...pinned,appPath,'--out='+out],{encoding:'utf8'});
     assert.equal(generated.status,0,generated.stderr);
     const mod=await import(pathToFileURL(out).href);
     assert.equal(mod.sample(19n),10n);
     assert.equal(mod.large(),9007199254740992n);
+    for(const badPin of ['0'.repeat(64),'BAD_SHA256']){
+      const invalid=spawnSync(process.execPath,[cli,...options,
+        '--core-sha256='+badPin,'--check',appPath],{encoding:'utf8'});
+      assert.notEqual(invalid.status,0,'bad source pin must fail closed');
+    }
     const noCore=spawnSync(process.execPath,[cli,'--linked-core',appPath],{encoding:'utf8'});
     assert.notEqual(noCore.status,0);
     const wrongProfile=spawnSync(process.execPath,[cli,'--freestanding-core','--check',appPath],{encoding:'utf8'});
