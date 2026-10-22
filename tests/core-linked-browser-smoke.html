@@ -1,0 +1,31 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Oreslang compile-time core linker: real browser ESM</title>
+<pre id="result">RUNNING</pre>
+<script type="module">
+import {compileCoreLinkedProgram} from '../src/core-static-link.mjs';
+const display=document.querySelector('#result');
+let blob;
+try {
+  const [appResponse,coreResponse]=await Promise.all([
+    fetch('./fixtures/core-import-main.ores',{cache:'no-store'}),
+    fetch('./fixtures/freestanding-core-java.ores',{cache:'no-store'})
+  ]);
+  if(!appResponse.ok||!coreResponse.ok)throw Error('missing pinned Oreslang source fixture');
+  const esm=compileCoreLinkedProgram(await appResponse.text(),await coreResponse.text());
+  // Trusted local-test ESM only. Runtime API has no Node, filesystem or host imports.
+  blob=URL.createObjectURL(new Blob([esm],{type:'text/javascript'}));
+  const linked=await import(blob);
+  const assert=(condition,reason)=>{if(!condition)throw Error(reason);};
+  assert(linked.bounded(-1n)===0n,'negative clamp');
+  assert(linked.bounded(15n)===10n,'upper clamp');
+  assert(linked.compose(14n)===14n,'cross-function core call');
+  assert(linked.compose(9007199254740993n)===20n,'BigInt beyond Number.MAX_SAFE_INTEGER');
+  assert(Object.getPrototypeOf(linked.core)===null&&Object.isFrozen(linked.core),'public core exports must be immutable');
+  display.textContent='PASS_BROWSER_CORE_LINKED';
+} catch(error) {
+  display.textContent='FAIL_BROWSER_CORE_LINKED: '+String(error);
+} finally {
+  if(blob) URL.revokeObjectURL(blob);
+}
+</script>
