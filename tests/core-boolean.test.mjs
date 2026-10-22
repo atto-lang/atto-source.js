@@ -135,3 +135,20 @@ test('1024 deterministic boolean/integer boundary vectors',async()=>{
     assert.equal(core.invert_twice(i>0n),i>0n);
   }
 });
+
+test('IR headers with null, primitive, missing or malformed bool metadata fail closed',async()=>{
+  const valid=compileToProgramIRV2(await source());
+  const altered=value=>({...valid,functions:[value,...valid.functions.slice(1)]});
+  const first=valid.functions[0];
+  for(const v of [
+    null,undefined,42,[],true,'bad',
+    {...first,paramTypes:undefined},
+    {...first,paramTypes:'int'},
+    {...first,paramTypes:['int','bool']},
+    {...first,returnType:undefined},
+    {...first,returnType:'string'},
+    {...first,paramTypes:['bool']},
+    (({returnType,...rest})=>rest)(first),
+    (({paramTypes,...rest})=>rest)(first)
+  ])assert.throws(()=>compileProgramIRV2(altered(v)),/error: program IR:/);
+});
