@@ -123,3 +123,24 @@ test('pinned shared Option/Result i64 conformance vectors execute in JS ESM',asy
   }
   assert.equal(contract.testVectors.length,10);
 });
+
+test('ADT match arms can return typed Option values without losing tags',async()=>{
+  const typed=src(`pub fnc preserve(Option<int> value):Option<int> {
+    return match value over {
+      on Some(n) {return Some(n);}
+      on None {return None;}
+    };
+  }
+  pub fnc checked(Result<int,int> value):Option<int> {
+    return match value over {
+      on Ok(n) {return Some(n);}
+      on Err(e) {return None;}
+    };
+  }`);
+  const adt=(await load(compileFreestandingCore(await core()))).core;
+  const m=(await load(compileFreestandingCore(typed))).core;
+  assert.equal(m.preserve(adt.into_option(5n)).value,5n);
+  assert.equal(m.preserve(adt.into_option(-5n)).kind,'None');
+  assert.equal(m.checked(adt.into_result(9n)).value,9n);
+  assert.equal(m.checked(adt.into_result(-9n)).kind,'None');
+});
