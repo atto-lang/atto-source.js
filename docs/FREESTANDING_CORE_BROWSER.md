@@ -63,6 +63,39 @@ The experimental IR v2 adds optional, **paired** `paramTypes` / `returnType` fie
 
 `tests/fixtures/core-boolean.ores` is an explicitly **synthetic Oreslang portability fixture**. It is not the authoritative Java `core.ores` library, whose unchanged source still compiles to the identical integer ESM. `tests/core-boolean.test.mjs` compiles and runs pure typed boolean code, cross-module closed-world calls and adversarial IR mutations. The browser smoke also transpiles and imports the bool fixture. Generated boolean ESM has no Node, OS, filesystem, network or browser host imports; JavaScript GC remains normal.
 
+## Portable concrete Option/Result values (experimental)
+
+This PR extends the pure, closed-world browser/Node JavaScript compiler with **concrete** `Option<int>` and `Result<int,int>` values. These are intentionally *not yet polymorphic* `Option<T>` / `Result<T,E>`; a shared compiler type and ownership model is required before claiming generic ADT parity.
+
+Portable source intrinsics available in this slice:
+
+```ores
+pub fnc maybe(int x): Option<int> {
+  if x > 0; do return Option.some(x);
+  else return Option.none(); fi
+}
+pub fnc extract(Option<int> value): int {
+  return Option.unwrap_or(value,0);
+}
+pub fnc compute(int x): Result<int,int> {
+  if x < 0; do return Result.err(x);
+  else return Result.ok(x); fi
+}
+pub fnc test(Result<int,int> value): bool {
+  return Result.is_ok(value);
+}
+```
+
+This subset also supports `Option.is_some`, `Result.unwrap_or` and `Result.unwrap_err_or`. The intrinsics are compiler-resolved, not runtime ESM imports or extensible host functions. The parser forbids user modules called `Option` or `Result` from shadowing these reserved operations.
+
+The JS wire *representation* is an immutable null-prototype record with enumerable own data properties `kind` and `value`. `Some`, `Ok` and `Err` contain a **checked signed-i64 BigInt**; `None` contains `null`. The ABI checks the shape, frozen state, tags and payload before accepting a value passed in from JS. Correctly shaped values are ordinary transferable **data**, not unforgeable authority tokens or actor-owned handles. No zero-GC, untrusted JS sandbox, cross-backend message serialization, or zero-copy ownership is claimed.
+
+Generated ESM is freestanding: it requires no `process`, filesystem, browser DOM, Web Workers, Wasm host import, dynamic `import` or `std` capability. The standalone core source and linked applications use the same typed IR, and helper functions are emitted on **actual intrinsic use**, even if every public signature remains `int`. Type-confused and forged IR intrinsic operators reject before emission.
+
+`tests/fixtures/core-option-result.ores` is a **synthetic integration fixture**, not the authoritative `oreslang-source.java/stdlib/core.ores`, which still generates its unchanged 1,662-byte integer ESM. Run `npm run test:core-option-result`; the actual browser smoke also includes the standalone concrete ADT module and a linked Oreslang application that calls it.
+
+**Not implemented here:** generic ADTs, `Option<bool>`, nominal algebraic type declarations, exhaustive `match Some(x)/None` / `Ok(x)/Err(e)` destructuring, reflection, generated zorde serializers, typed `ActorRef`, ownership/borrowing proofs, Java/LLVM/Wasm binary ABI equivalence, or full core/alloc/std. These must remain explicit future validation gates.
+
 ## Architecture and future proof gates
 
 1. The currently named `oreslang-source.java/stdlib/core.ores` and its `std/core` import are **legacy source layout/API**. Moving it to `core/` must be coordinated with import resolver and consumers; this change does **not** silently move or duplicate the authoritative source.
