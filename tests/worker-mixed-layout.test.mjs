@@ -84,6 +84,35 @@ test("native f64 integration updates only selected data and preserves integer co
   store.retire();
 });
 
+test("mixed schema rejects getter-backed fields, holes and shadowed SoAoS names",()=>{
+  const hostile={type:"u32"};
+  Object.defineProperty(hostile,"name",{get(){
+    throw new Error("untrusted property getter must never run");
+  }});
+  assert.throws(()=>new MixedLayoutGeometry({
+    rows:1,layout:"aos",fields:[hostile]
+  }),/own data/);
+  const sparse=[];
+  sparse.length=1;
+  assert.throws(()=>new MixedLayoutGeometry({
+    rows:1,layout:"soa",fields:sparse
+  }),/own data/);
+  const group=[["id"]];
+  Object.defineProperty(group,0,{configurable:true,get(){
+    throw new Error("group getter must never run");
+  }});
+  assert.throws(()=>new MixedLayoutGeometry({
+    rows:1,layout:"soaos",fields:[{name:"id",type:"u32"}],groups:group
+  }),/own data/);
+  const safe=new MixedLayoutGeometry({
+    rows:2,layout:"soaos",fields:[{name:"__proto__",type:"u32"},{name:"constructor",type:"bool"}],
+    groups:[["constructor"],["__proto__"]]
+  });
+  assert.equal(safe.address(1,"__proto__").type,"u32");
+  assert.equal(safe.address(1,"constructor").type,"bool");
+  assert.throws(()=>safe.address(1,"toString"),/bounds/);
+});
+
 test("mixed field authority survives Array/Map prototype mutation",()=>{
   const store=new WorkerMixedLayout({fields:[
     {name:"pos",type:"f64"},{name:"vel",type:"f64"}
