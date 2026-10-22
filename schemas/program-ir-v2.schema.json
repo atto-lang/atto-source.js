@@ -402,6 +402,87 @@
               }
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "slot"
+          ],
+          "properties": {
+            "kind": {
+              "const": "capture"
+            },
+            "slot": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 30000
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "adt",
+            "subject",
+            "arms"
+          ],
+          "properties": {
+            "kind": {
+              "const": "adtMatch"
+            },
+            "adt": {
+              "enum": [
+                "option<int>",
+                "result<int,int>"
+              ]
+            },
+            "subject": {
+              "$ref": "#/$defs/expr"
+            },
+            "arms": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "tag",
+                  "slot",
+                  "body"
+                ],
+                "properties": {
+                  "tag": {
+                    "enum": [
+                      "Some",
+                      "None",
+                      "Ok",
+                      "Err"
+                    ]
+                  },
+                  "slot": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 30000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "body": {
+                    "$ref": "#/$defs/expr"
+                  }
+                }
+              }
+            }
+          }
         }
       ]
     },
