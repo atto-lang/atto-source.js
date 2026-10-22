@@ -6,7 +6,7 @@
 import {compileFreestandingCore} from '../src/freestanding-core.mjs';
 import {compileLinkedFreestandingCore} from '../src/freestanding-core-link.mjs';
 const display=document.querySelector('#result');
-let url,linkedUrl,boolUrl,adtUrl,adtLinkedUrl,matchUrl,matchLinkedUrl;
+let url,linkedUrl,boolUrl,adtUrl,adtLinkedUrl,matchUrl,matchLinkedUrl,portableMatchUrl;
 try {
   const input=await fetch('./fixtures/freestanding-core-java.ores',{cache:'no-store'});
   if(!input.ok)throw Error('failed to load canonical core source');
@@ -93,8 +93,46 @@ try {
   eq(matchedApp.sample(41n),42n,'linked Some pattern');
   eq(matchedApp.result(-9n),9n,'linked Err pattern');
   eq(matchedApp.nested(4n),8n,'linked nested ADT pattern');
+  // Exact shared portable conformance vectors, including inert poison branches.
+  const [portableSourceResponse,portableManifestResponse]=await Promise.all([
+    fetch('./fixtures/conformance-option-result-match-i64-v0.ores',{cache:'no-store'}),
+    fetch('./fixtures/conformance-option-result-match-i64-v0.json',{cache:'no-store'})
+  ]);
+  if(!portableSourceResponse.ok||!portableManifestResponse.ok)
+    throw Error('missing pinned ADT conformance files');
+  const portableManifest=await portableManifestResponse.json();
+  if(portableManifest.schema!=='oreslang.portable-adt-match-i64.v0'||
+     portableManifest.testVectors.length!==27)throw Error('wrong portable ADT contract');
+  portableMatchUrl=URL.createObjectURL(new Blob([
+    compileFreestandingCore(await portableSourceResponse.text())
+  ],{type:'text/javascript'}));
+  const portableCore=(await import(portableMatchUrl)).core;
+  for(const vector of portableManifest.testVectors)
+    eq(portableCore[vector.function](...vector.args.map(BigInt)),
+      BigInt(vector.expected.int),'portable '+vector.id);
+  if(portableManifest.negativeCases.length!==9)
+    throw Error('incorrect portable ADT negative vector count');
+  const rejectionPatterns={
+    'missing-none':/non-exhaustive ADT match/,
+    'duplicate-some':/duplicate match pattern Some/,
+    'mixed-families':/cannot mix Option and Result variant patterns/,
+    'wrong-subject':/parameter type mismatch/,
+    'parameter-shadow':/ADT payload binding shadows an existing name/,
+    'nested-shadow':/ADT payload binding shadows an existing name/,
+    'none-has-no-payload':/None has no payload/,
+    'wrong-return-type':/ADT int payload capture type mismatch/,
+    'wildcard-instead-of-none':/ADT match requires exhaustive named variants/
+  };
+  for(const vector of portableManifest.negativeCases){
+    const expected=rejectionPatterns[vector.id];
+    if(!expected)throw Error('unknown portable negative '+vector.id);
+    let rejected=false;
+    try{compileFreestandingCore(vector.source);}
+    catch(error){rejected=expected.test(String(error));}
+    if(!rejected)throw Error('wrong browser diagnostic '+vector.id);
+  }
   display.textContent='PASS_BROWSER_FREESTANDING_CORE';
 } catch(error) {
   display.textContent='FAIL_BROWSER_FREESTANDING_CORE: '+String(error);
-} finally {if(url)URL.revokeObjectURL(url);if(linkedUrl)URL.revokeObjectURL(linkedUrl);if(boolUrl)URL.revokeObjectURL(boolUrl);if(adtUrl)URL.revokeObjectURL(adtUrl);if(adtLinkedUrl)URL.revokeObjectURL(adtLinkedUrl);if(matchUrl)URL.revokeObjectURL(matchUrl);if(matchLinkedUrl)URL.revokeObjectURL(matchLinkedUrl);}
+} finally {if(url)URL.revokeObjectURL(url);if(linkedUrl)URL.revokeObjectURL(linkedUrl);if(boolUrl)URL.revokeObjectURL(boolUrl);if(adtUrl)URL.revokeObjectURL(adtUrl);if(adtLinkedUrl)URL.revokeObjectURL(adtLinkedUrl);if(matchUrl)URL.revokeObjectURL(matchUrl);if(matchLinkedUrl)URL.revokeObjectURL(matchLinkedUrl);if(portableMatchUrl)URL.revokeObjectURL(portableMatchUrl);}
 </script>

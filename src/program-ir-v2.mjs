@@ -133,9 +133,9 @@ export function validateProgramIRV2(input) {
         return {kind:'bool',value:expr.value};
       case 'capture':
         record(expr,['kind','slot'],'capture');
-        if(expected!=='int'||!Number.isSafeInteger(expr.slot)||expr.slot<0||
-           !active.includes(expr.slot))
+        if(!Number.isSafeInteger(expr.slot)||expr.slot<0||!active.includes(expr.slot))
           fail('ADT capture outside its typed payload scope');
+        if(expected!=='int')fail('ADT int payload capture type mismatch');
         return {kind:'capture',slot:expr.slot};
       case 'param':
         record(expr,['kind','index'],'param');

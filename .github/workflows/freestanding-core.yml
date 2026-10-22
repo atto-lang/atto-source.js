@@ -28,6 +28,8 @@ jobs:
         run: npm run test:core-option-result
       - name: Validate exhaustive ADT match, payload scope, and forged IR negatives
         run: npm run test:core-adt-match
+      - name: Execute SHA-pinned portable Option/Result matching contract
+        run: npm run test:core-adt-conformance
       - name: Verify a real Chrome executable
         run: google-chrome --version
       - name: Compile and execute canonical core in browser
