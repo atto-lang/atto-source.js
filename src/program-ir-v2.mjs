@@ -92,11 +92,15 @@ export function validateProgramIRV2(input) {
     fail('file export conflicts with runtime module '+header.name);
   const graph=headers.map(()=>new Set());
   let nodes=0;
-  function node(expr,owner,depth=0){
+  function node(expr,owner,depth=0,expected='int'){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('expression complexity exceeded');
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid expression');
     const desc=Object.getOwnPropertyDescriptor(expr,'kind');
     if(!desc||!Object.hasOwn(desc,'value'))fail('invalid expression kind');
+    // The IR has two static types in this slice: int values and boolean
+    // comparisons used exclusively in conditions. Never permit JS truthiness.
+    if(expected==='bool'&&desc.value!=='compare')fail('if condition requires boolean comparison');
+    if(expected==='int'&&desc.value==='compare')fail('comparison cannot be used as int');
     switch(desc.value) {
       case 'int':
         record(expr,['kind','value'],'int');
@@ -114,6 +118,15 @@ export function validateProgramIRV2(input) {
         if(!['+','-','*','%'].includes(expr.op))fail('unsupported binary operator');
         return {kind:'binary',op:expr.op,
           left:node(expr.left,owner,depth+1),right:node(expr.right,owner,depth+1)};
+      case 'compare':
+        record(expr,['kind','op','left','right'],'compare');
+        if(!['<','>','<=','>=','==','!='].includes(expr.op))fail('unsupported comparator');
+        return {kind:'compare',op:expr.op,left:node(expr.left,owner,depth+1),
+          right:node(expr.right,owner,depth+1)};
+      case 'if':
+        record(expr,['kind','condition','yes','no'],'if');
+        return {kind:'if',condition:node(expr.condition,owner,depth+1,'bool'),
+          yes:node(expr.yes,owner,depth+1),no:node(expr.no,owner,depth+1)};
       case 'call': {
         record(expr,['kind','target','args'],'call');
         if(!Number.isSafeInteger(expr.target)||Object.is(expr.target,-0)||expr.target<0||expr.target>=headers.length)
@@ -167,3 +180,4 @@ export function validateProgramIRV2(input) {
 export function stringifyProgramIRV2(ir){
   return JSON.stringify(validateProgramIRV2(ir));
 }
+

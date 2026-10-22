@@ -1,0 +1,45 @@
+# Freestanding core vs hosted std — JS target admission (experimental)
+
+Oreslang has separate **library tiers**, not a single mandatory runtime:
+
+| Tier | May depend on | Required host assumptions |
+| --- | --- | --- |
+| `core` | `core` only | none: no heap, OS, threads, clock, filesystem, network, FFI, runtime reflection, dynamic loading or mandatory Wasm |
+| `alloc` | `core` and admitted `alloc` | explicit allocation provider and heap grant; host adapter may use GC |
+| `actor` | freestanding actor primitives, `core` | no implicit heap, scheduler, clock or Worker; adapter explicitly selected when available |
+| `std` | admitted lower tiers | explicit host capability grants, e.g. POSIX, Windows, Node, browser, WASI, embedded |
+ 
+A browser is not Linux or Windows, and cannot satisfy POSIX filesystem/process APIs without an explicit implementation. **The JS backend should never inject Node builtins into core or quietly emulate unsupported OS effects.** Some optional `std` modules may have browser providers (`fetch`, WebSocket, timers); they require separate capability contracts. `core` must remain portable across all targets.
+
+## Current proved source subset
+
+`compileFreestandingCore(source)` in `src/freestanding-core.mjs` implements an intentionally **narrow source-effect gate**. It accepts one pure Oreslang `define module core` with integer `fnc` declarations in the program-v2 dialect. Supported functions may have bounded non-recursive integer arithmetic, comparisons, `if ...; do ... else ... fi`, total-returning branching, function calls, and scalar `match`. The exact canonical fixture is copied *unchanged* from `oreslang-source.java/stdlib/core.ores`, Git blob `d2cd9b8e0cd3e3bb3ee6a5f9cebf9ab3312c44f4`.
+
+The generated ES module has no imports, host APIs, memory allocator requirements or dynamic code loading. It uses JavaScript BigInt for a provisional checked signed-i64 arithmetic model and does not promise **zero JavaScript GC**. The package path is browser-safe: `src/freestanding-core.mjs` imports only `src/program-v2.mjs` and `src/program-ir-v2.mjs`, both host-independent. This **does not** prove freestanding OS-independent behavior of arbitrary future Oreslang library files or transitive packages; those require whole-program typed effects and link-time import verification.
+
+## Node verification
+
+```sh
+node bin/oreslang-jsc.mjs --freestanding-core --check tests/fixtures/freestanding-core-java.ores
+node bin/oreslang-jsc.mjs --freestanding-core tests/fixtures/freestanding-core-java.ores --out=/tmp/ores-core.mjs
+node -e 'import("file:///tmp/ores-core.mjs").then(m=>console.log(m.core.clamp_int(20n,0n,10n)))'
+npm run test:core
+```
+
+## Browser verification
+
+Serve the repository root over local HTTP(S), for example `python3 -m http.server 8000`, then open `http://localhost:8000/tests/core-browser-smoke.html`. The browser fixture fetches the **same pinned Oreslang source**, compiles with the host-neutral JS library, imports the resulting trusted Blob ESM, runs representative integer operations, and prints `PASS_BROWSER_FREESTANDING_CORE` only on success.
+
+This is a browser test fixture, **not yet actual external browser CI evidence**; a clean headless Chromium/browser run must complete before a browser verification claim. Blob compilation is for local trusted tests; production deployment should use pinned prebuilt ESM and CSP, not compile arbitrary untrusted Oreslang in-page.
+
+## Architecture and future proof gates
+
+1. The currently named `oreslang-source.java/stdlib/core.ores` and its `std/core` import are **legacy source layout/API**. Moving it to `core/` must be coordinated with import resolver and consumers; this change does **not** silently move or duplicate the authoritative source.
+2. Extend a **shared, versioned typed IR** to identify `libraryTier`, inferred effects, dependencies and entrypoint roots. Reject `core -> alloc/std`, host I/O and implicit provider dependencies before any backend codegen.
+3. Enforce `--freestanding` in every backend/CLI using compiler-proven dependency closure; forbid hosted imports after linking (native ELF, Wasm imports, JS ESM imports, etc.). A JSON manifest alone is not a proof.
+4. `alloc` and actor scheduler adapters are opt-in. JS Web Workers/Node worker_threads belong to hosted actor providers, **not** core.
+5. Cross-test exact core source/IR with Java, LLVM, JS Node and JS browser, and WASM guest once its source compiler admits the language slice.
+6. A JS `strict-aot`/hard-real-time profile must still fail closed unless explicitly admitted; transpiled ESM and managed GC are not proofs of those constraints.
+
+The schema now admits `compare` and `if` expression nodes as additive experimental program IR v2 variants, with strict expected boolean/int checking in the validator. Other consumers must negotiate the new variants; the IR remains backend-local and is not the shared authoritative typed IR.
+

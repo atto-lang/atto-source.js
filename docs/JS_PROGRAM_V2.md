@@ -36,6 +36,14 @@ export {math, _f2 as main};
 
 The current emitted object is frozen and has no `Object.prototype`. That is **correct only for the currently supported function-only modules**; future `pub let` / mutable state and `pub val` / readonly fields need dedicated typed cells/field accessors, initialization ordering and ownership enforcement. Simply freezing all module state would be incorrect. No nested module, import resolution, module contract, actor, class or arbitrary init hook support is claimed yet. A public `routine` inside a module is rejected rather than incorrectly reified into a JS function property.
 
+## Freestanding integer control flow (additive v2 slice)
+
+This backend also accepts **total-returning** integer functions containing bounded `if <int> <comparison> <int>; do ... else ... fi` and `return <int>;` statements. `else` is optional only when the remaining function control flow supplies a return on every path. The parser lowers the resulting control-flow tree to nested, statically typed conditional IR expressions. `<`, `>`, `<=`, `>=`, `==`, and `!=` compare signed i64 values; boolean comparisons are only valid as `if` conditions, never implicitly converted to Oreslang `int`. Paths with no return and unreachable trailing statements fail closed. Ordinary `let`, `while`, arbitrary statements, boolean operators, `void` returns, loops, and effects remain unsupported.
+
+Program IR v2 extends its experimental expression variants with `compare` and `if`; the structural schema and runtime validator are updated in the same PR. The validator separately enforces `compare` as `bool` and both `if` branches as `int`, rejecting type-confused externally supplied IR before ESM generation. The IR is **not** promoted to a stable shared frontend contract by this extension.
+
+This narrow slice is sufficient to compile the exact source of `oreslang-source.java/stdlib/core.ores` as a browser/Node-safe module with `--freestanding-core`; see [the tier and browser contract](FREESTANDING_CORE_BROWSER.md). It is **not** general hosted stdlib transpilation and does not weaken the Java/LLVM parity requirements.
+
 ## Scalar expression matches
 
 Supported initial subset:
@@ -86,3 +94,4 @@ Required next vertical slices:
 5. Execute exact-revision Node and Java/LLVM differential tests with actual CI runner steps/logs. Zero-step Actions failures do not count as tests.
 
 Audit gate: exported file-root routines must remain direct-call-only and cannot be ESM values.
+
