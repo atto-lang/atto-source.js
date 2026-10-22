@@ -1,6 +1,6 @@
 // Portable compile-time-only core linker for the experimental program-v2
-// integer dialect. There are NO runtime imports, filesystem reads, fetches,
-// host grants or dynamic loaders in this module. Supply trusted source bytes.
+// integer dialect. The GENERATED ESM has no host imports. This compiler module
+// has no filesystem reads, fetches, host grants or dynamic loaders. Supply trusted source bytes.
 // This is a narrow adapter; the canonical cross-backend module resolver and
 // dependency/effect closure are not yet implemented.
 import {compileFreestandingCore} from './freestanding-core.mjs';
@@ -48,13 +48,14 @@ export function compileToCoreLinkedIR(applicationSource,coreSource) {
     throw new CoreLinkError('source inputs must be strings');
   // The standard parser enforces byte budgets, strict declarations, exact
   // signatures, duplicate-module rejection and typed call resolution.
+  if(applicationSource.length+coreSource.length>DIRECTIVE_COUNT)
+    throw new CoreLinkError('combined source exceeds linker size budget');
   const offset=leadingTrivia(applicationSource);
   const match=CORE_DIRECTIVE.exec(applicationSource.slice(offset));
   if(!match)throw new CoreLinkError('expected leading import module core from "core";');
   const body=applicationSource.slice(offset+match[0].length);
   if(!body.trim())throw new CoreLinkError('application has no declarations');
-  if(applicationSource.length+coreSource.length>DIRECTIVE_COUNT)
-    throw new CoreLinkError('combined source exceeds linker size budget');
+
   // Independently establish that the exact core source is a pure integer-only
   // module, before allowing it into the same compile-time resolution scope.
   // This is source-only effect exclusion, not a signed package identity check.
