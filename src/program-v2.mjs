@@ -268,6 +268,8 @@ class Parser {
     while (this.peek().kind !== 'eof') {
       if (this.eat('define')) {
         this.expect('module'); const name=this.name();
+        if(name==='Option'||name==='Result')
+          fail('reserved portable intrinsic module name '+name);
         if (usedModules.has(name)) fail('duplicate module ' + name);
         usedModules.add(name); this.eat('as');
         modules.push(name);
@@ -520,10 +522,34 @@ function emitProgram(program) {
   }
   if(program.functions.some(fn=>fn.returnType==='bool'||fn.paramTypes?.includes('bool')))
     out.push('function _checkbool(v){if(typeof v!=="boolean")throw new TypeError("Oreslang bool required");return v;}');
+  if(program.functions.some(fn=>['option<int>','result<int,int>'].includes(fn.returnType)||
+      fn.paramTypes?.some(t=>['option<int>','result<int,int>'].includes(t)))) {
+    out.push(
+      'function _tag(k,v){const x=Object.create(null);Object.defineProperty(x,"kind",{value:k,enumerable:true});Object.defineProperty(x,"value",{value:v,enumerable:true});return Object.freeze(x);}',
+      'function _checktag(x,types){if(!x||typeof x!=="object"||Object.getPrototypeOf(x)!==null||!Object.isFrozen(x))throw new TypeError("Oreslang tagged value required");const keys=Reflect.ownKeys(x);if(keys.length!==2||!keys.includes("kind")||!keys.includes("value"))throw new TypeError("Oreslang tagged value shape required");const kd=Object.getOwnPropertyDescriptor(x,"kind"),vd=Object.getOwnPropertyDescriptor(x,"value");if(!kd||!vd||!Object.hasOwn(kd,"value")||!Object.hasOwn(vd,"value")||!kd.enumerable||!vd.enumerable||!types.includes(kd.value))throw new TypeError("Oreslang tagged value type required");if(kd.value==="None"){if(vd.value!==null)throw new TypeError("Oreslang None payload must be null");}else _check(vd.value);return x;}',
+      'function _checkoption(v){return _checktag(v,["Some","None"]);}',
+      'function _checkresult(v){return _checktag(v,["Ok","Err"]);}',
+      'function _some(v){return _tag("Some",_check(v));}',
+      'function _none(){return _tag("None",null);}',
+      'function _ok(v){return _tag("Ok",_check(v));}',
+      'function _err(v){return _tag("Err",_check(v));}',
+      'function _is_some(v){return _checkoption(v).kind==="Some";}',
+      'function _is_ok(v){return _checkresult(v).kind==="Ok";}',
+      'function _option_or(v,d){_check(d);const x=_checkoption(v);return x.kind==="Some"?x.value:d;}',
+      'function _result_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Ok"?x.value:d;}',
+      'function _error_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Err"?x.value:d;}'
+    );
+  }
   program.functions.forEach((fn,i)=>{
     const params=fn.params.map((_,j)=>'_p'+j);
     out.push('function _f'+i+'('+params.join(',')+'){');
-    params.forEach((p,j)=>out.push((fn.paramTypes?.[j]==='bool'?'_checkbool':'_check')+'('+p+');'));
+    params.forEach((p,j)=>{
+      const type=fn.paramTypes?.[j]??'int';
+      const check={int:'_check',bool:'_checkbool','option<int>':'_checkoption',
+        'result<int,int>':'_checkresult'}[type];
+      if(!check)fail('unsupported portable parameter type');
+      out.push(check+'('+p+');');
+    });
     out.push('return '+emitExpr(fn.body)+';','}');
   });
   let dispatcherNumber=0;
