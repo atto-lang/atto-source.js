@@ -6,7 +6,7 @@
 import {compileFreestandingCore} from '../src/freestanding-core.mjs';
 import {compileLinkedFreestandingCore} from '../src/freestanding-core-link.mjs';
 const display=document.querySelector('#result');
-let url,linkedUrl,boolUrl;
+let url,linkedUrl,boolUrl,adtUrl,adtLinkedUrl;
 try {
   const input=await fetch('./fixtures/freestanding-core-java.ores',{cache:'no-store'});
   if(!input.ok)throw Error('failed to load canonical core source');
@@ -45,8 +45,34 @@ try {
   let boolRejected=false;
   try{boolCore.choose(1n,42n,9n);}catch(error){boolRejected=/bool required/.test(String(error));}
   if(!boolRejected)throw Error('browser must reject nonbool argument');
+  const adtResponse=await fetch('./fixtures/core-option-result.ores',{cache:'no-store'});
+  if(!adtResponse.ok)throw Error('cannot load portable ADT fixture');
+  const adtSource=await adtResponse.text();
+  const adtESM=compileFreestandingCore(adtSource);
+  adtUrl=URL.createObjectURL(new Blob([adtESM],{type:'text/javascript'}));
+  const adt=(await import(adtUrl)).core;
+  const some=adt.positive(4n),none=adt.positive(-4n);
+  eq(some.kind,'Some','ADT Some');
+  eq(some.value,4n,'ADT Some payload');
+  eq(none.kind,'None','ADT None');
+  eq(adt.fallback(none,8n),8n,'ADT fallback');
+  eq(adt.succeeded(adt.negative(-4n)),false,'ADT error');
+  if(Object.getPrototypeOf(some)!==null||!Object.isFrozen(some))
+    throw Error('ADT value shape must be immutable and null-prototype');
+  let malformedRejected=false;
+  try{adt.fallback({kind:'Some',value:4n},8n);}
+  catch(error){malformedRejected=/tagged value/.test(String(error));}
+  if(!malformedRejected)throw Error('ADT accepted malformed host object');
+  const adtApp=await fetch('./fixtures/core-option-result-linked-app.ores',{cache:'no-store'});
+  if(!adtApp.ok)throw Error('cannot load ADT linked app');
+  const generated=compileLinkedFreestandingCore({coreSource:adtSource,appSource:await adtApp.text()});
+  adtLinkedUrl=URL.createObjectURL(new Blob([generated],{type:'text/javascript'}));
+  const adtLinked=await import(adtLinkedUrl);
+  eq(adtLinked.positive_or_zero(-7n),0n,'linked ADT Option');
+  eq(adtLinked.negative_is_error(-7n),true,'linked ADT Result');
+  eq(adtLinked.checked_value(-7n),42n,'linked ADT fallback');
   display.textContent='PASS_BROWSER_FREESTANDING_CORE';
 } catch(error) {
   display.textContent='FAIL_BROWSER_FREESTANDING_CORE: '+String(error);
-} finally {if(url)URL.revokeObjectURL(url);if(linkedUrl)URL.revokeObjectURL(linkedUrl);if(boolUrl)URL.revokeObjectURL(boolUrl);}
+} finally {if(url)URL.revokeObjectURL(url);if(linkedUrl)URL.revokeObjectURL(linkedUrl);if(boolUrl)URL.revokeObjectURL(boolUrl);if(adtUrl)URL.revokeObjectURL(adtUrl);if(adtLinkedUrl)URL.revokeObjectURL(adtLinkedUrl);}
 </script>
