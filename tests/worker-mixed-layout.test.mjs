@@ -110,3 +110,26 @@ test("mixed field authority survives Array/Map prototype mutation",()=>{
   }
   assert.equal(actual,2);
 });
+
+test("actor ECS hot path bypasses frozen diagnostic address records",()=>{
+  const oldAddress=MixedLayoutGeometry.prototype.address;
+  const schema=[{name:"pos",type:"f64"},{name:"vel",type:"f64"}];
+  const q=new WorkerMixedLayout({fields:schema,rows:9,layout:"aosoa",tileWidth:4});
+  for(let i=0;i<9;i++){
+    q.write(i,"pos",i);q.write(i,"vel",i+0.5);
+  }
+  try{
+    MixedLayoutGeometry.prototype.address=function(){
+      throw new Error("per-cell diagnostic address allocation");
+    };
+    q.integrate("pos","vel",0.25);
+    for(let i=0;i<9;i++)
+      assert.equal(q.read(i,"pos"),i+(i+0.5)*0.25);
+    q.write(0,"pos",123);
+    assert.equal(q.read(0,"pos"),123);
+    assert.throws(()=>q.read(9,"pos"),/bounds/);
+  }finally{
+    MixedLayoutGeometry.prototype.address=oldAddress;
+    q.retire();
+  }
+});
