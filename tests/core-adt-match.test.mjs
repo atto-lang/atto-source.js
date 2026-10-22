@@ -105,3 +105,21 @@ test('legacy integer match, bool and immutable tagged ADT remain unaffected',asy
   assert.equal(Object.isFrozen(v),true);
   assert.equal(Object.getPrototypeOf(v),null);
 });
+
+test('pinned shared Option/Result i64 conformance vectors execute in JS ESM',async()=>{
+  // Pinned copies from oreslang-platform-conformance PR #153:
+  // source Git blob 229b02ed7378ed0219fb161dbf98d602a91ec07a
+  // vectors Git blob 1d945d07bbcb07b642a1f3effd995aa938fbe3c1
+  const source=await get('./fixtures/conformance-option-result-i64.ores');
+  const contract=JSON.parse(await get('./fixtures/conformance-option-result-i64.json'));
+  assert.equal(contract.schema,'oreslang.portable-option-result-i64.v0');
+  assert.deepEqual(contract.capabilityRequirements,[]);
+  const module=(await load(compileFreestandingCore(source))).core;
+  for(const v of contract.testVectors){
+    const value=module[v.function](...v.args.map(BigInt));
+    const actual=typeof value==='bigint'?{int:String(value)}:
+      {variant:value.kind,...(value.kind==='None'?{}:{value:String(value.value)})};
+    assert.deepEqual(actual,v.expected,v.id);
+  }
+  assert.equal(contract.testVectors.length,10);
+});
