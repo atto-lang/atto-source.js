@@ -128,3 +128,23 @@ test('conditional fall-through cannot exponentially amplify IR trees',async()=>{
     assert.throws(()=>compileFreestandingCore(source(n)),
       /expanded conditional IR node budget exceeded/,String(n));
 });
+
+test('deterministic signed-i64 min/max/clamp property vectors',async()=>{
+  const source=await readFile(fixture,'utf8');
+  const {core}=await moduleFrom(source);
+  // Non-randomized test vector generation stays reproducible across runners.
+  // Compose full-width 64-bit inputs, including negative signed values.
+  let state=0x7a11d57d>>>0;
+  const step=()=>{
+    state^=state<<13;state^=state>>>17;state^=state<<5;
+    return state>>>0;
+  };
+  const int64=()=>BigInt.asIntN(64,(BigInt(step())<<32n)|BigInt(step()));
+  for(let i=0;i<1024;i++){
+    const left=int64(),right=int64(),value=int64();
+    assert.equal(core.min_int(left,right),left<right?left:right);
+    assert.equal(core.max_int(left,right),left>right?left:right);
+    const want=left>right?left:value<left?left:value>right?right:value;
+    assert.equal(core.clamp_int(value,left,right),want);
+  }
+});
