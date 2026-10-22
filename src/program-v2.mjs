@@ -332,6 +332,8 @@ class Parser {
     if(this.eat('.')) {qualifier=first; symbol=this.name();}
     if (!this.eat('(')) {
       if (qualifier) fail('bare module properties not yet supported',token);
+      // Existing Oreslang Option constructor spelling: bare None.
+      if(first==='None')return {kind:'call',qualifier:'Option',name:'none',args:[]};
       return {kind:'variable', name:first};
     }
     const args=[];
@@ -341,6 +343,15 @@ class Parser {
         args.push(this.expression());
       } while(this.eat(','));
       this.expect(')');
+    }
+    // Canonical Oreslang constructors also work as pure aliases for the
+    // same statically checked intrinsics; don't introduce any new host API.
+    if(qualifier===null){
+      const constructors={Some:['Option','some'],Ok:['Result','ok'],Err:['Result','err']};
+      if(Object.hasOwn(constructors,symbol)){
+        const [scope,name]=constructors[symbol];
+        return {kind:'call',qualifier:scope,name,args};
+      }
     }
     return {kind:'call',qualifier,name:symbol,args};
   }
