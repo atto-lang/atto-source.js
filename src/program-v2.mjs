@@ -153,6 +153,7 @@ class Parser {
     this.expect(braced?'}':'end');
     const body=this.lowerStatements(statements,null);
     if(!body)fail('int function requires a return on every path');
+    this.checkExpandedBudget(body);
     // Exporting a routine as a module object property would make a
     // direct-call-only routine first class. Leave this for runtime/ABI design.
     if (pub && kind === 'routine') fail('public routine cannot be exported');
@@ -206,6 +207,38 @@ class Parser {
       }
     }
     return result;
+  }
+  // Fall-through after sequential if statements can share a continuation
+  // between both branches. The AST is a DAG in memory, but resolving or
+  // serializing it expands every occurrence into an IR tree. Detect exponential
+  // amplification *before* resolution, JSON, or codegen work begins.
+  checkExpandedBudget(root) {
+    const memo=new WeakMap();
+    function size(expr,depth=0) {
+      if(depth>MAX_DEPTH)fail('expanded expression depth exceeded');
+      if(memo.has(expr))return memo.get(expr);
+      let total=1;
+      function add(next) {
+        if(next===null||typeof next!=='object')fail('invalid expression during lowering');
+        total+=size(next,depth+1);
+        if(total>MAX_TOKENS)fail('expanded conditional IR node budget exceeded');
+      }
+      switch(expr.kind){
+        case 'int':case 'variable':break;
+        case 'neg':add(expr.inner);break;
+        case 'binary':case 'compare':add(expr.left);add(expr.right);break;
+        case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
+        case 'call':for(const arg of expr.args)add(arg);break;
+        case 'match':
+          add(expr.subject);
+          for(const arm of expr.arms)add(arm.body);
+          break;
+        default:fail('unrecognized lowered expression');
+      }
+      memo.set(expr,total);
+      return total;
+    }
+    size(root);
   }
   parse() {
     // Oreslang's flat source namespace is compile-time package metadata,
