@@ -110,3 +110,21 @@ test('CLI explicit core path checks and Node runtime output',async()=>{
    }
  } finally {await rm(temp,{recursive:true,force:true});}
 });
+
+test('leading trivia is token-aware and bounded before parsing',async()=>{
+  const [,core]=await paths();
+  const header='import module core from "core"; pub fnc main(): int {return core.min_int(1,2);}';
+  const comments=[
+    '// import module filesystem from "node:fs";\n',
+    '/* fake import module core from "evil"; /*nested*/ */\n',
+    '   \n\t// comment only\n'
+  ].join('');
+  assert.equal(compileCoreLinkedProgram(comments+header,core),
+    compileCoreLinkedProgram(header,core));
+  for(const text of [
+    '/* unterminated '+header,
+    '/* nested '.repeat(65)+'*/'.repeat(65)+header
+  ]) assert.throws(()=>compileCoreLinkedProgram(text,core),/error:/);
+  assert.throws(()=>compileCoreLinkedProgram(' '.repeat(262144)+header,core),
+    /combined source exceeds linker size budget/);
+});
