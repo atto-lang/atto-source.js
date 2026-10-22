@@ -55,6 +55,14 @@ The optional `--core-sha256=HEX` build-time argument verifies SHA-256 of the dec
 
 The browser ESM smoke now exercises a **linked app** as well as the standalone core module. The development fixture server binds only to `127.0.0.1`, serves a limited `/tests/` and `/src/` allowlist of ESM/HTML/Oreslang source extensions, and is **not** for production hosting. The CLI is a Node-based **build-time** tool, not a runtime dependency of browser core. Neither linked code nor standalone core has a browser/Node API import. Source-relative path resolution and full library module graphs remain separate compiler work.
 
+## Experimental boolean core values
+
+The source compiler now recognizes **first-class `bool` parameters and return values** using explicit `bool` types, `true`/`false` constants, `!` boolean negation, signed integer comparisons returning `bool`, boolean-returning function calls, and `if predicate; do ... else ... fi` guards. The validated IR demands strict input types, and generated ESM rejects JavaScript numeric truthiness (`1`, `0`, `1n`) at the boolean ABI boundary. Boolean `if` results and arguments are statically checked before emission. Only integer comparisons are admitted so far; boolean `==` and generic `Any` equality, boolean `and/or`, `Option<T>`, and `Result<T,E>` are separate follow-ups.
+
+The experimental IR v2 adds optional, **paired** `paramTypes` / `returnType` fields to function declarations containing `bool`, plus `bool` and `not` expression nodes. Legacy integer-only IR records remain structurally unchanged. This is an additive version-2 **backend-private migration format**, not yet an independently reviewed shared typed-IR contract. Other tools must negotiate the extended shape before consuming it.
+
+`tests/fixtures/core-boolean.ores` is an explicitly **synthetic Oreslang portability fixture**. It is not the authoritative Java `core.ores` library, whose unchanged source still compiles to the identical integer ESM. `tests/core-boolean.test.mjs` compiles and runs pure typed boolean code, cross-module closed-world calls and adversarial IR mutations. The browser smoke also transpiles and imports the bool fixture. Generated boolean ESM has no Node, OS, filesystem, network or browser host imports; JavaScript GC remains normal.
+
 ## Architecture and future proof gates
 
 1. The currently named `oreslang-source.java/stdlib/core.ores` and its `std/core` import are **legacy source layout/API**. Moving it to `core/` must be coordinated with import resolver and consumers; this change does **not** silently move or duplicate the authoritative source.
