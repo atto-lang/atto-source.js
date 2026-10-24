@@ -13,9 +13,13 @@ const MAX_CLASSES=512,MAX_METHODS=256,MAX_ARITY=32;
 const RESERVED=new Set([
   'default','new','class','export','import','null','true','false','this','super',
   'extends','static','constructor','prototype','__proto__','define','pub','as',
-  'end','mtd','self','int','void','return','mut','private','actor','fnc',
+  'end','self','int','void','return','mut','private','actor','fnc',
   'routine','bool','let','val','const','if','fi','then','else','await','task',
-  'nb','do','spawn','module','trait','interface','type','rt'
+  'nb','do','done','stop','loop','block','select','readch','writech','spawn',
+  'module','trait','interface','type','rt'
+]);
+const CALLABLE_KEYWORDS=new Set([
+  'stop','do','done','loop','block','select','readch','writech','nb','true','false'
 ]);
 
 export class ClassMethodIRError extends Error {
@@ -53,6 +57,10 @@ function sequence(value,maximum,context){
 }
 export function isClassMethodIdentifierV1(value){
   return typeof value==='string'&&ID.test(value)&&!RESERVED.has(value);
+}
+export function isClassMethodCallableNameV1(value){
+  return typeof value==='string'&&ID.test(value)&&
+    (isClassMethodIdentifierV1(value)||CALLABLE_KEYWORDS.has(value));
 }
 function identifier(value,context){
   if(!isClassMethodIdentifierV1(value))fail(context+': invalid or reserved identifier');
@@ -114,7 +122,8 @@ export function validateClassMethodIRV1(input){
     const slots=new Set();
     const methods=sequence(cls.methods,MAX_METHODS,'methods').map((method,mi)=>{
       record(method,['name','pub','paramTypes','resultType','body'],'method');
-      const methodName=identifier(method.name,'method name');
+      const methodName=isClassMethodCallableNameV1(method.name)?method.name:
+        fail('method name: invalid or reserved callable name');
       if(typeof method.pub!=='boolean')fail('method visibility must be boolean');
       const paramTypes=sequence(method.paramTypes,MAX_ARITY,'method parameters').map(type=>{
         if(type!=='int')fail('unsupported method parameter type');
