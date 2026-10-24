@@ -16,6 +16,7 @@ function lex(source){
   // malformed source before that lossy conversion, even inside comments.
   for(let i=0;i<source.length;i++){
     const unit=source.charCodeAt(i);
+    if(unit===0)fail('NUL in source',i);
     if(unit>=0xd800&&unit<=0xdbff){
       const lo=source.charCodeAt(i+1);
       if(!(lo>=0xdc00&&lo<=0xdfff))fail('invalid UTF-16 source',i);
@@ -54,7 +55,10 @@ function lex(source){
 }
 const jsName=s=>/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)&&
   !['default','new','class','export','import','null','true','false','this','super','extends','static','constructor','prototype','__proto__',
-    'define','pub','as','end','mtd','self','int','void','return'].includes(s);
+    'define','pub','as','end','mtd','self','int','void','return',
+    'mut','private','actor','fnc','routine','bool','let','val','const',
+    'if','fi','then','else','await','task','nb','do','spawn','module',
+    'trait','interface','type','rt'].includes(s);
 class Reader{
   constructor(tokens){this.t=tokens;this.i=0;}
   peek(){return this.t[this.i].value;}
