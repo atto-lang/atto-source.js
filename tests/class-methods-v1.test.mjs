@@ -28,6 +28,32 @@ end
   assert.match(output,/class \$OresClass1/);
   assert.doesNotMatch(output,/export \{/);
 });
+test('optional mtd marker and arrow/end bodies preserve receiver-erased arity',async()=>{
+  const source=`pub define class X as
+    pub mtd zero(self) -> void ::
+    end
+    pub mtd read(self, int value) -> int ::
+      return value;
+    end
+    pub legacy(int value) -> int {
+      return value;
+    }
+  end`;
+  assert.equal(checkClassMethodsV1(source),true);
+  const ns=await load(source);
+  const x=new ns.X();
+  assert.equal(x.zero(),undefined);
+  assert.equal(x.read(9n),9n);
+  assert.equal(x.legacy(7n),7n);
+  assert.throws(()=>x.zero(1n),/method arity mismatch/);
+  assert.throws(()=>x.read(),/method arity mismatch/);
+});
+test('exact formatter-style mtd arrow syntax accepts nested method/class end tokens',()=>{
+  assert.equal(checkClassMethodsV1(`define class X as
+    mtd foo() -> void ::
+    end
+  end`),true);
+});
 test('pub instance methods compile to executable ESM with implicit or explicit self',async()=>{
   const ns=await load(`pub define class X1 as pub foo():void {} end
      pub define class X2 as pub foo(self):void {} end`);
@@ -68,7 +94,9 @@ test('same-selector implicit and explicit self declarations conflict in either o
     'foo():void {} foo(self):void {}',
     'foo(self):void {} foo():void {}',
     'foo(int x):int{return x;} foo(self,int x):int{return x;}',
-    'foo(self,int x):int{return x;} foo(int x):int{return x;}'
+    'foo(self,int x):int{return x;} foo(int x):int{return x;}',
+    'mtd foo():void {} foo(self):void {}',
+    'foo(self):void {} mtd foo():void {}'
   ]) assert.throws(()=>compileClassMethodsV1('define class X as '+pair+' end'),
     /duplicate method name\/arity/,pair);
 });
@@ -84,7 +112,11 @@ test('malformed or unsupported source fails closed before generating ESM',()=>{
     'define class X as foo(self):int {return 9223372036854775808;} end',
     'define actor X as foo(self):void {} end',
     'define class X as foo(self):void {} foo(self):void {} end',
-    'define class X as foo(self):void {} end junk'
+    'define class X as foo(self):void {} end junk',
+    'define class X as mtd mtd foo():void {} end',
+    'define class X as mtd foo():void :: end end',
+    'define class X as mtd foo() -> int :: end end',
+    'define class X as mtd foo() -> void :: end'
   ]) assert.throws(()=>compileClassMethodsV1(source),/error: class methods v1:/,source);
 });
 test('compiler rejects malformed UTF-16 even inside ignorable comments',()=>{
@@ -112,7 +144,7 @@ test('CLI --class-methods-v1 --check and ESM output run from saved .ores',async(
   const dir=await mkdtemp(join(tmpdir(),'ores-self-methods-'));
   try{
     const input=join(dir,'classes.ores'), output=join(dir,'classes.mjs');
-    await writeFile(input,'pub define class X as pub foo(self):int{return 42;} end');
+    await writeFile(input,'pub define class X as pub mtd foo(self) -> int :: return 42; end end');
     const cli=resolve('bin/oreslang-jsc.mjs');
     let run=spawnSync(process.execPath,[cli,'--class-methods-v1','--check',input],{encoding:'utf8'});
     assert.equal(run.status,0,run.stderr);
