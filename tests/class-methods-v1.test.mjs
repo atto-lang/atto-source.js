@@ -48,6 +48,26 @@ test('optional mtd marker and arrow/end bodies preserve receiver-erased arity',a
   assert.throws(()=>x.zero(1n),/method arity mismatch/);
   assert.throws(()=>x.read(),/method arity mismatch/);
 });
+test('contextual mtd/method markers preserve Java callable keyword names',async()=>{
+  const ns=await load(`pub define class mtd as
+    pub mtd do():int{return 1;}
+    pub method select() -> int :: return 2; end
+    pub mtd mtd():int{return 3;}
+    pub method mtd(int value):int{return value;}
+    pub method():int{return 4;}
+    pub done():int{return 5;}
+    pub true():int{return 6;}
+  end`);
+  const x=new ns.mtd();
+  assert.equal(x.do(),1n);
+  assert.equal(x.select(),2n);
+  assert.equal(x.mtd(),3n);
+  assert.equal(x.mtd(9n),9n);
+  assert.equal(x.method(),4n);
+  assert.equal(x.done(),5n);
+  assert.equal(x.true(),6n);
+});
+
 test('exact formatter-style mtd arrow syntax accepts nested method/class end tokens',()=>{
   assert.equal(checkClassMethodsV1(`define class X as
     mtd foo() -> void ::
@@ -138,8 +158,6 @@ test('malformed or unsupported source fails closed before generating ESM',()=>{
     'define class X as mtd foo() -> int as return 42; end end',
     'define class X as mtd foo() -> void end end',
     'define class X as mtd foo() -> void :: end',
-    'define class mtd as foo():void {} end',
-    'define class X as foo(int mtd):int{return mtd;} end',
     'define class X as foo(int self):int{return self;} end'
   ]) assert.throws(()=>compileClassMethodsV1(source),/error: class methods v1:/,source);
 });
