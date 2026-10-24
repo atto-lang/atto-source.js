@@ -43,6 +43,16 @@ test('actual Oreslang source compiles through CLI and executes inside two distin
     ]),[42n,42n,-3n,3n]);
     await assert.rejects(actorA.request({args:[(1n<<63n)-1n,1n]}),/OVERFLOW/);
     await assert.rejects(actorB.request({args:[40,2n]}),/BigInt/);
+    // A guest overflow is a recoverable call result, not a Worker fatal.
+    assert.equal(await actorA.request({args:[1n,2n]}),3n);
+    await assert.rejects(actorA.request({args:[1n]}),/arity/);
+    assert.equal(await actorB.request({args:[2n,40n]}),42n);
+    if(typeof SharedArrayBuffer==='function'){
+      // Nested shared memory cannot cross this copy-only message boundary.
+      await assert.rejects(actorB.request({args:[new SharedArrayBuffer(8),2n]}),
+        /shared-memory/);
+      assert.equal(await actorB.request({args:[40n,2n]}),42n);
+    }
     await actorA.close();
     actorA=null;
     assert.equal(await actorB.request({args:[40n,2n]}),42n);
@@ -67,4 +77,23 @@ test('unsupported source-level actor declaration fails without producing guest a
     assert.ok(compiled.stderr.length>0);
     await assert.rejects(stat(target),e=>e?.code==='ENOENT');
   }finally{await rm(temp,{recursive:true,force:true});}
+});
+
+// Closing the client revokes pending reply authority; it does NOT prove
+// execution-level cancellation of an already running guest turn.
+test('closing one Node Worker revokes pending delivery without affecting sibling Worker',async()=>{
+  const moduleUrl=new URL('./fixtures/worker-handler.mjs',import.meta.url).href;
+  let actorA=spawnNodeActor({moduleUrl}), actorB=spawnNodeActor({moduleUrl});
+  try {
+    await Promise.all([actorA.ready,actorB.ready]);
+    const pending=actorA.request({type:'sleep',ms:1500,n:7n});
+    const rejected=assert.rejects(pending,/actor closed/);
+    await actorA.close();
+    actorA=null;
+    await rejected;
+    assert.equal(await actorB.request({type:'add',x:40n,y:2n}),42n);
+  } finally {
+    if(actorA)await actorA.close();
+    if(actorB)await actorB.close();
+  }
 });
