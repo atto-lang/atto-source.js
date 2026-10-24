@@ -81,3 +81,15 @@ test('complex graphs are rejected before clone',()=>{
     assert.equal(cloneCalls,0);
   }finally{globalThis.structuredClone=original;}
 });
+
+test('wide primitive-only arrays and Map/Set entries reject before clone',()=>{
+  const original=globalThis.structuredClone;
+  let calls=0;
+  globalThis.structuredClone=value=>{calls++;return original(value);};
+  try{
+    assert.throws(()=>copyOwnedValue(Array.from({length:8200},(_,i)=>i)),/complexity exceeded/);
+    assert.throws(()=>copyOwnedValue(new Map(Array.from({length:8200},(_,i)=>[i,true]))),/complexity exceeded/);
+    assert.throws(()=>copyOwnedValue(new Set(Array.from({length:8200},(_,i)=>i))),/complexity exceeded/);
+    assert.equal(calls,0);
+  }finally{globalThis.structuredClone=original;}
+});
