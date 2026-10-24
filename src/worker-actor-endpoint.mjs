@@ -1,8 +1,9 @@
-import {copyOwnedValue} from './worker-actor-copy.mjs';
+import {copyOwnedValue,copyOwnedValueWithBytes} from './worker-actor-copy.mjs';
 // Trusted host adapter, NOT source-level actor lowering or a sandbox.
 // Exactly one guest handler executes per Worker. A fatal protocol violation
 // revokes the session and suppresses late replies; it does not preempt code.
 const PROTOCOL='ores.js.worker.v1';
+const MAX_CONFIGURED_PENDING_BYTES=256*1024*1024;
 const errorText=e=>{
   try{return String(e?.message ?? e).slice(0,512);}
   catch{return 'uninspectable actor failure';}
@@ -12,12 +13,15 @@ export function installWorkerActorEndpoint({subscribe,post}) {
   if(typeof subscribe!=='function'||typeof post!=='function')
     throw new TypeError('invalid actor endpoint transport');
   let initializing=false,initialized=false,terminal=false,receive=null;
-  let processing=false,inFlight=0,lastId=0,maxPending=0;
+  let processing=false,inFlight=0,inFlightBytes=0,lastId=0,maxPending=0,maxPendingBytes=0;
   const queue=[];
   const reply=frame=>post({protocol:PROTOCOL,...frame});
   function fail(reason){
     if(terminal)return;
     terminal=true;
+    // Release queued reservations immediately. The current executing turn
+    // retains its loan until its finally block runs (no forced preemption).
+    for(const item of queue){inFlight--;inFlightBytes-=item.bytes;}
     queue.length=0;
     try{reply({kind:'fatal',error:reason});}catch{/* transport already lost */}
   }
@@ -56,6 +60,7 @@ export function installWorkerActorEndpoint({subscribe,post}) {
         }finally{
           completed=true;
           inFlight--;
+          inFlightBytes-=frame.bytes;
         }
       }
     }finally{processing=false;}
@@ -74,10 +79,14 @@ export function installWorkerActorEndpoint({subscribe,post}) {
          !/^[A-Za-z_][A-Za-z0-9_]*$/.test(frame.exportName)||
          !['handler','call'].includes(frame.mode)||
          !Number.isSafeInteger(frame.maxPending)||
-         frame.maxPending<1||frame.maxPending>65536){
+         frame.maxPending<1||frame.maxPending>65536||
+         !Number.isSafeInteger(frame.maxPendingBytes)||
+         frame.maxPendingBytes<1||
+         frame.maxPendingBytes>MAX_CONFIGURED_PENDING_BYTES){
         fail('invalid actor module descriptor');return;
       }
       maxPending=frame.maxPending;
+      maxPendingBytes=frame.maxPendingBytes;
       void (async()=>{
         try{
           const module=await import(frame.moduleUrl);
@@ -106,12 +115,16 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     }
     // Includes the one currently executing turn, not only the queued frames.
     if(inFlight>=maxPending){fail('actor mailbox capacity exceeded');return;}
-    let snapshot;
-    try{snapshot=copyOwnedValue(frame.value);}
+    let snapshot,bytes;
+    try{({value:snapshot,bytes}=copyOwnedValueWithBytes(frame.value));}
     catch{fail('invalid actor delivery payload');return;}
+    if(bytes>maxPendingBytes-inFlightBytes){
+      fail('actor mailbox byte capacity exceeded');return;
+    }
     lastId=frame.id;
     inFlight++;
-    queue.push({id:frame.id,reply:frame.reply,value:snapshot});
+    inFlightBytes+=bytes;
+    queue.push({id:frame.id,reply:frame.reply,value:snapshot,bytes});
     void drain();
   });
 }
