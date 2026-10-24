@@ -34,6 +34,8 @@ jobs:
         run: npm run test:conditionals
       - name: Execute composed conditional and ADT source-to-ESM checks
         run: npm run test:conditional-adt
+      - name: Execute named-call binding and evaluation-order checks
+        run: npm run test:named-args
       - run: npm test
       - run: npm run check
       - run: npm run parity:js
