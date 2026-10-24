@@ -32,6 +32,8 @@ jobs:
         run: node --test tests/checked-i64-arithmetic-differential.test.mjs tests/checked-i64-remainder-parity.test.mjs
       - name: Execute canonical conditional semantics and negative IR cases
         run: npm run test:conditionals
+      - name: Execute composed conditional and ADT source-to-ESM checks
+        run: npm run test:conditional-adt
       - run: npm test
       - run: npm run check
       - run: npm run parity:js
