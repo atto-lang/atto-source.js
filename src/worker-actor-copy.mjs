@@ -39,7 +39,10 @@ function validateOwnedValue(value) {
       for(const key of Reflect.ownKeys(node)){
         if(typeof key==='string')addBytes(key.length*2);
         const desc=Object.getOwnPropertyDescriptor(node,key);
-        if(desc&&Object.hasOwn(desc,'value'))check(desc.value,depth+1);
+        // structuredClone invokes getters: only copy plain data properties.
+        if(!desc||!Object.hasOwn(desc,'value'))
+          throw new TypeError('actor message accessors forbidden in copy-only profile');
+        check(desc.value,depth+1);
       }
     }
   }
