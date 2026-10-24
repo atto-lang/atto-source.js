@@ -143,3 +143,19 @@ test('real Node Worker mailbox byte budget and sibling isolation',async()=>{
     assert.equal(a.pendingBytes,0);
   }finally{await Promise.all([a.close(),b.close()]);}
 });
+
+test('reject invalid aggregate-byte configuration at both protocol boundaries',async()=>{
+  for(const maxPendingBytes of [0,-1,1.5,Number.MAX_SAFE_INTEGER,256*1024*1024+1]){
+    assert.throws(()=>client(new StubWorker(),{maxPendingBytes}),
+      /invalid actor mailbox byte limit/);
+    let receive;const frames=[];
+    installWorkerActorEndpoint({
+      subscribe:cb=>{receive=cb;},post:f=>frames.push(f)
+    });
+    receive({protocol:PROTOCOL,kind:'init',moduleUrl,
+      exportName:'receive',mode:'handler',maxPending:4,maxPendingBytes});
+    assert.equal(frames.length,1);
+    assert.equal(frames[0].kind,'fatal');
+    assert.match(frames[0].error,/invalid actor module descriptor/);
+  }
+});
