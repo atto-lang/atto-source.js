@@ -40,9 +40,9 @@ The current emitted object is frozen and has no `Object.prototype`. That is **co
 
 Program-v2 admits Java-compatible PROCESS Symbol literals `#ready`, `#"quoted name"`, and `#'quoted name'`, plus `Symbol` function parameter/result types. Source names are bounded before normalization, NFC-normalized, limited to 1–256 UTF-8 bytes, and reject malformed UTF-16, controls, Unicode format/line-separator/paragraph-separator and bidi-control characters. Unquoted names remain ASCII identifiers of at most 128 bytes.
 
-Generated Symbols are fresh, frozen, null-prototype nominal values branded by the generated module; equal names are not required to be pointer-interned, and a host-forged lookalike is rejected at a typed Symbol parameter boundary. This matches Java's non-interning/value-identity direction without exposing a JavaScript global symbol registry.
+Generated Symbols are fresh, frozen, null-prototype nominal values branded by the generated ESM artifact; equal names are not required to be pointer-interned, and a host-forged lookalike is rejected at a typed Symbol parameter boundary. The brand is intentionally artifact-local in this first slice: a Symbol created by separately compiled artifact A is not admitted by artifact B. Cross-artifact/actor transport needs an explicit canonical Symbol wire/admission contract rather than a forgeable host shape or JavaScript global registry.
 
-This first JS slice deliberately does **not** implement source Symbol `==`/`!=`, stable UUID Symbols, Map/record Symbol keys, declarations/export manifests, actor transport policy, or string coercion. Those remain fail-closed until their typed/runtime contracts are lowered.
+This first JS slice deliberately does **not** implement source Symbol `==`/`!=`, stable UUID Symbols, Map/record Symbol keys, declarations/export manifests, cross-artifact or actor transport policy, or string coercion. Those remain fail-closed until their typed/runtime contracts are lowered.
 
 ## Named call arguments (experimental program-v2)
 
