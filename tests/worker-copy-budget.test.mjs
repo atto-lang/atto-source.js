@@ -106,3 +106,29 @@ test('copy receipt measures owned snapshot bytes and counts shared backing only 
   assert.equal(Object.isFrozen(receipt),true);
   assert.equal(copyOwnedValueWithBytes('hello').bytes,10);
 });
+
+
+test('large RegExp patterns and arbitrarily wide bigint values consume budgets before clone',()=>{
+  const original=globalThis.structuredClone;
+  let cloneCalls=0;
+  globalThis.structuredClone=(value)=>{cloneCalls++;return original(value);};
+  try{
+    const largePattern=new RegExp('a'.repeat(4*MiB+1));
+    assert.throws(()=>copyOwnedValue(largePattern),/byte budget exceeded/);
+    const wide=BigInt('0x'+'f'.repeat(16*MiB+2));
+    assert.throws(()=>copyOwnedValue(wide),/byte budget exceeded/);
+    assert.throws(()=>copyOwnedValue(Object(wide)),/byte budget exceeded/);
+    assert.equal(cloneCalls,0);
+  }finally{globalThis.structuredClone=original;}
+});
+
+test('RegExp built-in source accounting ignores hostile overridden source getter',()=>{
+  let getterCalls=0;
+  const pattern=/abc/;
+  Object.defineProperty(pattern,'source',{get(){getterCalls++;return 'evil';}});
+  assert.throws(()=>copyOwnedValue(pattern),/accessors forbidden/);
+  assert.equal(getterCalls,0);
+  assert.ok(copyOwnedValueWithBytes(/abc/).bytes>=6);
+  assert.ok(copyOwnedValueWithBytes(2n**256n).bytes>=33);
+  assert.ok(copyOwnedValueWithBytes(Object(2n**256n)).bytes>=33);
+});
