@@ -37,6 +37,13 @@ test('pub instance methods compile to executable ESM with implicit or explicit s
   assert.throws(()=>new ns.X1(42n),/constructor arity mismatch/);
   assert.throws(()=>new ns.X2(42n),/constructor arity mismatch/);
   assert.throws(()=>ns.X1.prototype.foo.call(new ns.X2()),/invalid Oreslang receiver/);
+  assert.equal(Object.isFrozen(ns.X1.prototype),true);
+  assert.equal(Object.isFrozen(ns.X2.prototype),true);
+  assert.equal(Object.isFrozen(ns.X1),true);
+  assert.equal(Object.isExtensible(new ns.X1()),false);
+  assert.throws(()=>Object.defineProperty(new ns.X1(),'foo',{value:()=>42}),TypeError);
+  assert.throws(()=>{ns.X1.prototype.foo=()=>42;},TypeError);
+  assert.throws(()=>new (class Sub extends ns.X1 {})(),/unsupported class derivation/);
   assert.throws(()=>new ns.X2().foo(12n),/method arity mismatch/);
   assert.throws(()=>ns.X1.prototype.foo.call({}),TypeError);
   assert.throws(()=>ns.X2.prototype.foo.call(Object.create(ns.X2.prototype)),TypeError);
