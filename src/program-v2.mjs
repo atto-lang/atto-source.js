@@ -57,8 +57,23 @@ function requireWellFormedCheckedI64Header(source) {
   }
   return enabled;
 }
+function validateSourceText(source) {
+  if(typeof source!=='string')fail('oversized or invalid source');
+  // TextEncoder replaces lone UTF-16 surrogates. Reject before encoding so
+  // comments and other lexically ignored regions cannot change byte identity.
+  for(let i=0;i<source.length;i++){
+    const unit=source.charCodeAt(i);
+    if(unit===0)fail('NUL in source');
+    if(unit>=0xd800&&unit<=0xdbff){
+      const lo=source.charCodeAt(i+1);
+      if(!(lo>=0xdc00&&lo<=0xdfff))fail('invalid UTF-16 source');
+      i++;
+    }else if(unit>=0xdc00&&unit<=0xdfff)fail('invalid UTF-16 source');
+  }
+}
 function tokenize(source) {
-  if (typeof source !== 'string' || new TextEncoder().encode(source).length > MAX_BYTES) fail('oversized or invalid source');
+  validateSourceText(source);
+  if (new TextEncoder().encode(source).length > MAX_BYTES) fail('oversized or invalid source');
   requireWellFormedCheckedI64Header(source);
   const result = [];
   let pos = 0, line = 1, col = 1;
