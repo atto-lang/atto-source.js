@@ -46,6 +46,6 @@
     "test:core-option-result": "node --test tests/core-option-result.test.mjs",
     "test:core-adt-match": "node --test tests/core-adt-match.test.mjs",
     "test:core-adt-conformance": "node --test tests/core-adt-match-conformance.test.mjs tests/core-adt-match-diagnostics.test.mjs",
-    "test:conditional-adt": "node --test tests/conditional-adt-integration.test.mjs"
+    "test:conditional-adt": "node --test tests/conditional-adt-integration.test.mjs tests/conditional-adt-boundaries.test.mjs"
   }
 }
