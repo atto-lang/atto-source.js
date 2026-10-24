@@ -7,10 +7,13 @@ Implemented first slice: integer functions with typed int parameters, return-onl
 ## Experimental class-method source transpilation (opt-in)
 
 The `--class-methods-v1` dialect compiles **fieldless, synchronous**
-Oreslang class declarations into executable ESM, including both
-`foo():void {}` and `foo(self):void {}`. A leading declaration-level
-`self` is a receiver binder and does not count toward caller-visible arity.
-For example, `pub foo(self, int x):int{return x;}` is `foo/1`.
+Oreslang class declarations into executable ESM. The optional formatter-facing
+`mtd` marker is accepted but not required, and both colon/brace and
+arrow/`end` method bodies are admitted: `foo():void {}`,
+`mtd foo(self):void {}`, and `mtd foo(self) -> void :: ... end`.
+A leading declaration-level `self` is a receiver binder and does not count
+toward caller-visible arity. For example,
+`pub mtd foo(self, int x) -> int :: return x; end` is `foo/1`.
 Duplicate implicit/explicit receiver slots reject at compile time.
 
 ```sh
