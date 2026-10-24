@@ -87,6 +87,27 @@ test('malformed or unsupported source fails closed before generating ESM',()=>{
     'define class X as foo(self):void {} end junk'
   ]) assert.throws(()=>compileClassMethodsV1(source),/error: class methods v1:/,source);
 });
+test('compiler rejects malformed UTF-16 even inside ignorable comments',()=>{
+  const src='pub define class X as pub f(self):void {} end';
+  for(const bad of [
+    src+' // '+String.fromCharCode(0xd800),
+    src+' /* '+String.fromCharCode(0xdc00)+' */',
+    src+' // '+String.fromCharCode(0xdbff)+'x',
+    String.fromCharCode(0xdc00)+src
+  ]) assert.throws(()=>compileClassMethodsV1(bad),/invalid UTF-16 source/);
+  const valid=src+' // '+String.fromCodePoint(0x1f642);
+  assert.equal(checkClassMethodsV1(valid),true);
+});
+
+test('private members do not escape ESM class exports',async()=>{
+  const ns=await load('pub define class X as privateMethod(self):int{return 5;} pub visible():int{return 42;} end');
+  const x=new ns.X();
+  assert.equal(x.visible(),42n);
+  assert.equal(Object.hasOwn(ns.X.prototype,'privateMethod'),false);
+  assert.equal(x.privateMethod,undefined);
+  assert.equal(Object.isFrozen(ns.X.prototype),true);
+});
+
 test('CLI --class-methods-v1 --check and ESM output run from saved .ores',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'ores-self-methods-'));
   try{
