@@ -10,12 +10,26 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const profile=await mkdtemp(join(tmpdir(),'ores-js-browser-'));
 const server=createServer(async(req,res)=>{
   try {
+    if(req.method!=='GET'&&req.method!=='HEAD'){
+      res.writeHead(405,{Allow:'GET, HEAD'});res.end();return;
+    }
     const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);
     const path=resolve(root,pathname.startsWith('/')?pathname.slice(1):pathname);
-    if(!path.startsWith(root+sep)){res.writeHead(403);res.end();return;}
+    // The loopback smoke server must not expose repository policy, secrets,
+    // dotfiles, or unrelated source material to a browser session.
+    const ext=extname(path);
+    if(!path.startsWith(root+sep)||!/^\\/(?:src\\/|tests\\/)/.test(pathname)||
+       !['.html','.mjs','.ores'].includes(ext)){
+      res.writeHead(403);res.end();return;
+    }
     const body=await readFile(path);
-    res.setHeader('Content-Type',extname(path)==='.html'?'text/html; charset=utf-8':'text/javascript; charset=utf-8');
-    res.setHeader('Cache-Control','no-store');res.end(body);
+    const mime={'.html':'text/html; charset=utf-8',
+      '.mjs':'text/javascript; charset=utf-8',
+      '.ores':'text/plain; charset=utf-8'}[ext];
+    res.setHeader('Content-Type',mime);
+    res.setHeader('Cache-Control','no-store');
+    res.setHeader('X-Content-Type-Options','nosniff');
+    res.end(req.method==='HEAD'?undefined:body);
   }catch{res.writeHead(404);res.end();}
 });
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
