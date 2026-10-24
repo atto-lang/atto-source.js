@@ -1,5 +1,7 @@
-import {copyOwnedValue} from './worker-actor-copy.mjs';
+import {copyOwnedValue,copyOwnedValueWithBytes} from './worker-actor-copy.mjs';
 const PROTOCOL = 'ores.js.worker.v1';
+const DEFAULT_MAX_PENDING_BYTES=32*1024*1024;
+const MAX_CONFIGURED_PENDING_BYTES=256*1024*1024;
 const UNSUPPORTED_PLACEMENT_KEYS = Object.freeze([
   'placement','cpuAffinity','maxParallelTurns',
   'accelerator','gpuDeviceId','maxGpuInFlight'
@@ -15,7 +17,8 @@ export function rejectUnsupportedWorkerPlacement(options) {
     }
   }
 }
-export function createWorkerActorClient({worker, moduleUrl, exportName = 'receive', mode = 'handler', maxPending = 64}) {
+export function createWorkerActorClient({worker, moduleUrl, exportName = 'receive', mode = 'handler', maxPending = 64,
+  maxPendingBytes = DEFAULT_MAX_PENDING_BYTES}) {
   if (!worker || typeof worker.postMessage !== 'function' || typeof worker.terminate !== 'function')
     throw new TypeError('invalid Worker');
   if (typeof moduleUrl !== 'string' || !moduleUrl || typeof exportName !== 'string' ||
@@ -23,7 +26,11 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
     throw new TypeError('invalid entrypoint');
   if (!Number.isSafeInteger(maxPending) || maxPending < 1 || maxPending > 65536)
     throw new RangeError('invalid mailbox limit');
+  if(!Number.isSafeInteger(maxPendingBytes)||maxPendingBytes<1||
+     maxPendingBytes>MAX_CONFIGURED_PENDING_BYTES)
+    throw new RangeError('invalid actor mailbox byte limit');
   const pending = new Map();
+  let pendingBytes=0;
   let nextId = 1, closed = false, ready = false;
   let readyResolve, readyReject;
   const readyPromise = new Promise((resolve,reject) => {readyResolve = resolve; readyReject = reject;});
@@ -34,6 +41,13 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
     if (!ready) readyReject(error);
     for (const p of pending.values()) p.reject(error);
     pending.clear();
+    pendingBytes=0;
+  }
+  function release(id){
+    const entry=pending.get(id);
+    if(!entry)return;
+    pending.delete(id);
+    pendingBytes-=entry.bytes;
   }
   // Worker frames are from the trusted adapter, but malformed/unexpected
   // control frames must still revoke outstanding receipts, never hang them.
@@ -67,10 +81,10 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
           failProtocol('invalid actor response payload');
           return;
         }
-        pending.delete(frame.id);
+        release(frame.id);
         entry.resolve(snapshot);
       } else if (frame.ok === false) {
-        pending.delete(frame.id);
+        release(frame.id);
         entry.reject(new Error('actor delivery failed: '+String(frame.error).slice(0,512)));
       } else {
         failProtocol('invalid actor response');
@@ -96,7 +110,7 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
     });
     worker.on('exit', code => shutdown(new Error('worker exited: ' + code)));
   } else throw new TypeError('Worker event interface unsupported');
-  try {worker.postMessage({protocol: PROTOCOL,kind:'init',moduleUrl,exportName,mode,maxPending});}
+  try {worker.postMessage({protocol: PROTOCOL,kind:'init',moduleUrl,exportName,mode,maxPending,maxPendingBytes});}
   catch (error) {shutdown(error);void worker.terminate();}
   function send(value, reply) {
     if (closed) return Promise.reject(new Error('actor closed'));
@@ -104,23 +118,27 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
     if (!Number.isSafeInteger(nextId)) return Promise.reject(new Error('actor message id exhausted'));
     // Take ownership at admission, not after the Worker startup handshake.
     // This prevents callers from mutating an outstanding queued delivery.
-    let snapshot;
+    let snapshot,bytes;
     try {
-      snapshot = copyOwnedValue(value);
+      ({value:snapshot,bytes}=copyOwnedValueWithBytes(value));
     } catch (error) {return Promise.reject(error);}
+    if(bytes>maxPendingBytes-pendingBytes)
+      return Promise.reject(new Error('actor mailbox byte capacity exceeded'));
     const id = nextId++;
+    pendingBytes+=bytes;
     return new Promise((resolve,reject) => {
-      pending.set(id,{resolve,reject,reply});
+      pending.set(id,{resolve,reject,reply,bytes});
       void readyPromise.then(() => {
         if (!pending.has(id) || closed) return;
         try {worker.postMessage({protocol:PROTOCOL,kind:'deliver',id,reply,value:snapshot});}
-        catch (error) {pending.delete(id);reject(error);}
+        catch (error) {release(id);reject(error);}
       },reject);
     });
   }
   return Object.freeze({
     get ready() {return readyPromise;},
     get pending() {return pending.size;},
+    get pendingBytes() {return pendingBytes;},
     request(value) {return send(value,true);},
     tell(value) {return send(value,false);},
     async close() {shutdown(new Error('actor closed'));await worker.terminate();}
