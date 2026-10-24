@@ -105,7 +105,9 @@ class Reader{
         const braced=this.eat('{');
         if(!braced){
           if(!arrow)fail('colon method bodies require braces',this.t[this.i].at);
-          if(!this.eat('as'))this.eat('::');
+          // Mirror the Java frontend: arrow/end bodies require the explicit
+          // double-colon delimiter. Silent delimiter omission is not grammar.
+          this.require('::');
         }
         const bodyEnd=braced?'}':'end';
         let body;
