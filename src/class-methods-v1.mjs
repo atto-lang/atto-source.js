@@ -12,6 +12,16 @@ export class ClassMethodsError extends Error {
 const fail=(message,at)=>{throw new ClassMethodsError(message,at);};
 function lex(source){
   if(typeof source!=='string'||new TextEncoder().encode(source).length>MAX_BYTES)fail('invalid or oversized source',0);
+  // TextEncoder replaces unpaired UTF-16 surrogates with U+FFFD. Reject
+  // malformed source before that lossy conversion, even inside comments.
+  for(let i=0;i<source.length;i++){
+    const unit=source.charCodeAt(i);
+    if(unit>=0xd800&&unit<=0xdbff){
+      const lo=source.charCodeAt(i+1);
+      if(!(lo>=0xdc00&&lo<=0xdfff))fail('invalid UTF-16 source',i);
+      i++;
+    }else if(unit>=0xdc00&&unit<=0xdfff)fail('invalid UTF-16 source',i);
+  }
   const result=[]; let p=0;
   while(p<source.length){
     if(/\s/.test(source[p])){p++;continue;}
