@@ -27,10 +27,15 @@ method images, non-extensible fieldless instances, BigInt i64 argument
 validation, and a fixed caller-visible argument-count switch. No fallback
 to type-driven overload resolution or dynamic eval exists in the emitter.
 This initial slice supports `int` arguments; `void` empty/`return;`
-bodies; and `int` bodies with `return` of a bounded nonnegative literal
-or an integer parameter. It **does not** yet lower fields, constructors,
-inheritance, actor lifecycle, mutable/borrowed receivers, nested calls,
-arithmetic expressions, or general functions. Direct JavaScript subclassing
+bodies; and `int` bodies with `return` of an exact signed-i64 literal
+(including `INT64_MIN`/`INT64_MAX`) or an integer parameter. Source first
+lowers through the strict JSON-safe `class-method-ir-v1` contract before ESM
+emission; direct IR input is exact-field validated, size bounded, copied
+defensively, and rejects duplicate receiver-erased method slots. This is a
+backend-local migration seam toward shared typed IR, not the final canonical
+Oreslang IR. It **does not** yet lower fields, constructors, inheritance,
+actor lifecycle, mutable/borrowed receivers, nested calls, arithmetic
+expressions, or general functions. Direct JavaScript subclassing
 is rejected while class inheritance is not implemented by this dialect.
 Unsupported source is rejected,
 rather than incorrectly reported as fully transpiled Oreslang. The original
