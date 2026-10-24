@@ -57,10 +57,24 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
       if (!ready) {failProtocol('actor result before ready');return;}
       const entry = pending.get(frame.id);
       if (!entry) {shutdown(new Error('unexpected actor response id'));void worker.terminate();return;}
-      pending.delete(frame.id);
-      if (frame.ok === true) entry.resolve(entry.reply ? frame.value : undefined);
-      else if (frame.ok === false) entry.reject(new Error('actor delivery failed: '+String(frame.error).slice(0,512)));
-      else {entry.reject(new Error('invalid actor response'));shutdown(new Error('invalid actor response'));void worker.terminate();}
+      if (frame.ok === true) {
+        // A Worker response is a new ownership boundary. Even trusted adapter
+        // code can regress and return a SharedArrayBuffer, or a test Worker
+        // can forge a success frame. Never expose such aliases to callers.
+        let snapshot;
+        try {snapshot = entry.reply ? copyOwnedValue(frame.value) : undefined;}
+        catch {
+          failProtocol('invalid actor response payload');
+          return;
+        }
+        pending.delete(frame.id);
+        entry.resolve(snapshot);
+      } else if (frame.ok === false) {
+        pending.delete(frame.id);
+        entry.reject(new Error('actor delivery failed: '+String(frame.error).slice(0,512)));
+      } else {
+        failProtocol('invalid actor response');
+      }
     }
   }
   if (typeof worker.addEventListener === 'function') {
