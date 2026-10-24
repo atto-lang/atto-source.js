@@ -35,8 +35,18 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
     for (const p of pending.values()) p.reject(error);
     pending.clear();
   }
+  // Worker frames are from the trusted adapter, but malformed/unexpected
+  // control frames must still revoke outstanding receipts, never hang them.
+  function failProtocol(message) {
+    shutdown(new Error(message));
+    void worker.terminate();
+  }
   function onFrame(frame) {
-    if (closed || !frame || frame.protocol !== PROTOCOL) return;
+    if (closed) return;
+    if (!frame || typeof frame !== 'object' || frame.protocol !== PROTOCOL ||
+        !['ready','fatal','result'].includes(frame.kind)) {
+      failProtocol('invalid actor frame');return;
+    }
     if (frame.kind === 'ready') {
       if (ready) {shutdown(new Error('duplicate actor ready'));void worker.terminate();return;}
       ready = true; readyResolve();
@@ -44,6 +54,7 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
       shutdown(new Error('actor startup/protocol failure: ' + String(frame.error).slice(0,512)));
       void worker.terminate();
     } else if (frame.kind === 'result') {
+      if (!ready) {failProtocol('actor result before ready');return;}
       const entry = pending.get(frame.id);
       if (!entry) {shutdown(new Error('unexpected actor response id'));void worker.terminate();return;}
       pending.delete(frame.id);
@@ -54,11 +65,21 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
   }
   if (typeof worker.addEventListener === 'function') {
     worker.addEventListener('message', e => onFrame(e.data));
-    worker.addEventListener('error', () => shutdown(new Error('worker execution failure')));
-    worker.addEventListener('messageerror', () => shutdown(new Error('worker message decoding failure')));
+    worker.addEventListener('error', () => {
+      shutdown(new Error('worker execution failure'));void worker.terminate();
+    });
+    worker.addEventListener('messageerror', () => {
+      shutdown(new Error('worker message decoding failure'));void worker.terminate();
+    });
   } else if (typeof worker.on === 'function') {
     worker.on('message', onFrame);
-    worker.on('error', err => shutdown(new Error('worker execution failure: ' + String(err.message))));
+    worker.on('error', err => {
+      shutdown(new Error('worker execution failure: ' + String(err?.message ?? err)));
+      void worker.terminate();
+    });
+    worker.on('messageerror', () => {
+      shutdown(new Error('worker message decoding failure'));void worker.terminate();
+    });
     worker.on('exit', code => shutdown(new Error('worker exited: ' + code)));
   } else throw new TypeError('Worker event interface unsupported');
   try {worker.postMessage({protocol: PROTOCOL,kind:'init',moduleUrl,exportName,mode});}
