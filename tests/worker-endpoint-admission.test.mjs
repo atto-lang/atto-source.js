@@ -15,7 +15,8 @@ function harness(){
   const send=(kind,extra={})=>listener({protocol:PROTOCOL,kind,...extra});
   const raw=frame=>listener(frame);
   const init=(extra={})=>send('init',{
-    moduleUrl:MODULE_URL,exportName:'receive',mode:'handler',maxPending:2,...extra
+    moduleUrl:MODULE_URL,exportName:'receive',mode:'handler',
+    maxPending:2,maxPendingBytes:32*1024*1024,...extra
   });
   const until=async(predicate,timeout=1000)=>{
     const deadline=Date.now()+timeout;
