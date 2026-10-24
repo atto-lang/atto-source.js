@@ -4,10 +4,10 @@
  * actor/ownership support. The receiver is compiler-owned and excluded from
  * the caller-visible method selector (class, name, user argument count).
  */
-const MAX_BYTES=262144, MAX_TOKENS=30000, MAX_ARITY=32;
+const MAX_BYTES=262144, MAX_TOKENS=30000, MAX_ARITY=32, MAX_INT_DIGITS=19;
 const MIN=-(1n<<63n), MAX=(1n<<63n)-1n;
 export class ClassMethodsError extends Error {
-  constructor(message,offset){super('error: class methods v1: '+message+' at token '+offset);this.name='ClassMethodsError';}
+  constructor(message,offset){super('error: class methods v1: '+message+' at offset '+offset);this.name='ClassMethodsError';}
 }
 const fail=(message,at)=>{throw new ClassMethodsError(message,at);};
 function lex(source){
@@ -115,23 +115,22 @@ class Reader{
           if(this.peek()!==bodyEnd)fail('void method body unsupported',this.t[this.i].at);
         }else{
           this.require('return');
-          let sign=1n;
-          if(this.eat('-'))sign=-1n;
-          else this.eat('+');
+          let sign=1n,signed=false;
+          if(this.eat('-')){sign=-1n;signed=true;}
+          else if(this.eat('+'))signed=true;
           const token=this.pop();const position=this.t[this.i-1].at;
           if(/^(?:0|[1-9][0-9]*)$/.test(token)){
             // Any signed-i64 decimal magnitude fits in at most 19 digits.
             // Reject longer tokens before BigInt conversion to keep hostile
             // source from turning one token into disproportionate CPU work.
-            if(token.length>19)fail('int literal outside i64',position);
+            if(token.length>MAX_INT_DIGITS)fail('int literal outside i64',position);
             const magnitude=BigInt(token);
             const limit=sign<0n?MAX+1n:MAX;
             if(magnitude>limit)fail('int literal outside i64',position);
             const n=sign*magnitude;
             body={kind:'literal',value:n.toString()};
           }else{
-            if(sign<0n||this.t[this.i-2]?.value==='+')
-              fail('signed method return supports integer literals only',position);
+            if(signed)fail('signed method return supports integer literals only',position);
             if(!params.includes(token))fail('unresolved method parameter',position);
             body={kind:'arg',index:params.indexOf(token)};
           }
