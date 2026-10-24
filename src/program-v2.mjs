@@ -551,7 +551,7 @@ function resolveProgram(parsed) {
       case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
       case 'bool':case 'not':case 'compare':case 'symbolCompare':return 'bool';
       case 'symbol':return 'symbol';
-      case 'param':return functions[owner].paramTypes?.[expr.index]??'int';
+      case 'param':return owner.paramTypes?.[expr.index]??'int';
       case 'call':case 'namedCall':return functions[expr.target].returnType??'int';
       case 'intrinsic': {
         const results={
