@@ -54,13 +54,16 @@ function validateOwnedValue(value) {
     }
   }
   check(value,0);
+  return bytes;
 }
-export function copyOwnedValue(value) {
-  // Preflight rejects oversized binary buffers and SAB *before* clone cost.
+// Measure the *validated snapshot*, rather than the caller's mutable graph.
+// This conservative estimate is not a serialized-wire-byte or heap bound.
+export function copyOwnedValueWithBytes(value) {
   validateOwnedValue(value);
   const snapshot=structuredClone(value);
-  // Revalidate after clone: accessors or concurrent mutation of the input
-  // can change the cloned payload. Never publish an unchecked clone.
-  validateOwnedValue(snapshot);
-  return snapshot;
+  const bytes=validateOwnedValue(snapshot);
+  return Object.freeze({value:snapshot,bytes});
+}
+export function copyOwnedValue(value) {
+  return copyOwnedValueWithBytes(value).value;
 }
