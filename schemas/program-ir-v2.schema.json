@@ -317,6 +317,42 @@
           "additionalProperties": false,
           "required": [
             "kind",
+            "target",
+            "args",
+            "paramOrder"
+          ],
+          "properties": {
+            "kind": {
+              "const": "namedCall"
+            },
+            "target": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "args": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "$ref": "#/$defs/expr"
+              }
+            },
+            "paramOrder": {
+              "type": "array",
+              "maxItems": 128,
+              "uniqueItems": true,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
             "subject",
             "arms"
           ],
@@ -417,7 +453,7 @@
             "slot": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 30000
+              "maximum": 29999
             }
           }
         },
@@ -469,7 +505,7 @@
                       {
                         "type": "integer",
                         "minimum": 0,
-                        "maximum": 30000
+                        "maximum": 29999
                       },
                       {
                         "type": "null"
