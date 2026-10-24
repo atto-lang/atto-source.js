@@ -25,6 +25,18 @@ test('Result constructor qualifiers compose with matched payload return type',as
   assert.equal(mod.f(false),3n);
 });
 
+test('program source rejects NUL and malformed UTF-16 before comment stripping',()=>{
+  const valid='pub fnc f(): int {return 1;}';
+  for(const source of [
+    valid+' // '+String.fromCharCode(0),
+    valid+' /* '+String.fromCharCode(0)+' */',
+    valid+' // '+String.fromCharCode(0xd800),
+    valid+' /* '+String.fromCharCode(0xdc00)+' */',
+    String.fromCharCode(0xdc00)+valid
+  ]) assert.throws(()=>compileProgramV2(source),/error: program v2:/);
+  assert.doesNotThrow(()=>compileProgramV2(valid+' // '+String.fromCodePoint(0x1f642)));
+});
+
 const invalidSources=[
   ['missing None', 'pub fnc f(): int {return match Some(7) over on Some(n) {n;} end;}'],
   ['duplicate Some', 'pub fnc f(): int {return match Some(7) over on Some(n) {n;} on Some(m) {m;} end;}'],
