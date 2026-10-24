@@ -71,6 +71,29 @@ function validateSourceText(source) {
     }else if(unit>=0xdc00&&unit<=0xdfff)fail('invalid UTF-16 source');
   }
 }
+function normalizeProcessSymbolName(input) {
+  if(typeof input!=='string'||input.length>1024)
+    fail('Symbol source name exceeds normalization budget');
+  for(let i=0;i<input.length;i++){
+    const unit=input.charCodeAt(i);
+    if(unit>=0xd800&&unit<=0xdbff){
+      const lo=input.charCodeAt(i+1);
+      if(!(lo>=0xdc00&&lo<=0xdfff))fail('unpaired UTF-16 surrogate in Symbol');
+      i++;
+    }else if(unit>=0xdc00&&unit<=0xdfff)fail('unpaired UTF-16 surrogate in Symbol');
+  }
+  const value=input.normalize('NFC');
+  const bytes=new TextEncoder().encode(value).length;
+  if(bytes<1||bytes>256)fail('Symbol name requires 1..256 UTF-8 bytes');
+  for(const ch of value){
+    const cp=ch.codePointAt(0);
+    if(cp<0x20||(cp>=0x7f&&cp<=0x9f)||/[\p{Cf}\p{Zl}\p{Zp}]/u.test(ch)||
+       cp===0x061c||cp===0x200e||cp===0x200f||
+       (cp>=0x202a&&cp<=0x202e)||(cp>=0x2066&&cp<=0x2069))
+      fail('control, line-separator, or bidi character in Symbol');
+  }
+  return value;
+}
 function tokenize(source) {
   validateSourceText(source);
   if (new TextEncoder().encode(source).length > MAX_BYTES) fail('oversized or invalid source');
@@ -106,7 +129,54 @@ function tokenize(source) {
       if (nesting) fail('unterminated comment',start);
       continue;
     }
-    if (/[A-Za-z_]/.test(c)) {
+    if (c==='#') {
+      advance();
+      let value='';
+      const quote=source[pos];
+      if(quote==='"'||quote==="'"){
+        advance();
+        let closed=false;
+        while(pos<source.length){
+          if(source[pos]===quote){advance();closed=true;break;}
+          let ch=source[pos];
+          if(ch==='\n'||ch==='\r')fail('raw newline in quoted Symbol literal',start);
+          advance();
+          if(ch==='\\'){
+            if(pos>=source.length)fail('unterminated quoted Symbol escape',start);
+            const escaped=source[pos];advance();
+            if(escaped==='u'){
+              let code=0;
+              for(let i=0;i<4;i++){
+                if(pos>=source.length)fail('incomplete Unicode Symbol escape',start);
+                const digit=source[pos];advance();
+                const hex=digit>='0'&&digit<='9'?digit.charCodeAt(0)-48:
+                  digit>='a'&&digit<='f'?digit.charCodeAt(0)-87:
+                  digit>='A'&&digit<='F'?digit.charCodeAt(0)-55:-1;
+                if(hex<0)fail('invalid Unicode Symbol escape',start);
+                code=(code<<4)|hex;
+              }
+              ch=String.fromCharCode(code);
+            }else if(escaped==='n')ch='\n';
+            else if(escaped==='r')ch='\r';
+            else if(escaped==='t')ch='\t';
+            else if(escaped==='"'||escaped==="'"||escaped==='\\')ch=escaped;
+            else fail('invalid quoted Symbol escape',start);
+          }
+          value+=ch;
+        }
+        if(!closed)fail('unterminated quoted Symbol literal',start);
+        value=normalizeProcessSymbolName(value);
+      }else{
+        if(pos>=source.length||!/[A-Za-z_]/.test(source[pos]))
+          fail("expected Symbol name immediately after '#'",start);
+        while(pos<source.length&&/[A-Za-z0-9_]/.test(source[pos])){
+          value+=source[pos];advance();
+        }
+        if(value.length>128)fail('unquoted Symbol literal exceeds 128 ASCII bytes',start);
+        value=normalizeProcessSymbolName(value);
+      }
+      emit('symbol',value,start);
+    } else if (/[A-Za-z_]/.test(c)) {
       let word = '';
       while (pos < source.length && /[A-Za-z0-9_]/.test(source[pos])) {
         word += source[pos]; advance();
@@ -144,6 +214,7 @@ class Parser {
   valueType() {
     if(this.eat('int'))return 'int';
     if(this.eat('bool'))return 'bool';
+    if(this.eat('Symbol'))return 'symbol';
     if(this.eat('Option')){
       this.expect('<');this.expect('int');this.expect('>');
       return 'option<int>';
@@ -152,7 +223,7 @@ class Parser {
       this.expect('<');this.expect('int');this.expect(',');this.expect('int');this.expect('>');
       return 'result<int,int>';
     }
-    fail('unsupported scalar type (int, bool, Option<int>, Result<int,int>)',this.peek());
+    fail('unsupported scalar type (int, bool, Symbol, Option<int>, Result<int,int>)',this.peek());
   }
   functions(moduleName) {
     const pub = this.eat('pub'), start=this.peek();
@@ -256,7 +327,7 @@ class Parser {
         if(total>MAX_TOKENS)fail('expanded conditional IR node budget exceeded');
       }
       switch(expr.kind){
-        case 'int':case 'bool':case 'variable':break;
+        case 'int':case 'bool':case 'symbol':case 'variable':break;
         case 'neg':case 'not':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
@@ -284,7 +355,7 @@ class Parser {
     while (this.peek().kind !== 'eof') {
       if (this.eat('define')) {
         this.expect('module'); const name=this.name();
-        if(name==='Option'||name==='Result')
+        if(name==='Option'||name==='Result'||name==='Symbol')
           fail('reserved portable intrinsic module name '+name);
         if (usedModules.has(name)) fail('duplicate module ' + name);
         usedModules.add(name); this.eat('as');
@@ -349,6 +420,10 @@ class Parser {
     }
     if(this.eat('match')) return this.matchExpression();
     if(this.peek().kind==='int') return {kind:'int',value:this.integer()};
+    if(this.peek().kind==='symbol'){
+      const literal=this.tokens[this.i++];
+      return {kind:'symbol',value:literal.value};
+    }
     const token=this.peek();
     if (token.kind !== 'id') fail('expression expected',token);
     const first=this.name();
@@ -474,7 +549,7 @@ function resolveProgram(parsed) {
   function resolve(expr,owner,depth=0,bindings=[]) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
-      case 'int':case 'bool':return expr;
+      case 'int':case 'bool':case 'symbol':return expr;
       case 'variable': {
         const captured=bindings.findLast(b=>b.name===expr.name);
         if(captured)return {kind:'capture',slot:captured.slot};
@@ -598,6 +673,7 @@ function emitProgram(program) {
     if(depth > MAX_DEPTH) fail('codegen depth exceeded');
     switch(expr.kind) {
       case 'int': return expr.value+'n';
+      case 'symbol':return '_symbol('+JSON.stringify(expr.value)+')';
       case 'bool': return expr.value?'true':'false';
       case 'param':return '_p'+expr.index;
       case 'capture':return '_v'+expr.slot;
@@ -659,6 +735,26 @@ function emitProgram(program) {
   }
   if(program.functions.some(fn=>fn.returnType==='bool'||fn.paramTypes?.includes('bool')))
     out.push('function _checkbool(v){if(typeof v!=="boolean")throw new TypeError("Oreslang bool required");return v;}');
+  function usesSymbol(expr) {
+    switch(expr.kind) {
+      case 'symbol':return true;
+      case 'call':case 'namedCall':case 'intrinsic':return expr.args.some(usesSymbol);
+      case 'binary':case 'compare':return usesSymbol(expr.left)||usesSymbol(expr.right);
+      case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
+      case 'neg':case 'not':return usesSymbol(expr.inner);
+      case 'match':case 'adtMatch':return usesSymbol(expr.subject)||
+        expr.arms.some(arm=>usesSymbol(arm.body));
+      default:return false;
+    }
+  }
+  if(program.functions.some(fn=>fn.returnType==='symbol'||fn.paramTypes?.includes('symbol')||
+      usesSymbol(fn.body))) {
+    out.push(
+      'const _symbolBrand=new WeakSet();',
+      'function _symbol(n){const x=Object.create(null);Object.defineProperty(x,"kind",{value:"PROCESS",enumerable:true});Object.defineProperty(x,"name",{value:n,enumerable:true});Object.freeze(x);_symbolBrand.add(x);return x;}',
+      'function _checksymbol(v){if(!v||typeof v!=="object"||!_symbolBrand.has(v)||Object.getPrototypeOf(v)!==null||!Object.isFrozen(v))throw new TypeError("Oreslang Symbol required");return v;}'
+    );
+  }
   // Intrinsics may be nested entirely within an int-returning function
   // without appearing in its public signature. Include helpers based on
   // both typed signatures and the entire already-validated expression DAG.
@@ -701,8 +797,8 @@ function emitProgram(program) {
     out.push('function _f'+i+'('+params.join(',')+'){');
     params.forEach((p,j)=>{
       const type=fn.paramTypes?.[j]??'int';
-      const check={int:'_check',bool:'_checkbool','option<int>':'_checkoption',
-        'result<int,int>':'_checkresult'}[type];
+      const check={int:'_check',bool:'_checkbool',symbol:'_checksymbol',
+        'option<int>':'_checkoption','result<int,int>':'_checkresult'}[type];
       if(!check)fail('unsupported portable parameter type');
       out.push(check+'('+p+');');
     });
