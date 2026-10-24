@@ -19,14 +19,17 @@ node bin/oreslang-jsc.mjs --class-methods-v1 sample.ores --out=/tmp/classes.mjs
 ```
 
 Only explicitly `pub` classes and methods are exported. Emitted instance
-methods use JS private-field receiver brand checking, BigInt i64 argument
+methods use JS private-field receiver brand checking, immutable class/prototype
+method images, non-extensible fieldless instances, BigInt i64 argument
 validation, and a fixed caller-visible argument-count switch. No fallback
 to type-driven overload resolution or dynamic eval exists in the emitter.
 This initial slice supports `int` arguments; `void` empty/`return;`
 bodies; and `int` bodies with `return` of a bounded nonnegative literal
 or an integer parameter. It **does not** yet lower fields, constructors,
 inheritance, actor lifecycle, mutable/borrowed receivers, nested calls,
-arithmetic expressions, or general functions. Unsupported source is rejected,
+arithmetic expressions, or general functions. Direct JavaScript subclassing
+is rejected while class inheritance is not implemented by this dialect.
+Unsupported source is rejected,
 rather than incorrectly reported as fully transpiled Oreslang. The original
 scalar and program-v2 profiles stay unchanged.
 
