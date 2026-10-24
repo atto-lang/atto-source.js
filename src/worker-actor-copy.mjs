@@ -4,6 +4,9 @@
 const MAX_NODES=8192;
 const MAX_DEPTH=64;
 const MAX_CONTENT_BYTES=8*1024*1024;
+// Intrinsic getters avoid invoking user-overridden instance accessors.
+const regexpSourceGetter=Object.getOwnPropertyDescriptor(RegExp.prototype,'source').get;
+const bigintHex=BigInt.prototype.toString;
 
 function validateOwnedValue(value) {
   const seen=new WeakSet();
@@ -16,6 +19,11 @@ function validateOwnedValue(value) {
   }
   function check(node,depth) {
     if(typeof node==='string') {addBytes(node.length*2);return;}
+    if(typeof node==='bigint') {
+      const hex=bigintHex.call(node,16);
+      addBytes(Math.ceil((hex.length-(hex[0]==='-'?1:0))/2));
+      return;
+    }
     if(node===null||typeof node!=='object')return;
     if(depth>MAX_DEPTH)throw new RangeError('actor message complexity exceeded');
     if(seen.has(node))return;
@@ -30,6 +38,15 @@ function validateOwnedValue(value) {
     }
     if(typeof Blob!=='undefined'&&node instanceof Blob) {
       addBytes(node.size);return;
+    }
+    if(node instanceof RegExp) {
+      // RegExp's potentially huge source is stored in an internal slot,
+      // not an own property. structuredClone copies it nevertheless.
+      addBytes(regexpSourceGetter.call(node).length*2);
+    }
+    if(node instanceof BigInt) {
+      const hex=bigintHex.call(node,16);
+      addBytes(Math.ceil((hex.length-(hex[0]==='-'?1:0))/2));
     }
     if(node instanceof Map) {
       for(const [key,item] of node){
