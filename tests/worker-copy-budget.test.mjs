@@ -165,3 +165,46 @@ test('built-in readers preserve the correct bounded Map/Set and view semantics',
   set[Symbol.iterator]=()=>[][Symbol.iterator]();
   assert.deepEqual([...copyOwnedValue(set)],[1,2,3]);
 });
+
+test('cloneable internal slots cannot hide behind changed object prototypes',()=>{
+  const size=9*MiB;
+  const kinds=[
+    new ArrayBuffer(size),
+    new Uint8Array(size),
+    new DataView(new ArrayBuffer(size)),
+    new Map([['buffer',new ArrayBuffer(size)]]),
+    new Set([new ArrayBuffer(size)]),
+    new RegExp('a'.repeat(4*MiB+1)),
+    Object('x'.repeat(4*MiB+1))
+  ];
+  const original=globalThis.structuredClone;
+  let cloneCalls=0;
+  globalThis.structuredClone=(value)=>{cloneCalls++;return original(value);};
+  try{
+    for(const value of kinds){
+      Object.setPrototypeOf(value,Object.prototype);
+      assert.throws(()=>copyOwnedValue(value),/byte budget exceeded/);
+    }
+    if(typeof SharedArrayBuffer==='function'){
+      const shared=new SharedArrayBuffer(8);
+      Object.setPrototypeOf(shared,Object.prototype);
+      assert.throws(()=>copyOwnedValue(shared),/shared-memory/);
+    }
+    assert.equal(cloneCalls,0);
+  }finally{globalThis.structuredClone=original;}
+});
+
+test('small cloneables remain supported after prototype changes',()=>{
+  const map=new Map([['answer',42]]);
+  const set=new Set([1,2,3]);
+  const pattern=/hello/i;
+  const backing=new ArrayBuffer(16);
+  const boxed=Object('hello');
+  for(const item of [map,set,pattern,backing,boxed])
+    Object.setPrototypeOf(item,Object.prototype);
+  assert.equal(copyOwnedValue(map).get('answer'),42);
+  assert.deepEqual([...copyOwnedValue(set)],[1,2,3]);
+  assert.equal(copyOwnedValue(pattern).source,'hello');
+  assert.equal(copyOwnedValue(backing).byteLength,16);
+  assert.equal(copyOwnedValue(boxed).valueOf(),'hello');
+});
