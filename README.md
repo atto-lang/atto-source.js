@@ -7,11 +7,15 @@ Implemented first slice: integer functions with typed int parameters, return-onl
 ## Experimental class-method source transpilation (opt-in)
 
 The `--class-methods-v1` dialect compiles **fieldless, synchronous**
-Oreslang class declarations into executable ESM. The optional formatter-facing
-`mtd` marker is accepted but not required, and both colon/brace and
-arrow/`end` method bodies are admitted: `foo():void {}`,
-`mtd foo(self):void {}`, and `mtd foo(self) -> void :: ... end`.
-A leading declaration-level `self` is a receiver binder and does not count
+Oreslang class declarations into executable ESM. The contextual
+`mtd` and `method` markers are accepted but not required, and remain legal
+ordinary callable names when followed directly by `(`. Java-compatible
+callable keyword names such as `do`, `done`, `stop`, `loop`, `block`,
+`select`, `readch`, `writech`, `nb`, `true`, and `false` are admitted
+as method names. Both colon/brace and arrow/`end` method bodies are supported:
+`foo():void {}`, `mtd foo(self):void {}`, and
+`method foo(self) -> void :: ... end`. A leading declaration-level `self`
+is a receiver binder and does not count
 toward caller-visible arity. For example,
 `pub mtd foo(self, int x) -> int :: return x; end` is `foo/1`.
 Duplicate implicit/explicit receiver slots reject at compile time.
@@ -39,7 +43,8 @@ authoritative for semantic checks such as signed-i64 range and argument bounds.
 This is a backend-local migration seam toward shared typed IR, not the final
 canonical Oreslang IR. It **does not** yet lower fields, constructors, inheritance,
 actor lifecycle, mutable/borrowed receivers, nested calls, arithmetic
-expressions, or general functions. Direct JavaScript subclassing
+expressions, generic methods, computed/symbol method names, or general functions.
+Direct JavaScript subclassing
 is rejected while class inheritance is not implemented by this dialect.
 Unsupported source is rejected,
 rather than incorrectly reported as fully transpiled Oreslang. The original
