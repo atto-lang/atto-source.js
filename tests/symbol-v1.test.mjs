@@ -29,6 +29,38 @@ test('hash Symbol literals are typed, NFC-normalized and non-interned',async()=>
   assert.equal(mod.single().name,'ready foo');
 });
 
+test('Symbol literals compose with named arguments and quoted directive lookalikes',async()=>{
+  const source=[
+    'fnc echo(Symbol value):Symbol{return value;}',
+    'pub fnc named():Symbol{return echo(value:#ready);}',
+    'pub fnc directive():Symbol{return #"// oreslang:checked-i64-v1";}',
+    'pub fnc escaped():Symbol{return #"quote:\\\\" slash:\\\\ ok";}',
+    'pub fnc unicode():Symbol{return #"\\u0063afe\\u0301";}'
+  ].join('\n');
+  const mod=await load(source);
+  assert.equal(mod.named().name,'ready');
+  assert.equal(mod.directive().name,'// oreslang:checked-i64-v1');
+  assert.equal(mod.escaped().name,'quote:" slash:\\ ok');
+  assert.equal(mod.unicode().name,'café');
+  const call=compileToProgramIRV2(source).functions[1].body;
+  assert.equal(call.kind,'namedCall');
+  assert.deepEqual(call.paramOrder,[0]);
+});
+
+test('Symbol branding is intentionally local to one generated artifact',async()=>{
+  const source=[
+    'pub fnc tag():Symbol{return #ready;}',
+    'pub fnc echo(Symbol value):Symbol{return value;}'
+  ].join('\n');
+  const first=await import('data:text/javascript;charset=utf-8,'+
+    encodeURIComponent(compileProgramV2(source))+'#first');
+  const second=await import('data:text/javascript;charset=utf-8,'+
+    encodeURIComponent(compileProgramV2(source))+'#second');
+  const foreign=first.tag();
+  assert.strictEqual(first.echo(foreign),foreign);
+  assert.throws(()=>second.echo(foreign),/Oreslang Symbol required/);
+});
+
 test('typed Symbol parameters accept only module-branded values',async()=>{
   const source=[
     'pub fnc tag():Symbol{return #ready;}',
