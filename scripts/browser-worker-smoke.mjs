@@ -18,7 +18,7 @@ const server=createServer(async(req,res)=>{
     // The loopback smoke server must not expose repository policy, secrets,
     // dotfiles, or unrelated source material to a browser session.
     const ext=extname(path);
-    if(!path.startsWith(root+sep)||!/^\\/(?:src\\/|tests\\/)/.test(pathname)||
+    if(!path.startsWith(root+sep)||!/^\/(?:src\/|tests\/)/.test(pathname)||
        !['.html','.mjs','.ores'].includes(ext)){
       res.writeHead(403);res.end();return;
     }
