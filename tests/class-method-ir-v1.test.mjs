@@ -41,6 +41,22 @@ test('implicit and explicit self normalize to identical resolved method IR',()=>
   assert.equal(Object.hasOwn(implicit.classes[0].methods[0],'receiver'),false);
 });
 
+test('resolved IR admits contextual callable names but keeps ordinary names strict',()=>{
+  for(const name of ['mtd','method','do','done','stop','loop','block','select','readch','writech','nb','true','false']){
+    const ir=valid();
+    ir.classes[0].methods[0].name=name;
+    assert.doesNotThrow(()=>validateClassMethodIRV1(ir),name);
+  }
+  const cls=valid();
+  cls.classes[0].name='mtd';
+  assert.doesNotThrow(()=>validateClassMethodIRV1(cls));
+  for(const name of ['return','class','fnc','self']){
+    const ir=valid();
+    ir.classes[0].methods[0].name=name;
+    assert.throws(()=>validateClassMethodIRV1(ir),ClassMethodIRError,name);
+  }
+});
+
 test('IR validator defensively copies nested records and arrays',()=>{
   const input=valid();
   const checked=validateClassMethodIRV1(input);
