@@ -5,7 +5,7 @@ import {readFile,mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {resolveBrowserWorkerFixture,BrowserWorkerFixtureAccessError} from './browser-worker-fixture-path.mjs';
+import {readBrowserWorkerFixture,BrowserWorkerFixtureAccessError} from './browser-worker-fixture-path.mjs';
 const root=resolve(fileURLToPath(new URL('../',import.meta.url)));
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const profile=await mkdtemp(join(tmpdir(),'ores-js-browser-'));
@@ -14,12 +14,12 @@ const server=createServer(async(req,res)=>{
     if(req.method!=='GET'&&req.method!=='HEAD'){
       res.writeHead(405,{Allow:'GET, HEAD'});res.end();return;
     }
-    const admitted=await resolveBrowserWorkerFixture(root,req.url);
-    const body=await readFile(admitted.path);
+    const admitted=await readBrowserWorkerFixture(root,req.url,{head:req.method==='HEAD'});
     res.setHeader('Content-Type',admitted.contentType);
     res.setHeader('Cache-Control','no-store');
     res.setHeader('X-Content-Type-Options','nosniff');
-    res.end(req.method==='HEAD'?undefined:body);
+    res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'unsafe-inline' blob:; connect-src 'self'; worker-src 'self' blob:; style-src 'none'; base-uri 'none'; object-src 'none'");
+    res.end(admitted.body);
   }catch(error){
     res.writeHead(error instanceof BrowserWorkerFixtureAccessError?403:
       error?.code==='ENOENT'?404:400);
