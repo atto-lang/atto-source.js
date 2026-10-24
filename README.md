@@ -4,6 +4,32 @@ Experimental source-to-ESM compiler for Oreslang, intended ultimately for browse
 
 Implemented first slice: integer functions with typed int parameters, return-only bodies, operators +, -, *, and %, forward/same-module calls, pub exports, optional module wrapper, lexical comments and bounded source. Unsupported features fail closed. The Java/Truffle frontend is the language reference; this is **not** feature parity.
 
+## Experimental class-method source transpilation (opt-in)
+
+The `--class-methods-v1` dialect compiles **fieldless, synchronous**
+Oreslang class declarations into executable ESM, including both
+`foo():void {}` and `foo(self):void {}`. A leading declaration-level
+`self` is a receiver binder and does not count toward caller-visible arity.
+For example, `pub foo(self, int x):int{return x;}` is `foo/1`.
+Duplicate implicit/explicit receiver slots reject at compile time.
+
+```sh
+node bin/oreslang-jsc.mjs --class-methods-v1 --check sample.ores
+node bin/oreslang-jsc.mjs --class-methods-v1 sample.ores --out=/tmp/classes.mjs
+```
+
+Only explicitly `pub` classes and methods are exported. Emitted instance
+methods use JS private-field receiver brand checking, BigInt i64 argument
+validation, and a fixed caller-visible argument-count switch. No fallback
+to type-driven overload resolution or dynamic eval exists in the emitter.
+This initial slice supports `int` arguments; `void` empty/`return;`
+bodies; and `int` bodies with `return` of a bounded nonnegative literal
+or an integer parameter. It **does not** yet lower fields, constructors,
+inheritance, actor lifecycle, mutable/borrowed receivers, nested calls,
+arithmetic expressions, or general functions. Unsupported source is rejected,
+rather than incorrectly reported as fully transpiled Oreslang. The original
+scalar and program-v2 profiles stay unchanged.
+
 ## Quick start
 
 Requires Node.js 22 or later; no third-party runtime dependencies.
