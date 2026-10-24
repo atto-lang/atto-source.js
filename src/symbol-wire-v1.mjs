@@ -56,7 +56,8 @@ function exactWireRecord(input){
     fail('expected exact $symbol/name fields');
   for(const key of ['$symbol','name']){
     const desc=Object.getOwnPropertyDescriptor(input,key);
-    if(!desc||!Object.hasOwn(desc,'value'))fail('accessor or missing '+key);
+    if(!desc||!Object.hasOwn(desc,'value')||!desc.enumerable)
+      fail('non-enumerable, accessor, or missing '+key);
   }
   return input;
 }
@@ -72,10 +73,12 @@ function policyName(options){
   if(options===undefined)return 'trusted';
   if(options===null||typeof options!=='object'||Array.isArray(options))
     fail('invalid options');
+  const proto=Object.getPrototypeOf(options);
+  if(proto!==Object.prototype&&proto!==null)fail('non-plain options');
   const keys=Reflect.ownKeys(options);
-  if(keys.some(k=>k!=='policy'))fail('unknown option');
+  if(keys.length>1||keys.some(k=>k!=='policy'))fail('unknown option');
   const desc=Object.getOwnPropertyDescriptor(options,'policy');
-  if(desc&&!Object.hasOwn(desc,'value'))fail('accessor option');
+  if(desc&&(!Object.hasOwn(desc,'value')||!desc.enumerable))fail('accessor/non-enumerable option');
   const policy=desc?desc.value:'trusted';
   if(policy!=='trusted'&&policy!=='untrusted-core')fail('unknown policy');
   return policy;
