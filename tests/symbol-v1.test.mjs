@@ -34,7 +34,7 @@ test('Symbol literals compose with named arguments and quoted directive lookalik
     'fnc echo(Symbol value):Symbol{return value;}',
     'pub fnc named():Symbol{return echo(value:#ready);}',
     'pub fnc directive():Symbol{return #"// oreslang:checked-i64-v1";}',
-    'pub fnc escaped():Symbol{return #"quote:\\\\" slash:\\\\ ok";}',
+    'pub fnc escaped():Symbol{return #"quote:\\" slash:\\\\ ok";}',
     'pub fnc unicode():Symbol{return #"\\u0063afe\\u0301";}'
   ].join('\n');
   const mod=await load(source);
