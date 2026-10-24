@@ -7,6 +7,14 @@ const MAX_CONTENT_BYTES=8*1024*1024;
 // Intrinsic getters avoid invoking user-overridden instance accessors.
 const regexpSourceGetter=Object.getOwnPropertyDescriptor(RegExp.prototype,'source').get;
 const bigintHex=BigInt.prototype.toString;
+// Capture built-in internal-slot readers once. Instance properties such as
+// byteLength, buffer, size or Symbol.iterator must not hide cloneable bytes.
+const arrayBufferLength=Object.getOwnPropertyDescriptor(ArrayBuffer.prototype,'byteLength').get;
+const typedArrayBuffer=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),'buffer').get;
+const dataViewBuffer=Object.getOwnPropertyDescriptor(DataView.prototype,'buffer').get;
+const blobSize=typeof Blob==='function'?Object.getOwnPropertyDescriptor(Blob.prototype,'size').get:null;
+const mapEntries=Map.prototype.entries;
+const setValues=Set.prototype.values;
 
 function validateOwnedValue(value) {
   const seen=new WeakSet();
@@ -31,13 +39,14 @@ function validateOwnedValue(value) {
     if(++nodes>MAX_NODES)throw new RangeError('actor message complexity exceeded');
     if(typeof SharedArrayBuffer!=='undefined'&&node instanceof SharedArrayBuffer)
       throw new TypeError('shared-memory actor message forbidden in copy-only profile');
-    if(node instanceof ArrayBuffer) {addBytes(node.byteLength);return;}
+    if(node instanceof ArrayBuffer) {addBytes(arrayBufferLength.call(node));return;}
     if(ArrayBuffer.isView(node)) {
-      check(node.buffer,depth+1);
+      check(node instanceof DataView ? dataViewBuffer.call(node) :
+        typedArrayBuffer.call(node),depth+1);
       return;
     }
     if(typeof Blob!=='undefined'&&node instanceof Blob) {
-      addBytes(node.size);return;
+      addBytes(blobSize.call(node));return;
     }
     if(node instanceof RegExp) {
       // RegExp's potentially huge source is stored in an internal slot,
@@ -49,12 +58,12 @@ function validateOwnedValue(value) {
       addBytes(Math.ceil((hex.length-(hex[0]==='-'?1:0))/2));
     }
     if(node instanceof Map) {
-      for(const [key,item] of node){
+      for(const [key,item] of mapEntries.call(node)){
         if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
         check(key,depth+1);check(item,depth+1);
       }
     }else if(node instanceof Set) {
-      for(const item of node){
+      for(const item of setValues.call(node)){
         if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
         check(item,depth+1);
       }
