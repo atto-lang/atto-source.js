@@ -122,6 +122,21 @@ test('malformed or unsupported source fails closed before generating ESM',()=>{
     'define class X as foo(int self):int{return self;} end'
   ]) assert.throws(()=>compileClassMethodsV1(source),/error: class methods v1:/,source);
 });
+test('keywords and NUL cannot be smuggled into source identifiers or comments',()=>{
+  const bad=[
+    'define class self as foo():void {} end',
+    'define class actor as foo():void {} end',
+    'define class X as mtd return(self):void {} end',
+    'define class X as foo(int mut):void {} end',
+    'define class X as foo(int await):void {} end',
+    'define class X as foo(int fnc):void {} end',
+    'define class X as foo(self):void {} end // '+String.fromCharCode(0),
+    'define class X as foo(self):void {} end /* '+String.fromCharCode(0)+' */'
+  ];
+  for(const source of bad)assert.throws(()=>compileClassMethodsV1(source),
+    /error: class methods v1:/,source);
+});
+
 test('compiler rejects malformed UTF-16 even inside ignorable comments',()=>{
   const src='pub define class X as pub f(self):void {} end';
   for(const bad of [
