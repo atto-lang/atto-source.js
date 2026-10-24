@@ -14,9 +14,9 @@ const valid=()=>({
   integerModel:CLASS_METHOD_IR_INT_MODEL,
   classes:[{
     name:'Box',pub:true,methods:[
-      {name:'read',pub:true,receiver:true,paramTypes:['int'],resultType:'int',
+      {name:'read',pub:true,paramTypes:['int'],resultType:'int',
         body:{kind:'arg',index:0}},
-      {name:'zero',pub:true,receiver:false,paramTypes:[],resultType:'void',
+      {name:'zero',pub:true,paramTypes:[],resultType:'void',
         body:{kind:'void'}}
     ]
   }]
@@ -34,6 +34,13 @@ test('source lowering produces strict JSON-safe class-method IR and round-trips'
     compileClassMethodsV1(source));
 });
 
+test('implicit and explicit self normalize to identical resolved method IR',()=>{
+  const implicit=compileToClassMethodIRV1('pub define class X as pub foo(int x):int{return x;} end');
+  const explicit=compileToClassMethodIRV1('pub define class X as pub foo(self,int x):int{return x;} end');
+  assert.deepEqual(implicit,explicit);
+  assert.equal(Object.hasOwn(implicit.classes[0].methods[0],'receiver'),false);
+});
+
 test('IR validator defensively copies nested records and arrays',()=>{
   const input=valid();
   const checked=validateClassMethodIRV1(input);
@@ -48,7 +55,7 @@ test('IR validator defensively copies nested records and arrays',()=>{
 test('IR rejects duplicate receiver-erased selectors and invalid body typing',()=>{
   const duplicate=valid();
   duplicate.classes[0].methods.push(
-    {name:'read',pub:false,receiver:false,paramTypes:['int'],resultType:'int',
+    {name:'read',pub:false,paramTypes:['int'],resultType:'int',
       body:{kind:'literal',value:'1'}}
   );
   assert.throws(()=>validateClassMethodIRV1(duplicate),
@@ -72,6 +79,7 @@ test('IR rejects reserved identifiers, extra fields, accessors and exotic record
     ir=>{ir.classes[0].methods[0].name='return';},
     ir=>{ir.extra=true;},
     ir=>{ir.classes[0].methods[0].extra=true;},
+    ir=>{ir.classes[0].methods[0].receiver=true;},
     ir=>{Object.setPrototypeOf(ir.classes[0],new Date());}
   ]){
     const ir=valid();mutate(ir);
@@ -96,9 +104,9 @@ test('IR rejects sparse and decorated arrays',()=>{
 test('direct IR compilation preserves signed bounds and runtime arity checks',async()=>{
   const ir=valid();
   ir.classes[0].methods.unshift(
-    {name:'min',pub:true,receiver:false,paramTypes:[],resultType:'int',
+    {name:'min',pub:true,paramTypes:[],resultType:'int',
       body:{kind:'literal',value:'-9223372036854775808'}},
-    {name:'max',pub:true,receiver:false,paramTypes:[],resultType:'int',
+    {name:'max',pub:true,paramTypes:[],resultType:'int',
       body:{kind:'literal',value:'9223372036854775807'}}
   );
   const esm=compileClassMethodIRV1(ir);
