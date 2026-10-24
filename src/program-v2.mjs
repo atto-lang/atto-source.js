@@ -354,6 +354,9 @@ class Parser {
     const modules = [], functions = [], usedModules = new Set();
     while (this.peek().kind !== 'eof') {
       if (this.eat('define')) {
+        if(this.peek().value==='symbol'||
+           (this.peek().value==='pub'&&this.tokens[this.i+1]?.value==='symbol'))
+          fail('Symbol declaration/export manifest not implemented',this.peek());
         this.expect('module'); const name=this.name();
         if(name==='Option'||name==='Result'||name==='Symbol')
           fail('reserved portable intrinsic module name '+name);
