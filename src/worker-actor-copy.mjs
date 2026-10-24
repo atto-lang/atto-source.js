@@ -15,6 +15,19 @@ const dataViewBuffer=Object.getOwnPropertyDescriptor(DataView.prototype,'buffer'
 const blobSize=typeof Blob==='function'?Object.getOwnPropertyDescriptor(Blob.prototype,'size').get:null;
 const mapEntries=Map.prototype.entries;
 const setValues=Set.prototype.values;
+const mapSize=Object.getOwnPropertyDescriptor(Map.prototype,'size').get;
+const setSize=Object.getOwnPropertyDescriptor(Set.prototype,'size').get;
+const stringValue=String.prototype.valueOf;
+const sabLength=typeof SharedArrayBuffer==='function' ?
+  Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype,'byteLength').get : null;
+const MISSING_SLOT=Symbol('not a cloneable internal slot');
+function readSlot(reader,node) {
+  try{return reader.call(node);}
+  catch(error){
+    if(error instanceof TypeError)return MISSING_SLOT;
+    throw error;
+  }
+}
 
 function validateOwnedValue(value) {
   const seen=new WeakSet();
@@ -37,32 +50,40 @@ function validateOwnedValue(value) {
     if(seen.has(node))return;
     seen.add(node);
     if(++nodes>MAX_NODES)throw new RangeError('actor message complexity exceeded');
-    if(typeof SharedArrayBuffer!=='undefined'&&node instanceof SharedArrayBuffer)
+    // Internal-slot probes remain correct after Object.setPrototypeOf().
+    // An altered prototype must not conceal a cloneable 9-MiB backing buffer.
+    if(sabLength&&readSlot(sabLength,node)!==MISSING_SLOT)
       throw new TypeError('shared-memory actor message forbidden in copy-only profile');
-    if(node instanceof ArrayBuffer) {addBytes(arrayBufferLength.call(node));return;}
+    const arrayBytes=readSlot(arrayBufferLength,node);
+    if(arrayBytes!==MISSING_SLOT){addBytes(arrayBytes);return;}
     if(ArrayBuffer.isView(node)) {
-      check(node instanceof DataView ? dataViewBuffer.call(node) :
-        typedArrayBuffer.call(node),depth+1);
+      const viewBuffer=readSlot(dataViewBuffer,node);
+      const buffer=viewBuffer!==MISSING_SLOT?viewBuffer:
+        readSlot(typedArrayBuffer,node);
+      if(buffer===MISSING_SLOT)
+        throw new TypeError('unknown actor ArrayBuffer view');
+      check(buffer,depth+1);
       return;
     }
-    if(typeof Blob!=='undefined'&&node instanceof Blob) {
-      addBytes(blobSize.call(node));return;
+    if(blobSize){
+      const fileBytes=readSlot(blobSize,node);
+      if(fileBytes!==MISSING_SLOT){addBytes(fileBytes);return;}
     }
-    if(node instanceof RegExp) {
-      // RegExp's potentially huge source is stored in an internal slot,
-      // not an own property. structuredClone copies it nevertheless.
-      addBytes(regexpSourceGetter.call(node).length*2);
-    }
-    if(node instanceof BigInt) {
-      const hex=bigintHex.call(node,16);
-      addBytes(Math.ceil((hex.length-(hex[0]==='-'?1:0))/2));
-    }
-    if(node instanceof Map) {
+    const hiddenString=readSlot(stringValue,node);
+    if(hiddenString!==MISSING_SLOT)addBytes(hiddenString.length*2);
+    const hiddenPattern=readSlot(regexpSourceGetter,node);
+    if(hiddenPattern!==MISSING_SLOT)addBytes(hiddenPattern.length*2);
+    const hiddenBigInt=readSlot(function bigintBase16(){return bigintHex.call(this,16);},node);
+    if(hiddenBigInt!==MISSING_SLOT)
+      addBytes(Math.ceil((hiddenBigInt.length-(hiddenBigInt[0]==='-'?1:0))/2));
+    const isMap=readSlot(mapSize,node)!==MISSING_SLOT;
+    const isSet=readSlot(setSize,node)!==MISSING_SLOT;
+    if(isMap) {
       for(const [key,item] of mapEntries.call(node)){
         if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
         check(key,depth+1);check(item,depth+1);
       }
-    }else if(node instanceof Set) {
+    }else if(isSet) {
       for(const item of setValues.call(node)){
         if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
         check(item,depth+1);
