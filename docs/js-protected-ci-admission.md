@@ -55,9 +55,20 @@ Ask an authorized Actions/billing administrator to check remaining private
 minutes, spending limits, enterprise/org/repository Actions policy and hosted
 runner availability/labels. The linked GitHub App cannot access these settings.
 
-Start with one **source-free** checkout-free smoke job. Do not rerun a long
-matrix while allocation still fails. Require nonzero `runner_id`, nonempty
-executed `steps`, and accessible logs. Then test each immutable reviewed PR
+A temporary checkout-free/no-token/zero-dependency source-free probe was
+executed on PR #48 at immutable head `5ef881af9c65cf3baa48de514e61b8c6b3beaccb`:
+[workflow run #40129913430](https://github.com/ores-truffle-oreslang/oreslang-source.js/actions/runs/40129913430),
+job `120979227465`, `runner_id:0`, `runner_name:""`, `steps:[]`,
+`conclusion:failure`. The temporary workflow was **removed** after recording
+the evidence; it is not a permanent, merge-required check. This proves
+source-free steps could not execute, independently of checkout, package
+dependencies or compiler changes. It does not distinguish billing from a
+runner or repository-policy problem.
+
+After an administrator changes runner admission settings, rerun one **source-free**
+checkout-free smoke job. Do not rerun a long matrix while allocation still
+fails. Require nonzero `runner_id`, nonempty executed `steps` and accessible
+logs. Then test each immutable reviewed PR
 head and final merge tree with Node 22, the complete `npm test`, `npm run check`,
 `npm run test:workers`, and real Chromium `npm run test:browser`. For PR #44
 and stacked #45 add the corresponding conditional and Option/Result scripts.
