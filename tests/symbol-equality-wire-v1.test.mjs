@@ -112,4 +112,7 @@ test('generated wire bridge enforces exact shape, canonical names and core polic
   const accessor={'$symbol':'process'};
   Object.defineProperty(accessor,'name',{get(){return 'ready';},enumerable:true});
   assert.throws(()=>bridge.decode(accessor),/accessor/);
+  const hidden={'$symbol':'process'};
+  Object.defineProperty(hidden,'name',{value:'ready',enumerable:false});
+  assert.throws(()=>bridge.decode(hidden),/non-enumerable/);
 });
