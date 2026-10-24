@@ -1,6 +1,6 @@
 import {
   CLASS_METHOD_IR_VERSION, CLASS_METHOD_IR_DIALECT, CLASS_METHOD_IR_INT_MODEL,
-  isClassMethodIdentifierV1, validateClassMethodIRV1
+  isClassMethodIdentifierV1, isClassMethodCallableNameV1, validateClassMethodIRV1
 } from './class-method-ir-v1.mjs';
 
 /**
@@ -65,6 +65,18 @@ class Reader{
   eat(s){if(this.peek()===s){this.i++;return true;}return false;}
   require(s){if(!this.eat(s))fail('expected '+s+', got '+this.peek(),this.t[this.i].at);}
   id(){const v=this.peek();if(!isClassMethodIdentifierV1(v))fail('invalid or reserved identifier '+v,this.t[this.i].at);this.i++;return v;}
+  callableName(){const v=this.peek();if(!isClassMethodCallableNameV1(v))fail('invalid or reserved callable name '+v,this.t[this.i].at);this.i++;return v;}
+  eatMethodMarker(){
+    const marker=this.peek();
+    if(marker!=='mtd'&&marker!=='method')return false;
+    const next=this.t[this.i+1]?.value;
+    // Contextual marker: mtd()/method() are ordinary method names, while
+    // mtd foo()/method foo() consume the marker only when the next token is
+    // an admitted callable name.
+    if(!isClassMethodCallableNameV1(next))return false;
+    this.i++;
+    return true;
+  }
   parse(){
     const classes=[];const seen=new Set();
     while(this.peek()!=='<eof>'){
@@ -79,8 +91,8 @@ class Reader{
         if(this.peek()==='<eof>')fail('unterminated class',this.t[this.i].at);
         if(methods.length>=256)fail('method count limit',this.t[this.i].at);
         const pub=this.eat('pub');
-        this.eat('mtd'); // formatter-visible marker; optional in source
-        const method=this.id();
+        this.eatMethodMarker();
+        const method=this.callableName();
         this.require('(');
         if(this.eat('self')){
           if(this.peek()===','){this.pop();if(this.peek()===')')fail('trailing receiver comma',this.t[this.i].at);}
