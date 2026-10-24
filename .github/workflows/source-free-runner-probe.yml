@@ -1,0 +1,22 @@
+# Diagnostic only: no checkout, no source clone, no secrets, no third-party actions.
+# REMOVE this temporary workflow before the governance PR is merged.
+name: JS source-free runner admission probe
+on:
+  pull_request:
+    paths:
+      - .github/CODEOWNERS
+      - docs/js-protected-ci-admission.md
+      - .github/workflows/source-free-runner-probe.yml
+permissions: {}
+jobs:
+  source-free-runner-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Prove runner allocation without accessing private source
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "RUNNER_ADMITTED"
+          echo "Runner OS: $RUNNER_OS"
+          echo "Runner name: $RUNNER_NAME"
