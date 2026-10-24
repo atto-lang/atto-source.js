@@ -96,7 +96,7 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
     });
     worker.on('exit', code => shutdown(new Error('worker exited: ' + code)));
   } else throw new TypeError('Worker event interface unsupported');
-  try {worker.postMessage({protocol: PROTOCOL,kind:'init',moduleUrl,exportName,mode});}
+  try {worker.postMessage({protocol: PROTOCOL,kind:'init',moduleUrl,exportName,mode,maxPending});}
   catch (error) {shutdown(error);void worker.terminate();}
   function send(value, reply) {
     if (closed) return Promise.reject(new Error('actor closed'));
