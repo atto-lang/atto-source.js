@@ -53,6 +53,10 @@ The experimental program-v2 and `--freestanding-core` backend now also support f
 
 Run `npm run test:core-bool`; the browser ESM smoke also covers pure boolean compilation. The source is still an **experimental narrow subset**: `Option`/`Result`, records, full comparison/equality generics, and actor declarations are not yet supported.
 
+## Canonical conditional syntax (experimental program-v2)
+
+In opt-in `--program-v2` source, `if condition then ... else ... fi` is **statement-only** and requires explicit returns on all paths. Pure scalar value selection uses lazy, right-associative `condition ? whenTrue : whenFalse`, with strictly boolean conditions (no JS truthiness) and statically compatible `int` or `bool` branches. The earlier `if condition; do ... fi` remains an accepted bootstrap compatibility spelling. `return if ... fi` remains invalid. Internal program IR reuses its existing typed `if` variant; no general actor/class/ownership feature is implied. Run `npm run test:conditionals`. This is only a limited Java/Graal syntax-alignment slice, not full parity.
+
 ## Security boundary
 
 This is a code generator, **not a sandbox**. An ES module, Node worker thread or Node vm context is not a secure boundary for malicious guests. Only bundle the generated JS as a trusted artifact. This backend still has **no compiler-lowered Oreslang actor runtime** or enforced actor capability/ownership model. The experimental Worker reference is only for trusted host handlers and synchronous transpiled function calls. General native pointers, Oreslang async/await, channels, objects, collections, exceptions, and host I/O remain unsupported in the language compiler. Do not promote it to an untrusted host.
