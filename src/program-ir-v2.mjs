@@ -133,7 +133,8 @@ export function validateProgramIRV2(input) {
         return {kind:'bool',value:expr.value};
       case 'capture':
         record(expr,['kind','slot'],'capture');
-        if(!Number.isSafeInteger(expr.slot)||expr.slot<0||!active.includes(expr.slot))
+        if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
+           !active.includes(expr.slot))
           fail('ADT capture outside its typed payload scope');
         if(expected!=='int')fail('ADT int payload capture type mismatch');
         return {kind:'capture',slot:expr.slot};
@@ -220,8 +221,8 @@ export function validateProgramIRV2(input) {
           seen.add(arm.tag);
           const payload=arm.tag!=='None';
           if(payload) {
-            if(!Number.isSafeInteger(arm.slot)||arm.slot<0||arm.slot>LIMIT_NODES||
-               captureSlots[owner].has(arm.slot)||active.includes(arm.slot))
+            if(!Number.isSafeInteger(arm.slot)||Object.is(arm.slot,-0)||arm.slot<0||
+               arm.slot>=LIMIT_NODES||captureSlots[owner].has(arm.slot)||active.includes(arm.slot))
               fail('invalid or repeated ADT payload slot');
             captureSlots[owner].add(arm.slot);
           } else if(arm.slot!==null)fail('None arm cannot bind a payload');
