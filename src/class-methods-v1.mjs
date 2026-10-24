@@ -45,7 +45,7 @@ function lex(source){
       value=source.slice(start,p);
       if(!/^(?:0|[1-9][0-9]*)$/.test(value))fail('invalid integer literal',start);
     }else if(source.startsWith('->',p)||source.startsWith('::',p)){value=source.slice(p,p+2);p+=2;}
-    else if('(){},:;+'.includes(source[p]))value=source[p++];
+    else if('(){},:;+-'.includes(source[p]))value=source[p++];
     else fail('unsupported token',start);
     if(result.length>=MAX_TOKENS)fail('token budget',start);
     result.push({value,at:start});
@@ -115,11 +115,23 @@ class Reader{
           if(this.peek()!==bodyEnd)fail('void method body unsupported',this.t[this.i].at);
         }else{
           this.require('return');
+          let sign=1n;
+          if(this.eat('-'))sign=-1n;
+          else this.eat('+');
           const token=this.pop();const position=this.t[this.i-1].at;
           if(/^(?:0|[1-9][0-9]*)$/.test(token)){
-            const n=BigInt(token);if(n>MAX)fail('int literal outside i64',position);
+            // Any signed-i64 decimal magnitude fits in at most 19 digits.
+            // Reject longer tokens before BigInt conversion to keep hostile
+            // source from turning one token into disproportionate CPU work.
+            if(token.length>19)fail('int literal outside i64',position);
+            const magnitude=BigInt(token);
+            const limit=sign<0n?MAX+1n:MAX;
+            if(magnitude>limit)fail('int literal outside i64',position);
+            const n=sign*magnitude;
             body={kind:'literal',value:n.toString()};
           }else{
+            if(sign<0n||this.t[this.i-2]?.value==='+')
+              fail('signed method return supports integer literals only',position);
             if(!params.includes(token))fail('unresolved method parameter',position);
             body={kind:'arg',index:params.indexOf(token)};
           }
