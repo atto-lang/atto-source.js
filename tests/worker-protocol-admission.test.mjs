@@ -131,3 +131,57 @@ test('Browser Worker malformed frame and error paths also terminate',async()=>{
     await actor.close();
   }
 });
+
+test('successful Worker replies are snapped before resolving caller promises',async()=>{
+  const worker=new StubNodeWorker(),actor=client(worker);
+  worker.frame('ready');
+  await actor.ready;
+  const received=actor.request({args:[1n,2n]});
+  await nextTurn();
+  const mutable={items:[{answer:42}],buffer:new Uint8Array([1,2])};
+  worker.frame('result',{id:1,ok:true,value:mutable});
+  mutable.items[0].answer=999;
+  mutable.buffer[0]=255;
+  const reply=await received;
+  assert.deepEqual(reply.items,[{answer:42}]);
+  assert.deepEqual([...reply.buffer],[1,2]);
+  assert.notEqual(reply,mutable);
+  assert.equal(actor.pending,0);
+  await actor.close();
+});
+
+test('successful shared-memory Worker responses fail closed without leaking aliases',async()=>{
+  if(typeof SharedArrayBuffer!=='function')return;
+  for(const payload of [
+    new SharedArrayBuffer(8),
+    {nested:new Map([['alias',new Uint8Array(new SharedArrayBuffer(8))]])}
+  ]){
+    const worker=new StubNodeWorker(),actor=client(worker);
+    worker.frame('ready');
+    await actor.ready;
+    const rejection=assert.rejects(actor.request({args:[1n,2n]}),
+      /invalid actor response payload/);
+    await nextTurn();
+    worker.frame('result',{id:1,ok:true,value:payload});
+    await rejection;
+    assert.equal(actor.pending,0);
+    assert.equal(worker.terminated,1);
+    await assert.rejects(actor.request({args:[1n,2n]}),/actor closed/);
+    await actor.close();
+  }
+});
+
+test('successful Worker responses exceeding complexity budget revoke pending receipts',async()=>{
+  const worker=new StubNodeWorker(),actor=client(worker);
+  worker.frame('ready');
+  await actor.ready;
+  const rejection=assert.rejects(actor.request({args:[1n,2n]}),
+    /invalid actor response payload/);
+  await nextTurn();
+  worker.frame('result',{id:1,ok:true,
+    value:{items:Array.from({length:8200},()=>({flag:true}))}});
+  await rejection;
+  assert.equal(actor.pending,0);
+  assert.equal(worker.terminated,1);
+  await actor.close();
+});
