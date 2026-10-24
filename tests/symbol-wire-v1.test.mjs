@@ -45,6 +45,14 @@ test('wire decoder rejects noncanonical names, hostile records and invalid stabl
   const accessor={'$symbol':'process'};
   Object.defineProperty(accessor,'name',{get(){return 'ready';},enumerable:true});
   assert.throws(()=>validateSymbolWireV1(accessor),/accessor/);
+
+  const hidden={'$symbol':'process'};
+  Object.defineProperty(hidden,'name',{value:'ready',enumerable:false});
+  assert.throws(()=>validateSymbolWireV1(hidden),/non-enumerable/);
+
+  assert.throws(()=>validateSymbolWireV1(
+    {'$symbol':'process',name:'ready'},Object.create({policy:'trusted'})
+  ),/non-plain options/);
 });
 
 test('untrusted-core policy admits only sealed core PROCESS symbols',()=>{
