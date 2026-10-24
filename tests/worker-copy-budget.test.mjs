@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {copyOwnedValue} from '../src/worker-actor-copy.mjs';
+import {copyOwnedValue,copyOwnedValueWithBytes} from '../src/worker-actor-copy.mjs';
 
 const MiB=1024*1024;
 
@@ -92,4 +92,17 @@ test('wide primitive-only arrays and Map/Set entries reject before clone',()=>{
     assert.throws(()=>copyOwnedValue(new Set(Array.from({length:8200},(_,i)=>i))),/complexity exceeded/);
     assert.equal(calls,0);
   }finally{globalThis.structuredClone=original;}
+});
+
+test('copy receipt measures owned snapshot bytes and counts shared backing only once',()=>{
+  const bytes=new ArrayBuffer(1024);
+  const receipt=copyOwnedValueWithBytes({
+    first:new Uint8Array(bytes),second:new DataView(bytes)
+  });
+  // UTF-16 key bytes: first=10, second=12, backing=1024.
+  assert.equal(receipt.bytes,1046);
+  assert.equal(receipt.value.first.buffer,receipt.value.second.buffer);
+  assert.notEqual(receipt.value.first.buffer,bytes);
+  assert.equal(Object.isFrozen(receipt),true);
+  assert.equal(copyOwnedValueWithBytes('hello').bytes,10);
 });
