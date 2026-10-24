@@ -53,7 +53,8 @@ function lex(source){
   return result;
 }
 const jsName=s=>/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)&&
-  !['default','new','class','export','import','null','true','false','this','super','extends','static','constructor','prototype','__proto__'].includes(s);
+  !['default','new','class','export','import','null','true','false','this','super','extends','static','constructor','prototype','__proto__',
+    'define','pub','as','end','mtd','self','int','void','return'].includes(s);
 class Reader{
   constructor(tokens){this.t=tokens;this.i=0;}
   peek(){return this.t[this.i].value;}
