@@ -7,7 +7,7 @@ const MAX_CONTENT_BYTES=8*1024*1024;
 
 function validateOwnedValue(value) {
   const seen=new WeakSet();
-  let nodes=0,bytes=0;
+  let nodes=0,entries=0,bytes=0;
   function addBytes(size) {
     if(!Number.isSafeInteger(size)||size<0||
        size>MAX_CONTENT_BYTES-bytes)
@@ -32,11 +32,18 @@ function validateOwnedValue(value) {
       addBytes(node.size);return;
     }
     if(node instanceof Map) {
-      for(const [key,item] of node){check(key,depth+1);check(item,depth+1);}
+      for(const [key,item] of node){
+        if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
+        check(key,depth+1);check(item,depth+1);
+      }
     }else if(node instanceof Set) {
-      for(const item of node)check(item,depth+1);
+      for(const item of node){
+        if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
+        check(item,depth+1);
+      }
     }else{
       for(const key of Reflect.ownKeys(node)){
+        if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
         if(typeof key==='string')addBytes(key.length*2);
         const desc=Object.getOwnPropertyDescriptor(node,key);
         // structuredClone invokes getters: only copy plain data properties.
