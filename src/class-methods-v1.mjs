@@ -82,9 +82,7 @@ class Reader{
         this.eat('mtd'); // formatter-visible marker; optional in source
         const method=this.id();
         this.require('(');
-        let receiver=false;
         if(this.eat('self')){
-          receiver=true;
           if(this.peek()===','){this.pop();if(this.peek()===')')fail('trailing receiver comma',this.t[this.i].at);}
           else if(this.peek()!==')')fail('unsupported self parameter spelling',this.t[this.i].at);
         }
@@ -142,7 +140,7 @@ class Reader{
         const slot=method+'/'+params.length;
         if(slots.has(slot))fail('duplicate method name/arity '+slot,this.t[this.i].at);
         slots.add(slot);
-        methods.push({name:method,pub,receiver,paramTypes:params.map(()=>'int'),resultType:type,body});
+        methods.push({name:method,pub,paramTypes:params.map(()=>'int'),resultType:type,body});
       }
       this.require('end');classes.push({name,pub:prefixPub||afterPub,methods});
     }
