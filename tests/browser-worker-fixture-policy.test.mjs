@@ -21,6 +21,7 @@ async function withSandbox(callback){
     await writeFile(join(root,'.github','workflows','secrets.mjs'),'secret content');
     await writeFile(join(root,'tests','fixtures','wrong.json'),'{"private":true}');
     await symlink(join(root,'secret.mjs'),join(root,'src','escaped.mjs'));
+    await symlink(join(root,'tests','.hidden.mjs'),join(root,'src','hidden-alias.mjs'));
     await symlink(join(root,'tests','worker.html'),join(root,'src','allowed.html'));
     await callback(root);
   }finally{await rm(root,{recursive:true,force:true});}
@@ -59,6 +60,7 @@ test('loopback browser fixture policy denies path traversal, private roots and h
       '/tests/.hidden.mjs',
       '/tests/fixtures/wrong.json',
       '/src/escaped.mjs',
+      '/src/hidden-alias.mjs',
       '/src/not-there.mjs/../escaped.mjs'
     ]) await denied(root,url);
   });
