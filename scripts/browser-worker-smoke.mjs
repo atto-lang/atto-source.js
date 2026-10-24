@@ -1,12 +1,12 @@
 // No third-party dependencies; must execute a REAL browser module Worker.
 import {createServer} from 'node:http';
 import {spawn} from 'node:child_process';
-import {readFile,mkdtemp,rm,realpath} from 'node:fs/promises';
+import {readFile,mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join,resolve,sep,extname} from 'node:path';
+import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {resolveBrowserWorkerFixture,BrowserWorkerFixtureAccessError} from './browser-worker-fixture-path.mjs';
 const root=resolve(fileURLToPath(new URL('../',import.meta.url)));
-const allowedRoots=[resolve(root,'src')+sep,resolve(root,'tests')+sep];
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const profile=await mkdtemp(join(tmpdir(),'ores-js-browser-'));
 const server=createServer(async(req,res)=>{
@@ -14,30 +14,17 @@ const server=createServer(async(req,res)=>{
     if(req.method!=='GET'&&req.method!=='HEAD'){
       res.writeHead(405,{Allow:'GET, HEAD'});res.end();return;
     }
-    const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);
-    const path=resolve(root,pathname.startsWith('/')?pathname.slice(1):pathname);
-    // The loopback smoke server must not expose repository policy, secrets,
-    // dotfiles, or unrelated source material to a browser session.
-    const ext=extname(path);
-    if(!path.startsWith(root+sep)||!/^\/(?:src\/|tests\/)/.test(pathname)||
-       !['.html','.mjs','.ores'].includes(ext)||
-       !allowedRoots.some(prefix=>path.startsWith(prefix))){
-      res.writeHead(403);res.end();return;
-    }
-    // Enforce the same root after symlink resolution, before reading bytes.
-    const target=await realpath(path);
-    if(!allowedRoots.some(prefix=>target.startsWith(prefix))){
-      res.writeHead(403);res.end();return;
-    }
-    const body=await readFile(target);
-    const mime={'.html':'text/html; charset=utf-8',
-      '.mjs':'text/javascript; charset=utf-8',
-      '.ores':'text/plain; charset=utf-8'}[ext];
-    res.setHeader('Content-Type',mime);
+    const admitted=await resolveBrowserWorkerFixture(root,req.url);
+    const body=await readFile(admitted.path);
+    res.setHeader('Content-Type',admitted.contentType);
     res.setHeader('Cache-Control','no-store');
     res.setHeader('X-Content-Type-Options','nosniff');
     res.end(req.method==='HEAD'?undefined:body);
-  }catch{res.writeHead(404);res.end();}
+  }catch(error){
+    res.writeHead(error instanceof BrowserWorkerFixtureAccessError?403:
+      error?.code==='ENOENT'?404:400);
+    res.end();
+  }
 });
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const chrome=spawn(process.env.CHROME_BIN||'google-chrome',[
