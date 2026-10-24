@@ -29,6 +29,14 @@ test('Symbol equality is logical by kind and canonical name, never pointer ident
   assert.equal(ir.functions[4].body.kind,'symbolCompare');
 });
 
+test('future Symbol declaration manifest spelling is reserved fail-closed',()=>{
+  for(const source of [
+    'define symbol #ready;',
+    'define pub symbol #ready;'
+  ]) assert.throws(()=>compileProgramV2(source),
+    /Symbol declaration\/export manifest not implemented/,source);
+});
+
 test('Symbol comparison rejects mixed domains and non-equality operators',()=>{
   for(const source of [
     'pub fnc bad(Symbol s):bool{return s==1;}',
