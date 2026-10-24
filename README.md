@@ -53,6 +53,12 @@ The experimental program-v2 and `--freestanding-core` backend now also support f
 
 Run `npm run test:core-bool`; the browser ESM smoke also covers pure boolean compilation. The source is still an **experimental narrow subset**: `Option`/`Result`, records, full comparison/equality generics, and actor declarations are not yet supported.
 
+## Symbol literals (experimental program-v2)
+
+The typed program-v2 subset now accepts nominal `Symbol` parameters/results and strict PROCESS Symbol literals such as `#ready` and `#"http.ok"`. Names use Java-aligned pre-normalization/UTF-8 budgets and NFC/control/bidi validation. Generated values are fresh/non-interned and module-branded; forged host objects do not satisfy the Symbol ABI. Run `npm run test:symbols`.
+
+Symbol equality, stable UUID Symbols, Symbol-keyed collections/records, declarations/manifests and actor transport remain explicitly unsupported in this slice.
+
 ## Named arguments (experimental program-v2)
 
 Ordinary program-v2 function/module calls can bind exact-arity arguments by formal name, with positional arguments only before named ones. For example, `mix(1, c: 3, b: 2)` binds to `(a,b,c)` while preserving lexical expression evaluation order. The resolved `namedCall` IR carries an explicit source-to-formal permutation and validates it before ESM emission. Unknown/duplicate/missing labels and named portable intrinsics reject. Run `npm run test:named-args`.
