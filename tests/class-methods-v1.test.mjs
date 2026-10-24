@@ -89,6 +89,24 @@ test('overloads dispatch by user args only and reject wrong types and arity',asy
   assert.throws(()=>box.read(1n<<63n),/signed i64 BigInt/);
   assert.throws(()=>box.read.call({}),/invalid Oreslang receiver/);
 });
+test('signed i64 method literals admit exact bounds and reject overflow',async()=>{
+  const ns=await load(`pub define class Limits as
+    pub min() -> int :: return -9223372036854775808; end
+    pub max() -> int :: return +9223372036854775807; end
+    pub neg() -> int :: return -42; end
+  end`);
+  const x=new ns.Limits();
+  assert.equal(x.min(),-(1n<<63n));
+  assert.equal(x.max(),(1n<<63n)-1n);
+  assert.equal(x.neg(),-42n);
+  for(const source of [
+    'define class X as f() -> int :: return 9223372036854775808; end end',
+    'define class X as f() -> int :: return -9223372036854775809; end end',
+    'define class X as f() -> int :: return 999999999999999999999999999999999999999999; end end',
+    'define class X as f(int x) -> int :: return -x; end end',
+    'define class X as f(int x) -> int :: return +x; end end'
+  ]) assert.throws(()=>compileClassMethodsV1(source),/error: class methods v1:/,source);
+});
 test('same-selector implicit and explicit self declarations conflict in either order',()=>{
   for(const pair of [
     'foo():void {} foo(self):void {}',
