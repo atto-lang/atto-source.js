@@ -183,6 +183,32 @@ export function validateProgramIRV2(input) {
         return {kind:'call',target:expr.target,args:args.map((a,i)=>
           node(a,owner,depth+1,target.paramTypes?.[i]??'int',active))};
       }
+      case 'namedCall': {
+        record(expr,['kind','target','args','paramOrder'],'named call');
+        if(!Number.isSafeInteger(expr.target)||Object.is(expr.target,-0)||
+           expr.target<0||expr.target>=headers.length)fail('invalid named call target');
+        const target=headers[expr.target];
+        if((target.returnType??'int')!==expected)fail('named call return type mismatch');
+        const args=sequence(expr.args,128,'named call args');
+        const order=sequence(expr.paramOrder,128,'named call parameter order');
+        if(args.length!==target.params.length||order.length!==args.length)
+          fail('named call arity mismatch');
+        const seen=new Set();
+        const normalizedOrder=order.map(slot=>{
+          if(!Number.isSafeInteger(slot)||Object.is(slot,-0)||slot<0||
+             slot>=target.params.length||seen.has(slot))
+            fail('invalid named call parameter order');
+          seen.add(slot);return slot;
+        });
+        if(seen.size!==target.params.length)fail('incomplete named call parameter order');
+        if(target.module!==headers[owner].module&&!target.pub)
+          fail('cross-module private named call');
+        graph[owner].add(expr.target);
+        return {kind:'namedCall',target:expr.target,
+          args:args.map((argument,i)=>node(argument,owner,depth+1,
+            target.paramTypes?.[normalizedOrder[i]]??'int',active)),
+          paramOrder:normalizedOrder};
+      }
       case 'intrinsic': {
         record(expr,['kind','name','args'],'intrinsic');
         const signatures={
