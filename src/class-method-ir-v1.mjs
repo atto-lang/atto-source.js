@@ -113,10 +113,9 @@ export function validateClassMethodIRV1(input){
     if(typeof cls.pub!=='boolean')fail('class visibility must be boolean');
     const slots=new Set();
     const methods=sequence(cls.methods,MAX_METHODS,'methods').map((method,mi)=>{
-      record(method,['name','pub','receiver','paramTypes','resultType','body'],'method');
+      record(method,['name','pub','paramTypes','resultType','body'],'method');
       const methodName=identifier(method.name,'method name');
-      if(typeof method.pub!=='boolean'||typeof method.receiver!=='boolean')
-        fail('method visibility/receiver flags must be boolean');
+      if(typeof method.pub!=='boolean')fail('method visibility must be boolean');
       const paramTypes=sequence(method.paramTypes,MAX_ARITY,'method parameters').map(type=>{
         if(type!=='int')fail('unsupported method parameter type');
         return 'int';
@@ -127,8 +126,7 @@ export function validateClassMethodIRV1(input){
       if(slots.has(slot))fail('duplicate caller-visible method arity '+slot);
       slots.add(slot);
       return {
-        name:methodName,pub:method.pub,receiver:method.receiver,
-        paramTypes, resultType:method.resultType,
+        name:methodName,pub:method.pub,paramTypes,resultType:method.resultType,
         body:body(method.body,method.resultType,paramTypes.length)
       };
     });
