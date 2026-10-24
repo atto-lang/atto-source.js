@@ -53,6 +53,12 @@ The experimental program-v2 and `--freestanding-core` backend now also support f
 
 Run `npm run test:core-bool`; the browser ESM smoke also covers pure boolean compilation. The source is still an **experimental narrow subset**: `Option`/`Result`, records, full comparison/equality generics, and actor declarations are not yet supported.
 
+## Named arguments (experimental program-v2)
+
+Ordinary program-v2 function/module calls can bind exact-arity arguments by formal name, with positional arguments only before named ones. For example, `mix(1, c: 3, b: 2)` binds to `(a,b,c)` while preserving lexical expression evaluation order. The resolved `namedCall` IR carries an explicit source-to-formal permutation and validates it before ESM emission. Unknown/duplicate/missing labels and named portable intrinsics reject. Run `npm run test:named-args`.
+
+Optional/omittable parameters, defaults, varargs, constructors/methods and `omit`/`_` are **not** enabled by this slice.
+
 ## Canonical conditional syntax (experimental program-v2)
 
 In opt-in `--program-v2` source, `if condition then ... else ... fi` is **statement-only** and requires explicit returns on all paths. Pure scalar value selection uses lazy, right-associative `condition ? whenTrue : whenFalse`, with strictly boolean conditions (no JS truthiness) and statically compatible `int` or `bool` branches. The earlier `if condition; do ... fi` remains an accepted bootstrap compatibility spelling. `return if ... fi` remains invalid. Internal program IR reuses its existing typed `if` variant; no general actor/class/ownership feature is implied. Run `npm run test:conditionals`. This is only a limited Java/Graal syntax-alignment slice, not full parity.
