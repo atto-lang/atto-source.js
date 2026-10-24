@@ -37,6 +37,8 @@ export async function resolveBrowserWorkerFixture(root,requestUrl) {
   if(!Object.hasOwn(MIME,extension))deny();
   // No user-controlled paths or followable symlinks may escape the allowlist.
   const target=await realpath(file);
-  if(!allow.some(prefix=>target.startsWith(prefix)))deny();
+  if(!allow.some(prefix=>target.startsWith(prefix))||
+     target.slice(directory.length+1).split(sep)
+       .some(segment=>segment.startsWith('.')))deny();
   return Object.freeze({path:target,contentType:MIME[extension]});
 }
