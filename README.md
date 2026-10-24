@@ -30,10 +30,14 @@ This initial slice supports `int` arguments; `void` empty/`return;`
 bodies; and `int` bodies with `return` of an exact signed-i64 literal
 (including `INT64_MIN`/`INT64_MAX`) or an integer parameter. Source first
 lowers through the strict JSON-safe `class-method-ir-v1` contract before ESM
-emission; direct IR input is exact-field validated, size bounded, copied
-defensively, and rejects duplicate receiver-erased method slots. This is a
-backend-local migration seam toward shared typed IR, not the final canonical
-Oreslang IR. It **does not** yet lower fields, constructors, inheritance,
+emission; explicit-vs-implicit `self` spelling is erased during resolution, so
+semantically identical receiver forms produce identical IR. Direct IR input is
+exact-field validated, size bounded, copied defensively, and rejects duplicate
+receiver-erased method slots. The structural wire schema is
+`schemas/class-method-ir-v1.schema.json`; the JavaScript validator remains
+authoritative for semantic checks such as signed-i64 range and argument bounds.
+This is a backend-local migration seam toward shared typed IR, not the final
+canonical Oreslang IR. It **does not** yet lower fields, constructors, inheritance,
 actor lifecycle, mutable/borrowed receivers, nested calls, arithmetic
 expressions, or general functions. Direct JavaScript subclassing
 is rejected while class inheritance is not implemented by this dialect.
