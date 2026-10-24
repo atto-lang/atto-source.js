@@ -1,0 +1,13 @@
+# Oreslang JS source, compiler, CI and tests — independent ownership.
+# This file expresses review ownership only; it DOES NOT protect main.
+# Repository admins must enable and verify protected-branch rules.
+# The owner account was verified as a repository administrator (2026-10-24).
+* @ORESoftware
+
+# Any edits that could alter CI evidence or runtime integrity.
+.github/ @ORESoftware
+bin/ @ORESoftware
+scripts/ @ORESoftware
+src/ @ORESoftware
+schemas/ @ORESoftware
+tests/ @ORESoftware
