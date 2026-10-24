@@ -20,8 +20,12 @@ const deny=()=>{throw new BrowserWorkerFixtureAccessError();};
 export async function resolveBrowserWorkerFixture(root,requestUrl) {
   if(typeof root!=='string'||typeof requestUrl!=='string'||
      requestUrl.length>4096)deny();
-  // The URL parser normalizes dot segments, while the explicit segment check
-  // rejects hidden files and paths outside /src/ or /tests/.
+  // Reject traversal *before* URL canonicalization strips dot segments.
+  // The browser HTTP server passes origin-form request paths only.
+  const raw=requestUrl.split(/[?#]/,1)[0];
+  if(!raw.startsWith('/')||raw.startsWith('//'))deny();
+  const decoded=decodeURIComponent(raw);
+  if(decoded.split('/').some(segment=>segment==='.'||segment==='..'))deny();
   const pathname=decodeURIComponent(new URL(requestUrl,'http://localhost').pathname);
   if(!/^\/(?:src\/|tests\/)/.test(pathname)||
      pathname.split('/').some(segment=>segment.startsWith('.')))deny();
