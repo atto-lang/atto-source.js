@@ -116,7 +116,10 @@ test('malformed or unsupported source fails closed before generating ESM',()=>{
     'define class X as mtd mtd foo():void {} end',
     'define class X as mtd foo():void :: end end',
     'define class X as mtd foo() -> int :: end end',
-    'define class X as mtd foo() -> void :: end'
+    'define class X as mtd foo() -> void :: end',
+    'define class mtd as foo():void {} end',
+    'define class X as foo(int mtd):int{return mtd;} end',
+    'define class X as foo(int self):int{return self;} end'
   ]) assert.throws(()=>compileClassMethodsV1(source),/error: class methods v1:/,source);
 });
 test('compiler rejects malformed UTF-16 even inside ignorable comments',()=>{
