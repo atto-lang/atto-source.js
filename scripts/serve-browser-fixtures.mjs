@@ -10,7 +10,8 @@ if(!Number.isSafeInteger(port)||port<0||port>65535)
   throw new Error('invalid local fixture port');
 const types={'.html':'text/html; charset=utf-8',
              '.mjs':'text/javascript; charset=utf-8',
-             '.ores':'text/plain; charset=utf-8'};
+             '.ores':'text/plain; charset=utf-8',
+             '.json':'application/json; charset=utf-8'};
 const server=createServer(async(request,response)=>{
   try {
     if(request.method!=='GET'&&request.method!=='HEAD') {
@@ -22,7 +23,8 @@ const server=createServer(async(request,response)=>{
     const file=resolve(root,path.startsWith('/')?path.slice(1):path);
     const ext=extname(file);
     if(!file.startsWith(root+sep)||!Object.hasOwn(types,ext)||
-       !/^\/(?:src\/|tests\/)/.test(path)) {
+       !/^\/(?:src\/|tests\/)/.test(path)||
+       (ext==='.json'&&path!=='/tests/fixtures/conformance-option-result-match-i64-v0.json')) {
       response.writeHead(403);response.end();return;
     }
     const content=await readFile(file);
