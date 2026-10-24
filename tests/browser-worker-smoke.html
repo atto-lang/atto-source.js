@@ -16,7 +16,7 @@ try {
   const fixture=await fetch('./fixtures/worker-guest-i64.ores',{cache:'no-store'});
   assert(fixture.ok,'browser guest fixture unavailable');
   const bytes=new Uint8Array(await fixture.arrayBuffer());
-  const prefix=new TextEncoder().encode('blob '+bytes.length+'\\0'.replace('\\0','\\u0000'));
+  const prefix=new TextEncoder().encode('blob '+bytes.length+String.fromCharCode(0));
   const full=new Uint8Array(prefix.length+bytes.length);
   full.set(prefix);full.set(bytes,prefix.length);
   const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-1',full)),
