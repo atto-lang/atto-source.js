@@ -5,7 +5,7 @@ import {copyOwnedValue} from '../src/worker-actor-copy.mjs';
 const MiB=1024*1024;
 
 test('binary payload at byte-budget boundary is copied without aliases',()=>{
-  const source=new Uint8Array(8*MiB);
+  const source=new Uint8Array(8*MiB-14); // 14 UTF-16 bytes for the "payload" key
   source[0]=42;
   const clone=copyOwnedValue({payload:source});
   source[0]=99;
