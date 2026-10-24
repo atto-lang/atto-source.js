@@ -1,3 +1,8 @@
+import {
+  CLASS_METHOD_IR_VERSION, CLASS_METHOD_IR_DIALECT, CLASS_METHOD_IR_INT_MODEL,
+  isClassMethodIdentifierV1, validateClassMethodIRV1
+} from './class-method-ir-v1.mjs';
+
 /**
  * Experimental, opt-in source-to-ESM lowering for fieldless synchronous classes.
  * No fallback to scalar-v1/program-v2, JS eval, dynamic type scoring or fake
@@ -53,19 +58,13 @@ function lex(source){
   result.push({value:'<eof>',at:p});
   return result;
 }
-const jsName=s=>/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)&&
-  !['default','new','class','export','import','null','true','false','this','super','extends','static','constructor','prototype','__proto__',
-    'define','pub','as','end','mtd','self','int','void','return',
-    'mut','private','actor','fnc','routine','bool','let','val','const',
-    'if','fi','then','else','await','task','nb','do','spawn','module',
-    'trait','interface','type','rt'].includes(s);
 class Reader{
   constructor(tokens){this.t=tokens;this.i=0;}
   peek(){return this.t[this.i].value;}
   pop(){return this.t[this.i++].value;}
   eat(s){if(this.peek()===s){this.i++;return true;}return false;}
   require(s){if(!this.eat(s))fail('expected '+s+', got '+this.peek(),this.t[this.i].at);}
-  id(){const v=this.peek();if(!jsName(v))fail('invalid or reserved identifier '+v,this.t[this.i].at);this.i++;return v;}
+  id(){const v=this.peek();if(!isClassMethodIdentifierV1(v))fail('invalid or reserved identifier '+v,this.t[this.i].at);this.i++;return v;}
   parse(){
     const classes=[];const seen=new Set();
     while(this.peek()!=='<eof>'){
@@ -143,7 +142,7 @@ class Reader{
         const slot=method+'/'+params.length;
         if(slots.has(slot))fail('duplicate method name/arity '+slot,this.t[this.i].at);
         slots.add(slot);
-        methods.push({name:method,arity:params.length,receiver,pub,body});
+        methods.push({name:method,pub,receiver,paramTypes:params.map(()=>'int'),resultType:type,body});
       }
       this.require('end');classes.push({name,pub:prefixPub||afterPub,methods});
     }
@@ -151,8 +150,17 @@ class Reader{
     return classes;
   }
 }
-export function compileClassMethodsV1(source){
+export function compileToClassMethodIRV1(source){
   const classes=new Reader(lex(source)).parse();
+  return validateClassMethodIRV1({
+    schemaVersion:CLASS_METHOD_IR_VERSION,
+    dialect:CLASS_METHOD_IR_DIALECT,
+    integerModel:CLASS_METHOD_IR_INT_MODEL,
+    classes
+  });
+}
+export function compileClassMethodIRV1(input){
+  const classes=validateClassMethodIRV1(input).classes;
   let result='// Experimental fieldless class-method source subset; receiver-erased selectors.\n';
   for(let ci=0;ci<classes.length;ci++){
     const cls=classes[ci], local='$OresClass'+ci;
@@ -167,8 +175,9 @@ export function compileClassMethodsV1(source){
       result+='  if (this === null || (typeof this !== "object" && typeof this !== "function") || !(#oresBrand in this)) throw new TypeError("invalid Oreslang receiver");\n';
       result+='  switch(args.length){\n';
       for(const m of methods){
-        result+='  case '+m.arity+':\n';
-        for(let i=0;i<m.arity;i++)result+='   if(typeof args['+i+']!=="bigint"||args['+i+']<'+MIN+'n||args['+i+']>'+MAX+'n)throw new TypeError("expected signed i64 BigInt");\n';
+        const arity=m.paramTypes.length;
+        result+='  case '+arity+':\n';
+        for(let i=0;i<arity;i++)result+='   if(typeof args['+i+']!=="bigint"||args['+i+']<'+MIN+'n||args['+i+']>'+MAX+'n)throw new TypeError("expected signed i64 BigInt");\n';
         result+=m.body.kind==='void'?'   return;\n':m.body.kind==='literal'?'   return '+m.body.value+'n;\n':'   return args['+m.body.index+'];\n';
       }
       result+='  default: throw new TypeError("method arity mismatch");\n  }\n }\n';
@@ -177,5 +186,8 @@ export function compileClassMethodsV1(source){
     if(cls.pub)result+='export { '+local+' as '+cls.name+' };\n';
   }
   return result;
+}
+export function compileClassMethodsV1(source){
+  return compileClassMethodIRV1(compileToClassMethodIRV1(source));
 }
 export function checkClassMethodsV1(source){compileClassMethodsV1(source);return true;}
