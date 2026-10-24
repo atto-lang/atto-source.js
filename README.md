@@ -55,9 +55,9 @@ Run `npm run test:core-bool`; the browser ESM smoke also covers pure boolean com
 
 ## Symbol literals (experimental program-v2)
 
-The typed program-v2 subset now accepts nominal `Symbol` parameters/results and strict PROCESS Symbol literals such as `#ready` and `#"http.ok"`. Names use Java-aligned pre-normalization/UTF-8 budgets and NFC/control/bidi validation. Generated values are fresh/non-interned and module-branded; forged host objects do not satisfy the Symbol ABI. Run `npm run test:symbols`.
+The typed program-v2 subset now accepts nominal `Symbol` parameters/results and strict PROCESS Symbol literals such as `#ready` and `#"http.ok"`. Names use Java-aligned pre-normalization/UTF-8 budgets and NFC/control/bidi validation. Generated values are fresh/non-interned and artifact-branded; forged host objects do not satisfy the Symbol ABI. The current brand is intentionally local to one generated artifact, so cross-artifact/actor Symbol transport remains fail-closed. Run `npm run test:symbols`.
 
-Symbol equality, stable UUID Symbols, Symbol-keyed collections/records, declarations/manifests and actor transport remain explicitly unsupported in this slice.
+Symbol equality, stable UUID Symbols, Symbol-keyed collections/records, declarations/manifests and cross-artifact/actor transport remain explicitly unsupported in this slice.
 
 ## Named arguments (experimental program-v2)
 
