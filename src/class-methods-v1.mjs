@@ -117,7 +117,7 @@ export function compileClassMethodsV1(source){
   let result='// Experimental fieldless class-method source subset; receiver-erased selectors.\n';
   for(let ci=0;ci<classes.length;ci++){
     const cls=classes[ci], local='$OresClass'+ci;
-    result+='class '+local+' {\n #oresBrand=1;\n constructor(...args) { if (args.length !== 0) throw new TypeError("constructor arity mismatch"); }\n';
+    result+='class '+local+' {\n #oresBrand=1;\n constructor(...args) { if (new.target !== '+local+') throw new TypeError("unsupported class derivation"); if (args.length !== 0) throw new TypeError("constructor arity mismatch"); Object.preventExtensions(this); }\n';
     const families=new Map();
     for(const m of cls.methods)if(m.pub){
       if(!families.has(m.name))families.set(m.name,[]);
@@ -134,7 +134,7 @@ export function compileClassMethodsV1(source){
       }
       result+='  default: throw new TypeError("method arity mismatch");\n  }\n }\n';
     }
-    result+='}\n';
+    result+='}\nObject.freeze('+local+'.prototype);\nObject.freeze('+local+');\n';
     if(cls.pub)result+='export { '+local+' as '+cls.name+' };\n';
   }
   return result;
