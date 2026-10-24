@@ -125,7 +125,7 @@ export function compileClassMethodsV1(source){
     }
     for(const [name,methods] of families){
       result+=' '+JSON.stringify(name)+'(...args) {\n';
-      result+='  if (this.#oresBrand !== 1) throw new TypeError("invalid Oreslang receiver");\n';
+      result+='  if (this === null || (typeof this !== "object" && typeof this !== "function") || !(#oresBrand in this)) throw new TypeError("invalid Oreslang receiver");\n';
       result+='  switch(args.length){\n';
       for(const m of methods){
         result+='  case '+m.arity+':\n';
