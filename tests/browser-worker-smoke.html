@@ -50,6 +50,10 @@ try {
   try {await compiledB.request({args:[40,2n]});}
   catch(error) {wrongAbi=/BigInt/.test(String(error));}
   assert(wrongAbi,'non-BigInt JS input accepted');
+  let wrongArity=false;
+  try {await compiledB.request({args:[42n]});}
+  catch(error) {wrongArity=/arity/.test(String(error));}
+  assert(wrongArity,'wrong caller-visible arity accepted');
   assert(await compiledA.request({args:[1n,2n]})===3n,
     'guest failed to recover after rejected delivery');
   await compiledA.close();
