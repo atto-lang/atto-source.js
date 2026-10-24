@@ -132,3 +132,36 @@ test('RegExp built-in source accounting ignores hostile overridden source getter
   assert.ok(copyOwnedValueWithBytes(2n**256n).bytes>=33);
   assert.ok(copyOwnedValueWithBytes(Object(2n**256n)).bytes>=33);
 });
+
+test('spoofed built-in size and buffer properties cannot hide cloneable bytes',()=>{
+  const original=globalThis.structuredClone;
+  let cloned=0;
+  globalThis.structuredClone=value=>{cloned++;return original(value);};
+  try{
+    const oversized=9*MiB;
+    const b=Object.defineProperty(new ArrayBuffer(oversized),'byteLength',{value:0});
+    const blob=Object.defineProperty(new Blob([new Uint8Array(oversized)]),'size',{value:0});
+    const typed=Object.defineProperty(new Uint8Array(oversized),'buffer',{value:new ArrayBuffer(0)});
+    const view=Object.defineProperty(new DataView(new ArrayBuffer(oversized)),'buffer',{value:new ArrayBuffer(0)});
+    const map=new Map([['large',new Uint8Array(oversized)]]);
+    map[Symbol.iterator]=()=>[][Symbol.iterator]();
+    const set=new Set([new Uint8Array(oversized)]);
+    set[Symbol.iterator]=()=>[][Symbol.iterator]();
+    for(const value of [b,blob,typed,view,map,set])
+      assert.throws(()=>copyOwnedValue(value),/byte budget exceeded/);
+    assert.equal(cloned,0);
+  }finally{globalThis.structuredClone=original;}
+});
+
+test('built-in readers preserve the correct bounded Map/Set and view semantics',()=>{
+  const backing=new ArrayBuffer(1000);
+  const view=Object.defineProperty(new DataView(backing),'buffer',{value:new ArrayBuffer(0)});
+  assert.equal(copyOwnedValueWithBytes(view).bytes,1000);
+  const map=new Map([[1,{answer:42}]]);
+  map[Symbol.iterator]=()=>[][Symbol.iterator]();
+  const mapped=copyOwnedValue(map);
+  assert.equal(mapped.get(1).answer,42);
+  const set=new Set([1,2,3]);
+  set[Symbol.iterator]=()=>[][Symbol.iterator]();
+  assert.deepEqual([...copyOwnedValue(set)],[1,2,3]);
+});
