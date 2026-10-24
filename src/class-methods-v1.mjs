@@ -43,7 +43,8 @@ function lex(source){
       while(p<source.length&&/[0-9_]/.test(source[p]))p++;
       value=source.slice(start,p);
       if(!/^(?:0|[1-9][0-9]*)$/.test(value))fail('invalid integer literal',start);
-    }else if('(){},:;+'.includes(source[p]))value=source[p++];
+    }else if(source.startsWith('->',p)||source.startsWith('::',p)){value=source.slice(p,p+2);p+=2;}
+    else if('(){},:;+'.includes(source[p]))value=source[p++];
     else fail('unsupported token',start);
     if(result.length>=MAX_TOKENS)fail('token budget',start);
     result.push({value,at:start});
@@ -73,7 +74,9 @@ class Reader{
       while(this.peek()!=='end'){
         if(this.peek()==='<eof>')fail('unterminated class',this.t[this.i].at);
         if(methods.length>=256)fail('method count limit',this.t[this.i].at);
-        const pub=this.eat('pub'),method=this.id();
+        const pub=this.eat('pub');
+        this.eat('mtd'); // formatter-visible marker; optional in source
+        const method=this.id();
         this.require('(');
         let receiver=false;
         if(this.eat('self')){
@@ -90,13 +93,21 @@ class Reader{
             params.push(param);
           }while(this.eat(','));
         }
-        this.require(')');this.require(':');
+        this.require(')');
+        const arrow=this.eat('->');
+        if(!arrow)this.require(':');
         const type=this.pop();if(type!=='void'&&type!=='int')fail('only void/int return supported',this.t[this.i-1].at);
-        this.require('{');
+        const braced=this.eat('{');
+        if(!braced){
+          if(!arrow)fail('colon method bodies require braces',this.t[this.i].at);
+          if(!this.eat('as'))this.eat('::');
+        }
+        const bodyEnd=braced?'}':'end';
         let body;
         if(type==='void'){
-          this.eat('return');this.eat(';');body={kind:'void'};
-          if(this.peek()!=='}')fail('void method body unsupported',this.t[this.i].at);
+          if(this.eat('return'))this.eat(';');
+          body={kind:'void'};
+          if(this.peek()!==bodyEnd)fail('void method body unsupported',this.t[this.i].at);
         }else{
           this.require('return');
           const token=this.pop();const position=this.t[this.i-1].at;
@@ -108,9 +119,9 @@ class Reader{
             body={kind:'arg',index:params.indexOf(token)};
           }
           this.require(';');
-          if(this.peek()!=='}')fail('nontrivial int method body unsupported',this.t[this.i].at);
+          if(this.peek()!==bodyEnd)fail('nontrivial int method body unsupported',this.t[this.i].at);
         }
-        this.require('}');
+        this.require(bodyEnd);
         const slot=method+'/'+params.length;
         if(slots.has(slot))fail('duplicate method name/arity '+slot,this.t[this.i].at);
         slots.add(slot);
