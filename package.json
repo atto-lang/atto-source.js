@@ -15,6 +15,8 @@
     "./load-trusted-package.node": "./src/load-trusted-package.node.mjs",
     "./scalar-ir": "./src/scalar-ir.mjs",
     "./program-v2": "./src/program-v2.mjs",
+    "./class-methods-v1": "./src/class-methods-v1.mjs",
+    "./class-method-ir-v1": "./src/class-method-ir-v1.mjs",
     "./symbol-wire-v1": "./src/symbol-wire-v1.mjs",
     "./multiple-inheritance": "./src/multiple-inheritance.mjs",
     "./program-ir-v2": "./src/program-ir-v2.mjs",
@@ -51,6 +53,7 @@
     "test:named-args": "node --test tests/named-arguments.test.mjs",
     "test:symbols": "node --test tests/symbol-v1.test.mjs",
     "test:symbol-wire": "node --test tests/symbol-equality-wire-v1.test.mjs tests/symbol-wire-v1.test.mjs",
-    "test:program-classes": "node --test tests/program-classes-v2.test.mjs"
+    "test:program-classes": "node --test tests/program-classes-v2.test.mjs",
+    "test:class-methods": "node --test tests/class-methods-compat-v1.test.mjs"
   }
 }
