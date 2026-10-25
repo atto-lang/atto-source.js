@@ -5,6 +5,7 @@ const MAX_NODES=8192, MAX_DEPTH=64, MAX_CONTENT_BYTES=8*1024*1024;
 const MISSING=Symbol('no internal slot');
 const ownKeys=Reflect.ownKeys, descriptor=Object.getOwnPropertyDescriptor;
 const getPrototype=Object.getPrototypeOf;
+const nativeTag=Object.prototype.toString;
 const arrayBufferBytes=descriptor(ArrayBuffer.prototype,'byteLength').get;
 const sharedBytes=typeof SharedArrayBuffer==='function'?
   descriptor(SharedArrayBuffer.prototype,'byteLength').get:null;
@@ -40,7 +41,9 @@ function validate(value){
   function own(node,depth){
     for(const key of ownKeys(node)){
       if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
-      if(typeof key==='string')charge(key.length*2);
+      if(typeof key==='symbol')
+        throw new TypeError('unsupported actor wire symbol key');
+      charge(key.length*2);
       const d=descriptor(node,key);
       if(!d||!Object.hasOwn(d,'value'))
         throw new TypeError('actor message accessors forbidden in copy-only profile');
@@ -103,7 +106,11 @@ function validate(value){
       own(node,depth);return;
     }
     const proto=getPrototype(node);
-    if(proto!==null&&proto!==Object.prototype)
+    // A native Error (or another exotic cloneable) can be disguised by
+    // changing its prototype to Object.prototype. structuredClone still
+    // copies its internal data. Reject anything not natively a record.
+    if((proto!==null&&proto!==Object.prototype)||
+       nativeTag.call(node)!=='[object Object]')
       throw new TypeError('unsupported actor wire object type');
     own(node,depth);
   }
