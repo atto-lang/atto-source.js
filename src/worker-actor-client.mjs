@@ -97,8 +97,16 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
       }
     }
   }
+  // A custom Worker adapter or test transport may deliver accessor-backed
+  // frames rather than structured-cloned records. An event callback must
+  // never throw before revoking outstanding message reservations.
+  function guardedOnFrame(frame) {
+    try {onFrame(frame);} catch {failProtocol('invalid actor frame');}
+  }
   if (typeof worker.addEventListener === 'function') {
-    worker.addEventListener('message', e => onFrame(e.data));
+    worker.addEventListener('message', e => {
+      try {guardedOnFrame(e.data);} catch {failProtocol('invalid actor frame');}
+    });
     worker.addEventListener('error', () => {
       shutdown(new Error('worker execution failure'));void worker.terminate();
     });
@@ -106,7 +114,7 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
       shutdown(new Error('worker message decoding failure'));void worker.terminate();
     });
   } else if (typeof worker.on === 'function') {
-    worker.on('message', onFrame);
+    worker.on('message', guardedOnFrame);
     worker.on('error', err => {
       shutdown(new Error('worker execution failure: ' + errorText(err)));
       void worker.terminate();
