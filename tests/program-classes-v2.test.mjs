@@ -115,7 +115,9 @@ test('direct class IR rejects forged targets, receiver confusion and parameter m
     mutate(ir=>{ir.classes[0].methods[0].pub=false;}),
     mutate(ir=>{ir.classes[0].methods[0].body={kind:'call',target:0,args:[]};}),
     mutate(ir=>{ir.classes[0].methods[0].extra=true;}),
-    mutate(ir=>{ir.classes[0].methods[0].returnType='void';})
+    mutate(ir=>{ir.classes[0].methods[0].returnType='void';}),
+    mutate(ir=>{ir.classes[0].name='Option';}),
+    mutate(ir=>{ir.classes[0].methods[0].params[0]='return';})
   ];
   for(const ir of bad)
     assert.throws(()=>compileProgramIRV2(ir),/error: program IR:/);
