@@ -90,8 +90,13 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
         release(frame.id);
         entry.resolve(snapshot);
       } else if (frame.ok === false) {
+        // Parse the negative result before revoking its receipt. An accessor-
+        // throwing frame.error must fail the whole protocol and reject every
+        // outstanding promise, including this one. Releasing first would
+        // orphan the promise because shutdown no longer finds its entry.
+        const reason=errorText(frame.error);
         release(frame.id);
-        entry.reject(new Error('actor delivery failed: '+errorText(frame.error)));
+        entry.reject(new Error('actor delivery failed: '+reason));
       } else {
         failProtocol('invalid actor response');
       }
