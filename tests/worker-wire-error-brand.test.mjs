@@ -1,0 +1,61 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {copyOwnedValue,copyOwnedValueWithBytes} from '../src/worker-actor-copy.mjs';
+
+function rejectedBeforeClone(value, pattern) {
+  const original=globalThis.structuredClone;
+  let calls=0;
+  globalThis.structuredClone=x=>{calls++;return original(x);};
+  try {
+    assert.throws(()=>copyOwnedValue(value),pattern);
+    assert.equal(calls,0,'untrusted payload must never reach structuredClone');
+  } finally {
+    globalThis.structuredClone=original;
+  }
+}
+test('native Errors cannot be disguised as plain records with Object.setPrototypeOf',()=>{
+  for(const error of [
+    new Error('sensitive'),
+    new TypeError('sensitive'),
+    new RangeError('sensitive'),
+    new AggregateError([new Error('cause')],'sensitive'),
+  ]) {
+    Object.setPrototypeOf(error,Object.prototype);
+    rejectedBeforeClone(error,/unsupported actor wire object type/);
+  }
+});
+test('Error native brand cannot be hidden by a forged Symbol.toStringTag',()=>{
+  const error=new Error('sensitive');
+  Object.setPrototypeOf(error,Object.prototype);
+  Object.defineProperty(error,Symbol.toStringTag,{value:'Object',configurable:true});
+  rejectedBeforeClone(error,/unsupported actor wire symbol key/);
+});
+test('plain records cannot smuggle clone-ignored symbol-key metadata',()=>{
+  rejectedBeforeClone({[Symbol.for('meta')]:new ArrayBuffer(10)},/unsupported actor wire symbol key/);
+  rejectedBeforeClone(Object.assign(Object.create(null),{[Symbol.for('meta')]:1}),
+    /unsupported actor wire symbol key/);
+});
+test('native unsupported URL, WeakMap and Promise brands fail before clone',()=>{
+  for(const value of [new URL('https://example.org'),new WeakMap(),Promise.resolve(1)]) {
+    Object.setPrototypeOf(value,Object.prototype);
+    rejectedBeforeClone(value,/unsupported actor wire object type/);
+  }
+});
+test('ordinary and null-prototype records still clone, including cycles',()=>{
+  const normal={key:'ok',nested:[1,2,3]};
+  const record=Object.create(null);
+  record.child=normal;record.self=record;
+  const result=copyOwnedValue(record);
+  assert.notEqual(result,record);
+  assert.equal(result.self,result);
+  assert.deepEqual(result.child,normal);
+  assert.ok(copyOwnedValueWithBytes(result).bytes>0);
+});
+test('known cloneable internal slots still work under prototype changes',()=>{
+  const examples=[new Date(1234),/abc/i,new Map([[1,2]]),new Set([1,2]),new ArrayBuffer(10),Object('hi')];
+  for(const value of examples) {
+    Object.setPrototypeOf(value,Object.prototype);
+    const result=copyOwnedValue(value);
+    assert.ok(result!==undefined);
+  }
+});
