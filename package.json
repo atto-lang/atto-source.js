@@ -38,7 +38,7 @@
     "parity:js": "node bin/js-semantic-parity-report.mjs",
     "parity:numeric-js": "node bin/js-numeric-boundary-report.mjs",
     "static-facts:smoke": "node bin/oreslang-jsc.mjs --static-facts tests/fixtures/forward-call.ores",
-    "test:workers": "node --test tests/worker-node.test.mjs",
+    "test:workers": "node --test tests/worker-node.test.mjs tests/worker-guest-scalar-e2e.test.mjs tests/worker-protocol-admission.test.mjs tests/worker-endpoint-admission.test.mjs tests/worker-real-integration.test.mjs tests/worker-copy-budget.test.mjs tests/worker-mailbox-bytes.test.mjs tests/worker-wire-allowlist.test.mjs tests/worker-wire-compat.test.mjs tests/worker-mailbox-invariants.test.mjs tests/worker-wire-real.test.mjs tests/worker-wire-error-brand.test.mjs tests/worker-malformed-error.test.mjs tests/worker-frame-getter-failure.test.mjs tests/worker-blob-type-budget.test.mjs tests/worker-resizable-buffer-budget.test.mjs tests/worker-negative-result-getter.test.mjs",
     "test:browser": "node scripts/browser-worker-smoke.mjs",
     "test:core": "node --test tests/freestanding-core.test.mjs",
     "test:core-browser": "node scripts/browser-core-smoke.mjs",

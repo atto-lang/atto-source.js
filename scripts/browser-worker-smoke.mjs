@@ -3,20 +3,28 @@ import {createServer} from 'node:http';
 import {spawn} from 'node:child_process';
 import {readFile,mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join,resolve,sep,extname} from 'node:path';
+import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {readBrowserWorkerFixture,BrowserWorkerFixtureAccessError} from './browser-worker-fixture-path.mjs';
 const root=resolve(fileURLToPath(new URL('../',import.meta.url)));
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const profile=await mkdtemp(join(tmpdir(),'ores-js-browser-'));
 const server=createServer(async(req,res)=>{
   try {
-    const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);
-    const path=resolve(root,pathname.startsWith('/')?pathname.slice(1):pathname);
-    if(!path.startsWith(root+sep)){res.writeHead(403);res.end();return;}
-    const body=await readFile(path);
-    res.setHeader('Content-Type',extname(path)==='.html'?'text/html; charset=utf-8':'text/javascript; charset=utf-8');
-    res.setHeader('Cache-Control','no-store');res.end(body);
-  }catch{res.writeHead(404);res.end();}
+    if(req.method!=='GET'&&req.method!=='HEAD'){
+      res.writeHead(405,{Allow:'GET, HEAD'});res.end();return;
+    }
+    const admitted=await readBrowserWorkerFixture(root,req.url,{head:req.method==='HEAD'});
+    res.setHeader('Content-Type',admitted.contentType);
+    res.setHeader('Cache-Control','no-store');
+    res.setHeader('X-Content-Type-Options','nosniff');
+    res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'unsafe-inline' blob:; connect-src 'self'; worker-src 'self' blob:; style-src 'none'; base-uri 'none'; object-src 'none'");
+    res.end(admitted.body);
+  }catch(error){
+    res.writeHead(error instanceof BrowserWorkerFixtureAccessError?403:
+      error?.code==='ENOENT'?404:400);
+    res.end();
+  }
 });
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const chrome=spawn(process.env.CHROME_BIN||'google-chrome',[
