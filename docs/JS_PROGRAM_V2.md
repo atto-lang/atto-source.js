@@ -36,6 +36,19 @@ export {math, _f2 as main};
 
 The current emitted object is frozen and has no `Object.prototype`. That is **correct only for the currently supported function-only modules**; future `pub let` / mutable state and `pub val` / readonly fields need dedicated typed cells/field accessors, initialization ordering and ownership enforcement. Simply freezing all module state would be incorrect. No nested module, import resolution, module contract, actor, class or arbitrary init hook support is claimed yet. A public `routine` inside a module is rejected rather than incorrectly reified into a JS function property.
 
+## Named call arguments (experimental program-v2)
+
+Program-v2 accepts declaration-bound named arguments for ordinary root/module function calls, with positional arguments allowed only before the first named argument. Labels resolve statically against the selected declaration's parameter names; duplicate, unknown, missing, extra, and positional-after-named bindings fail closed. Portable `Option`/`Result` intrinsics remain positional-only in this slice.
+
+```ores
+fnc mix(int a, int b, int c): int { return a*100+b*10+c; }
+pub fnc main(): int { return mix(1, c: 3, b: 2); }
+```
+
+Resolved named calls use a dedicated `namedCall` IR node. Its `args` remain in lexical source-evaluation order while `paramOrder` is a validated permutation mapping each evaluated value to its formal ABI slot. ESM lowering evaluates every source argument left-to-right into temporaries and only then reorders those temporaries for the target function. This deliberately preserves the language's evaluation-order contract instead of relying on the current pure subset.
+
+This is exact-arity named binding only. It does **not** enable optional/omittable parameters, defaults, `omit`/`_` call items, varargs, constructors, methods, indirect calls, or overload selection by labels. Those require the separately reviewed parameter-presence/default contract and ownership/effect lowering.
+
 ## Freestanding integer control flow (additive v2 slice)
 
 This backend also accepts **total-returning** integer functions containing canonical `if <bool-condition> then ... else ... fi` and `return <int>;` statements. The prototype `if <bool-condition>; do ... else ... fi` remains accepted only for backward compatibility. `else` is optional only when the remaining function control flow supplies a return on every path. The parser lowers the resulting control-flow tree to nested, statically typed conditional IR expressions. `<`, `>`, `<=`, `>=`, `==`, and `!=` compare signed i64 values; boolean comparisons are only valid as `if` conditions, never implicitly converted to Oreslang `int`. Paths with no return and unreachable trailing statements fail closed. Ordinary `let`, `while`, arbitrary statements, boolean operators, `void` returns, loops, and effects remain unsupported.

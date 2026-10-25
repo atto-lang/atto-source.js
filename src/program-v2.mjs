@@ -260,7 +260,7 @@ class Parser {
         case 'neg':case 'not':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
-        case 'call':case 'intrinsic':for(const arg of expr.args)add(arg);break;
+        case 'call':case 'intrinsic':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'match':case 'adtMatch':
           add(expr.subject);
           for(const arm of expr.arms)add(arm.body);
@@ -360,11 +360,17 @@ class Parser {
       if(first==='None')return {kind:'call',qualifier:'Option',name:'none',args:[]};
       return {kind:'variable', name:first};
     }
-    const args=[];
+    const args=[];let namedSeen=false;
     if(!this.eat(')')) {
       do {
         if(args.length >= 128) fail('argument limit');
-        args.push(this.expression());
+        let name=null;
+        if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value===':'){
+          name=this.name();this.expect(':');namedSeen=true;
+        }else if(namedSeen){
+          fail('positional argument cannot follow a named argument',this.peek());
+        }
+        args.push({name,expr:this.expression()});
       } while(this.eat(','));
       this.expect(')');
     }
@@ -497,8 +503,10 @@ function resolveProgram(parsed) {
           };
           const sig=signatures[key];
           if(!sig)fail('unknown portable constructor/intrinsic '+key);
+          if(expr.args.some(a=>a.name!==null))
+            fail('named arguments are unsupported for portable intrinsic '+key);
           if(expr.args.length!==sig[0])fail('intrinsic arity mismatch '+key);
-          return {kind:'intrinsic',name:key,args:expr.args.map(a=>resolve(a,owner,depth+1,bindings))};
+          return {kind:'intrinsic',name:key,args:expr.args.map(a=>resolve(a.expr,owner,depth+1,bindings))};
         }
         const mod=expr.qualifier===null?owner.module:expr.qualifier;
         if(mod!==null && !modules.includes(mod)) fail('unknown module '+mod);
@@ -509,7 +517,27 @@ function resolveProgram(parsed) {
           fail('unresolved callable '+key);
         }
         if(expr.qualifier!==null && mod!==owner.module && !functions[target].pub) fail('private module member '+key);
-        return {kind:'call',target,args:expr.args.map(a=>resolve(a,owner,depth+1,bindings))};
+        const formals=functions[target].params;
+        const byName=new Map(formals.map((name,index)=>[name,index]));
+        const paramOrder=[],seenParams=new Set();
+        let nextPositional=0,hasNamed=false;
+        for(const arg of expr.args){
+          let formal;
+          if(arg.name===null){
+            formal=nextPositional++;
+          }else{
+            hasNamed=true;
+            formal=byName.get(arg.name);
+            if(formal===undefined)fail('unknown named argument '+arg.name+' for '+key);
+          }
+          if(formal>=formals.length)fail('call arity mismatch for '+key);
+          if(seenParams.has(formal))fail('duplicate argument binding for '+formals[formal]);
+          seenParams.add(formal);paramOrder.push(formal);
+        }
+        if(seenParams.size!==formals.length)fail('missing argument for '+key);
+        const resolvedArgs=expr.args.map(a=>resolve(a.expr,owner,depth+1,bindings));
+        return hasNamed?{kind:'namedCall',target,args:resolvedArgs,paramOrder}:
+          {kind:'call',target,args:resolvedArgs};
       }
       case 'match': return {kind:'match',subject:resolve(expr.subject,owner,depth+1,bindings),
         arms:expr.arms.map(arm=>({value:arm.value,body:resolve(arm.body,owner,depth+1,bindings)}))};
@@ -534,8 +562,9 @@ function resolveProgram(parsed) {
   const resolved=functions.map(fn=>({...fn,body:resolve(fn.body,fn)}));
   const graph=resolved.map(()=>new Set());
   function inspect(expr,owner) {
-    if(expr.kind==='call') {graph[owner].add(expr.target);expr.args.forEach(a=>inspect(a,owner));}
-    else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
+    if(expr.kind==='call'||expr.kind==='namedCall') {
+      graph[owner].add(expr.target);expr.args.forEach(a=>inspect(a,owner));
+    } else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
     else if(expr.kind==='binary'||expr.kind==='compare') {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='neg'||expr.kind==='not') inspect(expr.inner,owner);
@@ -583,6 +612,14 @@ function emitProgram(program) {
       case 'if':return '(('+emitExpr(expr.condition,depth+1)+')?('+
         emitExpr(expr.yes,depth+1)+'):('+emitExpr(expr.no,depth+1)+'))';
       case 'call':return '_f'+expr.target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
+      case 'namedCall': {
+        const declarations=expr.args.map((arg,i)=>
+          'const _named'+i+'='+emitExpr(arg,depth+1)+';');
+        const formal=new Array(expr.args.length);
+        expr.paramOrder.forEach((slot,i)=>{formal[slot]='_named'+i;});
+        return '(()=>{'+declarations.join('')+'return _f'+expr.target+'('+
+          formal.join(',')+');})()';
+      }
       case 'intrinsic': {
         const funcs={
           'Option.some':'_some','Option.none':'_none',
@@ -628,7 +665,7 @@ function emitProgram(program) {
   function usesPortableRuntime(expr) {
     switch(expr.kind) {
       case 'intrinsic':return true;
-      case 'call':return expr.args.some(usesPortableRuntime);
+      case 'call':case 'namedCall':return expr.args.some(usesPortableRuntime);
       case 'binary':case 'compare':
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
       case 'if':return usesPortableRuntime(expr.condition)||
