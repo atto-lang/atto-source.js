@@ -100,7 +100,14 @@ test('inherited Symbol.toStringTag cannot disguise native Error without invoking
     assert.equal(getterCalls,0);
     assert.equal(clones,0);
     const nullRecord=Object.create(null);nullRecord.ok=1;
-    assert.equal(copyOwnedValue(nullRecord).ok,1);
+    // structuredClone normalizes null-prototype records into ordinary ones.
+    // Post-clone validation must also fail closed while global tags are polluted.
+    assert.throws(
+      ()=>copyOwnedValue(nullRecord),
+      /unsupported actor wire inherited symbol tag/
+    );
+    assert.equal(getterCalls,0);
+    assert.equal(clones,1);
   } finally {
     globalThis.structuredClone=original;
     if(previous)Object.defineProperty(Object.prototype,Symbol.toStringTag,previous);
