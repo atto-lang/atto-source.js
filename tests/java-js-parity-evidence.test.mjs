@@ -265,3 +265,25 @@ test('JSON report checkout commit and tree are an all-or-nothing pair',async()=>
   assert.equal(compareJavaAndJsJsonReports(JSON.stringify(tagged),
     JSON.stringify(graal)).cases_compared.length,10);
 });
+
+
+test('pass observations never carry mutually inconsistent value and diagnostic claims',async()=>{
+ const js=await executeJsReferenceFixtures();
+ const graal=syntheticGraal(js);
+ const a=()=>structuredClone(js),b=()=>structuredClone(graal);
+ const idx=id=>graal.results.findIndex(x=>x.id===id);
+ let x=b(); x.results[idx('native.add')].diagnostic_class='unknown_name';
+ assert.throws(()=>compareJavaAndJsReports(js,x),/contradictory pass observations/);
+ x=b();x.results[idx('diagnostic.unknown')].observed_exit=42;
+ assert.throws(()=>compareJavaAndJsReports(js,x),/contradictory pass observations/);
+ x=b();x.results[idx('native.defer-lifo-cfg')].detail='timeout';
+ assert.throws(()=>compareJavaAndJsReports(js,x),/successful case contains error detail/);
+ x=b();x.results[idx('diagnostic.arity')].detail='unrelated host exception';
+ assert.throws(()=>compareJavaAndJsReports(js,x),/successful case contains error detail/);
+ let y=a();y.results.find(x=>x.id==='native.add').diagnostic_class='unknown_name';
+ assert.throws(()=>compareJavaAndJsReports(y,graal),/contradictory value observation/);
+ y=a();y.results.find(x=>x.id==='diagnostic.comment').observed_int64='42';
+ assert.throws(()=>compareJavaAndJsReports(y,graal),/contradictory diagnostic observation/);
+ assert.equal(compareJavaAndJsReports(js,graal).cases_compared.length,10);
+});
+
