@@ -8,6 +8,17 @@ import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT
 const MAX_BYTES = 262144, MAX_TOKENS = 30000, MAX_DEPTH = 192;
 const MIN = -(1n << 63n), MAX = (1n << 63n) - 1n;
 const TOKEN_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const CLASS_METHOD_RESERVED=new Set([
+  'default','new','class','export','import','null','this','super','extends','static',
+  'constructor','prototype','__proto__','define','pub','as','end','self','int',
+  'void','return','mut','private','actor','fnc','routine','bool','Symbol','let',
+  'val','const','if','fi','then','else','await','task','spawn','module','trait',
+  'interface','type','rt'
+]);
+const CLASS_METHOD_CALLABLE_KEYWORDS=new Set([
+  'mtd','method','stop','do','done','loop','block','select','readch','writech',
+  'nb','true','false'
+]);
 export class ProgramCompileError extends Error {
   constructor(message, loc) {
     super('error: program v2: ' + message + (loc ? ' at ' + loc.line + ':' + loc.col : ''));
@@ -211,6 +222,38 @@ class Parser {
     if (t.kind !== 'id' || !TOKEN_NAME.test(t.value)) fail('identifier expected',t);
     this.i++; return t.value;
   }
+  callableName() {
+    const t=this.peek(),value=t.value;
+    if(t.kind!=='id'||!TOKEN_NAME.test(value)||
+       (CLASS_METHOD_RESERVED.has(value)&&!CLASS_METHOD_CALLABLE_KEYWORDS.has(value)))
+      fail('invalid or reserved callable name '+value,t);
+    this.i++;return value;
+  }
+  eatMethodMarker() {
+    const marker=this.peek().value;
+    if(marker!=='mtd'&&marker!=='method')return false;
+    const next=this.tokens[this.i+1],after=this.tokens[this.i+2];
+    if(!next||next.kind!=='id'||after?.value!=='(')return false;
+    const value=next.value;
+    if(CLASS_METHOD_RESERVED.has(value)&&!CLASS_METHOD_CALLABLE_KEYWORDS.has(value))
+      return false;
+    this.i++;return true;
+  }
+  argumentsAfterOpen() {
+    const args=[];let namedSeen=false;
+    if(!this.eat(')')) {
+      do {
+        if(args.length>=128)fail('argument limit',this.peek());
+        let name=null;
+        if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value===':'){
+          name=this.name();this.expect(':');namedSeen=true;
+        }else if(namedSeen)fail('positional argument cannot follow a named argument',this.peek());
+        args.push({name,expr:this.expression()});
+      } while(this.eat(','));
+      this.expect(')');
+    }
+    return args;
+  }
   valueType() {
     if(this.eat('int'))return 'int';
     if(this.eat('bool'))return 'bool';
@@ -224,6 +267,61 @@ class Parser {
       return 'result<int,int>';
     }
     fail('unsupported scalar type (int, bool, Symbol, Option<int>, Result<int,int>)',this.peek());
+  }
+  classDeclaration(pub) {
+    const name=this.name();
+    this.expect('as');
+    const methods=[],slots=new Set();
+    while(!this.eat('end')) {
+      if(this.peek().kind==='eof')fail('unterminated class '+name,this.peek());
+      if(methods.length>=256)fail('method count limit',this.peek());
+      const methodPub=this.eat('pub');
+      this.eatMethodMarker();
+      const methodName=this.callableName();
+      this.expect('(');
+      if(this.eat('self')){
+        if(this.eat(',')){
+          if(this.peek().value===')')fail('trailing receiver comma',this.peek());
+        }else if(this.peek().value!==')')fail('unsupported self parameter spelling',this.peek());
+      }
+      const params=[],paramTypes=[];
+      if(!this.eat(')')){
+        do {
+          if(params.length>=32)fail('method arity budget',this.peek());
+          const type=this.valueType();
+          const param=this.name();
+          if(param==='self'||params.includes(param))fail('duplicate or reserved method parameter '+param,this.peek());
+          params.push(param);paramTypes.push(type);
+        } while(this.eat(','));
+        this.expect(')');
+      }
+      const arrow=this.eat('->');
+      if(!arrow)this.expect(':');
+      const returnType=this.eat('void')?'void':this.valueType();
+      const braced=this.eat('{');
+      if(!braced){
+        if(!arrow)fail('colon method bodies require braces',this.peek());
+        this.expect('::');
+      }
+      const terminator=braced?'}':'end';
+      let body=null;
+      if(returnType==='void'){
+        if(this.eat('return'))this.expect(';');
+        if(this.peek().value!==terminator)
+          fail('void method body unsupported in convergence slice',this.peek());
+      }else{
+        const statements=this.statementSequence([terminator]);
+        body=this.lowerStatements(statements,null);
+        if(!body)fail('method requires a return on every path',this.peek());
+        this.checkExpandedBudget(body);
+      }
+      this.expect(terminator);
+      const slot=methodName+'/'+params.length;
+      if(slots.has(slot))fail('duplicate method name/arity '+slot,this.peek());
+      slots.add(slot);
+      methods.push({name:methodName,pub:methodPub,params,paramTypes,returnType,body});
+    }
+    return {name,pub,methods};
   }
   functions(moduleName) {
     const pub = this.eat('pub'), start=this.peek();
@@ -331,6 +429,9 @@ class Parser {
         case 'neg':case 'not':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
+        case 'newClass':for(const arg of expr.args)add(arg.expr??arg);break;
+        case 'methodCall':
+          add(expr.receiver);for(const arg of expr.args)add(arg.expr??arg);break;
         case 'call':case 'intrinsic':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'match':case 'adtMatch':
           add(expr.subject);
@@ -351,31 +452,44 @@ class Parser {
       namespace = this.name();
       this.expect(';');
     }
-    const modules = [], functions = [], usedModules = new Set();
-    while (this.peek().kind !== 'eof') {
-      if (this.eat('define')) {
-        if(this.peek().value==='symbol'||
-           (this.peek().value==='pub'&&this.tokens[this.i+1]?.value==='symbol'))
+    const modules=[],functions=[],classes=[],usedModules=new Set(),usedClasses=new Set();
+    while(this.peek().kind!=='eof'){
+      let prefixPub=false;
+      if(this.peek().value==='pub'&&this.tokens[this.i+1]?.value==='define'){
+        this.i++;prefixPub=true;
+      }
+      if(this.eat('define')){
+        const afterPub=this.eat('pub');
+        const declarationPub=prefixPub||afterPub;
+        if(this.peek().value==='symbol')
           fail('Symbol declaration/export manifest not implemented',this.peek());
-        this.expect('module'); const name=this.name();
+        if(this.eat('class')){
+          if(classes.length>=512)fail('class declaration budget exceeded',this.peek());
+          const cls=this.classDeclaration(declarationPub);
+          if(usedClasses.has(cls.name)||usedModules.has(cls.name))
+            fail('duplicate class/module name '+cls.name,this.peek());
+          usedClasses.add(cls.name);classes.push(cls);
+          continue;
+        }
+        if(declarationPub)fail('public define is only supported for classes in program-v2',this.peek());
+        this.expect('module');const name=this.name();
         if(name==='Option'||name==='Result'||name==='Symbol')
           fail('reserved portable intrinsic module name '+name);
-        if (usedModules.has(name)) fail('duplicate module ' + name);
-        usedModules.add(name); this.eat('as');
-        modules.push(name);
+        if(usedModules.has(name)||usedClasses.has(name))fail('duplicate module/class name '+name);
+        usedModules.add(name);this.eat('as');modules.push(name);
         let count=0;
-        while (!this.eat('end')) {
-          if (this.peek().kind === 'eof') fail('unterminated module ' + name);
-          if (++count > 512 || functions.length >= 512) fail('declaration budget exceeded');
+        while(!this.eat('end')){
+          if(this.peek().kind==='eof')fail('unterminated module '+name,this.peek());
+          if(++count>512||functions.length>=512)fail('declaration budget exceeded',this.peek());
           functions.push(this.functions(name));
         }
-      } else {
-        if (functions.length >= 512) fail('declaration budget exceeded');
+      }else{
+        if(functions.length>=512)fail('declaration budget exceeded',this.peek());
         functions.push(this.functions(null));
       }
     }
-    if (!functions.length && !modules.length) fail('empty program');
-    return {namespace,modules,functions};
+    if(!functions.length&&!modules.length&&!classes.length)fail('empty program');
+    return {namespace,modules,functions,classes};
   }
   integer(negative = false) {
     const token=this.peek();
@@ -411,6 +525,17 @@ class Parser {
   }
   primary() {
     if(this.eat('!'))return {kind:'not',inner:this.expression(30)};
+    if(this.eat('new')){
+      const className=this.name();
+      this.expect('(');
+      let receiver={kind:'newClass',name:className,args:this.argumentsAfterOpen()};
+      while(this.eat('.')){
+        const name=this.callableName();
+        this.expect('(');
+        receiver={kind:'methodCall',receiver,name,args:this.argumentsAfterOpen()};
+      }
+      return receiver;
+    }
     if(this.eat('true'))return {kind:'bool',value:true};
     if(this.eat('false'))return {kind:'bool',value:false};
     if (this.eat('-')) {
@@ -438,20 +563,7 @@ class Parser {
       if(first==='None')return {kind:'call',qualifier:'Option',name:'none',args:[]};
       return {kind:'variable', name:first};
     }
-    const args=[];let namedSeen=false;
-    if(!this.eat(')')) {
-      do {
-        if(args.length >= 128) fail('argument limit');
-        let name=null;
-        if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value===':'){
-          name=this.name();this.expect(':');namedSeen=true;
-        }else if(namedSeen){
-          fail('positional argument cannot follow a named argument',this.peek());
-        }
-        args.push({name,expr:this.expression()});
-      } while(this.eat(','));
-      this.expect(')');
-    }
+    const args=this.argumentsAfterOpen();
     // Canonical Oreslang constructors also work as pure aliases for the
     // same statically checked intrinsics; don't introduce any new host API.
     if(qualifier===null){
