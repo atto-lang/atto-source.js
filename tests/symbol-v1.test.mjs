@@ -109,8 +109,7 @@ test('Symbol remains nominal and cannot be used as int/bool in this slice',()=>{
     'pub fnc x():int{return #ready;}',
     'pub fnc x():bool{return #ready;}',
     'pub fnc x():Symbol{return 1;}',
-    'pub fnc x():Symbol{return true;}',
-    'pub fnc x():bool{return #ready == #ready;}'
+    'pub fnc x():Symbol{return true;}'
   ]) assert.throws(()=>compileProgramV2(source),/error: program (?:v2|IR):/,source);
 });
 

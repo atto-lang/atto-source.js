@@ -56,7 +56,7 @@ test('compatibility profile does not silently widen to richer program-v2 classes
     'define class X as pub f(bool x):bool{return x;} end',
     'define class X as pub f(Symbol x):Symbol{return x;} end',
     'define class X as pub f(int x):int{return x+1;} end',
-    'define class X as pub f():int{return Some(1);} end',
+    'define class X as pub f():Option<int>{return Some(1);} end',
     'define class X as end pub fnc f():int{return 1;}'
   ]) assert.throws(()=>compileClassMethodsV1(source),/class methods v1 compatibility/);
 });
