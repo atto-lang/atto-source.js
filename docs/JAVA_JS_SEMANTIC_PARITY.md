@@ -90,19 +90,27 @@ The numeric JS probes do not assert Java guest behavior; no arithmetic
 parity may be claimed until a real compiler-checked Graal runtime executes
 equivalent boundary probes and the language standard chooses a policy.
 
-## October 18 — contradictory passing evidence rejection
+## October 18 — pass-result consistency and bounded JSON ingress
 
-The structural adapter now rejects a passing Java result that simultaneously
-reports both a native exit and a compiler diagnostic. It also rejects nonempty
-`detail` on any passed Java fixture: the reference Java runner emits an empty
-detail for successful observations, so an error, timeout, or unrelated failure
-cannot hide in a record labelled `pass`. The equivalent JS result shape is
-also unambiguous: a numeric value cannot carry a diagnostic class, and an
-expected diagnostic cannot carry a numeric value.
+A successful parity report is not allowed to carry conflicting outcomes:
+value cases require exactly one numeric observation, diagnostic cases require
+exactly one diagnostic class, and a Java `pass` cannot include nonempty error
+detail. These constraints reject an internally contradictory report before
+comparing compiler results. They do not authenticate that the reported guest
+actually ran.
 
-These are **consistency checks**, not independent attestation. In particular,
-an attacker can still author plausible synthetic data, and a real Java
-compiler build plus authenticated guest execution remains necessary.
+Prefer `compareJavaAndJsJsonReports(jsJson, graalJson)` for externally
+received reports. It accepts JSON **text**, enforces 64 KiB / 256 KiB input
+limits (JS / Graal), parses to inert data, and applies the same structural
+admission checks. The lower-level object comparator remains for trusted local
+data; arbitrary live proxies may invoke traps and are not a safe ingestion
+format. The JSON parser does not establish source provenance, nor does
+JSON parsing on its own detect duplicate member names: independent evidence
+and producer controls remain necessary.
+
+When present, JS checkout commit and tree hashes must occur together,
+with a plausible Node version. These fields remain self-reported until
+verified independently from the actual GitHub Actions run.
 
 ## Required release evidence
 

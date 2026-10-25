@@ -212,6 +212,27 @@ function inertReport(value,backend) {
       if(typeof val==='number'&&(!Number.isSafeInteger(val)||Object.is(val,-0)))
         throw Error(where+' result '+i+': noncanonical number '+key);
     }
+    // A "pass" must carry exactly the observation appropriate for its
+    // declared case. Reject conflicting extra outcomes rather than ignoring
+    // them (including fake success records with an error in `detail`).
+    const hasValue=Object.hasOwn(record,java?'observed_exit':'observed_int64');
+    const hasDiagnostic=Object.hasOwn(record,'diagnostic_class');
+    if(record.status==='pass') {
+      if(java) {
+        if(hasValue===hasDiagnostic)
+          throw Error(where+' result '+i+': contradictory pass observations');
+        if(Object.hasOwn(record,'detail')&&record.detail!=='')
+          throw Error(where+' result '+i+': successful case contains error detail');
+      } else if(record.kind==='value') {
+        if(!hasValue||hasDiagnostic)
+          throw Error(where+' result '+i+': contradictory value observation');
+      } else if(record.kind==='diagnostic') {
+        if(hasValue||!hasDiagnostic)
+          throw Error(where+' result '+i+': contradictory diagnostic observation');
+      } else {
+        throw Error(where+' result '+i+': unknown result kind');
+      }
+    }
     return record;
   });
   for(const [key,val] of Object.entries(root)) {
@@ -232,7 +253,36 @@ function inertReport(value,backend) {
       if(Object.hasOwn(root,field)&&!/^[a-f0-9]{40}$/.test(root[field]))
         throw Error('invalid JS checkout identity');
   }
+  if(!java) {
+    const hasCommit=Object.hasOwn(root,'checkout_commit_sha');
+    const hasTree=Object.hasOwn(root,'checkout_tree_sha');
+    if(hasCommit!==hasTree)
+      throw Error('incomplete JS checkout identity');
+    if(Object.hasOwn(root,'node_version')&&
+       !/^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/.test(root.node_version))
+      throw Error('invalid Node runtime version');
+  }
   return root;
+}
+
+/**
+ * Preferred external ingress. JSON.parse creates inert ordinary data objects;
+ * the byte budget avoids unbounded parsing. This is validation, not proof of
+ * the origin or truthfulness of a report supplied by another party.
+ */
+export function compareJavaAndJsJsonReports(jsJson,graalJson) {
+  function parseBounded(text,maximum,where) {
+    if(typeof text!=='string'||Buffer.byteLength(text,'utf8')>maximum)
+      throw Error(where+': missing or oversized JSON report');
+    let parsed;
+    try { parsed=JSON.parse(text); }
+    catch { throw Error(where+': invalid JSON report'); }
+    return parsed;
+  }
+  return compareJavaAndJsReports(
+    parseBounded(jsJson,65536,'JS'),
+    parseBounded(graalJson,262144,'Java')
+  );
 }
 
 export function compareJavaAndJsReports(js,graal) {
@@ -279,21 +329,6 @@ export function compareJavaAndJsReports(js,graal) {
     } else if(observation.diagnostic_class!==expected)
       throw Error('diagnostic-class divergence: '+id);
   }
-  // Passing reports must have one unambiguous observation per case. A
-  // diagnostic case cannot smuggle a successful guest result, and a native
-  // result cannot simultaneously claim a diagnostic. The Java producer
-  // currently emits empty detail on pass; never admit a "pass" with an error
-  // or timeout described in detail.
-  for(const {id,expected} of JAVA_GRAAL_MANIFEST) {
-    const record=lookup.get(id);
-    if(Object.hasOwn(record,'detail')&&record.detail!=='')
-      throw Error('contradictory Java pass detail: '+id);
-    if(typeof expected==='number') {
-      if(Object.hasOwn(record,'diagnostic_class'))
-        throw Error('contradictory Java value observation: '+id);
-    } else if(Object.hasOwn(record,'observed_exit'))
-      throw Error('contradictory Java diagnostic observation: '+id);
-  }
   const checked=[];
   for(const caseInfo of REFERENCE_CASES) {
     const ja=lookup.get(caseInfo.id), jsr=jsLookup.get(caseInfo.id);
@@ -301,21 +336,15 @@ export function compareJavaAndJsReports(js,graal) {
        jsr.kind!==caseInfo.kind||jsr.fixture_git_blob!==caseInfo.blob)
       throw Error('missing/pending/failed required reference case: '+caseInfo.id);
     if(caseInfo.kind==='value') {
-      if(Object.hasOwn(jsr,'diagnostic_class'))
-        throw Error('contradictory JS value observation: '+caseInfo.id);
       if(typeof jsr.observed_int64!=='string'||
          !/^(0|-?[1-9][0-9]*)$/.test(jsr.observed_int64)||
          !Number.isSafeInteger(ja.observed_exit)||
          ja.observed_exit!==Number(jsr.observed_int64)||
          jsr.observed_int64!==caseInfo.expected)
         throw Error('backend value divergence: '+caseInfo.id);
-    } else {
-      if(Object.hasOwn(jsr,'observed_int64'))
-        throw Error('contradictory JS diagnostic observation: '+caseInfo.id);
-      if(ja.diagnostic_class!==caseInfo.expected||
-         jsr.diagnostic_class!==caseInfo.expected)
-        throw Error('diagnostic-class divergence: '+caseInfo.id);
-    }
+    } else if(ja.diagnostic_class!==caseInfo.expected||
+              jsr.diagnostic_class!==caseInfo.expected)
+      throw Error('diagnostic-class divergence: '+caseInfo.id);
     checked.push(caseInfo.id);
   }
   return {
