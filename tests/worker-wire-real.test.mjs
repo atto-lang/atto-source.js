@@ -70,3 +70,30 @@ test('real raw Worker endpoint revokes session on inbound unsupported error',asy
   await new Promise(r=>setTimeout(r,60));assert.deepEqual(inbox.map(x=>x.kind),['ready','fatal']);
  }finally{await worker.terminate();}
 });
+
+test('forged native Errors fail before real Worker admission without killing siblings',async()=>{
+  const a=spawnNodeActor({moduleUrl,maxPending:3,maxPendingBytes:2048});
+  const b=spawnNodeActor({moduleUrl,maxPending:3,maxPendingBytes:2048});
+  try{
+    await Promise.all([a.ready,b.ready]);
+    const err=new Error('not a plain record');
+    Object.setPrototypeOf(err,Object.prototype);
+    await assert.rejects(
+      a.request({type:'echo',payload:err}),
+      /unsupported actor wire object type/
+    );
+    assert.equal(a.pending,0);
+    assert.equal(a.pendingBytes,0);
+    const spoof=new Error('do not evaluate tag');
+    Object.setPrototypeOf(spoof,Object.prototype);
+    delete spoof.stack;
+    Object.defineProperty(spoof,Symbol.toStringTag,{value:'Object'});
+    await assert.rejects(
+      a.request({type:'echo',payload:spoof}),
+      /unsupported actor wire symbol key/
+    );
+    assert.equal(a.pendingBytes,0);
+    assert.equal(await a.request({type:'add',x:40n,y:2n}),42n);
+    assert.equal(await b.request({type:'add',x:40n,y:2n}),42n);
+  }finally{await Promise.all([a.close(),b.close()]);}
+});
