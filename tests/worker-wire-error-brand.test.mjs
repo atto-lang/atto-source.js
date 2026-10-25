@@ -64,3 +64,13 @@ test('known cloneable internal slots still work under prototype changes',()=>{
     assert.ok(result!==undefined);
   }
 });
+
+test('own Symbol.toStringTag getter is never executed during native brand validation',()=>{
+  let calls=0;
+  const value={payload:'ordinary'};
+  Object.defineProperty(value,Symbol.toStringTag,{
+    get(){calls++;return 'Object';},configurable:true
+  });
+  rejectedBeforeClone(value,/unsupported actor wire symbol key/);
+  assert.equal(calls,0);
+});
