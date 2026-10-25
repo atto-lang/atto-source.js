@@ -34,7 +34,38 @@ Object.freeze(math);
 export {math, _f2 as main};
 ```
 
-The current emitted object is frozen and has no `Object.prototype`. That is **correct only for the currently supported function-only modules**; future `pub let` / mutable state and `pub val` / readonly fields need dedicated typed cells/field accessors, initialization ordering and ownership enforcement. Simply freezing all module state would be incorrect. No nested module, import resolution, module contract, actor, class or arbitrary init hook support is claimed yet. A public `routine` inside a module is rejected rather than incorrectly reified into a JS function property.
+The current emitted object is frozen and has no `Object.prototype`. That is **correct only for the currently supported function-only modules**; future `pub let` / mutable state and `pub val` / readonly fields need dedicated typed cells/field accessors, initialization ordering and ownership enforcement. Simply freezing all module state would be incorrect. No nested module, import resolution, module contract, actor, stateful class field or arbitrary init hook support is claimed yet. A public `routine` inside a module is rejected rather than incorrectly reified into a JS function property.
+
+## Fieldless class convergence (experimental program-v2)
+
+The program-v2 frontend/IR now owns the bounded fieldless class path instead of requiring a separate parser/emitter architecture. Root classes carry public visibility plus resolved method metadata in an optional `classes` program-IR field. Class-free IR keeps the historical exact root shape and class-free ESM remains byte-identical to the predecessor compiler.
+
+Accepted declaration behavior includes:
+- implicit or explicit receiver spelling: `foo()` and `foo(self)` have the same caller-visible arity;
+- contextual `mtd` / `method` markers;
+- brace bodies and arrow/`:: ... end` bodies;
+- the Java-compatible contextual callable keyword names already covered by the class-method prototype;
+- fieldless zero-argument construction via Java-reference spelling `new X()`.
+
+A direct typed source method call is resolved statically against the receiver class and caller-visible name+arity:
+
+```ores
+pub define class Box as
+  pub mtd pick(self, int a, int b): int { return a*10+b; }
+end
+
+pub fnc main(): int {
+  return new Box().pick(b: 2, a: 1);
+}
+```
+
+The resolver emits `methodCall` or `namedMethodCall`. Named method calls retain argument expressions in lexical source order and carry a validated source-value→formal-slot permutation, exactly like `namedCall`. ESM evaluates the receiver once, then named argument expressions left-to-right, then performs the ABI reorder. Direct IR validation independently checks class/method indices, public visibility, receiver class identity, result/argument types, exact permutations, and method-body restrictions.
+
+Generated classes use a private JS field brand only as an implementation guard; the guest semantics do not expose JS object identity. Constructors/prototypes are frozen, instances are non-extensible, foreign JS subclass construction rejects, and a method borrowed from another emitted class rejects its receiver.
+
+Current method bodies share scalar/bool/Symbol expression lowering and portable Option/Result intrinsics, but deliberately reject function calls, nested method calls/construction and match until a unified callable graph/fuel/ownership policy covers both functions and methods. Fields, inheritance, source constructors, locals holding class values, class-valued signatures, generics, actor methods and ownership remain unsupported.
+
+The older standalone class-method implementation is therefore a migration/proof source, not the intended long-term frontend. Its remaining CLI/API compatibility surface should become a wrapper over this program IR after this convergence path has executed full exact-head tests.
 
 ## Nominal Symbol literals (experimental program-v2)
 
@@ -57,7 +88,7 @@ pub fnc main(): int { return mix(1, c: 3, b: 2); }
 
 Resolved named calls use a dedicated `namedCall` IR node. Its `args` remain in lexical source-evaluation order while `paramOrder` is a validated permutation mapping each evaluated value to its formal ABI slot. ESM lowering evaluates every source argument left-to-right into temporaries and only then reorders those temporaries for the target function. This deliberately preserves the language's evaluation-order contract instead of relying on the current pure subset.
 
-This is exact-arity named binding only. It does **not** enable optional/omittable parameters, defaults, `omit`/`_` call items, varargs, constructors, methods, indirect calls, or overload selection by labels. Those require the separately reviewed parameter-presence/default contract and ownership/effect lowering.
+This is exact-arity named binding only. It does **not** enable optional/omittable parameters, defaults, `omit`/`_` call items, varargs, indirect calls, or overload selection by labels. The bounded fieldless-class profile above reuses the same binder for direct method calls. Those require the separately reviewed parameter-presence/default contract and ownership/effect lowering.
 
 ## Freestanding integer control flow (additive v2 slice)
 
