@@ -65,7 +65,7 @@ Generated classes use a private JS field brand only as an implementation guard; 
 
 Current method bodies share scalar/bool/Symbol expression lowering and portable Option/Result intrinsics, but deliberately reject function calls, nested method calls/construction and match until a unified callable graph/fuel/ownership policy covers both functions and methods. Fields, inheritance, source constructors, locals holding class values, class-valued signatures, generics, actor methods and ownership remain unsupported.
 
-The older standalone class-method implementation is therefore a migration/proof source, not the intended long-term frontend. Its remaining CLI/API compatibility surface should become a wrapper over this program IR after this convergence path has executed full exact-head tests.
+The older standalone class-method implementation is therefore a migration/proof source, not the long-term frontend. On this branch its `--class-methods-v1` CLI and `class-methods-v1` JS API are already compatibility adapters over program-v2. The strict legacy class-method IR validator remains as a data-format boundary, while parsing, resolution and ESM generation use the unified program path.
 
 ## Nominal Symbol literals (experimental program-v2)
 
