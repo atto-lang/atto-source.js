@@ -9,6 +9,17 @@ const ID=/^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const DEC=/^(?:0|[1-9][0-9]*|-[1-9][0-9]*)$/;
 const MIN=-(1n<<63n), MAX=(1n<<63n)-1n;
 const LIMIT_NODES=30000,LIMIT_DEPTH=192;
+const CLASS_RESERVED=new Set([
+  'default','new','class','export','import','null','true','false','this','super',
+  'extends','static','constructor','prototype','__proto__','define','pub','as',
+  'end','self','int','void','return','mut','private','actor','fnc','routine',
+  'bool','Symbol','let','val','const','if','fi','then','else','await','task',
+  'spawn','module','trait','interface','type','rt'
+]);
+const METHOD_CALLABLE_KEYWORDS=new Set([
+  'mtd','method','stop','do','done','loop','block','select','readch','writech',
+  'nb','true','false'
+]);
 export class ProgramIRError extends Error {
   constructor(detail) {super('error: program IR: '+detail);this.name='ProgramIRError';}
 }
@@ -40,6 +51,18 @@ function sequence(v,max,context){
 }
 function ident(s,where) {
   if(typeof s!=='string'||!ID.test(s))fail(where+': invalid identifier');
+  return s;
+}
+function classIdent(s,where){
+  ident(s,where);
+  if((CLASS_RESERVED.has(s)&&s!=='mtd'&&s!=='method')||
+     s==='Option'||s==='Result')fail(where+': reserved identifier');
+  return s;
+}
+function callableIdent(s,where){
+  ident(s,where);
+  if(CLASS_RESERVED.has(s)&&!METHOD_CALLABLE_KEYWORDS.has(s))
+    fail(where+': reserved callable name');
   return s;
 }
 function int(s){
@@ -76,7 +99,13 @@ function symbolName(s){
  * Direct object inputs are trusted data only, not a JavaScript sandbox.
  */
 export function validateProgramIRV2(input) {
-  record(input,['schemaVersion','dialect','integerModel','sourceNamespace','modules','functions'],'program');
+  if(input===null||typeof input!=='object'||Array.isArray(input))
+    fail('program: expected object');
+  const rawKeys=Reflect.ownKeys(input);
+  const hasClasses=rawKeys.includes('classes');
+  record(input,hasClasses?
+    ['schemaVersion','dialect','integerModel','sourceNamespace','modules','functions','classes']:
+    ['schemaVersion','dialect','integerModel','sourceNamespace','modules','functions'],'program');
   if(input.schemaVersion!==PROGRAM_IR_VERSION||input.dialect!==PROGRAM_IR_DIALECT||
      input.integerModel!==PROGRAM_IR_INT_MODEL)fail('unsupported IR version/dialect/model');
   const namespace=input.sourceNamespace===null?null:ident(input.sourceNamespace,'file namespace');
@@ -87,7 +116,39 @@ export function validateProgramIRV2(input) {
     return name;
   });
   const sourceFunctions=sequence(input.functions,512,'functions');
-  if(!moduleNames.length && !sourceFunctions.length)fail('empty program');
+  const sourceClasses=hasClasses?sequence(input.classes,512,'classes'):[];
+  if(hasClasses&&!sourceClasses.length)fail('redundant empty classes field');
+  if(!moduleNames.length&&!sourceFunctions.length&&!sourceClasses.length)fail('empty program');
+  const classNames=new Set(),classHeaders=sourceClasses.map(cls=>{
+    record(cls,['name','pub','methods'],'class');
+    const name=classIdent(cls.name,'class name');
+    if(classNames.has(name)||seenModules.has(name))fail('duplicate class/module '+name);
+    classNames.add(name);
+    if(typeof cls.pub!=='boolean')fail('invalid class visibility');
+    const slots=new Set(),methods=sequence(cls.methods,256,'class methods').map(method=>{
+      record(method,['name','pub','params','paramTypes','returnType','body'],'class method');
+      const methodName=callableIdent(method.name,'method name');
+      if(typeof method.pub!=='boolean')fail('invalid method visibility');
+      const params=sequence(method.params,32,'method parameters').map(p=>classIdent(p,'method parameter'));
+      if(new Set(params).size!==params.length||params.includes('self'))
+        fail('duplicate/reserved method parameter');
+      const types=['int','bool','symbol','option<int>','result<int,int>'];
+      const paramTypes=sequence(method.paramTypes,32,'method paramTypes');
+      if(paramTypes.length!==params.length||paramTypes.some(t=>!types.includes(t)))
+        fail('unsupported method parameter type');
+      const returnType=method.returnType;
+      if(returnType!=='void'&&!types.includes(returnType))fail('unsupported method return type');
+      if(returnType==='void'&&method.body!==null)fail('void method body must be null');
+      if(returnType!=='void'&&(method.body===null||typeof method.body!=='object'))
+        fail('value method body required');
+      const slot=methodName+'/'+params.length;
+      if(slots.has(slot))fail('duplicate caller-visible method arity '+name+'.'+slot);
+      slots.add(slot);
+      return {name:methodName,pub:method.pub,params:[...params],
+        paramTypes:[...paramTypes],returnType,body:method.body};
+    });
+    return {name,pub:cls.pub,methods};
+  });
   const slots=new Set(),symbolKinds=new Map(),exportNames=new Set(moduleNames);
   const headers=sourceFunctions.map(f=>{
     // Reject nulls and non-records before any optional-key introspection.
@@ -130,6 +191,11 @@ export function validateProgramIRV2(input) {
   // function, and NEVER between a runtime module object and a root function.
   for(const header of headers)if(header.module===null&&header.pub&&seenModules.has(header.name))
     fail('file export conflicts with runtime module '+header.name);
+  for(const cls of classHeaders){
+    if(cls.pub&&seenModules.has(cls.name))fail('class export conflicts with runtime module '+cls.name);
+    if(cls.pub&&headers.some(h=>h.module===null&&h.pub&&h.name===cls.name))
+      fail('class export conflicts with root function '+cls.name);
+  }
   const graph=headers.map(()=>new Set());
   let nodes=0;
   const captureSlots=headers.map(()=>new Set());
@@ -160,6 +226,54 @@ export function validateProgramIRV2(input) {
         record(expr,['kind','value'],'symbol');
         if(expected!=='symbol')fail('Symbol literal type mismatch');
         return {kind:'symbol',value:symbolName(expr.value)};
+      case 'newClass': {
+        record(expr,['kind','classIndex'],'class construction');
+        if(!Number.isSafeInteger(expr.classIndex)||Object.is(expr.classIndex,-0)||
+           expr.classIndex<0||expr.classIndex>=classHeaders.length)
+          fail('invalid class construction target');
+        if(expected!=='class:'+expr.classIndex)fail('class construction type mismatch');
+        return {kind:'newClass',classIndex:expr.classIndex};
+      }
+      case 'methodCall':
+      case 'namedMethodCall': {
+        const named=desc.value==='namedMethodCall';
+        record(expr,named?
+          ['kind','classIndex','methodIndex','receiver','args','paramOrder']:
+          ['kind','classIndex','methodIndex','receiver','args'],
+          named?'named method call':'method call');
+        if(!Number.isSafeInteger(expr.classIndex)||Object.is(expr.classIndex,-0)||
+           expr.classIndex<0||expr.classIndex>=classHeaders.length)
+          fail('invalid method class target');
+        const cls=classHeaders[expr.classIndex];
+        if(!Number.isSafeInteger(expr.methodIndex)||Object.is(expr.methodIndex,-0)||
+           expr.methodIndex<0||expr.methodIndex>=cls.methods.length)
+          fail('invalid method target');
+        const method=cls.methods[expr.methodIndex];
+        if(!method.pub)fail('private method cannot be called externally');
+        if(method.returnType==='void')fail('void method cannot be used as expression');
+        if(method.returnType!==expected)fail('method return type mismatch');
+        const receiver=node(expr.receiver,owner,depth+1,'class:'+expr.classIndex,active);
+        const args=sequence(expr.args,32,'method call args');
+        let order=method.params.map((_,i)=>i);
+        if(named){
+          const supplied=sequence(expr.paramOrder,32,'method parameter order');
+          if(supplied.length!==args.length||args.length!==method.params.length)
+            fail('named method arity mismatch');
+          const seen=new Set();
+          order=supplied.map(slot=>{
+            if(!Number.isSafeInteger(slot)||Object.is(slot,-0)||slot<0||
+               slot>=method.params.length||seen.has(slot))
+              fail('invalid named method parameter order');
+            seen.add(slot);return slot;
+          });
+          if(seen.size!==method.params.length)fail('incomplete named method parameter order');
+        }else if(args.length!==method.params.length)fail('method arity mismatch');
+        return {
+          kind:desc.value,classIndex:expr.classIndex,methodIndex:expr.methodIndex,
+          receiver,args:args.map((arg,i)=>node(arg,owner,depth+1,method.paramTypes[order[i]],active)),
+          ...(named?{paramOrder:order}:{})
+        };
+      }
       case 'capture':
         record(expr,['kind','slot'],'capture');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
@@ -322,7 +436,95 @@ export function validateProgramIRV2(input) {
       default:fail('unsupported expression kind');
     }
   }
+  function methodNode(expr,method,depth=0,expected=method.returnType){
+    if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('method expression complexity exceeded');
+    if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid method expression');
+    const desc=Object.getOwnPropertyDescriptor(expr,'kind');
+    if(!desc||!Object.hasOwn(desc,'value'))fail('invalid method expression kind');
+    switch(desc.value){
+      case 'int':
+        record(expr,['kind','value'],'method int');
+        if(expected!=='int')fail('method int type mismatch');
+        return {kind:'int',value:int(expr.value)};
+      case 'bool':
+        record(expr,['kind','value'],'method bool');
+        if(expected!=='bool'||typeof expr.value!=='boolean')fail('method bool type mismatch');
+        return {kind:'bool',value:expr.value};
+      case 'symbol':
+        record(expr,['kind','value'],'method Symbol');
+        if(expected!=='symbol')fail('method Symbol type mismatch');
+        return {kind:'symbol',value:symbolName(expr.value)};
+      case 'param':
+        record(expr,['kind','index'],'method param');
+        if(!Number.isSafeInteger(expr.index)||Object.is(expr.index,-0)||expr.index<0||
+           expr.index>=method.params.length)fail('out-of-bounds method parameter');
+        if(method.paramTypes[expr.index]!==expected)fail('method parameter type mismatch');
+        return {kind:'param',index:expr.index};
+      case 'neg':
+        record(expr,['kind','inner'],'method neg');
+        if(expected!=='int')fail('method negation type mismatch');
+        return {kind:'neg',inner:methodNode(expr.inner,method,depth+1,'int')};
+      case 'not':
+        record(expr,['kind','inner'],'method not');
+        if(expected!=='bool')fail('method boolean negation type mismatch');
+        return {kind:'not',inner:methodNode(expr.inner,method,depth+1,'bool')};
+      case 'binary':
+        record(expr,['kind','op','left','right'],'method binary');
+        if(expected!=='int'||!['+','-','*','%'].includes(expr.op))
+          fail('unsupported method arithmetic');
+        return {kind:'binary',op:expr.op,
+          left:methodNode(expr.left,method,depth+1,'int'),
+          right:methodNode(expr.right,method,depth+1,'int')};
+      case 'compare':
+        record(expr,['kind','op','left','right'],'method compare');
+        if(expected!=='bool'||!['<','>','<=','>=','==','!='].includes(expr.op))
+          fail('unsupported method comparison');
+        return {kind:'compare',op:expr.op,
+          left:methodNode(expr.left,method,depth+1,'int'),
+          right:methodNode(expr.right,method,depth+1,'int')};
+      case 'symbolCompare':
+        record(expr,['kind','op','left','right'],'method Symbol compare');
+        if(expected!=='bool'||(expr.op!=='=='&&expr.op!=='!='))
+          fail('unsupported method Symbol comparison');
+        return {kind:'symbolCompare',op:expr.op,
+          left:methodNode(expr.left,method,depth+1,'symbol'),
+          right:methodNode(expr.right,method,depth+1,'symbol')};
+      case 'if':
+        record(expr,['kind','condition','yes','no'],'method if');
+        return {kind:'if',
+          condition:methodNode(expr.condition,method,depth+1,'bool'),
+          yes:methodNode(expr.yes,method,depth+1,expected),
+          no:methodNode(expr.no,method,depth+1,expected)};
+      case 'intrinsic': {
+        record(expr,['kind','name','args'],'method intrinsic');
+        const signatures={
+          'Option.some':[['int'],'option<int>'],'Option.none':[[],'option<int>'],
+          'Option.is_some':[['option<int>'],'bool'],'Option.unwrap_or':[['option<int>','int'],'int'],
+          'Result.ok':[['int'],'result<int,int>'],'Result.err':[['int'],'result<int,int>'],
+          'Result.is_ok':[['result<int,int>'],'bool'],
+          'Result.unwrap_or':[['result<int,int>','int'],'int'],
+          'Result.unwrap_err_or':[['result<int,int>','int'],'int']
+        };
+        if(typeof expr.name!=='string'||!Object.hasOwn(signatures,expr.name))
+          fail('unknown method intrinsic');
+        const [types,result]=signatures[expr.name];
+        if(result!==expected)fail('method intrinsic return type mismatch');
+        const args=sequence(expr.args,2,'method intrinsic args');
+        if(args.length!==types.length)fail('method intrinsic arity mismatch');
+        return {kind:'intrinsic',name:expr.name,
+          args:args.map((arg,i)=>methodNode(arg,method,depth+1,types[i]))};
+      }
+      default:fail('unsupported method expression kind '+desc.value);
+    }
+  }
   const functions=headers.map((f,i)=>({...f,body:node(sourceFunctions[i].body,i,0,f.returnType??'int')}));
+  const classes=classHeaders.map(cls=>({
+    name:cls.name,pub:cls.pub,
+    methods:cls.methods.map(method=>({
+      ...method,
+      body:method.returnType==='void'?null:methodNode(method.body,method,0,method.returnType)
+    }))
+  }));
   const color=new Uint8Array(headers.length);
   function visit(i) {
     if(color[i]===1)fail('recursive call graph unsupported pending fuel');
@@ -330,9 +532,12 @@ export function validateProgramIRV2(input) {
     color[i]=1;for(const j of graph[i])visit(j);color[i]=2;
   }
   functions.forEach((_,i)=>visit(i));
-  return {schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,
+  return {
+    schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,
     integerModel:PROGRAM_IR_INT_MODEL,sourceNamespace:namespace,
-    modules:moduleNames,functions};
+    modules:moduleNames,functions,
+    ...(hasClasses?{classes}:{})
+  };
 }
 export function stringifyProgramIRV2(ir){
   return JSON.stringify(validateProgramIRV2(ir));

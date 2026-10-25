@@ -40,6 +40,10 @@ jobs:
         run: npm run test:symbols
       - name: Execute Symbol equality and cross-artifact wire checks
         run: npm run test:symbol-wire
+      - name: Execute unified program-v2 class and method checks
+        run: npm run test:program-classes
+      - name: Execute legacy class-method compatibility adapter checks
+        run: npm run test:class-methods
       - run: npm test
       - run: npm run check
       - run: npm run parity:js

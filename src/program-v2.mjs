@@ -8,6 +8,17 @@ import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT
 const MAX_BYTES = 262144, MAX_TOKENS = 30000, MAX_DEPTH = 192;
 const MIN = -(1n << 63n), MAX = (1n << 63n) - 1n;
 const TOKEN_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const CLASS_METHOD_RESERVED=new Set([
+  'default','new','class','export','import','null','this','super','extends','static',
+  'constructor','prototype','__proto__','define','pub','as','end','self','int',
+  'void','return','mut','private','actor','fnc','routine','bool','Symbol','let',
+  'val','const','if','fi','then','else','await','task','spawn','module','trait',
+  'interface','type','rt'
+]);
+const CLASS_METHOD_CALLABLE_KEYWORDS=new Set([
+  'mtd','method','stop','do','done','loop','block','select','readch','writech',
+  'nb','true','false'
+]);
 export class ProgramCompileError extends Error {
   constructor(message, loc) {
     super('error: program v2: ' + message + (loc ? ' at ' + loc.line + ':' + loc.col : ''));
@@ -211,6 +222,45 @@ class Parser {
     if (t.kind !== 'id' || !TOKEN_NAME.test(t.value)) fail('identifier expected',t);
     this.i++; return t.value;
   }
+  classIdentifier() {
+    const t=this.peek(),value=t.value;
+    if(t.kind!=='id'||!TOKEN_NAME.test(value)||CLASS_METHOD_RESERVED.has(value)||
+       value==='Option'||value==='Result')
+      fail('invalid or reserved class/member identifier '+value,t);
+    this.i++;return value;
+  }
+  callableName() {
+    const t=this.peek(),value=t.value;
+    if(t.kind!=='id'||!TOKEN_NAME.test(value)||
+       (CLASS_METHOD_RESERVED.has(value)&&!CLASS_METHOD_CALLABLE_KEYWORDS.has(value)))
+      fail('invalid or reserved callable name '+value,t);
+    this.i++;return value;
+  }
+  eatMethodMarker() {
+    const marker=this.peek().value;
+    if(marker!=='mtd'&&marker!=='method')return false;
+    const next=this.tokens[this.i+1],after=this.tokens[this.i+2];
+    if(!next||next.kind!=='id'||after?.value!=='(')return false;
+    const value=next.value;
+    if(CLASS_METHOD_RESERVED.has(value)&&!CLASS_METHOD_CALLABLE_KEYWORDS.has(value))
+      return false;
+    this.i++;return true;
+  }
+  argumentsAfterOpen() {
+    const args=[];let namedSeen=false;
+    if(!this.eat(')')) {
+      do {
+        if(args.length>=128)fail('argument limit',this.peek());
+        let name=null;
+        if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value===':'){
+          name=this.name();this.expect(':');namedSeen=true;
+        }else if(namedSeen)fail('positional argument cannot follow a named argument',this.peek());
+        args.push({name,expr:this.expression()});
+      } while(this.eat(','));
+      this.expect(')');
+    }
+    return args;
+  }
   valueType() {
     if(this.eat('int'))return 'int';
     if(this.eat('bool'))return 'bool';
@@ -224,6 +274,61 @@ class Parser {
       return 'result<int,int>';
     }
     fail('unsupported scalar type (int, bool, Symbol, Option<int>, Result<int,int>)',this.peek());
+  }
+  classDeclaration(pub) {
+    const name=this.classIdentifier();
+    this.expect('as');
+    const methods=[],slots=new Set();
+    while(!this.eat('end')) {
+      if(this.peek().kind==='eof')fail('unterminated class '+name,this.peek());
+      if(methods.length>=256)fail('method count limit',this.peek());
+      const methodPub=this.eat('pub');
+      this.eatMethodMarker();
+      const methodName=this.callableName();
+      this.expect('(');
+      if(this.eat('self')){
+        if(this.eat(',')){
+          if(this.peek().value===')')fail('trailing receiver comma',this.peek());
+        }else if(this.peek().value!==')')fail('unsupported self parameter spelling',this.peek());
+      }
+      const params=[],paramTypes=[];
+      if(!this.eat(')')){
+        do {
+          if(params.length>=32)fail('method arity budget',this.peek());
+          const type=this.valueType();
+          const param=this.classIdentifier();
+          if(param==='self'||params.includes(param))fail('duplicate or reserved method parameter '+param,this.peek());
+          params.push(param);paramTypes.push(type);
+        } while(this.eat(','));
+        this.expect(')');
+      }
+      const arrow=this.eat('->');
+      if(!arrow)this.expect(':');
+      const returnType=this.eat('void')?'void':this.valueType();
+      const braced=this.eat('{');
+      if(!braced){
+        if(!arrow)fail('colon method bodies require braces',this.peek());
+        this.expect('::');
+      }
+      const terminator=braced?'}':'end';
+      let body=null;
+      if(returnType==='void'){
+        if(this.eat('return'))this.expect(';');
+        if(this.peek().value!==terminator)
+          fail('void method body unsupported in convergence slice',this.peek());
+      }else{
+        const statements=this.statementSequence([terminator]);
+        body=this.lowerStatements(statements,null);
+        if(!body)fail('method requires a return on every path',this.peek());
+        this.checkExpandedBudget(body);
+      }
+      this.expect(terminator);
+      const slot=methodName+'/'+params.length;
+      if(slots.has(slot))fail('duplicate method name/arity '+slot,this.peek());
+      slots.add(slot);
+      methods.push({name:methodName,pub:methodPub,params,paramTypes,returnType,body});
+    }
+    return {name,pub,methods};
   }
   functions(moduleName) {
     const pub = this.eat('pub'), start=this.peek();
@@ -331,6 +436,9 @@ class Parser {
         case 'neg':case 'not':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
+        case 'newClass':for(const arg of expr.args)add(arg.expr??arg);break;
+        case 'methodCall':
+          add(expr.receiver);for(const arg of expr.args)add(arg.expr??arg);break;
         case 'call':case 'intrinsic':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'match':case 'adtMatch':
           add(expr.subject);
@@ -351,31 +459,44 @@ class Parser {
       namespace = this.name();
       this.expect(';');
     }
-    const modules = [], functions = [], usedModules = new Set();
-    while (this.peek().kind !== 'eof') {
-      if (this.eat('define')) {
-        if(this.peek().value==='symbol'||
-           (this.peek().value==='pub'&&this.tokens[this.i+1]?.value==='symbol'))
+    const modules=[],functions=[],classes=[],usedModules=new Set(),usedClasses=new Set();
+    while(this.peek().kind!=='eof'){
+      let prefixPub=false;
+      if(this.peek().value==='pub'&&this.tokens[this.i+1]?.value==='define'){
+        this.i++;prefixPub=true;
+      }
+      if(this.eat('define')){
+        const afterPub=this.eat('pub');
+        const declarationPub=prefixPub||afterPub;
+        if(this.peek().value==='symbol')
           fail('Symbol declaration/export manifest not implemented',this.peek());
-        this.expect('module'); const name=this.name();
+        if(this.eat('class')){
+          if(classes.length>=512)fail('class declaration budget exceeded',this.peek());
+          const cls=this.classDeclaration(declarationPub);
+          if(usedClasses.has(cls.name)||usedModules.has(cls.name))
+            fail('duplicate class/module name '+cls.name,this.peek());
+          usedClasses.add(cls.name);classes.push(cls);
+          continue;
+        }
+        if(declarationPub)fail('public define is only supported for classes in program-v2',this.peek());
+        this.expect('module');const name=this.name();
         if(name==='Option'||name==='Result'||name==='Symbol')
           fail('reserved portable intrinsic module name '+name);
-        if (usedModules.has(name)) fail('duplicate module ' + name);
-        usedModules.add(name); this.eat('as');
-        modules.push(name);
+        if(usedModules.has(name)||usedClasses.has(name))fail('duplicate module/class name '+name);
+        usedModules.add(name);this.eat('as');modules.push(name);
         let count=0;
-        while (!this.eat('end')) {
-          if (this.peek().kind === 'eof') fail('unterminated module ' + name);
-          if (++count > 512 || functions.length >= 512) fail('declaration budget exceeded');
+        while(!this.eat('end')){
+          if(this.peek().kind==='eof')fail('unterminated module '+name,this.peek());
+          if(++count>512||functions.length>=512)fail('declaration budget exceeded',this.peek());
           functions.push(this.functions(name));
         }
-      } else {
-        if (functions.length >= 512) fail('declaration budget exceeded');
+      }else{
+        if(functions.length>=512)fail('declaration budget exceeded',this.peek());
         functions.push(this.functions(null));
       }
     }
-    if (!functions.length && !modules.length) fail('empty program');
-    return {namespace,modules,functions};
+    if(!functions.length&&!modules.length&&!classes.length)fail('empty program');
+    return {namespace,modules,functions,classes};
   }
   integer(negative = false) {
     const token=this.peek();
@@ -411,6 +532,17 @@ class Parser {
   }
   primary() {
     if(this.eat('!'))return {kind:'not',inner:this.expression(30)};
+    if(this.eat('new')){
+      const className=this.name();
+      this.expect('(');
+      let receiver={kind:'newClass',name:className,args:this.argumentsAfterOpen()};
+      while(this.eat('.')){
+        const name=this.callableName();
+        this.expect('(');
+        receiver={kind:'methodCall',receiver,name,args:this.argumentsAfterOpen()};
+      }
+      return receiver;
+    }
     if(this.eat('true'))return {kind:'bool',value:true};
     if(this.eat('false'))return {kind:'bool',value:false};
     if (this.eat('-')) {
@@ -438,20 +570,7 @@ class Parser {
       if(first==='None')return {kind:'call',qualifier:'Option',name:'none',args:[]};
       return {kind:'variable', name:first};
     }
-    const args=[];let namedSeen=false;
-    if(!this.eat(')')) {
-      do {
-        if(args.length >= 128) fail('argument limit');
-        let name=null;
-        if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value===':'){
-          name=this.name();this.expect(':');namedSeen=true;
-        }else if(namedSeen){
-          fail('positional argument cannot follow a named argument',this.peek());
-        }
-        args.push({name,expr:this.expression()});
-      } while(this.eat(','));
-      this.expect(')');
-    }
+    const args=this.argumentsAfterOpen();
     // Canonical Oreslang constructors also work as pure aliases for the
     // same statically checked intrinsics; don't introduce any new host API.
     if(qualifier===null){
@@ -532,8 +651,19 @@ class Parser {
   }
 }
 function resolveProgram(parsed) {
-  const {modules,functions}=parsed;
-  const slots = new Map(), exports = new Set(), symbolKinds = new Map();
+  const {modules,functions,classes=[]}=parsed;
+  const slots=new Map(),exports=new Set(),symbolKinds=new Map(),classByName=new Map();
+  const classTables=classes.map((cls,classIndex)=>{
+    if(classByName.has(cls.name))fail('duplicate class '+cls.name);
+    classByName.set(cls.name,classIndex);
+    const methodSlots=new Map(),methodFamilies=new Set();
+    cls.methods.forEach((method,methodIndex)=>{
+      const key=method.name+'/'+method.params.length;
+      if(methodSlots.has(key))fail('duplicate method name/arity '+cls.name+'.'+key);
+      methodSlots.set(key,methodIndex);methodFamilies.add(method.name);
+    });
+    return {methodSlots,methodFamilies};
+  });
   functions.forEach((fn,i)=>{
     const qualified=(fn.module===null?'@file/':'@module/'+fn.module+'/')+fn.name;
     const slot=qualified+'/'+fn.params.length;
@@ -548,13 +678,20 @@ function resolveProgram(parsed) {
     if(exports.has(m)) fail('module/function export conflict '+m);
     exports.add(m);
   });
-  let nodeCount=0, nextCaptureSlot=0;
+  classes.forEach(cls=>{
+    if(exports.has(cls.name))fail('class export conflicts with module/function '+cls.name);
+    if(cls.pub)exports.add(cls.name);
+  });
+  let nodeCount=0,nextCaptureSlot=0;
   function resolvedType(expr,owner) {
     switch(expr.kind){
       case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
       case 'bool':case 'not':case 'compare':case 'symbolCompare':return 'bool';
       case 'symbol':return 'symbol';
       case 'param':return owner.paramTypes?.[expr.index]??'int';
+      case 'newClass':return 'class:'+expr.classIndex;
+      case 'methodCall':case 'namedMethodCall':
+        return classes[expr.classIndex].methods[expr.methodIndex].returnType;
       case 'call':case 'namedCall':return functions[expr.target].returnType??'int';
       case 'intrinsic': {
         const results={
@@ -570,10 +707,60 @@ function resolveProgram(parsed) {
       default:fail('cannot infer resolved expression type '+expr.kind);
     }
   }
+  function bindArguments(formals,sourceArgs,label,owner,depth,bindings){
+    const byName=new Map(formals.map((name,index)=>[name,index]));
+    const paramOrder=[],seen=new Set();let nextPositional=0,hasNamed=false;
+    for(const arg of sourceArgs){
+      let formal;
+      if(arg.name===null)formal=nextPositional++;
+      else{
+        hasNamed=true;formal=byName.get(arg.name);
+        if(formal===undefined)fail('unknown named argument '+arg.name+' for '+label);
+      }
+      if(formal>=formals.length)fail('call arity mismatch for '+label);
+      if(seen.has(formal))fail('duplicate argument binding for '+formals[formal]);
+      seen.add(formal);paramOrder.push(formal);
+    }
+    if(seen.size!==formals.length)fail('missing argument for '+label);
+    return {
+      args:sourceArgs.map(a=>resolve(a.expr,owner,depth+1,bindings)),
+      paramOrder,hasNamed
+    };
+  }
   function resolve(expr,owner,depth=0,bindings=[]) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
       case 'int':case 'bool':case 'symbol':return expr;
+      case 'newClass': {
+        if(owner.ownerKind==='method')
+          fail('class construction inside method body unsupported in convergence slice');
+        const classIndex=classByName.get(expr.name);
+        if(classIndex===undefined)fail('unknown class '+expr.name);
+        if(expr.args.length!==0)fail('fieldless constructor arity mismatch for '+expr.name);
+        return {kind:'newClass',classIndex};
+      }
+      case 'methodCall': {
+        if(owner.ownerKind==='method')
+          fail('nested method calls inside method body unsupported in convergence slice');
+        const receiver=resolve(expr.receiver,owner,depth+1,bindings);
+        const receiverType=resolvedType(receiver,owner);
+        if(!receiverType.startsWith('class:'))fail('method receiver is not a class value');
+        const classIndex=Number(receiverType.slice(6));
+        const table=classTables[classIndex],cls=classes[classIndex];
+        const methodIndex=table.methodSlots.get(expr.name+'/'+expr.args.length);
+        if(methodIndex===undefined){
+          if(table.methodFamilies.has(expr.name))
+            fail('method arity mismatch for '+cls.name+'.'+expr.name);
+          fail('unknown method '+cls.name+'.'+expr.name);
+        }
+        const method=cls.methods[methodIndex];
+        if(!method.pub)fail('private method call '+cls.name+'.'+expr.name);
+        const bound=bindArguments(method.params,expr.args,cls.name+'.'+expr.name,
+          owner,depth,bindings);
+        const base={classIndex,methodIndex,receiver,args:bound.args};
+        return bound.hasNamed?{kind:'namedMethodCall',...base,paramOrder:bound.paramOrder}:
+          {kind:'methodCall',...base};
+      }
       case 'variable': {
         const captured=bindings.findLast(b=>b.name===expr.name);
         if(captured)return {kind:'capture',slot:captured.slot};
@@ -617,6 +804,8 @@ function resolveProgram(parsed) {
           if(expr.args.length!==sig[0])fail('intrinsic arity mismatch '+key);
           return {kind:'intrinsic',name:key,args:expr.args.map(a=>resolve(a.expr,owner,depth+1,bindings))};
         }
+        if(owner.ownerKind==='method')
+          fail('function calls inside method body unsupported in convergence slice');
         const mod=expr.qualifier===null?owner.module:expr.qualifier;
         if(mod!==null && !modules.includes(mod)) fail('unknown module '+mod);
         const key=(mod===null?'@file/':'@module/'+mod+'/')+expr.name;
@@ -626,31 +815,19 @@ function resolveProgram(parsed) {
           fail('unresolved callable '+key);
         }
         if(expr.qualifier!==null && mod!==owner.module && !functions[target].pub) fail('private module member '+key);
-        const formals=functions[target].params;
-        const byName=new Map(formals.map((name,index)=>[name,index]));
-        const paramOrder=[],seenParams=new Set();
-        let nextPositional=0,hasNamed=false;
-        for(const arg of expr.args){
-          let formal;
-          if(arg.name===null){
-            formal=nextPositional++;
-          }else{
-            hasNamed=true;
-            formal=byName.get(arg.name);
-            if(formal===undefined)fail('unknown named argument '+arg.name+' for '+key);
-          }
-          if(formal>=formals.length)fail('call arity mismatch for '+key);
-          if(seenParams.has(formal))fail('duplicate argument binding for '+formals[formal]);
-          seenParams.add(formal);paramOrder.push(formal);
-        }
-        if(seenParams.size!==formals.length)fail('missing argument for '+key);
-        const resolvedArgs=expr.args.map(a=>resolve(a.expr,owner,depth+1,bindings));
-        return hasNamed?{kind:'namedCall',target,args:resolvedArgs,paramOrder}:
-          {kind:'call',target,args:resolvedArgs};
+        const bound=bindArguments(functions[target].params,expr.args,key,
+          owner,depth,bindings);
+        return bound.hasNamed?{kind:'namedCall',target,args:bound.args,paramOrder:bound.paramOrder}:
+          {kind:'call',target,args:bound.args};
       }
-      case 'match': return {kind:'match',subject:resolve(expr.subject,owner,depth+1,bindings),
+      case 'match':
+        if(owner.ownerKind==='method')
+          fail('match inside method body unsupported in convergence slice');
+        return {kind:'match',subject:resolve(expr.subject,owner,depth+1,bindings),
         arms:expr.arms.map(arm=>({value:arm.value,body:resolve(arm.body,owner,depth+1,bindings)}))};
       case 'adtMatch': {
+        if(owner.ownerKind==='method')
+          fail('ADT match inside method body unsupported in convergence slice');
         const subject=resolve(expr.subject,owner,depth+1,bindings);
         const arms=expr.arms.map(arm=>{
           let slot=null,scope=bindings;
@@ -669,12 +846,25 @@ function resolveProgram(parsed) {
     }
   }
   const resolved=functions.map(fn=>({...fn,body:resolve(fn.body,fn)}));
+  const resolvedClasses=classes.map((cls,classIndex)=>({
+    ...cls,
+    methods:cls.methods.map(method=>({
+      ...method,
+      body:method.body===null?null:resolve(method.body,{
+        ...method,module:null,ownerKind:'method',classIndex
+      })
+    }))
+  }));
   const graph=resolved.map(()=>new Set());
   function inspect(expr,owner) {
     if(expr.kind==='call'||expr.kind==='namedCall') {
       graph[owner].add(expr.target);expr.args.forEach(a=>inspect(a,owner));
+    } else if(expr.kind==='methodCall'||expr.kind==='namedMethodCall') {
+      inspect(expr.receiver,owner);expr.args.forEach(a=>inspect(a,owner));
+    } else if(expr.kind==='newClass') {
+      // fieldless construction has no call-graph edge in this slice
     } else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
-    else if(expr.kind==='binary'||expr.kind==='compare') {inspect(expr.left,owner);inspect(expr.right,owner);}
+    else if(expr.kind==='binary'||expr.kind==='compare'||expr.kind==='symbolCompare') {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='neg'||expr.kind==='not') inspect(expr.inner,owner);
     else if(expr.kind==='match'||expr.kind==='adtMatch') {
@@ -692,7 +882,10 @@ function resolveProgram(parsed) {
     colors[i]=1;for(const j of graph[i])visit(j); colors[i]=2;
   }
   resolved.forEach((_,i)=>visit(i));
-  return {sourceNamespace:parsed.namespace,modules,functions:resolved};
+  return {
+    sourceNamespace:parsed.namespace,modules,functions:resolved,
+    ...(resolvedClasses.length?{classes:resolvedClasses}:{})
+  };
 }
 function emitProgram(program) {
   const out=[
@@ -726,6 +919,22 @@ function emitProgram(program) {
       }
       case 'if':return '(('+emitExpr(expr.condition,depth+1)+')?('+
         emitExpr(expr.yes,depth+1)+'):('+emitExpr(expr.no,depth+1)+'))';
+      case 'newClass':return 'new _class'+expr.classIndex+'()';
+      case 'methodCall': {
+        const method=program.classes[expr.classIndex].methods[expr.methodIndex];
+        return '('+emitExpr(expr.receiver,depth+1)+')['+JSON.stringify(method.name)+']('+
+          expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
+      }
+      case 'namedMethodCall': {
+        const method=program.classes[expr.classIndex].methods[expr.methodIndex];
+        const declarations=['const _receiver='+emitExpr(expr.receiver,depth+1)+';'];
+        expr.args.forEach((arg,i)=>declarations.push(
+          'const _namedMethod'+i+'='+emitExpr(arg,depth+1)+';'));
+        const formal=new Array(expr.args.length);
+        expr.paramOrder.forEach((slot,i)=>{formal[slot]='_namedMethod'+i;});
+        return '(()=>{'+declarations.join('')+'return _receiver['+
+          JSON.stringify(method.name)+']('+formal.join(',')+');})()';
+      }
       case 'call':return '_f'+expr.target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
       case 'namedCall': {
         const declarations=expr.args.map((arg,i)=>
@@ -772,11 +981,16 @@ function emitProgram(program) {
       default: fail('unsupported codegen expression');
     }
   }
-  if(program.functions.some(fn=>fn.returnType==='bool'||fn.paramTypes?.includes('bool')))
+  const classMethods=(program.classes??[]).flatMap(cls=>cls.methods);
+  if(program.functions.some(fn=>fn.returnType==='bool'||fn.paramTypes?.includes('bool'))||
+     classMethods.some(method=>method.returnType==='bool'||method.paramTypes.includes('bool')))
     out.push('function _checkbool(v){if(typeof v!=="boolean")throw new TypeError("Oreslang bool required");return v;}');
   function usesSymbol(expr) {
     switch(expr.kind) {
       case 'symbol':return true;
+      case 'newClass':return false;
+      case 'methodCall':case 'namedMethodCall':
+        return usesSymbol(expr.receiver)||expr.args.some(usesSymbol);
       case 'call':case 'namedCall':case 'intrinsic':return expr.args.some(usesSymbol);
       case 'binary':case 'compare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
@@ -788,7 +1002,9 @@ function emitProgram(program) {
     }
   }
   const hasSymbol=program.functions.some(fn=>fn.returnType==='symbol'||
-    fn.paramTypes?.includes('symbol')||usesSymbol(fn.body));
+    fn.paramTypes?.includes('symbol')||usesSymbol(fn.body))||
+    classMethods.some(method=>method.returnType==='symbol'||
+      method.paramTypes.includes('symbol')||(method.body!==null&&usesSymbol(method.body)));
   if(hasSymbol) {
     out.push(
       'const _symbolBrand=new WeakSet();',
@@ -808,8 +1024,11 @@ function emitProgram(program) {
   function usesPortableRuntime(expr) {
     switch(expr.kind) {
       case 'intrinsic':return true;
+      case 'newClass':return false;
+      case 'methodCall':case 'namedMethodCall':
+        return usesPortableRuntime(expr.receiver)||expr.args.some(usesPortableRuntime);
       case 'call':case 'namedCall':return expr.args.some(usesPortableRuntime);
-      case 'binary':case 'compare':
+      case 'binary':case 'compare':case 'symbolCompare':
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
       case 'if':return usesPortableRuntime(expr.condition)||
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
@@ -822,7 +1041,10 @@ function emitProgram(program) {
   }
   if(program.functions.some(fn=>['option<int>','result<int,int>'].includes(fn.returnType)||
       fn.paramTypes?.some(t=>['option<int>','result<int,int>'].includes(t))||
-      usesPortableRuntime(fn.body))) {
+      usesPortableRuntime(fn.body))||
+     classMethods.some(method=>['option<int>','result<int,int>'].includes(method.returnType)||
+      method.paramTypes.some(t=>['option<int>','result<int,int>'].includes(t))||
+      (method.body!==null&&usesPortableRuntime(method.body)))) {
     out.push(
       'function _tag(k,v){const x=Object.create(null);Object.defineProperty(x,"kind",{value:k,enumerable:true});Object.defineProperty(x,"value",{value:v,enumerable:true});return Object.freeze(x);}',
       'function _checktag(x,types){if(!x||typeof x!=="object"||Object.getPrototypeOf(x)!==null||!Object.isFrozen(x))throw new TypeError("Oreslang tagged value required");const keys=Reflect.ownKeys(x);if(keys.length!==2||!keys.includes("kind")||!keys.includes("value"))throw new TypeError("Oreslang tagged value shape required");const kd=Object.getOwnPropertyDescriptor(x,"kind"),vd=Object.getOwnPropertyDescriptor(x,"value");if(!kd||!vd||!Object.hasOwn(kd,"value")||!Object.hasOwn(vd,"value")||!kd.enumerable||!vd.enumerable||!types.includes(kd.value))throw new TypeError("Oreslang tagged value type required");if(kd.value==="None"){if(vd.value!==null)throw new TypeError("Oreslang None payload must be null");}else _check(vd.value);return x;}',
@@ -839,6 +1061,36 @@ function emitProgram(program) {
       'function _error_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Err"?x.value:d;}'
     );
   }
+  (program.classes??[]).forEach((cls,classIndex)=>{
+    const local='_class'+classIndex;
+    out.push('class '+local+' {','#oresBrand=1;',
+      'constructor(..._args){if(new.target!=='+local+')throw new TypeError("unsupported class derivation");if(_args.length!==0)throw new TypeError("constructor arity mismatch");Object.preventExtensions(this);}');
+    const families=new Map();
+    cls.methods.forEach((method,methodIndex)=>{
+      if(!method.pub)return;
+      if(!families.has(method.name))families.set(method.name,[]);
+      families.get(method.name).push(methodIndex);
+    });
+    for(const [name,indices] of families){
+      out.push(JSON.stringify(name)+'(..._args){',
+        'if(this===null||(typeof this!=="object"&&typeof this!=="function")||!(#oresBrand in this))throw new TypeError("invalid Oreslang receiver");',
+        'switch(_args.length){');
+      for(const methodIndex of indices){
+        const method=cls.methods[methodIndex];
+        out.push('case '+method.params.length+':{');
+        method.params.forEach((_,i)=>{
+          const type=method.paramTypes[i];
+          const check={int:'_check',bool:'_checkbool',symbol:'_checksymbol',
+            'option<int>':'_checkoption','result<int,int>':'_checkresult'}[type];
+          if(!check)fail('unsupported method parameter type');
+          out.push('const _p'+i+'=_args['+i+'];'+check+'(_p'+i+');');
+        });
+        out.push(method.returnType==='void'?'return;':'return '+emitExpr(method.body)+';','}');
+      }
+      out.push('default:throw new TypeError("method arity mismatch");','}','}');
+    }
+    out.push('}','Object.freeze('+local+'.prototype);','Object.freeze('+local+');');
+  });
   program.functions.forEach((fn,i)=>{
     const params=fn.params.map((_,j)=>'_p'+j);
     out.push('function _f'+i+'('+params.join(',')+'){');
@@ -884,6 +1136,9 @@ function emitProgram(program) {
   for(const [name,indices] of publicGroups(null)) {
     out.push('export { '+exportCallable(indices)+' as '+JSON.stringify(name)+' };');
   }
+  (program.classes??[]).forEach((cls,i)=>{
+    if(cls.pub)out.push('export { _class'+i+' as '+JSON.stringify(cls.name)+' };');
+  });
   if(hasSymbol)out.push('export { _symbolWireV1 as "@oreslang/symbol-wire-v1" };');
   return out.join('\n')+'\n';
 }
