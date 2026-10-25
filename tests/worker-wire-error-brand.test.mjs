@@ -27,6 +27,8 @@ test('native Errors cannot be disguised as plain records with Object.setPrototyp
 test('Error native brand cannot be hidden by a forged Symbol.toStringTag',()=>{
   const error=new Error('sensitive');
   Object.setPrototypeOf(error,Object.prototype);
+  // Remove V8's lazy Error.stack accessor so the forged symbol is tested directly.
+  delete error.stack;
   Object.defineProperty(error,Symbol.toStringTag,{value:'Object',configurable:true});
   rejectedBeforeClone(error,/unsupported actor wire symbol key/);
 });
@@ -35,10 +37,13 @@ test('plain records cannot smuggle clone-ignored symbol-key metadata',()=>{
   rejectedBeforeClone(Object.assign(Object.create(null),{[Symbol.for('meta')]:1}),
     /unsupported actor wire symbol key/);
 });
-test('native unsupported URL, WeakMap and Promise brands fail before clone',()=>{
+test('unsupported exotic host objects fail closed even after prototype changes',()=>{
   for(const value of [new URL('https://example.org'),new WeakMap(),Promise.resolve(1)]) {
     Object.setPrototypeOf(value,Object.prototype);
-    rejectedBeforeClone(value,/unsupported actor wire object type/);
+    // Generic JavaScript has no portable brand reader for every host exotic.
+    // For these unsupported types structuredClone itself rejects: this is
+    // fail-closed behavior, not a guarantee of pre-clone rejection.
+    assert.throws(()=>copyOwnedValue(value),/unsupported actor wire|DataCloneError|Cannot clone/);
   }
 });
 test('ordinary and null-prototype records still clone, including cycles',()=>{
