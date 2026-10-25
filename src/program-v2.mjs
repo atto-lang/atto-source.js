@@ -222,6 +222,12 @@ class Parser {
     if (t.kind !== 'id' || !TOKEN_NAME.test(t.value)) fail('identifier expected',t);
     this.i++; return t.value;
   }
+  classIdentifier() {
+    const t=this.peek(),value=t.value;
+    if(t.kind!=='id'||!TOKEN_NAME.test(value)||CLASS_METHOD_RESERVED.has(value))
+      fail('invalid or reserved class/member identifier '+value,t);
+    this.i++;return value;
+  }
   callableName() {
     const t=this.peek(),value=t.value;
     if(t.kind!=='id'||!TOKEN_NAME.test(value)||
@@ -269,7 +275,7 @@ class Parser {
     fail('unsupported scalar type (int, bool, Symbol, Option<int>, Result<int,int>)',this.peek());
   }
   classDeclaration(pub) {
-    const name=this.name();
+    const name=this.classIdentifier();
     this.expect('as');
     const methods=[],slots=new Set();
     while(!this.eat('end')) {
@@ -289,7 +295,7 @@ class Parser {
         do {
           if(params.length>=32)fail('method arity budget',this.peek());
           const type=this.valueType();
-          const param=this.name();
+          const param=this.classIdentifier();
           if(param==='self'||params.includes(param))fail('duplicate or reserved method parameter '+param,this.peek());
           params.push(param);paramTypes.push(type);
         } while(this.eat(','));
