@@ -113,6 +113,7 @@
             "enum": [
               "int",
               "bool",
+              "symbol",
               "option<int>",
               "result<int,int>"
             ]
@@ -122,6 +123,7 @@
           "enum": [
             "int",
             "bool",
+            "symbol",
             "option<int>",
             "result<int,int>"
           ]
@@ -386,6 +388,24 @@
             },
             "value": {
               "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "symbol"
+            },
+            "value": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
             }
           }
         },

@@ -48,6 +48,29 @@ function int(s){
   if(n<MIN||n>MAX)fail('integer outside provisional signed i64');
   return s;
 }
+function symbolName(s){
+  if(typeof s!=='string'||s.length>1024)fail('Symbol source name exceeds normalization budget');
+  for(let i=0;i<s.length;i++){
+    const unit=s.charCodeAt(i);
+    if(unit>=0xd800&&unit<=0xdbff){
+      const lo=s.charCodeAt(i+1);
+      if(!(lo>=0xdc00&&lo<=0xdfff))fail('unpaired UTF-16 surrogate in Symbol');
+      i++;
+    }else if(unit>=0xdc00&&unit<=0xdfff)fail('unpaired UTF-16 surrogate in Symbol');
+  }
+  const normalized=s.normalize('NFC');
+  if(normalized!==s)fail('non-canonical NFC Symbol name');
+  const bytes=new TextEncoder().encode(s).length;
+  if(bytes<1||bytes>256)fail('Symbol name requires 1..256 UTF-8 bytes');
+  for(const ch of s){
+    const cp=ch.codePointAt(0);
+    if(cp<0x20||(cp>=0x7f&&cp<=0x9f)||/[\p{Cf}\p{Zl}\p{Zp}]/u.test(ch)||
+       cp===0x061c||cp===0x200e||cp===0x200f||
+       (cp>=0x202a&&cp<=0x202e)||(cp>=0x2066&&cp<=0x2069))
+      fail('control, line-separator, or bidi character in Symbol');
+  }
+  return s;
+}
 /**
  * Copy after validation, never return caller-owned IR references.
  * Direct object inputs are trusted data only, not a JavaScript sandbox.
@@ -85,7 +108,7 @@ export function validateProgramIRV2(input) {
     const params=sequence(f.params,128,'parameters').map(p=>ident(p,'parameter'));
     if(new Set(params).size!==params.length)fail('duplicate parameters');
     const paramTypes=typed?sequence(f.paramTypes,128,'paramTypes'):params.map(()=>'int');
-    const types=['int','bool','option<int>','result<int,int>'];
+    const types=['int','bool','symbol','option<int>','result<int,int>'];
     if(paramTypes.length!==params.length||
        paramTypes.some(t=>!types.includes(t)))fail('unsupported function parameter type');
     const returnType=typed?f.returnType:'int';
@@ -122,6 +145,8 @@ export function validateProgramIRV2(input) {
       fail('boolean value cannot be used as non-bool');
     if(expected!=='int'&&['int','neg','binary'].includes(desc.value))
       fail('integer expression cannot be used as non-int');
+    if(expected!=='symbol'&&desc.value==='symbol')
+      fail('Symbol value cannot be used as non-Symbol');
     switch(desc.value) {
       case 'int':
         record(expr,['kind','value'],'int');
@@ -131,6 +156,10 @@ export function validateProgramIRV2(input) {
         record(expr,['kind','value'],'bool');
         if(expected!=='bool'||typeof expr.value!=='boolean')fail('invalid bool literal/type');
         return {kind:'bool',value:expr.value};
+      case 'symbol':
+        record(expr,['kind','value'],'symbol');
+        if(expected!=='symbol')fail('Symbol literal type mismatch');
+        return {kind:'symbol',value:symbolName(expr.value)};
       case 'capture':
         record(expr,['kind','slot'],'capture');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
