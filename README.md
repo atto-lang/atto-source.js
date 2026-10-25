@@ -61,11 +61,23 @@ Symbol-using generated ESM also exports the reserved host bridge `"@oreslang/sym
 
 Stable UUID Symbols are wire-decodable but still have no source constructor/literal in this JS slice. Symbol-keyed collections/records, declaration/export manifests, tenant-scoped userland admission, and actor transport remain explicitly unsupported.
 
+## Fieldless classes and typed method calls (experimental program-v2)
+
+Program-v2 now contains the migration path for the bounded class-method semantics previously isolated in the class-method prototype. Root-level `define class`, `pub define class`, and `define pub class` declarations lower into the same resolved program IR as functions/modules. A leading declaration-level `self` is erased from caller-visible arity, so `foo()` and `foo(self)` collide as the same `foo/0` slot. Contextual `mtd`/`method` markers and the Java-compatible callable keyword names remain supported.
+
+The first source-call form is deliberately narrow and Java-aligned: `new Box().pick(...)`. Fieldless construction has arity zero. Positional and named method arguments reuse the exact same declaration-name binder and source-order-preserving permutation model as free functions, e.g. `new Box().pick(b: 2, a: 1)`. Method parameters/results may use the current program-v2 scalar domains, including `Symbol`; Symbol equality inside methods reuses the same logical `(kind,name)` semantics.
+
+Generated classes retain the prototype hardening proven by the standalone class-method prototype: private receiver brand checks, immutable constructor/prototype, non-extensible instances, constructor arity checks, and rejection of foreign JS subclassing. Private methods are not externally callable.
+
+This convergence slice still has **no fields, inheritance, constructors with source parameters, local class variables, class-valued parameters/results, generic methods, actor methods, ownership/borrowing, or arbitrary method call graphs**. Method bodies may use scalar/boolean/Symbol expressions, conditionals and portable Option/Result intrinsics; nested class construction, free-function calls, method calls and match inside method bodies fail closed for now. Run `npm run test:program-classes`.
+
+Legacy class-free program-v2 IR and generated ESM remain byte-stable: the optional `classes` IR field is emitted only when a class is actually present.
+
 ## Named arguments (experimental program-v2)
 
 Ordinary program-v2 function/module calls can bind exact-arity arguments by formal name, with positional arguments only before named ones. For example, `mix(1, c: 3, b: 2)` binds to `(a,b,c)` while preserving lexical expression evaluation order. The resolved `namedCall` IR carries an explicit source-to-formal permutation and validates it before ESM emission. Unknown/duplicate/missing labels and named portable intrinsics reject. Run `npm run test:named-args`.
 
-Optional/omittable parameters, defaults, varargs, constructors/methods and `omit`/`_` are **not** enabled by this slice.
+Optional/omittable parameters, defaults, varargs and `omit`/`_` are **not** enabled by this slice. Named method calls reuse this binder only for the bounded fieldless-class profile described above.
 
 ## Canonical conditional syntax (experimental program-v2)
 
@@ -93,7 +105,7 @@ See [the experimental iso-lattes host contract](docs/ISO_LATTES_HOST_ABI.md) for
 
 ## Experimental runtime-module and match lowering (opt-in)
 
-`node bin/oreslang-jsc.mjs --program-v2 --check path/to/program.ores` validates the new isolated scalar program dialect; `--program-v2 input.ores --out=/absolute/program.mjs` emits ESM. Its direct JS API is `compileProgramV2(source)` from `@oreslang/source-js/program-v2`. Multiple flat `define module` declarations become immutable null-prototype JS namespace objects with only public function members. File `namespace name;` is compile-time metadata and produces **no** runtime export. Exhaustive integer `match` expressions lower to one-evaluation `switch` expressions. Private member accesses and unsupported constructs are rejected.
+`node bin/oreslang-jsc.mjs --program-v2 --check path/to/program.ores` validates the new isolated scalar program dialect; `--program-v2 input.ores --out=/absolute/program.mjs` emits ESM. Its direct JS API is `compileProgramV2(source)` from `@oreslang/source-js/program-v2`. Multiple flat `define module` declarations become immutable null-prototype JS namespace objects with only public function members; the same profile now also admits the bounded root-level fieldless classes described above. File `namespace name;` is compile-time metadata and produces **no** runtime export. Exhaustive integer `match` expressions lower to one-evaluation `switch` expressions. Private member accesses and unsupported constructs are rejected.
 
 `@oreslang/source-js/multiple-inheritance` separately offers a **method-only** inheritance planner/runtime proof: diamond deduplication, method conflicts requiring explicit overrides, public visibility/field/cycle checks, arity dispatch and nominal runtime brands. This is **not** general class transpilation: constructors, storage fields, generic views, static fields, private method dispatch, class syntax and native `instanceof` interoperability remain unsupported. Please do not confuse JavaScript mixin-order semantics with Oreslang method-slot rules.
 
