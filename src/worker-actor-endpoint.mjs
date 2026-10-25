@@ -66,6 +66,7 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     }finally{processing=false;}
   }
   subscribe(frame=>{
+    try {
     if(terminal)return;
     if(!frame||typeof frame!=='object'||frame.protocol!==PROTOCOL||
        !['init','deliver'].includes(frame.kind)){
@@ -126,5 +127,6 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     inFlightBytes+=bytes;
     queue.push({id:frame.id,reply:frame.reply,value:snapshot,bytes});
     void drain();
+    } catch {fail('invalid actor frame');}
   });
 }
