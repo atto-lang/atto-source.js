@@ -89,3 +89,7 @@ The existing `compile(source)` and trusted-package builder intentionally remain 
 
 Python is prohibited in this repository for source code, tests, build tooling, code generation, CI, and automation. Existing Python code must be replaced with behavior-equivalent Rust and equivalent regression coverage before removal. Do not add Python source/notebooks, Python dependency manifests, `python`/`python3`, `pip`, `pytest`, `poetry`, `uv`, or Python setup actions. Rust tooling must pass `cargo fmt`, `cargo clippy -- -D warnings`, and `cargo test`.
 
+
+## Concrete Option/Result and exhaustive ADT matching (integration draft)
+
+The opt-in program-v2 source compiler admits only portable `Option<int>` and `Result<int,int>` values, strict frozen null-prototype tagged-data checks, and exhaustive `Some/None` and `Ok/Err` expression matching with arm-local typed payload bindings. This is not general generics, capabilities, actor-source lowering or general exception support. Run `npm run test:core-option-result`, `npm run test:core-adt-match` and `npm run test:core-adt-conformance`. Exact-head Node/browser tests and independent review remain required.

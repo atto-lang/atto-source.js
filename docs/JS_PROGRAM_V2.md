@@ -110,3 +110,7 @@ Required next vertical slices:
 
 Audit gate: exported file-root routines must remain direct-call-only and cannot be ESM values.
 
+
+## Concrete ADT matching (integration draft)
+
+Opt-in typed `Option<int>` / `Result<int,int>` and exhaustive `Some/None` / `Ok/Err` expressions use validated `intrinsic`, `adtMatch`, and `capture` IR nodes. Payload bindings are local to the selected match arm. The experimental ADT parser also permits a legacy `return` spelling in arm bodies as expression sugar; it must never return from the enclosing function. Source `if` remains statement-only; `?:` is the value operator. Arbitrary ADTs and general ownership are not supported. Exact-head Node/browser and cross-backend conformance remain blocking release gates.

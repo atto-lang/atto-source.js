@@ -57,8 +57,23 @@ function requireWellFormedCheckedI64Header(source) {
   }
   return enabled;
 }
+function validateSourceText(source) {
+  if(typeof source!=='string')fail('oversized or invalid source');
+  // TextEncoder replaces lone UTF-16 surrogates. Reject before encoding so
+  // comments and other lexically ignored regions cannot change byte identity.
+  for(let i=0;i<source.length;i++){
+    const unit=source.charCodeAt(i);
+    if(unit===0)fail('NUL in source');
+    if(unit>=0xd800&&unit<=0xdbff){
+      const lo=source.charCodeAt(i+1);
+      if(!(lo>=0xdc00&&lo<=0xdfff))fail('invalid UTF-16 source');
+      i++;
+    }else if(unit>=0xdc00&&unit<=0xdfff)fail('invalid UTF-16 source');
+  }
+}
 function tokenize(source) {
-  if (typeof source !== 'string' || new TextEncoder().encode(source).length > MAX_BYTES) fail('oversized or invalid source');
+  validateSourceText(source);
+  if (new TextEncoder().encode(source).length > MAX_BYTES) fail('oversized or invalid source');
   requireWellFormedCheckedI64Header(source);
   const result = [];
   let pos = 0, line = 1, col = 1;
@@ -126,6 +141,19 @@ class Parser {
     if (t.kind !== 'id' || !TOKEN_NAME.test(t.value)) fail('identifier expected',t);
     this.i++; return t.value;
   }
+  valueType() {
+    if(this.eat('int'))return 'int';
+    if(this.eat('bool'))return 'bool';
+    if(this.eat('Option')){
+      this.expect('<');this.expect('int');this.expect('>');
+      return 'option<int>';
+    }
+    if(this.eat('Result')){
+      this.expect('<');this.expect('int');this.expect(',');this.expect('int');this.expect('>');
+      return 'result<int,int>';
+    }
+    fail('unsupported scalar type (int, bool, Option<int>, Result<int,int>)',this.peek());
+  }
   functions(moduleName) {
     const pub = this.eat('pub'), start=this.peek();
     if (!this.eat('fnc') && !this.eat('routine')) fail('unsupported declaration',start);
@@ -135,9 +163,7 @@ class Parser {
     if (!this.eat(')')) {
       do {
         if (params.length >= 128) fail('parameter limit',this.peek());
-        const type=this.peek().value;
-        if(type!=='int'&&type!=='bool')fail('only int/bool parameters supported',this.peek());
-        this.i++;
+        const type=this.valueType();
         const p = this.name();
         if (params.includes(p)) fail('duplicate parameter ' + p);
         params.push(p); paramTypes.push(type);
@@ -148,9 +174,7 @@ class Parser {
     // This is a freestanding core slice, not generic statement lowering.
     const arrow=this.eat('->');
     if(!arrow)this.expect(':');
-    const returnType=this.peek().value;
-    if(returnType!=='int'&&returnType!=='bool')fail('only int/bool returns supported',this.peek());
-    this.i++;
+    const returnType=this.valueType();
     const braced=this.eat('{');
     if(!braced&&!arrow)fail('expected { for colon function body',this.peek());
     if(!braced){if(!this.eat('as'))this.eat('::');}
@@ -165,7 +189,7 @@ class Parser {
     const fn={module:moduleName, name, kind, pub, params, body};
     // Keep the historical integer-only IR exactly stable for old consumers.
     // New typed fields are an all-or-nothing additive extension for bool.
-    if(returnType==='bool'||paramTypes.includes('bool')){
+    if(returnType!=='int'||paramTypes.some(type=>type!=='int')){
       fn.paramTypes=paramTypes;fn.returnType=returnType;
     }
     return fn;
@@ -181,8 +205,7 @@ class Parser {
         statements.push({kind:'return',body});
       } else if(this.eat('if')) {
         const condition=this.expression();
-        // Canonical Oreslang uses `if condition then ... fi` statements;
-        // retain the earlier `if condition; do` prototype for old fixtures.
+        // Canonical statement-only `if`; retain old ; do syntax.
         if(!this.eat('then')){this.expect(';');this.expect('do');}
         const yes=this.statementSequence(['else','fi'],depth+1);
         const no=this.eat('else')?this.statementSequence(['fi'],depth+1):[];
@@ -237,8 +260,8 @@ class Parser {
         case 'neg':case 'not':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
-        case 'call':for(const arg of expr.args)add(arg);break;
-        case 'match':
+        case 'call':case 'intrinsic':for(const arg of expr.args)add(arg);break;
+        case 'match':case 'adtMatch':
           add(expr.subject);
           for(const arm of expr.arms)add(arm.body);
           break;
@@ -261,6 +284,8 @@ class Parser {
     while (this.peek().kind !== 'eof') {
       if (this.eat('define')) {
         this.expect('module'); const name=this.name();
+        if(name==='Option'||name==='Result')
+          fail('reserved portable intrinsic module name '+name);
         if (usedModules.has(name)) fail('duplicate module ' + name);
         usedModules.add(name); this.eat('as');
         modules.push(name);
@@ -292,14 +317,11 @@ class Parser {
       let left = this.primary();
       while (true) {
         const op = this.peek().value;
-        // Lower precedence than arithmetic/comparison. Reusing the strict
-        // `if` IR expression keeps both arms lazy and type-checked; source
-        // `if ... then ... fi` remains statement-only.
         if (op==='?' && min<=1) {
           this.i++;
           const yes=this.expression();
           this.expect(':');
-          const no=this.expression(1); // right associative
+          const no=this.expression(1); // right associative, branches remain lazy
           left={kind:'if',condition:left,yes,no};
           continue;
         }
@@ -334,6 +356,8 @@ class Parser {
     if(this.eat('.')) {qualifier=first; symbol=this.name();}
     if (!this.eat('(')) {
       if (qualifier) fail('bare module properties not yet supported',token);
+      // Existing Oreslang Option constructor spelling: bare None.
+      if(first==='None')return {kind:'call',qualifier:'Option',name:'none',args:[]};
       return {kind:'variable', name:first};
     }
     const args=[];
@@ -344,38 +368,83 @@ class Parser {
       } while(this.eat(','));
       this.expect(')');
     }
+    // Canonical Oreslang constructors also work as pure aliases for the
+    // same statically checked intrinsics; don't introduce any new host API.
+    if(qualifier===null){
+      const constructors={Some:['Option','some'],Ok:['Result','ok'],Err:['Result','err']};
+      if(Object.hasOwn(constructors,symbol)){
+        const [scope,name]=constructors[symbol];
+        return {kind:'call',qualifier:scope,name,args};
+      }
+    }
     return {kind:'call',qualifier,name:symbol,args};
   }
   matchExpression() {
     const subject=this.expression();
-    this.eat('over'); // compatibility with documented compact match syntax
-    const arms=[], seen=new Set(); let wildcard=false;
-    while(this.peek().value !== 'end' && this.peek().kind !== 'eof') {
-      let isDefault=false, value=null;
-      if(this.eat('else')) isDefault=true;
-      else {
+    this.eat('over');
+    const braced=this.eat('{');
+    const arms=[],seen=new Set();
+    let family=null,wildcard=false;
+    const ended=()=>braced?this.peek().value==='}':this.peek().value==='end';
+    while(!ended()&&this.peek().kind!=='eof') {
+      let tag=null, bind=null, value=null;
+      if(this.eat('else')) {
+        if(family==='adt')fail('ADT match requires exhaustive named variants, not else');
+        family='int';tag='wildcard';
+      } else {
         this.expect('on');
-        if(this.eat('_')) isDefault=true;
-        else value=this.integer(this.eat('-'));
+        const at=this.peek();
+        if(this.eat('_')){
+          if(family==='adt')fail('ADT match forbids wildcard');
+          family='int';tag='wildcard';
+        } else if(['Some','None','Ok','Err'].includes(at.value)){
+          if(family==='int')fail('cannot mix integer and ADT patterns',at);
+          family='adt';tag=this.name();
+          if(tag==='None') {
+            if(this.peek().value==='(')fail('None has no payload',this.peek());
+          } else {
+            this.expect('(');bind=this.name();this.expect(')');
+            if(bind==='_'||['None','Some','Ok','Err'].includes(bind))
+              fail('unsupported ADT payload binding name',at);
+          }
+        } else {
+          if(family==='adt')fail('cannot mix ADT and integer patterns',at);
+          family='int';tag='integer';
+          value=this.integer(this.eat('-'));
+        }
       }
-      if(wildcard) fail('unreachable arm after wildcard',this.peek());
-      if(isDefault) wildcard=true;
-      else {
-        if(seen.has(value)) fail('duplicate scalar pattern');
-        seen.add(value);
-      }
+      if(wildcard)fail('unreachable arm after wildcard',this.peek());
+      if(tag==='wildcard')wildcard=true;
+      const key=tag==='integer'?'int:'+value:tag;
+      if(seen.has(key))fail('duplicate match pattern '+key);
+      seen.add(key);
       this.eat('->');
       this.expect('{');
-      // A match expression yields its arm expression, not a statement return.
-      if(this.peek().value === 'return') fail('return inside expression match is invalid');
+      // Existing Oreslang ADT fixture uses statement-looking return bodies
+      // inside a match expression. Treat that spelling as an expression arm.
+      if(this.peek().value==='return') {
+        if(family!=='adt')fail('return in scalar expression match is unsupported');
+        this.i++;
+      }
       const body=this.expression();
       this.expect(';');this.expect('}');
-      arms.push({value, body});
-      if (arms.length > 256) fail('match arm limit');
+      arms.push({tag,bind,value,body});
+      if(arms.length>256)fail('match arm limit');
     }
-    this.expect('end');
-    if (!wildcard) fail('scalar int match requires exhaustive wildcard/else');
-    return {kind:'match',subject,arms};
+    this.expect(braced?'}':'end');
+    if(family==='adt') {
+      const tags=new Set(arms.map(arm=>arm.tag));
+      const option=tags.has('Some')||tags.has('None');
+      const result=tags.has('Ok')||tags.has('Err');
+      if(option&&result)fail('cannot mix Option and Result variant patterns');
+      const required=option?['Some','None']:['Ok','Err'];
+      if(arms.length!==2||required.some(tag=>!tags.has(tag)))
+        fail('non-exhaustive ADT match; expected '+required.join('/'));
+      return {kind:'adtMatch',adt:option?'option<int>':'result<int,int>',
+        subject,arms:arms.map(arm=>({tag:arm.tag,bind:arm.bind,body:arm.body}))};
+    }
+    if(!wildcard)fail('scalar int match requires exhaustive wildcard/else');
+    return {kind:'match',subject,arms:arms.map(arm=>({value:arm.value,body:arm.body}))};
   }
 }
 function resolveProgram(parsed) {
@@ -395,22 +464,42 @@ function resolveProgram(parsed) {
     if(exports.has(m)) fail('module/function export conflict '+m);
     exports.add(m);
   });
-  let nodeCount=0;
-  function resolve(expr,owner,depth=0) {
+  let nodeCount=0, nextCaptureSlot=0;
+  function resolve(expr,owner,depth=0,bindings=[]) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
       case 'int':case 'bool':return expr;
       case 'variable': {
+        const captured=bindings.findLast(b=>b.name===expr.name);
+        if(captured)return {kind:'capture',slot:captured.slot};
         const index=owner.params.indexOf(expr.name);
         if(index<0) fail('unresolved identifier '+expr.name);
         return {kind:'param',index};
       }
-      case 'neg':case 'not':return {kind:expr.kind,inner:resolve(expr.inner,owner,depth+1)};
-      case 'binary': return {kind:'binary',op:expr.op,left:resolve(expr.left,owner,depth+1),right:resolve(expr.right,owner,depth+1)};
-      case 'compare': return {kind:'compare',op:expr.op,left:resolve(expr.left,owner,depth+1),right:resolve(expr.right,owner,depth+1)};
-      case 'if': return {kind:'if',condition:resolve(expr.condition,owner,depth+1),
-        yes:resolve(expr.yes,owner,depth+1),no:resolve(expr.no,owner,depth+1)};
+      case 'neg':case 'not':return {kind:expr.kind,inner:resolve(expr.inner,owner,depth+1,bindings)};
+      case 'binary': return {kind:'binary',op:expr.op,left:resolve(expr.left,owner,depth+1,bindings),right:resolve(expr.right,owner,depth+1,bindings)};
+      case 'compare': return {kind:'compare',op:expr.op,left:resolve(expr.left,owner,depth+1,bindings),right:resolve(expr.right,owner,depth+1,bindings)};
+      case 'if': return {kind:'if',condition:resolve(expr.condition,owner,depth+1,bindings),
+        yes:resolve(expr.yes,owner,depth+1,bindings),no:resolve(expr.no,owner,depth+1,bindings)};
       case 'call': {
+        if(expr.qualifier==='Option'||expr.qualifier==='Result'){
+          const key=expr.qualifier+'.'+expr.name;
+          const signatures={
+            'Option.some':[1,'option<int>'],
+            'Option.none':[0,'option<int>'],
+            'Option.is_some':[1,'bool'],
+            'Option.unwrap_or':[2,'int'],
+            'Result.ok':[1,'result<int,int>'],
+            'Result.err':[1,'result<int,int>'],
+            'Result.is_ok':[1,'bool'],
+            'Result.unwrap_or':[2,'int'],
+            'Result.unwrap_err_or':[2,'int']
+          };
+          const sig=signatures[key];
+          if(!sig)fail('unknown portable constructor/intrinsic '+key);
+          if(expr.args.length!==sig[0])fail('intrinsic arity mismatch '+key);
+          return {kind:'intrinsic',name:key,args:expr.args.map(a=>resolve(a,owner,depth+1,bindings))};
+        }
         const mod=expr.qualifier===null?owner.module:expr.qualifier;
         if(mod!==null && !modules.includes(mod)) fail('unknown module '+mod);
         const key=(mod===null?'@file/':'@module/'+mod+'/')+expr.name;
@@ -420,10 +509,25 @@ function resolveProgram(parsed) {
           fail('unresolved callable '+key);
         }
         if(expr.qualifier!==null && mod!==owner.module && !functions[target].pub) fail('private module member '+key);
-        return {kind:'call',target,args:expr.args.map(a=>resolve(a,owner,depth+1))};
+        return {kind:'call',target,args:expr.args.map(a=>resolve(a,owner,depth+1,bindings))};
       }
-      case 'match': return {kind:'match',subject:resolve(expr.subject,owner,depth+1),
-        arms:expr.arms.map(arm=>({value:arm.value,body:resolve(arm.body,owner,depth+1)}))};
+      case 'match': return {kind:'match',subject:resolve(expr.subject,owner,depth+1,bindings),
+        arms:expr.arms.map(arm=>({value:arm.value,body:resolve(arm.body,owner,depth+1,bindings)}))};
+      case 'adtMatch': {
+        const subject=resolve(expr.subject,owner,depth+1,bindings);
+        const arms=expr.arms.map(arm=>{
+          let slot=null,scope=bindings;
+          if(arm.bind!==null){
+            if(owner.params.includes(arm.bind)||bindings.some(b=>b.name===arm.bind))
+              fail('ADT payload binding shadows an existing name '+arm.bind);
+            if(nextCaptureSlot>=MAX_TOKENS)fail('ADT capture slot budget exceeded');
+            slot=nextCaptureSlot++;
+            scope=[...bindings,{name:arm.bind,slot}];
+          }
+          return {tag:arm.tag,slot,body:resolve(arm.body,owner,depth+1,scope)};
+        });
+        return {kind:'adtMatch',adt:expr.adt,subject,arms};
+      }
       default: fail('unsupported expression node');
     }
   }
@@ -431,10 +535,11 @@ function resolveProgram(parsed) {
   const graph=resolved.map(()=>new Set());
   function inspect(expr,owner) {
     if(expr.kind==='call') {graph[owner].add(expr.target);expr.args.forEach(a=>inspect(a,owner));}
+    else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
     else if(expr.kind==='binary'||expr.kind==='compare') {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='neg'||expr.kind==='not') inspect(expr.inner,owner);
-    else if(expr.kind==='match') {
+    else if(expr.kind==='match'||expr.kind==='adtMatch') {
       inspect(expr.subject,owner);expr.arms.forEach(a=>inspect(a.body,owner));
     }
   }
@@ -466,6 +571,7 @@ function emitProgram(program) {
       case 'int': return expr.value+'n';
       case 'bool': return expr.value?'true':'false';
       case 'param':return '_p'+expr.index;
+      case 'capture':return '_v'+expr.slot;
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
@@ -477,6 +583,29 @@ function emitProgram(program) {
       case 'if':return '(('+emitExpr(expr.condition,depth+1)+')?('+
         emitExpr(expr.yes,depth+1)+'):('+emitExpr(expr.no,depth+1)+'))';
       case 'call':return '_f'+expr.target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
+      case 'intrinsic': {
+        const funcs={
+          'Option.some':'_some','Option.none':'_none',
+          'Option.is_some':'_is_some','Option.unwrap_or':'_option_or',
+          'Result.ok':'_ok','Result.err':'_err',
+          'Result.is_ok':'_is_ok','Result.unwrap_or':'_result_or',
+          'Result.unwrap_err_or':'_error_or'
+        };
+        const target=funcs[expr.name];
+        if(!target)fail('unsupported portable intrinsic');
+        return target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
+      }
+      case 'adtMatch': {
+        const check=expr.adt==='option<int>'?'_checkoption':'_checkresult';
+        const lines=['(()=>{const _subject='+emitExpr(expr.subject,depth+1)+';'+check+'(_subject);switch(_subject.kind){'];
+        for(const arm of expr.arms){
+          lines.push('case '+JSON.stringify(arm.tag)+':{');
+          if(arm.slot!==null)lines.push('const _v'+arm.slot+'=_subject.value;');
+          lines.push('return '+emitExpr(arm.body,depth+1)+';}');
+        }
+        lines.push('default:throw new TypeError("Oreslang ADT match illegal tag");}})()');
+        return lines.join('');
+      }
       case 'match': {
         // _subject is evaluated exactly once. A branch returns immediately,
         // so no fallthrough and unmatched arm expressions stay lazy.
@@ -493,10 +622,53 @@ function emitProgram(program) {
   }
   if(program.functions.some(fn=>fn.returnType==='bool'||fn.paramTypes?.includes('bool')))
     out.push('function _checkbool(v){if(typeof v!=="boolean")throw new TypeError("Oreslang bool required");return v;}');
+  // Intrinsics may be nested entirely within an int-returning function
+  // without appearing in its public signature. Include helpers based on
+  // both typed signatures and the entire already-validated expression DAG.
+  function usesPortableRuntime(expr) {
+    switch(expr.kind) {
+      case 'intrinsic':return true;
+      case 'call':return expr.args.some(usesPortableRuntime);
+      case 'binary':case 'compare':
+        return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
+      case 'if':return usesPortableRuntime(expr.condition)||
+        usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
+      case 'neg':case 'not':return usesPortableRuntime(expr.inner);
+      case 'match':return usesPortableRuntime(expr.subject)||
+        expr.arms.some(arm=>usesPortableRuntime(arm.body));
+      case 'adtMatch':return true;
+      default:return false;
+    }
+  }
+  if(program.functions.some(fn=>['option<int>','result<int,int>'].includes(fn.returnType)||
+      fn.paramTypes?.some(t=>['option<int>','result<int,int>'].includes(t))||
+      usesPortableRuntime(fn.body))) {
+    out.push(
+      'function _tag(k,v){const x=Object.create(null);Object.defineProperty(x,"kind",{value:k,enumerable:true});Object.defineProperty(x,"value",{value:v,enumerable:true});return Object.freeze(x);}',
+      'function _checktag(x,types){if(!x||typeof x!=="object"||Object.getPrototypeOf(x)!==null||!Object.isFrozen(x))throw new TypeError("Oreslang tagged value required");const keys=Reflect.ownKeys(x);if(keys.length!==2||!keys.includes("kind")||!keys.includes("value"))throw new TypeError("Oreslang tagged value shape required");const kd=Object.getOwnPropertyDescriptor(x,"kind"),vd=Object.getOwnPropertyDescriptor(x,"value");if(!kd||!vd||!Object.hasOwn(kd,"value")||!Object.hasOwn(vd,"value")||!kd.enumerable||!vd.enumerable||!types.includes(kd.value))throw new TypeError("Oreslang tagged value type required");if(kd.value==="None"){if(vd.value!==null)throw new TypeError("Oreslang None payload must be null");}else _check(vd.value);return x;}',
+      'function _checkoption(v){return _checktag(v,["Some","None"]);}',
+      'function _checkresult(v){return _checktag(v,["Ok","Err"]);}',
+      'function _some(v){return _tag("Some",_check(v));}',
+      'function _none(){return _tag("None",null);}',
+      'function _ok(v){return _tag("Ok",_check(v));}',
+      'function _err(v){return _tag("Err",_check(v));}',
+      'function _is_some(v){return _checkoption(v).kind==="Some";}',
+      'function _is_ok(v){return _checkresult(v).kind==="Ok";}',
+      'function _option_or(v,d){_check(d);const x=_checkoption(v);return x.kind==="Some"?x.value:d;}',
+      'function _result_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Ok"?x.value:d;}',
+      'function _error_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Err"?x.value:d;}'
+    );
+  }
   program.functions.forEach((fn,i)=>{
     const params=fn.params.map((_,j)=>'_p'+j);
     out.push('function _f'+i+'('+params.join(',')+'){');
-    params.forEach((p,j)=>out.push((fn.paramTypes?.[j]==='bool'?'_checkbool':'_check')+'('+p+');'));
+    params.forEach((p,j)=>{
+      const type=fn.paramTypes?.[j]??'int';
+      const check={int:'_check',bool:'_checkbool','option<int>':'_checkoption',
+        'result<int,int>':'_checkresult'}[type];
+      if(!check)fail('unsupported portable parameter type');
+      out.push(check+'('+p+');');
+    });
     out.push('return '+emitExpr(fn.body)+';','}');
   });
   let dispatcherNumber=0;
@@ -553,4 +725,3 @@ export function checkProgramV2(source) {
   compileProgramV2(source);
   return true;
 }
-

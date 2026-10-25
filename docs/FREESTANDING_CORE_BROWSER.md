@@ -74,3 +74,7 @@ The experimental IR v2 adds optional, **paired** `paramTypes` / `returnType` fie
 
 The schema now admits `compare` and `if` expression nodes as additive experimental program IR v2 variants, with strict expected boolean/int checking in the validator. Other consumers must negotiate the new variants; the IR remains backend-local and is not the shared authoritative typed IR.
 
+
+## Concrete freestanding ADTs (integration draft)
+
+The experimental pure JS compiler includes `Option<int>`, `Result<int,int>`, and typed exhaustive variant matching. Values are frozen null-prototype data, not authority-bearing capabilities. Captures are lexically scoped to their matched arm. This remains a limited closed-world subset, not a general user-defined tagged-union, hosted standard library, actor or sandbox implementation. Verify actual Node and browser ESM execution before enabling release.
