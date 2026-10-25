@@ -55,7 +55,8 @@ function ident(s,where) {
 }
 function classIdent(s,where){
   ident(s,where);
-  if(CLASS_RESERVED.has(s)&&s!=='mtd'&&s!=='method')fail(where+': reserved identifier');
+  if((CLASS_RESERVED.has(s)&&s!=='mtd'&&s!=='method')||
+     s==='Option'||s==='Result')fail(where+': reserved identifier');
   return s;
 }
 function callableIdent(s,where){
@@ -128,7 +129,7 @@ export function validateProgramIRV2(input) {
       record(method,['name','pub','params','paramTypes','returnType','body'],'class method');
       const methodName=callableIdent(method.name,'method name');
       if(typeof method.pub!=='boolean')fail('invalid method visibility');
-      const params=sequence(method.params,32,'method parameters').map(p=>ident(p,'method parameter'));
+      const params=sequence(method.params,32,'method parameters').map(p=>classIdent(p,'method parameter'));
       if(new Set(params).size!==params.length||params.includes('self'))
         fail('duplicate/reserved method parameter');
       const types=['int','bool','symbol','option<int>','result<int,int>'];
