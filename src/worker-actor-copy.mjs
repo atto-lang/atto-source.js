@@ -7,6 +7,9 @@ const ownKeys=Reflect.ownKeys, descriptor=Object.getOwnPropertyDescriptor;
 const getPrototype=Object.getPrototypeOf;
 const nativeTag=Object.prototype.toString;
 const arrayBufferBytes=descriptor(ArrayBuffer.prototype,'byteLength').get;
+// A resizable ArrayBuffer can have zero currently allocated bytes but retain a
+// much larger cloneable growth capacity. Budget the maximum, not just length.
+const arrayBufferCapacity=descriptor(ArrayBuffer.prototype,'maxByteLength')?.get;
 const sharedBytes=typeof SharedArrayBuffer==='function'?
   descriptor(SharedArrayBuffer.prototype,'byteLength').get:null;
 const typedBuffer=descriptor(getPrototype(Uint8Array.prototype),'buffer').get;
@@ -63,7 +66,10 @@ function validate(value){
     if(slot(sharedBytes,node)!==MISSING)
       throw new TypeError('shared-memory actor message forbidden in copy-only profile');
     const raw=slot(arrayBufferBytes,node);
-    if(raw!==MISSING){charge(raw);return;}
+    if(raw!==MISSING){
+      const capacity=slot(arrayBufferCapacity,node);
+      charge(capacity===MISSING?raw:Math.max(raw,capacity));return;
+    }
     if(ArrayBuffer.isView(node)){
       const viewed=slot(viewBuffer,node);
       const backing=viewed!==MISSING?viewed:slot(typedBuffer,node);
