@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "status": "NO_TRANSFER",
+  "source": {
+    "repository": "ores-truffle-oreslang/oreslang-source.js",
+    "repository_id": 1423606573,
+    "pull_request": 52,
+    "head_sha": "909546927722a14cdea8e288f3843b357542ed2e"
+  },
+  "candidate": {
+    "repository": "fiducia-cloud-test/gleam-client-consumer",
+    "repository_id": 1323680970,
+    "current_main_sha": "1566107fae4949e3baad8c8314608530021f2cfc",
+    "proposed_governance_pr": 17,
+    "proposed_governance_head": "c8f4d1c43edef70dea49ec4f6902fcc9a57a6987",
+    "admin_protection_issue": 18,
+    "main_protected": false,
+    "codeowners_blob_sha": "276947d843d0f01a0640768d1de38ee1dc7823d5",
+    "capacity_workflow_blob_sha": "f1ce2053e8ac5d0b725e5b63cdbd0c664831cf72",
+    "governance_workflow_blob_sha": "3a3a00a944bb27d7f58fd4f80dd7831c64bc35af",
+    "exact_tree_test_plan_blob_sha": "43c929a00ee5fdcbbc3b8b1711b24029a5ad75fd",
+    "successful_node22_run_id": 40157846401,
+    "successful_node22_job_id": 121062948121,
+    "verified_node": "v22.23.3",
+    "final_reviewed_main_sha": null
+  },
+  "activation_requirements": [
+    "platform-conformance#22 independent completed/resume disposition",
+    "platform-conformance#77 independent completed/resume disposition",
+    "platform-conformance#127 independent completed/resume disposition",
+    "carrier PR #17 independently reviewed and merged",
+    "carrier main protected with CODEOWNER/stale-review/required-check/admin/no-force/no-delete/no-bypass controls",
+    "final carrier main SHA repinned after merge/protection",
+    "independent ORESoftware approval on exact final JS authorization head"
+  ]
+}
