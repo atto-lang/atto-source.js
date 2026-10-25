@@ -71,7 +71,7 @@ Generated classes retain the prototype hardening proven by the standalone class-
 
 This convergence slice still has **no fields, inheritance, constructors with source parameters, local class variables, class-valued parameters/results, generic methods, actor methods, ownership/borrowing, or arbitrary method call graphs**. Method bodies may use scalar/boolean/Symbol expressions, conditionals and portable Option/Result intrinsics; nested class construction, free-function calls, method calls and match inside method bodies fail closed for now. Run `npm run test:program-classes`.
 
-Legacy class-free program-v2 IR and generated ESM remain byte-stable: the optional `classes` IR field is emitted only when a class is actually present.
+Legacy class-free program-v2 IR and generated ESM remain byte-stable: the optional `classes` IR field is emitted only when a class is actually present. The historical `--class-methods-v1` CLI and `@oreslang/source-js/class-methods-v1` API are retained as narrow compatibility adapters over this unified path; they intentionally reject richer program-v2 class features.
 
 ## Named arguments (experimental program-v2)
 
