@@ -3,10 +3,11 @@
 <title>Oreslang freestanding core in browser</title>
 <pre id="result">RUNNING</pre>
 <script type="module">
+import {compileProgramV2} from '../src/program-v2.mjs';
 import {compileFreestandingCore} from '../src/freestanding-core.mjs';
 import {compileLinkedFreestandingCore} from '../src/freestanding-core-link.mjs';
 const display=document.querySelector('#result');
-let url,linkedUrl,boolUrl,adtUrl,adtLinkedUrl,matchUrl,matchLinkedUrl,portableMatchUrl;
+let url,linkedUrl,boolUrl,adtUrl,adtLinkedUrl,matchUrl,matchLinkedUrl,portableMatchUrl,conditionalUrl,namedUrl,symbolUrl;
 try {
   const input=await fetch('./fixtures/freestanding-core-java.ores',{cache:'no-store'});
   if(!input.ok)throw Error('failed to load canonical core source');
@@ -131,8 +132,37 @@ try {
     catch(error){rejected=expected.test(String(error));}
     if(!rejected)throw Error('wrong browser diagnostic '+vector.id);
   }
+  // Execute the new source conditional slice in a real browser engine.
+  conditionalUrl=URL.createObjectURL(new Blob([compileProgramV2([
+    'pub fnc choose(bool b): int {return b ? 42 : 1 % 0;}',
+    'pub fnc nested(bool a,bool b): int {return a ? 1 : b ? 2 : 3;}',
+    'pub fnc statement(bool b): int {if b then return 41; else return 42; fi}'
+  ].join('\n'))],{type:'text/javascript'}));
+  const conditionals=await import(conditionalUrl);
+  eq(conditionals.choose(true),42n,'lazy ternary');
+  let selectedFailure=false;
+  try{conditionals.choose(false);}catch(error){selectedFailure=/ORES_I64_DIVISION_BY_ZERO/.test(String(error));}
+  if(!selectedFailure)throw Error('selected ternary arm must preserve checked arithmetic');
+  eq(conditionals.nested(false,true),2n,'right-associative ternary');
+  eq(conditionals.nested(false,false),3n,'nested false arm');
+  eq(conditionals.statement(false),42n,'canonical statement if');
+  namedUrl=URL.createObjectURL(new Blob([compileProgramV2(
+    'fnc take(int a,int b):int{return a+b;} pub fnc named():int{return take(b:2,a:40);}'
+  )],{type:'text/javascript'}));
+  eq((await import(namedUrl)).named(),42n,'named argument formal mapping');
+  symbolUrl=URL.createObjectURL(new Blob([compileProgramV2(
+    'pub fnc tag():Symbol{return #ready;} pub fnc echo(Symbol value):Symbol{return value;}'
+  )],{type:'text/javascript'}));
+  const symbols=await import(symbolUrl),tag=symbols.tag();
+  eq(tag.name,'ready','nominal Symbol');
+  eq(symbols.echo(tag),tag,'same-artifact Symbol parameter');
+  if(!Object.isFrozen(tag)||Object.getPrototypeOf(tag)!==null)throw Error('Symbol shape');
+  let forgedSymbolRejected=false;
+  try{symbols.echo(Object.freeze(Object.assign(Object.create(null),{kind:'PROCESS',name:'ready'})));}
+  catch(error){forgedSymbolRejected=/Oreslang Symbol required/.test(String(error));}
+  if(!forgedSymbolRejected)throw Error('forged Symbol accepted');
   display.textContent='PASS_BROWSER_FREESTANDING_CORE';
 } catch(error) {
   display.textContent='FAIL_BROWSER_FREESTANDING_CORE: '+String(error);
-} finally {if(url)URL.revokeObjectURL(url);if(linkedUrl)URL.revokeObjectURL(linkedUrl);if(boolUrl)URL.revokeObjectURL(boolUrl);if(adtUrl)URL.revokeObjectURL(adtUrl);if(adtLinkedUrl)URL.revokeObjectURL(adtLinkedUrl);if(matchUrl)URL.revokeObjectURL(matchUrl);if(matchLinkedUrl)URL.revokeObjectURL(matchLinkedUrl);if(portableMatchUrl)URL.revokeObjectURL(portableMatchUrl);}
+} finally {if(url)URL.revokeObjectURL(url);if(linkedUrl)URL.revokeObjectURL(linkedUrl);if(boolUrl)URL.revokeObjectURL(boolUrl);if(adtUrl)URL.revokeObjectURL(adtUrl);if(adtLinkedUrl)URL.revokeObjectURL(adtLinkedUrl);if(matchUrl)URL.revokeObjectURL(matchUrl);if(matchLinkedUrl)URL.revokeObjectURL(matchLinkedUrl);if(portableMatchUrl)URL.revokeObjectURL(portableMatchUrl);if(conditionalUrl)URL.revokeObjectURL(conditionalUrl);if(namedUrl)URL.revokeObjectURL(namedUrl);if(symbolUrl)URL.revokeObjectURL(symbolUrl);}
 </script>

@@ -23,18 +23,20 @@ const chrome=spawn(process.env.CHROME_BIN||'google-chrome',[
   '--headless=new','--no-sandbox','--disable-dev-shm-usage','--no-first-run',
   '--disable-background-networking','--remote-debugging-port=0',
   '--user-data-dir='+profile,'about:blank'
-],{stdio:'ignore'});
+],{stdio:['ignore','ignore','pipe']});
+let chromeStderr='';
+chrome.stderr.on('data',chunk=>{chromeStderr=(chromeStderr+chunk).slice(-16000);});
 let exited=false,chromeError=null,ws;
 chrome.on('exit',()=>{exited=true;});
 chrome.on('error',err=>{chromeError=err;exited=true;});
 try{
   let port;
-  for(let i=0;i<100;i++){
-    if(exited)throw Error('browser process exited: '+chromeError);
+  for(let i=0;i<600;i++){
+    if(exited)throw Error('browser process exited: '+chromeError+' '+chromeStderr);
     try{port=Number((await readFile(join(profile,'DevToolsActivePort'),'utf8')).split('\n')[0]);if(port)break;}catch{}
     await delay(100);
   }
-  if(!port)throw Error('browser DevTools startup timeout');
+  if(!port)throw Error('browser DevTools startup timeout: '+chromeStderr);
   const pages=await(await fetch('http://127.0.0.1:'+port+'/json/list')).json();
   const page=pages.find(p=>p.type==='page');
   if(!page)throw Error('browser target missing');
