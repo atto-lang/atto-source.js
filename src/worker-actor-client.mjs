@@ -1,5 +1,11 @@
 import {copyOwnedValue,copyOwnedValueWithBytes} from './worker-actor-copy.mjs';
 const PROTOCOL = 'ores.js.worker.v1';
+// An Error message is not necessarily stringifiable (e.g. null-prototype
+// structured-clone records). Never allow logging to interrupt settlement.
+const errorText = error => {
+  try {return String(error?.message ?? error).slice(0,512);}
+  catch {return 'uninspectable actor failure';}
+};
 const DEFAULT_MAX_PENDING_BYTES=32*1024*1024;
 const MAX_CONFIGURED_PENDING_BYTES=256*1024*1024;
 const UNSUPPORTED_PLACEMENT_KEYS = Object.freeze([
@@ -65,7 +71,7 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
       if (ready) {shutdown(new Error('duplicate actor ready'));void worker.terminate();return;}
       ready = true; readyResolve();
     } else if (frame.kind === 'fatal') {
-      shutdown(new Error('actor startup/protocol failure: ' + String(frame.error).slice(0,512)));
+      shutdown(new Error('actor startup/protocol failure: ' + errorText(frame.error)));
       void worker.terminate();
     } else if (frame.kind === 'result') {
       if (!ready) {failProtocol('actor result before ready');return;}
@@ -85,7 +91,7 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
         entry.resolve(snapshot);
       } else if (frame.ok === false) {
         release(frame.id);
-        entry.reject(new Error('actor delivery failed: '+String(frame.error).slice(0,512)));
+        entry.reject(new Error('actor delivery failed: '+errorText(frame.error)));
       } else {
         failProtocol('invalid actor response');
       }
@@ -102,7 +108,7 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
   } else if (typeof worker.on === 'function') {
     worker.on('message', onFrame);
     worker.on('error', err => {
-      shutdown(new Error('worker execution failure: ' + String(err?.message ?? err)));
+      shutdown(new Error('worker execution failure: ' + errorText(err)));
       void worker.terminate();
     });
     worker.on('messageerror', () => {
