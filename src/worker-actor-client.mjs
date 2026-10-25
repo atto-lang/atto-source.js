@@ -75,7 +75,10 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
       void worker.terminate();
     } else if (frame.kind === 'result') {
       if (!ready) {failProtocol('actor result before ready');return;}
-      const entry = pending.get(frame.id);
+      // Control properties may be accessors in custom Worker transports.
+      // Match and release the very same receipt, even if an id getter changes.
+      const id=frame.id;
+      const entry = pending.get(id);
       if (!entry) {shutdown(new Error('unexpected actor response id'));void worker.terminate();return;}
       if (frame.ok === true) {
         // A Worker response is a new ownership boundary. Even trusted adapter
@@ -87,7 +90,7 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
           failProtocol('invalid actor response payload');
           return;
         }
-        release(frame.id);
+        release(id);
         entry.resolve(snapshot);
       } else if (frame.ok === false) {
         // Parse the negative result before revoking its receipt. An accessor-
@@ -95,7 +98,7 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
         // outstanding promise, including this one. Releasing first would
         // orphan the promise because shutdown no longer finds its entry.
         const reason=errorText(frame.error);
-        release(frame.id);
+        release(id);
         entry.reject(new Error('actor delivery failed: '+reason));
       } else {
         failProtocol('invalid actor response');
