@@ -114,6 +114,12 @@ function validate(value){
     // there could execute arbitrary caller JS during validation.
     if(descriptor(node,Symbol.toStringTag))
       throw new TypeError('unsupported actor wire symbol key');
+    // Inherited Symbol.toStringTag is consulted by Object#toString too.
+    // An attacker can pollute Object.prototype to make a disguised native
+    // Error claim '[object Object]' without changing cloneable internal slots.
+    if(proto===Object.prototype &&
+       descriptor(Object.prototype,Symbol.toStringTag))
+      throw new TypeError('unsupported actor wire inherited symbol tag');
     if((proto!==null&&proto!==Object.prototype)||
        nativeTag.call(node)!=='[object Object]')
       throw new TypeError('unsupported actor wire object type');
