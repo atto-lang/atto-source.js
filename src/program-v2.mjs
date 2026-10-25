@@ -912,6 +912,22 @@ function emitProgram(program) {
       }
       case 'if':return '(('+emitExpr(expr.condition,depth+1)+')?('+
         emitExpr(expr.yes,depth+1)+'):('+emitExpr(expr.no,depth+1)+'))';
+      case 'newClass':return 'new _class'+expr.classIndex+'()';
+      case 'methodCall': {
+        const method=program.classes[expr.classIndex].methods[expr.methodIndex];
+        return '('+emitExpr(expr.receiver,depth+1)+')['+JSON.stringify(method.name)+']('+
+          expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
+      }
+      case 'namedMethodCall': {
+        const method=program.classes[expr.classIndex].methods[expr.methodIndex];
+        const declarations=['const _receiver='+emitExpr(expr.receiver,depth+1)+';'];
+        expr.args.forEach((arg,i)=>declarations.push(
+          'const _namedMethod'+i+'='+emitExpr(arg,depth+1)+';'));
+        const formal=new Array(expr.args.length);
+        expr.paramOrder.forEach((slot,i)=>{formal[slot]='_namedMethod'+i;});
+        return '(()=>{'+declarations.join('')+'return _receiver['+
+          JSON.stringify(method.name)+']('+formal.join(',')+');})()';
+      }
       case 'call':return '_f'+expr.target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
       case 'namedCall': {
         const declarations=expr.args.map((arg,i)=>
@@ -958,11 +974,16 @@ function emitProgram(program) {
       default: fail('unsupported codegen expression');
     }
   }
-  if(program.functions.some(fn=>fn.returnType==='bool'||fn.paramTypes?.includes('bool')))
+  const classMethods=(program.classes??[]).flatMap(cls=>cls.methods);
+  if(program.functions.some(fn=>fn.returnType==='bool'||fn.paramTypes?.includes('bool'))||
+     classMethods.some(method=>method.returnType==='bool'||method.paramTypes.includes('bool')))
     out.push('function _checkbool(v){if(typeof v!=="boolean")throw new TypeError("Oreslang bool required");return v;}');
   function usesSymbol(expr) {
     switch(expr.kind) {
       case 'symbol':return true;
+      case 'newClass':return false;
+      case 'methodCall':case 'namedMethodCall':
+        return usesSymbol(expr.receiver)||expr.args.some(usesSymbol);
       case 'call':case 'namedCall':case 'intrinsic':return expr.args.some(usesSymbol);
       case 'binary':case 'compare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
@@ -974,7 +995,9 @@ function emitProgram(program) {
     }
   }
   const hasSymbol=program.functions.some(fn=>fn.returnType==='symbol'||
-    fn.paramTypes?.includes('symbol')||usesSymbol(fn.body));
+    fn.paramTypes?.includes('symbol')||usesSymbol(fn.body))||
+    classMethods.some(method=>method.returnType==='symbol'||
+      method.paramTypes.includes('symbol')||(method.body!==null&&usesSymbol(method.body)));
   if(hasSymbol) {
     out.push(
       'const _symbolBrand=new WeakSet();',
@@ -994,8 +1017,11 @@ function emitProgram(program) {
   function usesPortableRuntime(expr) {
     switch(expr.kind) {
       case 'intrinsic':return true;
+      case 'newClass':return false;
+      case 'methodCall':case 'namedMethodCall':
+        return usesPortableRuntime(expr.receiver)||expr.args.some(usesPortableRuntime);
       case 'call':case 'namedCall':return expr.args.some(usesPortableRuntime);
-      case 'binary':case 'compare':
+      case 'binary':case 'compare':case 'symbolCompare':
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
       case 'if':return usesPortableRuntime(expr.condition)||
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
@@ -1008,7 +1034,10 @@ function emitProgram(program) {
   }
   if(program.functions.some(fn=>['option<int>','result<int,int>'].includes(fn.returnType)||
       fn.paramTypes?.some(t=>['option<int>','result<int,int>'].includes(t))||
-      usesPortableRuntime(fn.body))) {
+      usesPortableRuntime(fn.body))||
+     classMethods.some(method=>['option<int>','result<int,int>'].includes(method.returnType)||
+      method.paramTypes.some(t=>['option<int>','result<int,int>'].includes(t))||
+      (method.body!==null&&usesPortableRuntime(method.body)))) {
     out.push(
       'function _tag(k,v){const x=Object.create(null);Object.defineProperty(x,"kind",{value:k,enumerable:true});Object.defineProperty(x,"value",{value:v,enumerable:true});return Object.freeze(x);}',
       'function _checktag(x,types){if(!x||typeof x!=="object"||Object.getPrototypeOf(x)!==null||!Object.isFrozen(x))throw new TypeError("Oreslang tagged value required");const keys=Reflect.ownKeys(x);if(keys.length!==2||!keys.includes("kind")||!keys.includes("value"))throw new TypeError("Oreslang tagged value shape required");const kd=Object.getOwnPropertyDescriptor(x,"kind"),vd=Object.getOwnPropertyDescriptor(x,"value");if(!kd||!vd||!Object.hasOwn(kd,"value")||!Object.hasOwn(vd,"value")||!kd.enumerable||!vd.enumerable||!types.includes(kd.value))throw new TypeError("Oreslang tagged value type required");if(kd.value==="None"){if(vd.value!==null)throw new TypeError("Oreslang None payload must be null");}else _check(vd.value);return x;}',
@@ -1025,6 +1054,36 @@ function emitProgram(program) {
       'function _error_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Err"?x.value:d;}'
     );
   }
+  (program.classes??[]).forEach((cls,classIndex)=>{
+    const local='_class'+classIndex;
+    out.push('class '+local+' {','#oresBrand=1;',
+      'constructor(..._args){if(new.target!=='+local+')throw new TypeError("unsupported class derivation");if(_args.length!==0)throw new TypeError("constructor arity mismatch");Object.preventExtensions(this);}');
+    const families=new Map();
+    cls.methods.forEach((method,methodIndex)=>{
+      if(!method.pub)return;
+      if(!families.has(method.name))families.set(method.name,[]);
+      families.get(method.name).push(methodIndex);
+    });
+    for(const [name,indices] of families){
+      out.push(JSON.stringify(name)+'(..._args){',
+        'if(this===null||(typeof this!=="object"&&typeof this!=="function")||!(#oresBrand in this))throw new TypeError("invalid Oreslang receiver");',
+        'switch(_args.length){');
+      for(const methodIndex of indices){
+        const method=cls.methods[methodIndex];
+        out.push('case '+method.params.length+':{');
+        method.params.forEach((_,i)=>{
+          const type=method.paramTypes[i];
+          const check={int:'_check',bool:'_checkbool',symbol:'_checksymbol',
+            'option<int>':'_checkoption','result<int,int>':'_checkresult'}[type];
+          if(!check)fail('unsupported method parameter type');
+          out.push('const _p'+i+'=_args['+i+'];'+check+'(_p'+i+');');
+        });
+        out.push(method.returnType==='void'?'return;':'return '+emitExpr(method.body)+';','}');
+      }
+      out.push('default:throw new TypeError("method arity mismatch");','}','}');
+    }
+    out.push('}','Object.freeze('+local+'.prototype);','Object.freeze('+local+');');
+  });
   program.functions.forEach((fn,i)=>{
     const params=fn.params.map((_,j)=>'_p'+j);
     out.push('function _f'+i+'('+params.join(',')+'){');
@@ -1070,6 +1129,9 @@ function emitProgram(program) {
   for(const [name,indices] of publicGroups(null)) {
     out.push('export { '+exportCallable(indices)+' as '+JSON.stringify(name)+' };');
   }
+  (program.classes??[]).forEach((cls,i)=>{
+    if(cls.pub)out.push('export { _class'+i+' as '+JSON.stringify(cls.name)+' };');
+  });
   if(hasSymbol)out.push('export { _symbolWireV1 as "@oreslang/symbol-wire-v1" };');
   return out.join('\n')+'\n';
 }
