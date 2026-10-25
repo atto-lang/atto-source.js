@@ -224,7 +224,8 @@ class Parser {
   }
   classIdentifier() {
     const t=this.peek(),value=t.value;
-    if(t.kind!=='id'||!TOKEN_NAME.test(value)||CLASS_METHOD_RESERVED.has(value))
+    if(t.kind!=='id'||!TOKEN_NAME.test(value)||CLASS_METHOD_RESERVED.has(value)||
+       value==='Option'||value==='Result')
       fail('invalid or reserved class/member identifier '+value,t);
     this.i++;return value;
   }
