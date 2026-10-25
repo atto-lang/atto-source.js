@@ -78,6 +78,8 @@ test('own Symbol.toStringTag getter is never executed during native brand valida
 test('inherited Symbol.toStringTag cannot disguise native Error without invoking getter',()=>{
   const disguised=new Error('hidden Error data');
   Object.setPrototypeOf(disguised,Object.prototype);
+  // Remove the lazy stack own-property: prior validator then cloned before reject.
+  delete disguised.stack;
   const previous=Object.getOwnPropertyDescriptor(Object.prototype,Symbol.toStringTag);
   let getterCalls=0,clones=0;
   const original=globalThis.structuredClone;
