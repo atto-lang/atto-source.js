@@ -50,6 +50,7 @@
     "test:conditional-adt": "node --test tests/conditional-adt-integration.test.mjs tests/conditional-adt-boundaries.test.mjs",
     "test:named-args": "node --test tests/named-arguments.test.mjs",
     "test:symbols": "node --test tests/symbol-v1.test.mjs",
-    "test:symbol-wire": "node --test tests/symbol-equality-wire-v1.test.mjs tests/symbol-wire-v1.test.mjs"
+    "test:symbol-wire": "node --test tests/symbol-equality-wire-v1.test.mjs tests/symbol-wire-v1.test.mjs",
+    "test:program-classes": "node --test tests/program-classes-v2.test.mjs"
   }
 }
