@@ -26,7 +26,17 @@
     "contract_blob_sha": "e376d2b0a7a6d3b9efa3c678ade47267a4dbf1a8",
     "authorized_workflow_blob_sha": "6f4bdf4161dcfc39176656b83e450b5c549fc171",
     "runner_blob_sha": "6806728f904c353e8ffa968b276c6a609fb6c2f8",
-    "synthetic_isolation_workflow_blob_sha": "25177a8231a3dfc11c30f34cd418794183504525"
+    "synthetic_isolation_workflow_blob_sha": "25177a8231a3dfc11c30f34cd418794183504525",
+    "evidence": {
+      "capacity_run_id": 40213254381,
+      "synthetic_isolation_run_id": 40213254414,
+      "authorized_workflow_inertness_run_id": 40213254387,
+      "governance_run_id": 40213254566,
+      "governance_proposal_passed": true,
+      "carrier_main_admission_passed": false,
+      "carrier_main_protected": false,
+      "source_transfer_performed": false
+    }
   },
   "activation_requirements": [
     "platform-conformance#22 independent completed/resume disposition",
