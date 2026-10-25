@@ -12,6 +12,7 @@ const sharedBytes=typeof SharedArrayBuffer==='function'?
 const typedBuffer=descriptor(getPrototype(Uint8Array.prototype),'buffer').get;
 const viewBuffer=descriptor(DataView.prototype,'buffer').get;
 const blobBytes=typeof Blob==='function'?descriptor(Blob.prototype,'size').get:null;
+const blobType=typeof Blob==='function'?descriptor(Blob.prototype,'type').get:null;
 const mapSize=descriptor(Map.prototype,'size').get, setSize=descriptor(Set.prototype,'size').get;
 const mapEntries=Map.prototype.entries, setValues=Set.prototype.values;
 const regexpSource=descriptor(RegExp.prototype,'source').get;
@@ -72,7 +73,14 @@ function validate(value){
     const file=slot(fileName,node);
     if(file!==MISSING)throw new TypeError('unsupported actor wire File');
     const blob=slot(blobBytes,node);
-    if(blob!==MISSING){charge(blob);return;}
+    if(blob!==MISSING){
+      // Structured cloning preserves both byte payload and the MIME type.
+      // A zero-byte Blob can carry an arbitrarily long type string. Never
+      // trust an overridden instance .type property when budgeting it.
+      const type=slot(blobType,node);
+      if(typeof type!=='string')throw new TypeError('unsupported actor wire Blob type');
+      charge(blob);charge(type.length*2);return;
+    }
     const pattern=slot(regexpSource,node);
     if(pattern!==MISSING){charge(pattern.length*2);own(node,depth);return;}
     const time=slot(dateTime,node);
