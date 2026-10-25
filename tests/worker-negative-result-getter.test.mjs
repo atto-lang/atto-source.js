@@ -72,3 +72,24 @@ test('normal negative delivery only settles its own receipt, subsequent success 
   assert.equal(actor.pending,0);assert.equal(actor.pendingBytes,0);
   await actor.close();
 });
+for(const negative of [false,true]) {
+  test('response ID is captured once before '+(negative?'negative':'successful')+' settlement',async()=>{
+    const worker=new Stub(),actor=actorFor(worker);
+    worker.emit('message',{protocol:PROTOCOL,kind:'ready'});await actor.ready;
+    const first=actor.request({request:1}),second=actor.request({request:2});
+    let idReads=0;
+    const frame={protocol:PROTOCOL,kind:'result',ok:!negative};
+    if(negative)frame.error='denied';else frame.value=42;
+    Object.defineProperty(frame,'id',{get(){idReads++;return idReads===1?1:2;}});
+    worker.emit('message',frame);
+    if(negative)assert.deepEqual(await settles(first),{kind:'reject',message:'actor delivery failed: denied'});
+    else assert.equal(await first,42);
+    assert.equal(idReads,1,'a result must not consult mutable id more than once');
+    assert.equal(actor.pending,1);
+    assert.ok(actor.pendingBytes>0);
+    worker.emit('message',{protocol:PROTOCOL,kind:'result',id:2,ok:true,value:99});
+    assert.equal(await second,99);
+    assert.equal(actor.pending,0);assert.equal(actor.pendingBytes,0);
+    await actor.close();
+  });
+}
