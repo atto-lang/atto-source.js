@@ -55,9 +55,11 @@ Run `npm run test:core-bool`; the browser ESM smoke also covers pure boolean com
 
 ## Symbol literals (experimental program-v2)
 
-The typed program-v2 subset now accepts nominal `Symbol` parameters/results and strict PROCESS Symbol literals such as `#ready` and `#"http.ok"`. Names use Java-aligned pre-normalization/UTF-8 budgets and NFC/control/bidi validation. Generated values are fresh/non-interned and artifact-branded; forged host objects do not satisfy the Symbol ABI. The current brand is intentionally local to one generated artifact, so cross-artifact/actor Symbol transport remains fail-closed. Run `npm run test:symbols`.
+The typed program-v2 subset now accepts nominal `Symbol` parameters/results and strict PROCESS Symbol literals such as `#ready` and `#"http.ok"`. Names use Java-aligned pre-normalization/UTF-8 budgets and NFC/control/bidi validation. Generated values are fresh/non-interned and artifact-branded; forged host objects do not satisfy the Symbol ABI. Typed `==`/`!=` use logical `(kind,name)` equality rather than JavaScript object identity.
 
-Symbol equality, stable UUID Symbols, Symbol-keyed collections/records, declarations/manifests and cross-artifact/actor transport remain explicitly unsupported in this slice.
+Symbol-using generated ESM also exports the reserved host bridge `"@oreslang/symbol-wire-v1"`. Its `encode` method converts an artifact-branded Symbol to the portable exact-field wire `{"$symbol":"process"|"stable","name":"..."}`; `decode` validates canonical NFC/UUID/bounds and rebrands the value for the receiving artifact. The optional `"untrusted-core"` admission mode allows only PROCESS `ready`, `error`, and `Symbol.iterator`. The standalone `@oreslang/source-js/symbol-wire-v1` module additionally provides strict JSON parsing with duplicate-member rejection. Run `npm run test:symbols` and `npm run test:symbol-wire`.
+
+Stable UUID Symbols are wire-decodable but still have no source constructor/literal in this JS slice. Symbol-keyed collections/records, declaration/export manifests, tenant-scoped userland admission, and actor transport remain explicitly unsupported.
 
 ## Named arguments (experimental program-v2)
 

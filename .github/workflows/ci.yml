@@ -38,6 +38,8 @@ jobs:
         run: npm run test:named-args
       - name: Execute nominal Symbol literal and ABI checks
         run: npm run test:symbols
+      - name: Execute Symbol equality and cross-artifact wire checks
+        run: npm run test:symbol-wire
       - run: npm test
       - run: npm run check
       - run: npm run parity:js

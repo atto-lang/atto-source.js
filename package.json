@@ -15,6 +15,7 @@
     "./load-trusted-package.node": "./src/load-trusted-package.node.mjs",
     "./scalar-ir": "./src/scalar-ir.mjs",
     "./program-v2": "./src/program-v2.mjs",
+    "./symbol-wire-v1": "./src/symbol-wire-v1.mjs",
     "./multiple-inheritance": "./src/multiple-inheritance.mjs",
     "./program-ir-v2": "./src/program-ir-v2.mjs",
     "./java-js-parity-v1": "./src/java-js-parity-v1.mjs",
@@ -48,6 +49,7 @@
     "test:core-adt-conformance": "node --test tests/core-adt-match-conformance.test.mjs tests/core-adt-match-diagnostics.test.mjs",
     "test:conditional-adt": "node --test tests/conditional-adt-integration.test.mjs tests/conditional-adt-boundaries.test.mjs",
     "test:named-args": "node --test tests/named-arguments.test.mjs",
-    "test:symbols": "node --test tests/symbol-v1.test.mjs"
+    "test:symbols": "node --test tests/symbol-v1.test.mjs",
+    "test:symbol-wire": "node --test tests/symbol-equality-wire-v1.test.mjs tests/symbol-wire-v1.test.mjs"
   }
 }

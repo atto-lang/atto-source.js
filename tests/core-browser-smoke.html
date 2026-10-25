@@ -7,7 +7,7 @@ import {compileProgramV2} from '../src/program-v2.mjs';
 import {compileFreestandingCore} from '../src/freestanding-core.mjs';
 import {compileLinkedFreestandingCore} from '../src/freestanding-core-link.mjs';
 const display=document.querySelector('#result');
-let url,linkedUrl,boolUrl,adtUrl,adtLinkedUrl,matchUrl,matchLinkedUrl,portableMatchUrl,conditionalUrl,namedUrl,symbolUrl;
+let url,linkedUrl,boolUrl,adtUrl,adtLinkedUrl,matchUrl,matchLinkedUrl,portableMatchUrl,conditionalUrl,namedUrl,symbolUrl,equalityUrl;
 try {
   const input=await fetch('./fixtures/freestanding-core-java.ores',{cache:'no-store'});
   if(!input.ok)throw Error('failed to load canonical core source');
@@ -161,8 +161,14 @@ try {
   try{symbols.echo(Object.freeze(Object.assign(Object.create(null),{kind:'PROCESS',name:'ready'})));}
   catch(error){forgedSymbolRejected=/Oreslang Symbol required/.test(String(error));}
   if(!forgedSymbolRejected)throw Error('forged Symbol accepted');
+  equalityUrl=URL.createObjectURL(new Blob([compileProgramV2(
+    'pub fnc equal():bool{return #ready == #ready;} pub fnc unequal():bool{return #ready != #other;}'
+  )],{type:'text/javascript'}));
+  const equality=await import(equalityUrl);
+  eq(equality.equal(),true,'logical Symbol equality');
+  eq(equality.unequal(),true,'logical Symbol inequality');
   display.textContent='PASS_BROWSER_FREESTANDING_CORE';
 } catch(error) {
   display.textContent='FAIL_BROWSER_FREESTANDING_CORE: '+String(error);
-} finally {if(url)URL.revokeObjectURL(url);if(linkedUrl)URL.revokeObjectURL(linkedUrl);if(boolUrl)URL.revokeObjectURL(boolUrl);if(adtUrl)URL.revokeObjectURL(adtUrl);if(adtLinkedUrl)URL.revokeObjectURL(adtLinkedUrl);if(matchUrl)URL.revokeObjectURL(matchUrl);if(matchLinkedUrl)URL.revokeObjectURL(matchLinkedUrl);if(portableMatchUrl)URL.revokeObjectURL(portableMatchUrl);if(conditionalUrl)URL.revokeObjectURL(conditionalUrl);if(namedUrl)URL.revokeObjectURL(namedUrl);if(symbolUrl)URL.revokeObjectURL(symbolUrl);}
+} finally {if(url)URL.revokeObjectURL(url);if(linkedUrl)URL.revokeObjectURL(linkedUrl);if(boolUrl)URL.revokeObjectURL(boolUrl);if(adtUrl)URL.revokeObjectURL(adtUrl);if(adtLinkedUrl)URL.revokeObjectURL(adtLinkedUrl);if(matchUrl)URL.revokeObjectURL(matchUrl);if(matchLinkedUrl)URL.revokeObjectURL(matchLinkedUrl);if(portableMatchUrl)URL.revokeObjectURL(portableMatchUrl);if(conditionalUrl)URL.revokeObjectURL(conditionalUrl);if(namedUrl)URL.revokeObjectURL(namedUrl);if(symbolUrl)URL.revokeObjectURL(symbolUrl);if(equalityUrl)URL.revokeObjectURL(equalityUrl);}
 </script>

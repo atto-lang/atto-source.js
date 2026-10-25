@@ -354,6 +354,9 @@ class Parser {
     const modules = [], functions = [], usedModules = new Set();
     while (this.peek().kind !== 'eof') {
       if (this.eat('define')) {
+        if(this.peek().value==='symbol'||
+           (this.peek().value==='pub'&&this.tokens[this.i+1]?.value==='symbol'))
+          fail('Symbol declaration/export manifest not implemented',this.peek());
         this.expect('module'); const name=this.name();
         if(name==='Option'||name==='Result'||name==='Symbol')
           fail('reserved portable intrinsic module name '+name);
@@ -546,6 +549,27 @@ function resolveProgram(parsed) {
     exports.add(m);
   });
   let nodeCount=0, nextCaptureSlot=0;
+  function resolvedType(expr,owner) {
+    switch(expr.kind){
+      case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
+      case 'bool':case 'not':case 'compare':case 'symbolCompare':return 'bool';
+      case 'symbol':return 'symbol';
+      case 'param':return owner.paramTypes?.[expr.index]??'int';
+      case 'call':case 'namedCall':return functions[expr.target].returnType??'int';
+      case 'intrinsic': {
+        const results={
+          'Option.some':'option<int>','Option.none':'option<int>',
+          'Option.is_some':'bool','Option.unwrap_or':'int',
+          'Result.ok':'result<int,int>','Result.err':'result<int,int>',
+          'Result.is_ok':'bool','Result.unwrap_or':'int','Result.unwrap_err_or':'int'
+        };
+        return results[expr.name];
+      }
+      case 'if':return resolvedType(expr.yes,owner);
+      case 'adtMatch':return resolvedType(expr.arms[0].body,owner);
+      default:fail('cannot infer resolved expression type '+expr.kind);
+    }
+  }
   function resolve(expr,owner,depth=0,bindings=[]) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
@@ -559,7 +583,17 @@ function resolveProgram(parsed) {
       }
       case 'neg':case 'not':return {kind:expr.kind,inner:resolve(expr.inner,owner,depth+1,bindings)};
       case 'binary': return {kind:'binary',op:expr.op,left:resolve(expr.left,owner,depth+1,bindings),right:resolve(expr.right,owner,depth+1,bindings)};
-      case 'compare': return {kind:'compare',op:expr.op,left:resolve(expr.left,owner,depth+1,bindings),right:resolve(expr.right,owner,depth+1,bindings)};
+      case 'compare': {
+        const left=resolve(expr.left,owner,depth+1,bindings);
+        const right=resolve(expr.right,owner,depth+1,bindings);
+        const leftType=resolvedType(left,owner),rightType=resolvedType(right,owner);
+        if(leftType==='symbol'||rightType==='symbol'){
+          if(!['==','!='].includes(expr.op)||leftType!=='symbol'||rightType!=='symbol')
+            fail('Symbol comparison requires Symbol ==/!= Symbol');
+          return {kind:'symbolCompare',op:expr.op,left,right};
+        }
+        return {kind:'compare',op:expr.op,left,right};
+      }
       case 'if': return {kind:'if',condition:resolve(expr.condition,owner,depth+1,bindings),
         yes:resolve(expr.yes,owner,depth+1,bindings),no:resolve(expr.no,owner,depth+1,bindings)};
       case 'call': {
@@ -685,6 +719,11 @@ function emitProgram(program) {
         if(expr.op==='%')return '_rem(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
         return '_check(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
       case 'compare':return '(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
+      case 'symbolCompare': {
+        const equal='_symboleq('+emitExpr(expr.left,depth+1)+','+
+          emitExpr(expr.right,depth+1)+')';
+        return expr.op==='=='?equal:'!('+equal+')';
+      }
       case 'if':return '(('+emitExpr(expr.condition,depth+1)+')?('+
         emitExpr(expr.yes,depth+1)+'):('+emitExpr(expr.no,depth+1)+'))';
       case 'call':return '_f'+expr.target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
@@ -739,7 +778,8 @@ function emitProgram(program) {
     switch(expr.kind) {
       case 'symbol':return true;
       case 'call':case 'namedCall':case 'intrinsic':return expr.args.some(usesSymbol);
-      case 'binary':case 'compare':return usesSymbol(expr.left)||usesSymbol(expr.right);
+      case 'binary':case 'compare':case 'symbolCompare':
+        return usesSymbol(expr.left)||usesSymbol(expr.right);
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
       case 'neg':case 'not':return usesSymbol(expr.inner);
       case 'match':case 'adtMatch':return usesSymbol(expr.subject)||
@@ -747,12 +787,19 @@ function emitProgram(program) {
       default:return false;
     }
   }
-  if(program.functions.some(fn=>fn.returnType==='symbol'||fn.paramTypes?.includes('symbol')||
-      usesSymbol(fn.body))) {
+  const hasSymbol=program.functions.some(fn=>fn.returnType==='symbol'||
+    fn.paramTypes?.includes('symbol')||usesSymbol(fn.body));
+  if(hasSymbol) {
     out.push(
       'const _symbolBrand=new WeakSet();',
-      'function _symbol(n){const x=Object.create(null);Object.defineProperty(x,"kind",{value:"PROCESS",enumerable:true});Object.defineProperty(x,"name",{value:n,enumerable:true});Object.freeze(x);_symbolBrand.add(x);return x;}',
-      'function _checksymbol(v){if(!v||typeof v!=="object"||!_symbolBrand.has(v)||Object.getPrototypeOf(v)!==null||!Object.isFrozen(v))throw new TypeError("Oreslang Symbol required");return v;}'
+      'function _symbolKind(k,n){const x=Object.create(null);Object.defineProperty(x,"kind",{value:k,enumerable:true});Object.defineProperty(x,"name",{value:n,enumerable:true});Object.freeze(x);_symbolBrand.add(x);return x;}',
+      'function _symbol(n){return _symbolKind("PROCESS",n);}',
+      'function _checksymbol(v){if(!v||typeof v!=="object"||!_symbolBrand.has(v)||Object.getPrototypeOf(v)!==null||!Object.isFrozen(v))throw new TypeError("Oreslang Symbol required");return v;}',
+      'function _symboleq(a,b){_checksymbol(a);_checksymbol(b);return a.kind===b.kind&&a.name===b.name;}',
+      'function _wireName(n,stable){if(typeof n!=="string"||n.length>1024)throw new TypeError("Oreslang Symbol wire name budget");for(let i=0;i<n.length;i++){const u=n.charCodeAt(i);if(u>=55296&&u<=56319){const lo=n.charCodeAt(i+1);if(!(lo>=56320&&lo<=57343))throw new TypeError("Oreslang Symbol wire UTF-16");i++;}else if(u>=56320&&u<=57343)throw new TypeError("Oreslang Symbol wire UTF-16");}if(n.normalize("NFC")!==n)throw new TypeError("Oreslang Symbol wire requires NFC");const bytes=new TextEncoder().encode(n).length;if(bytes<1||bytes>256)throw new TypeError("Oreslang Symbol wire byte budget");for(const ch of n){const cp=ch.codePointAt(0);if(cp<32||(cp>=127&&cp<=159)||/[\\p{Cf}\\p{Zl}\\p{Zp}]/u.test(ch)||cp===1564||cp===8206||cp===8207||(cp>=8234&&cp<=8238)||(cp>=8294&&cp<=8297))throw new TypeError("Oreslang Symbol wire forbidden Unicode");}if(stable&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(n))throw new TypeError("Oreslang Symbol wire stable UUID");return n;}',
+      'function _wireDecode(v,policy="trusted"){if(policy!=="trusted"&&policy!=="untrusted-core")throw new TypeError("Oreslang Symbol wire policy");if(!v||typeof v!=="object"||Array.isArray(v)||(Object.getPrototypeOf(v)!==Object.prototype&&Object.getPrototypeOf(v)!==null))throw new TypeError("Oreslang Symbol wire object");const keys=Reflect.ownKeys(v);if(keys.length!==2||!keys.includes("$symbol")||!keys.includes("name")||keys.some(k=>typeof k!=="string"))throw new TypeError("Oreslang Symbol wire shape");for(const k of ["$symbol","name"]){const d=Object.getOwnPropertyDescriptor(v,k);if(!d||!Object.hasOwn(d,"value")||!d.enumerable)throw new TypeError("Oreslang Symbol wire accessor/non-enumerable");}const kind=v.$symbol;if(kind!=="process"&&kind!=="stable")throw new TypeError("Oreslang Symbol wire kind");const name=_wireName(v.name,kind==="stable");if(policy==="untrusted-core"&&(kind!=="process"||!["ready","error","Symbol.iterator"].includes(name)))throw new TypeError("Oreslang Symbol wire denied");return _symbolKind(kind==="process"?"PROCESS":"STABLE",name);}',
+      'function _wireEncode(v){const s=_checksymbol(v);const x=Object.create(null);Object.defineProperty(x,"$symbol",{value:s.kind==="PROCESS"?"process":"stable",enumerable:true});Object.defineProperty(x,"name",{value:s.name,enumerable:true});return Object.freeze(x);}',
+      'const _symbolWireV1=Object.freeze({encode:_wireEncode,decode:_wireDecode});'
     );
   }
   // Intrinsics may be nested entirely within an int-returning function
@@ -837,6 +884,7 @@ function emitProgram(program) {
   for(const [name,indices] of publicGroups(null)) {
     out.push('export { '+exportCallable(indices)+' as '+JSON.stringify(name)+' };');
   }
+  if(hasSymbol)out.push('export { _symbolWireV1 as "@oreslang/symbol-wire-v1" };');
   return out.join('\n')+'\n';
 }
 export function compileToProgramIRV2(source) {

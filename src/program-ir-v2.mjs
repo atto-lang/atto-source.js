@@ -141,7 +141,7 @@ export function validateProgramIRV2(input) {
     // No implicit truthiness or numeric coercions, including in supplied IR.
     if(expected==='bool'&&['int','neg','binary'].includes(desc.value))
       fail('boolean expression required');
-    if(expected!=='bool'&&['bool','compare','not'].includes(desc.value))
+    if(expected!=='bool'&&['bool','compare','symbolCompare','not'].includes(desc.value))
       fail('boolean value cannot be used as non-bool');
     if(expected!=='int'&&['int','neg','binary'].includes(desc.value))
       fail('integer expression cannot be used as non-int');
@@ -194,6 +194,13 @@ export function validateProgramIRV2(input) {
         if(!['<','>','<=','>=','==','!='].includes(expr.op))fail('unsupported comparator');
         return {kind:'compare',op:expr.op,left:node(expr.left,owner,depth+1,'int',active),
           right:node(expr.right,owner,depth+1,'int',active)};
+      case 'symbolCompare':
+        record(expr,['kind','op','left','right'],'Symbol compare');
+        if(expected!=='bool')fail('Symbol comparison outside bool context');
+        if(expr.op!=='=='&&expr.op!=='!=')fail('unsupported Symbol comparator');
+        return {kind:'symbolCompare',op:expr.op,
+          left:node(expr.left,owner,depth+1,'symbol',active),
+          right:node(expr.right,owner,depth+1,'symbol',active)};
       case 'if':
         record(expr,['kind','condition','yes','no'],'if');
         return {kind:'if',condition:node(expr.condition,owner,depth+1,'bool',active),
