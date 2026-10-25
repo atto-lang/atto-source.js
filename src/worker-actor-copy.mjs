@@ -1,116 +1,119 @@
-// Copy-only actor wire profile: no shared-memory or transferable authority.
-// Reject hostile/overlarge graphs BEFORE structuredClone allocates a copy.
-// The byte budget is an approximate content budget, not a wire-size guarantee.
-const MAX_NODES=8192;
-const MAX_DEPTH=64;
-const MAX_CONTENT_BYTES=8*1024*1024;
-// Intrinsic getters avoid invoking user-overridden instance accessors.
-const regexpSourceGetter=Object.getOwnPropertyDescriptor(RegExp.prototype,'source').get;
-const bigintHex=BigInt.prototype.toString;
-// Capture built-in internal-slot readers once. Instance properties such as
-// byteLength, buffer, size or Symbol.iterator must not hide cloneable bytes.
-const arrayBufferLength=Object.getOwnPropertyDescriptor(ArrayBuffer.prototype,'byteLength').get;
-const typedArrayBuffer=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),'buffer').get;
-const dataViewBuffer=Object.getOwnPropertyDescriptor(DataView.prototype,'buffer').get;
-const blobSize=typeof Blob==='function'?Object.getOwnPropertyDescriptor(Blob.prototype,'size').get:null;
-const mapEntries=Map.prototype.entries;
-const setValues=Set.prototype.values;
-const mapSize=Object.getOwnPropertyDescriptor(Map.prototype,'size').get;
-const setSize=Object.getOwnPropertyDescriptor(Set.prototype,'size').get;
+// A restricted copy-only value profile for the trusted Worker host adapter.
+// This is NOT a sandbox for executing adversarial JS and bytes are estimated
+// content size, not heap usage, wire size, or an allocation-free preflight.
+const MAX_NODES=8192, MAX_DEPTH=64, MAX_CONTENT_BYTES=8*1024*1024;
+const MISSING=Symbol('no internal slot');
+const ownKeys=Reflect.ownKeys, descriptor=Object.getOwnPropertyDescriptor;
+const getPrototype=Object.getPrototypeOf;
+const arrayBufferBytes=descriptor(ArrayBuffer.prototype,'byteLength').get;
+const sharedBytes=typeof SharedArrayBuffer==='function'?
+  descriptor(SharedArrayBuffer.prototype,'byteLength').get:null;
+const typedBuffer=descriptor(getPrototype(Uint8Array.prototype),'buffer').get;
+const viewBuffer=descriptor(DataView.prototype,'buffer').get;
+const blobBytes=typeof Blob==='function'?descriptor(Blob.prototype,'size').get:null;
+const mapSize=descriptor(Map.prototype,'size').get, setSize=descriptor(Set.prototype,'size').get;
+const mapEntries=Map.prototype.entries, setValues=Set.prototype.values;
+const regexpSource=descriptor(RegExp.prototype,'source').get;
+const dateTime=Date.prototype.getTime;
 const stringValue=String.prototype.valueOf;
-const sabLength=typeof SharedArrayBuffer==='function' ?
-  Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype,'byteLength').get : null;
-const MISSING_SLOT=Symbol('not a cloneable internal slot');
-function readSlot(reader,node) {
-  try{return reader.call(node);}
-  catch(error){
-    if(error instanceof TypeError)return MISSING_SLOT;
-    throw error;
-  }
+const numberValue=Number.prototype.valueOf, booleanValue=Boolean.prototype.valueOf;
+const bigintHex=BigInt.prototype.toString;
+// An optional File has extra cloneable name/metadata not measured as Blob data.
+const fileName=typeof File==='function'?
+  descriptor(File.prototype,'name')?.get:null;
+function slot(reader,node){
+  if(!reader)return MISSING;
+  try{return reader.call(node);}catch(e){if(e instanceof TypeError)return MISSING;throw e;}
 }
-
-function validateOwnedValue(value) {
-  const seen=new WeakSet();
+function bigintSize(value){
+  const hex=bigintHex.call(value,16);
+  return Math.ceil((hex.length-(hex[0]==='-'?1:0))/2);
+}
+function validate(value){
+  const visited=new WeakSet();
   let nodes=0,entries=0,bytes=0;
-  function addBytes(size) {
-    if(!Number.isSafeInteger(size)||size<0||
-       size>MAX_CONTENT_BYTES-bytes)
+  function charge(n){
+    if(!Number.isSafeInteger(n)||n<0||n>MAX_CONTENT_BYTES-bytes)
       throw new RangeError('actor message byte budget exceeded');
-    bytes+=size;
+    bytes+=n;
   }
-  function check(node,depth) {
-    if(typeof node==='string') {addBytes(node.length*2);return;}
-    if(typeof node==='bigint') {
-      const hex=bigintHex.call(node,16);
-      addBytes(Math.ceil((hex.length-(hex[0]==='-'?1:0))/2));
-      return;
+  function own(node,depth){
+    for(const key of ownKeys(node)){
+      if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
+      if(typeof key==='string')charge(key.length*2);
+      const d=descriptor(node,key);
+      if(!d||!Object.hasOwn(d,'value'))
+        throw new TypeError('actor message accessors forbidden in copy-only profile');
+      walk(d.value,depth+1);
     }
-    if(node===null||typeof node!=='object')return;
+  }
+  function walk(node,depth){
+    if(typeof node==='string'){charge(node.length*2);return;}
+    if(typeof node==='bigint'){charge(bigintSize(node));return;}
+    if(node===null||typeof node==='undefined'||typeof node==='boolean'||typeof node==='number')return;
+    if(typeof node!=='object')throw new TypeError('unsupported actor wire value');
     if(depth>MAX_DEPTH)throw new RangeError('actor message complexity exceeded');
-    if(seen.has(node))return;
-    seen.add(node);
+    if(visited.has(node))return;
+    visited.add(node);
     if(++nodes>MAX_NODES)throw new RangeError('actor message complexity exceeded');
-    // Internal-slot probes remain correct after Object.setPrototypeOf().
-    // An altered prototype must not conceal a cloneable 9-MiB backing buffer.
-    if(sabLength&&readSlot(sabLength,node)!==MISSING_SLOT)
+    if(slot(sharedBytes,node)!==MISSING)
       throw new TypeError('shared-memory actor message forbidden in copy-only profile');
-    const arrayBytes=readSlot(arrayBufferLength,node);
-    if(arrayBytes!==MISSING_SLOT){addBytes(arrayBytes);return;}
-    if(ArrayBuffer.isView(node)) {
-      const viewBuffer=readSlot(dataViewBuffer,node);
-      const buffer=viewBuffer!==MISSING_SLOT?viewBuffer:
-        readSlot(typedArrayBuffer,node);
-      if(buffer===MISSING_SLOT)
-        throw new TypeError('unknown actor ArrayBuffer view');
-      check(buffer,depth+1);
+    const raw=slot(arrayBufferBytes,node);
+    if(raw!==MISSING){charge(raw);return;}
+    if(ArrayBuffer.isView(node)){
+      const viewed=slot(viewBuffer,node);
+      const backing=viewed!==MISSING?viewed:slot(typedBuffer,node);
+      if(backing===MISSING)throw new TypeError('unsupported actor wire value');
+      walk(backing,depth+1);return;
+    }
+    const file=slot(fileName,node);
+    if(file!==MISSING)throw new TypeError('unsupported actor wire File');
+    const blob=slot(blobBytes,node);
+    if(blob!==MISSING){charge(blob);return;}
+    const pattern=slot(regexpSource,node);
+    if(pattern!==MISSING){charge(pattern.length*2);own(node,depth);return;}
+    const time=slot(dateTime,node);
+    if(time!==MISSING){charge(8);own(node,depth);return;}
+    const str=slot(stringValue,node);
+    if(str!==MISSING){charge(str.length*2);own(node,depth);return;}
+    const bn=slot(function(){return bigintHex.call(this,16);},node);
+    if(bn!==MISSING){charge(Math.ceil((bn.length-(bn[0]==='-'?1:0))/2));own(node,depth);return;}
+    const num=slot(numberValue,node);
+    if(num!==MISSING){charge(8);own(node,depth);return;}
+    const bool=slot(booleanValue,node);
+    if(bool!==MISSING){charge(1);own(node,depth);return;}
+    if(slot(mapSize,node)!==MISSING){
+      for(const [k,v] of mapEntries.call(node)){
+        if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
+        walk(k,depth+1);walk(v,depth+1);
+      }
       return;
     }
-    if(blobSize){
-      const fileBytes=readSlot(blobSize,node);
-      if(fileBytes!==MISSING_SLOT){addBytes(fileBytes);return;}
-    }
-    const hiddenString=readSlot(stringValue,node);
-    if(hiddenString!==MISSING_SLOT)addBytes(hiddenString.length*2);
-    const hiddenPattern=readSlot(regexpSourceGetter,node);
-    if(hiddenPattern!==MISSING_SLOT)addBytes(hiddenPattern.length*2);
-    const hiddenBigInt=readSlot(function bigintBase16(){return bigintHex.call(this,16);},node);
-    if(hiddenBigInt!==MISSING_SLOT)
-      addBytes(Math.ceil((hiddenBigInt.length-(hiddenBigInt[0]==='-'?1:0))/2));
-    const isMap=readSlot(mapSize,node)!==MISSING_SLOT;
-    const isSet=readSlot(setSize,node)!==MISSING_SLOT;
-    if(isMap) {
-      for(const [key,item] of mapEntries.call(node)){
-        if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
-        check(key,depth+1);check(item,depth+1);
-      }
-    }else if(isSet) {
+    if(slot(setSize,node)!==MISSING){
       for(const item of setValues.call(node)){
         if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
-        check(item,depth+1);
+        walk(item,depth+1);
       }
-    }else{
-      for(const key of Reflect.ownKeys(node)){
-        if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
-        if(typeof key==='string')addBytes(key.length*2);
-        const desc=Object.getOwnPropertyDescriptor(node,key);
-        // structuredClone invokes getters: only copy plain data properties.
-        if(!desc||!Object.hasOwn(desc,'value'))
-          throw new TypeError('actor message accessors forbidden in copy-only profile');
-        check(desc.value,depth+1);
-      }
+      return;
     }
+    if(Array.isArray(node)){
+      // Sparse arrays can request enormous clone-time backing storage with
+      // few enumerable elements: the length needs its own admission bound.
+      if(node.length>MAX_NODES)throw new RangeError('actor message complexity exceeded');
+      own(node,depth);return;
+    }
+    const proto=getPrototype(node);
+    if(proto!==null&&proto!==Object.prototype)
+      throw new TypeError('unsupported actor wire object type');
+    own(node,depth);
   }
-  check(value,0);
+  walk(value,0);
   return bytes;
 }
-// Measure the *validated snapshot*, rather than the caller's mutable graph.
-// This conservative estimate is not a serialized-wire-byte or heap bound.
-export function copyOwnedValueWithBytes(value) {
-  validateOwnedValue(value);
+export function copyOwnedValueWithBytes(value){
+  validate(value);
   const snapshot=structuredClone(value);
-  const bytes=validateOwnedValue(snapshot);
+  const bytes=validate(snapshot);
   return Object.freeze({value:snapshot,bytes});
 }
-export function copyOwnedValue(value) {
-  return copyOwnedValueWithBytes(value).value;
-}
+export function copyOwnedValue(value){return copyOwnedValueWithBytes(value).value;}
