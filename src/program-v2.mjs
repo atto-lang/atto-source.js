@@ -109,7 +109,7 @@ function tokenize(source) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
     } else if (source.startsWith('->',pos) || source.startsWith('::',pos)) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
-    } else if ('(){}:,;+-*/%=.<>!'.includes(c)) {
+    } else if ('(){}:,;+-*/%=.<>!?'.includes(c)) {
       emit('sym',c,start); advance();
     } else fail('unsupported character',start);
   }
@@ -181,7 +181,9 @@ class Parser {
         statements.push({kind:'return',body});
       } else if(this.eat('if')) {
         const condition=this.expression();
-        this.expect(';');this.expect('do');
+        // Canonical Oreslang uses `if condition then ... fi` statements;
+        // retain the earlier `if condition; do` prototype for old fixtures.
+        if(!this.eat('then')){this.expect(';');this.expect('do');}
         const yes=this.statementSequence(['else','fi'],depth+1);
         const no=this.eat('else')?this.statementSequence(['fi'],depth+1):[];
         this.expect('fi');
@@ -290,6 +292,17 @@ class Parser {
       let left = this.primary();
       while (true) {
         const op = this.peek().value;
+        // Lower precedence than arithmetic/comparison. Reusing the strict
+        // `if` IR expression keeps both arms lazy and type-checked; source
+        // `if ... then ... fi` remains statement-only.
+        if (op==='?' && min<=1) {
+          this.i++;
+          const yes=this.expression();
+          this.expect(':');
+          const no=this.expression(1); // right associative
+          left={kind:'if',condition:left,yes,no};
+          continue;
+        }
         if (op === '/') fail('division unsupported in provisional int profile',this.peek());
         const compare=['<','>','<=','>=','==','!='].includes(op);
         const prec=op==='*'||op==='%'?20:op==='+'||op==='-'?10:compare?5:-1;

@@ -38,11 +38,26 @@ The current emitted object is frozen and has no `Object.prototype`. That is **co
 
 ## Freestanding integer control flow (additive v2 slice)
 
-This backend also accepts **total-returning** integer functions containing bounded `if <int> <comparison> <int>; do ... else ... fi` and `return <int>;` statements. `else` is optional only when the remaining function control flow supplies a return on every path. The parser lowers the resulting control-flow tree to nested, statically typed conditional IR expressions. `<`, `>`, `<=`, `>=`, `==`, and `!=` compare signed i64 values; boolean comparisons are only valid as `if` conditions, never implicitly converted to Oreslang `int`. Paths with no return and unreachable trailing statements fail closed. Ordinary `let`, `while`, arbitrary statements, boolean operators, `void` returns, loops, and effects remain unsupported.
+This backend also accepts **total-returning** integer functions containing canonical `if <bool-condition> then ... else ... fi` and `return <int>;` statements. The prototype `if <bool-condition>; do ... else ... fi` remains accepted only for backward compatibility. `else` is optional only when the remaining function control flow supplies a return on every path. The parser lowers the resulting control-flow tree to nested, statically typed conditional IR expressions. `<`, `>`, `<=`, `>=`, `==`, and `!=` compare signed i64 values; boolean comparisons are only valid as `if` conditions, never implicitly converted to Oreslang `int`. Paths with no return and unreachable trailing statements fail closed. Ordinary `let`, `while`, arbitrary statements, boolean operators, `void` returns, loops, and effects remain unsupported.
 
-Program IR v2 extends its experimental expression variants with `compare` and `if`; the structural schema and runtime validator are updated in the same PR. The validator separately enforces `compare` as `bool` and both `if` branches as `int`, rejecting type-confused externally supplied IR before ESM generation. The IR is **not** promoted to a stable shared frontend contract by this extension.
+Program IR v2 extends its experimental expression variants with `compare` and `if`; the structural schema and runtime validator are updated in the same PR. The validator separately enforces `compare` as `bool` and both `if` branches as the statically expected `int` or `bool`, rejecting type-confused externally supplied IR before ESM generation. The IR is **not** promoted to a stable shared frontend contract by this extension.
 
 This narrow slice is sufficient to compile the exact source of `oreslang-source.java/stdlib/core.ores` as a browser/Node-safe module with `--freestanding-core`; see [the tier and browser contract](FREESTANDING_CORE_BROWSER.md). It is **not** general hosted stdlib transpilation and does not weaken the Java/LLVM parity requirements.
+
+## Canonical conditional expressions versus if statements
+
+`if condition then ... else ... fi` is **statement-only** and never a value. Use the canonical lazy expression `condition ? whenTrue : whenFalse` to select a value. Within the supported pure scalar program-v2 slice, the condition must be statically `bool` (no JavaScript truthiness), both arms must match the statically expected result type (`int` or `bool`), only the selected arm executes, and the condition is evaluated once. `?:` is right associative, binds below signed-i64 arithmetic/comparisons, and is currently above no admitted assignment operators. Boolean `and`/`or` and richer typing/ownership joins are not yet implemented; do not infer general language support.
+
+```ores
+pub fnc choose(bool enabled, int x): int { return enabled ? x : 0; }
+pub fnc decide(int x): int {
+  if x > 0 then return x; else return 0; fi
+}
+```
+
+A source `if` expression (including `return if ... fi`) must fail closed. The internal program-IR v2 `if` expression shape is reused for the lowered pure ternary and statement paths; this is a backend detail and does **not** make source `if` value-producing. The opt-in scalar-v1 compiler and generic class/actor lowering remain unaffected. Java/Graal reference: merged `oreslang-source.java` PR #1805; independent exact-head Node/Chrome and Java/LLVM semantics tests are release gates, not claimed here.
+
+Run `npm run test:conditionals` or the complete `npm test` suite.
 
 ## Scalar expression matches
 

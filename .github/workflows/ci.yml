@@ -30,6 +30,8 @@ jobs:
           node-version: '22'
       - name: Execute checked-i64 guest differential suite
         run: node --test tests/checked-i64-arithmetic-differential.test.mjs tests/checked-i64-remainder-parity.test.mjs
+      - name: Execute canonical conditional semantics and negative IR cases
+        run: npm run test:conditionals
       - run: npm test
       - run: npm run check
       - run: npm run parity:js
