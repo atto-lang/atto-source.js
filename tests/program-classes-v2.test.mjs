@@ -121,6 +121,17 @@ test('direct class IR rejects forged targets, receiver confusion and parameter m
     assert.throws(()=>compileProgramIRV2(ir),/error: program IR:/);
 });
 
+test('reserved class and method parameter identifiers fail closed',()=>{
+  for(const source of [
+    'define class new as end',
+    'define class Symbol as end',
+    'define class Option as end',
+    'define class Result as end',
+    'define class X as pub f(int return):int{return 1;} end',
+    'define class X as pub f(int self):int{return 1;} end'
+  ]) assert.throws(()=>compileProgramV2(source),/error: program v2:/,source);
+});
+
 test('class and method duplicate/collision boundaries fail closed',()=>{
   for(const source of [
     'define class X as foo():void{} foo(self):void{} end',
