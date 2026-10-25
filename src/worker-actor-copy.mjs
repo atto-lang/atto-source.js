@@ -109,6 +109,11 @@ function validate(value){
     // A native Error (or another exotic cloneable) can be disguised by
     // changing its prototype to Object.prototype. structuredClone still
     // copies its internal data. Reject anything not natively a record.
+    // Object.prototype.toString consults Symbol.toStringTag. Reject any
+    // instance override before asking for the native tag, or an accessor
+    // there could execute arbitrary caller JS during validation.
+    if(descriptor(node,Symbol.toStringTag))
+      throw new TypeError('unsupported actor wire symbol key');
     if((proto!==null&&proto!==Object.prototype)||
        nativeTag.call(node)!=='[object Object]')
       throw new TypeError('unsupported actor wire object type');
