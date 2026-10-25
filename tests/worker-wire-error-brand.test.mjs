@@ -74,3 +74,36 @@ test('own Symbol.toStringTag getter is never executed during native brand valida
   rejectedBeforeClone(value,/unsupported actor wire symbol key/);
   assert.equal(calls,0);
 });
+
+test('inherited Symbol.toStringTag cannot disguise native Error without invoking getter',()=>{
+  const disguised=new Error('hidden Error data');
+  Object.setPrototypeOf(disguised,Object.prototype);
+  const previous=Object.getOwnPropertyDescriptor(Object.prototype,Symbol.toStringTag);
+  let getterCalls=0,clones=0;
+  const original=globalThis.structuredClone;
+  try {
+    Object.defineProperty(Object.prototype,Symbol.toStringTag,{
+      configurable:true,
+      get(){getterCalls++;return 'Object';}
+    });
+    globalThis.structuredClone=(value)=>{clones++;return original(value);};
+    assert.throws(
+      ()=>copyOwnedValue(disguised),
+      /unsupported actor wire inherited symbol tag/
+    );
+    assert.equal(getterCalls,0);
+    assert.equal(clones,0);
+    assert.throws(
+      ()=>copyOwnedValue({ok:1}),
+      /unsupported actor wire inherited symbol tag/
+    );
+    assert.equal(getterCalls,0);
+    assert.equal(clones,0);
+    const nullRecord=Object.create(null);nullRecord.ok=1;
+    assert.equal(copyOwnedValue(nullRecord).ok,1);
+  } finally {
+    globalThis.structuredClone=original;
+    if(previous)Object.defineProperty(Object.prototype,Symbol.toStringTag,previous);
+    else delete Object.prototype[Symbol.toStringTag];
+  }
+});
