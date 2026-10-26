@@ -8,8 +8,26 @@ export class CompileError extends Error {
     this.name = 'CompileError';
   }
 }
+function validateSourceText(src) {
+  if (typeof src !== 'string') throw new CompileError('invalid or oversized source');
+  // TextEncoder silently replaces unpaired UTF-16 surrogates with U+FFFD.
+  // Reject them (and NUL) everywhere, including comments, before encoding.
+  for (let i=0; i<src.length; i++) {
+    const code=src.charCodeAt(i);
+    if (code===0) throw new CompileError('NUL in source');
+    if (code>=0xd800 && code<=0xdbff) {
+      const lo=src.charCodeAt(i+1);
+      if (!(lo>=0xdc00 && lo<=0xdfff)) throw new CompileError('invalid UTF-16 source');
+      i++;
+    } else if (code>=0xdc00 && code<=0xdfff) {
+      throw new CompileError('invalid UTF-16 source');
+    }
+  }
+  if (new TextEncoder().encode(src).byteLength > MAX_BYTES)
+    throw new CompileError('invalid or oversized source');
+}
 function lex(src) {
-  if (typeof src !== 'string' || new TextEncoder().encode(src).byteLength > MAX_BYTES) throw new CompileError('invalid or oversized source');
+  validateSourceText(src);
   const out = [];
   let i=0, line=1, col=1;
   function advance() { if(src[i]==='\n'){line++;col=1;}else col++;i++; }
