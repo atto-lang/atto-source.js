@@ -103,9 +103,11 @@ export function validateProgramIRV2(input) {
     fail('program: expected object');
   const rawKeys=Reflect.ownKeys(input);
   const hasClasses=rawKeys.includes('classes');
-  record(input,hasClasses?
-    ['schemaVersion','dialect','integerModel','sourceNamespace','modules','functions','classes']:
-    ['schemaVersion','dialect','integerModel','sourceNamespace','modules','functions'],'program');
+  const hasSourceExportBindings=rawKeys.includes('sourceExportBindings');
+  const programKeys=['schemaVersion','dialect','integerModel','sourceNamespace','modules','functions'];
+  if(hasSourceExportBindings)programKeys.push('sourceExportBindings');
+  if(hasClasses)programKeys.push('classes');
+  record(input,programKeys,'program');
   if(input.schemaVersion!==PROGRAM_IR_VERSION||input.dialect!==PROGRAM_IR_DIALECT||
      input.integerModel!==PROGRAM_IR_INT_MODEL)fail('unsupported IR version/dialect/model');
   const namespace=input.sourceNamespace===null?null:ident(input.sourceNamespace,'file namespace');
@@ -117,6 +119,34 @@ export function validateProgramIRV2(input) {
   });
   const sourceFunctions=sequence(input.functions,512,'functions');
   const sourceClasses=hasClasses?sequence(input.classes,512,'classes'):[];
+  const rawSourceExportBindings=hasSourceExportBindings?
+    sequence(input.sourceExportBindings,2048,'source export bindings'):[];
+  const sourceExportBindings=rawSourceExportBindings.map(binding=>{
+    record(binding,['ownerNamespaceId','localSymbolId','localKind','localName',
+      'externalName','scope','origin'],'source export binding');
+    const ownerNamespaceId=binding.ownerNamespaceId==='$root'?'$root':
+      ident(binding.ownerNamespaceId,'export owner namespace');
+    const kinds=new Set(['module','actor','class','fnc','routine','interface','contract',
+      'trait','struct','type','const','val','let','symbol','model']);
+    if(!kinds.has(binding.localKind))fail('invalid source export declaration kind');
+    const localName=binding.localKind==='symbol'?
+      symbolName(String(binding.localName).replace(/^#/u,'')):
+      ident(binding.localName,'export local name');
+    const expectedLocal=binding.localKind==='symbol'?'#'+localName:localName;
+    const externalName=binding.localKind==='symbol'?
+      '#'+symbolName(String(binding.externalName).replace(/^#/u,'')):
+      ident(binding.externalName,'export external name');
+    if(!['file','pkg','public'].includes(binding.scope))fail('invalid source export scope');
+    if(!['implicit_pub','explicit_export'].includes(binding.origin))
+      fail('invalid source export origin');
+    const expectedId=ownerNamespaceId+'::'+binding.localKind+'::'+expectedLocal;
+    if(binding.localSymbolId!==expectedId)fail('source export local symbol identity mismatch');
+    if(binding.origin==='implicit_pub'&&
+       (binding.scope!=='public'||externalName!==expectedLocal))
+      fail('implicit pub export metadata must preserve public local spelling');
+    return {ownerNamespaceId,localSymbolId:expectedId,localKind:binding.localKind,
+      localName:expectedLocal,externalName,scope:binding.scope,origin:binding.origin};
+  });
   if(hasClasses&&!sourceClasses.length)fail('redundant empty classes field');
   if(!moduleNames.length&&!sourceFunctions.length&&!sourceClasses.length)fail('empty program');
   const classNames=new Set(),classHeaders=sourceClasses.map(cls=>{
@@ -149,6 +179,31 @@ export function validateProgramIRV2(input) {
     });
     return {name,pub:cls.pub,methods};
   });
+  const exportExternalNames=new Set();
+  for(const binding of sourceExportBindings){
+    const externalKey=binding.ownerNamespaceId+'\0'+binding.externalName;
+    if(exportExternalNames.has(externalKey))fail('duplicate source export external name');
+    exportExternalNames.add(externalKey);
+
+    let matches=[];
+    if(binding.localKind==='module'){
+      matches=moduleNames.filter(name=>binding.ownerNamespaceId==='$root'&&
+        name===binding.localName).map(name=>({pub:false,name}));
+    }else if(binding.localKind==='class'){
+      matches=classHeaders.filter(cls=>binding.ownerNamespaceId==='$root'&&
+        cls.name===binding.localName);
+    }else if(binding.localKind==='fnc'||binding.localKind==='routine'){
+      matches=sourceFunctions.filter(fn=>
+        (fn.module??'$root')===binding.ownerNamespaceId&&
+        fn.name===binding.localName&&fn.kind===binding.localKind);
+    }
+    if(!matches.length)fail('source export metadata references missing local declaration');
+    if(binding.origin==='implicit_pub'&&!matches.every(item=>item.pub===true))
+      fail('implicit pub export metadata references non-public local declaration');
+    if(binding.scope!=='public'&&matches.some(item=>item.pub===true))
+      fail('narrow source export metadata conflicts with public local declaration');
+  }
+
   const slots=new Set(),symbolKinds=new Map(),exportNames=new Set(moduleNames);
   const headers=sourceFunctions.map(f=>{
     // Reject nulls and non-records before any optional-key introspection.
@@ -536,6 +591,7 @@ export function validateProgramIRV2(input) {
     schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,
     integerModel:PROGRAM_IR_INT_MODEL,sourceNamespace:namespace,
     modules:moduleNames,functions,
+    ...(hasSourceExportBindings?{sourceExportBindings}:{}),
     ...(hasClasses?{classes}:{})
   };
 }
