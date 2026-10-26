@@ -119,6 +119,25 @@ test('source-qualified module aliases resolve through public bindings only',asyn
     binding.ownerNamespaceId==='Service' &&
     binding.localName==='hidden' && binding.externalName==='value' &&
     binding.scope==='public' && binding.localKind==='fnc'));
+  // The separate IR admission path must enforce exactly the same source
+  // binding scope as source resolution. No raw IR caller can turn a file/pkg
+  // binding into authority for a cross-module private function call.
+  for(const scope of ['file','pkg']){
+    const narrowed=structuredClone(ir);
+    narrowed.sourceExportBindings=narrowed.sourceExportBindings.map(binding=>
+      binding.ownerNamespaceId==='Service'&&binding.externalName==='value'
+        ? {...binding,scope} : binding);
+    assert.throws(()=>validateProgramIRV2(narrowed),
+      /cross-module private call/,
+      'IR validation must deny cross-module calls with '+scope+' source scope');
+  }
+  const missingBinding=structuredClone(ir);
+  missingBinding.sourceExportBindings=missingBinding.sourceExportBindings.filter(
+    binding=>!(binding.ownerNamespaceId==='Service'&&binding.externalName==='value'));
+  assert.throws(()=>validateProgramIRV2(missingBinding),
+    /cross-module private call/,
+    'a direct IR caller cannot omit the authoritative public source binding');
+
   const compiled=compileProgramV2(publicAlias);
   const guest=await import('data:text/javascript;charset=utf-8,'+
     encodeURIComponent(compiled)+'#source-module-binding');
