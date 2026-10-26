@@ -43,8 +43,12 @@ function lex(src) {
   out.push({kind:'eof',value:'<eof>',line,col});return out;
 }
 function rejectUnsupportedSelect(tokens) {
-  for (const token of tokens) {
-    if (token.kind === 'id' && token.value === 'select') {
+  const startsStaticSelect = next =>
+    next && ['{','over','first','fair','random'].includes(next.value);
+  for (let i=0;i<tokens.length;i++) {
+    const token=tokens[i];
+    if (token.kind === 'id' && token.value === 'select' &&
+        startsStaticSelect(tokens[i+1])) {
       throw new CompileError(
         'static select requires checked Channel/Future arbitration, actor-lane continuation, ownership and cancellation lowering in the JS backend',
         token
