@@ -43,6 +43,19 @@ test('signed-i64 remainder follows Java long remainder semantics',async()=>{
 test('rejects unknown symbols with conformance-friendly diagnostic',()=>{
  assert.throws(()=>compile('pub fnc main(): int { return nonexistent_symbol; }'),/error: unresolved identifier nonexistent_symbol/);
 });
+test('inverted classes fail closed before JS lowering',()=>{
+ for(const source of [
+  'define inverted class Particle as x: int; end',
+  'define pub inverted class Particle as x: int; end',
+  'pub define inverted class Particle as x: int; end',
+  'define module M as define inverted class Particle as x: int; end pub fnc main(): int { return 0; } end'
+ ]) assert.throws(()=>compile(source),
+   /inverted class requires checked bracket-row and ownership lowering/, source);
+ // Contextual keyword only: ordinary identifier remains legal.
+ const ordinary='pub fnc inverted(): int { return 7; } pub fnc main(): int { return inverted(); }';
+ assert.doesNotThrow(()=>compile(ordinary));
+});
+
 test('fail-closed: unsupported language features and syntax',()=>{
  const invalid=[
   'pub fnc main(): int { return 1 / 2; }',
