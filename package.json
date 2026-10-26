@@ -29,7 +29,9 @@
     "./freestanding-core": "./src/freestanding-core.mjs",
     "./freestanding-core-link": "./src/freestanding-core-link.mjs",
     "./select-runtime": "./src/select-runtime.mjs",
-    "./selectable-i64-channel": "./src/selectable-i64-channel.mjs"
+    "./selectable-i64-channel": "./src/selectable-i64-channel.mjs",
+    "./selectable-future-i64": "./src/selectable-future-i64.mjs",
+    "./actor-generation-fence": "./src/actor-generation-fence.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
