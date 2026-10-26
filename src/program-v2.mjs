@@ -1031,13 +1031,26 @@ function resolveProgram(parsed) {
           fail('function calls inside method body unsupported in convergence slice');
         const mod=expr.qualifier===null?owner.module:expr.qualifier;
         if(mod!==null && !modules.includes(mod)) fail('unknown module '+mod);
-        const key=(mod===null?'@file/':'@module/'+mod+'/')+expr.name;
+        const crossModule=expr.qualifier!==null && mod!==owner.module;
+        let localName=expr.name;
+        if(crossModule) {
+          // Source names are resolved from the authoritative completed export
+          // table. File/pkg exports never authorize an unrelated module.
+          // Routines are direct-call-only, not imported/reified fnc values.
+          const binding=sourceExportBindings.find(item=>
+            item.ownerNamespaceId===mod && item.externalName===expr.name &&
+            item.scope==='public' && item.localKind==='fnc');
+          if(!binding)fail('private or unknown module export '+mod+'.'+expr.name);
+          localName=binding.localName;
+        }
+        const key=(mod===null?'@file/':'@module/'+mod+'/')+localName;
         const target=slots.get(key+'/'+expr.args.length);
         if(target===undefined) {
-          if(symbolKinds.has(key)) fail('call arity mismatch for '+key);
-          fail('unresolved callable '+key);
+          if(symbolKinds.has(key)) fail('call arity mismatch for '+mod+'.'+expr.name);
+          fail('unresolved callable '+mod+'.'+expr.name);
         }
-        if(expr.qualifier!==null && mod!==owner.module && !functions[target].pub) fail('private module member '+key);
+        if(crossModule && functions[target].kind!=='fnc')
+          fail('source module export is not reifiable fnc '+mod+'.'+expr.name);
         const bound=bindArguments(functions[target].params,expr.args,key,
           owner,depth,bindings);
         return bound.hasNamed?{kind:'namedCall',target,args:bound.args,paramOrder:bound.paramOrder}:
