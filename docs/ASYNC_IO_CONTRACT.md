@@ -24,7 +24,7 @@ The CLI `bin/oreslang-jsc.mjs` uses `node:fs/promises` for file access and now a
 stdout write completion so compiler-tooling output observes backpressure. Tooling output
 remains separate from guest I/O.
 
-`tests/async-io-contract.test.mjs` is an executable default-`npm test` gate over the
+`tests/async-only-io-policy.test.mjs` is an executable default-`npm test` gate over the
 guest-reachable Node/browser runtime modules. It rejects synchronous filesystem and
 child-process APIs, `Atomics.wait`, synchronous alternative-runtime filesystem APIs,
 and XMLHttpRequest. It also compiles scalar-v1 and program-v2 fixtures and verifies that
