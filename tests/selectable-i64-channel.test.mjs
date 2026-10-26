@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {SelectArbiter} from '../src/select-runtime.mjs';
 import {SelectableI64Channel} from '../src/selectable-i64-channel.mjs';
 
-function bindRead(channel,registration,onValue,onCallback) {
+function bindRead(channel,registration,onResult,onCallback) {
   return channel.subscribeReadable(subscription=>{
     onCallback();
     const cell=channel.createReadCell();
@@ -11,20 +11,19 @@ function bindRead(channel,registration,onValue,onCallback) {
     const won=registration.tryWin(
       ()=>channel.tryCommitRead(subscription,cell,notifications));
     notifications.dispatch();
-    if(won) {
-      assert.equal(cell.hasValue,true);
-      onValue(cell.value);
-    }
+    if(won) onResult(cell);
   });
 }
 
-function bindWrite(channel,registration,value,onCallback) {
+function bindWrite(channel,registration,value,onResult,onCallback) {
   return channel.subscribeWritable(subscription=>{
     onCallback();
+    const cell=channel.createWriteCell();
     const notifications=channel.createNotificationBatch();
-    registration.tryWin(
-      ()=>channel.tryCommitWrite(subscription,value,notifications));
+    const won=registration.tryWin(
+      ()=>channel.tryCommitWrite(subscription,value,cell,notifications));
     notifications.dispatch();
+    if(won) onResult(cell);
   });
 }
 
@@ -41,11 +40,11 @@ test('first ready read wins without consuming losing channel',()=>{
   let firstCallbacks=0,secondCallbacks=0;
 
   const firstWait=bindRead(
-    firstChannel,first,v=>{firstValue=v;},()=>{firstCallbacks++;});
+    firstChannel,first,c=>{firstValue=c.value;},()=>{firstCallbacks++;});
   first.arm(()=>firstWait.close());
 
   const secondWait=bindRead(
-    secondChannel,second,v=>{secondValue=v;},()=>{secondCallbacks++;});
+    secondChannel,second,c=>{secondValue=c.value;},()=>{secondCallbacks++;});
   second.arm(()=>secondWait.close());
 
   assert.equal(select.winner,0);
@@ -58,7 +57,7 @@ test('first ready read wins without consuming losing channel',()=>{
   assert.equal(firstChannel.pendingReaders,0);
   assert.equal(secondChannel.pendingReaders,0);
 
-  assert.deepEqual(secondChannel.tryRead(),{ok:true,value:22n});
+  assert.deepEqual(secondChannel.tryRead(),{ok:true,eof:false,value:22n});
 });
 
 test('losing write never publishes',()=>{
@@ -70,11 +69,11 @@ test('losing write never publishes',()=>{
   let firstCallbacks=0,secondCallbacks=0;
 
   const firstWait=bindWrite(
-    firstChannel,first,31n,()=>{firstCallbacks++;});
+    firstChannel,first,31n,()=>{},()=>{firstCallbacks++;});
   first.arm(()=>firstWait.close());
 
   const secondWait=bindWrite(
-    secondChannel,second,32n,()=>{secondCallbacks++;});
+    secondChannel,second,32n,()=>{},()=>{secondCallbacks++;});
   second.arm(()=>secondWait.close());
 
   assert.equal(select.winner,0);
@@ -84,8 +83,8 @@ test('losing write never publishes',()=>{
   assert.equal(secondChannel.size,0);
   assert.equal(firstChannel.pendingWriters,0);
   assert.equal(secondChannel.pendingWriters,0);
-  assert.deepEqual(firstChannel.tryRead(),{ok:true,value:31n});
-  assert.deepEqual(secondChannel.tryRead(),{ok:false,value:0n});
+  assert.deepEqual(firstChannel.tryRead(),{ok:true,eof:false,value:31n});
+  assert.deepEqual(secondChannel.tryRead(),{ok:false,eof:false,value:0n});
 });
 
 test('delayed readiness wakes one pending read and loser stays detached',()=>{
@@ -98,9 +97,9 @@ test('delayed readiness wakes one pending read and loser stays detached',()=>{
   let firstCallbacks=0,secondCallbacks=0;
 
   const firstWait=bindRead(
-    firstChannel,first,v=>{firstValue=v;},()=>{firstCallbacks++;});
+    firstChannel,first,c=>{firstValue=c.value;},()=>{firstCallbacks++;});
   const secondWait=bindRead(
-    secondChannel,second,v=>{secondValue=v;},()=>{secondCallbacks++;});
+    secondChannel,second,c=>{secondValue=c.value;},()=>{secondCallbacks++;});
   first.arm(()=>firstWait.close());
   second.arm(()=>secondWait.close());
 
@@ -119,7 +118,7 @@ test('delayed readiness wakes one pending read and loser stays detached',()=>{
 
   assert.equal(firstChannel.tryWrite(9n),true);
   assert.equal(firstCallbacks,0);
-  assert.deepEqual(firstChannel.tryRead(),{ok:true,value:9n});
+  assert.deepEqual(firstChannel.tryRead(),{ok:true,eof:false,value:9n});
 });
 
 test('freeing capacity wakes a pending selected write',()=>{
@@ -129,17 +128,17 @@ test('freeing capacity wakes a pending selected write',()=>{
   const select=new SelectArbiter(1);
   const write=select.registerCase(0);
   let callbacks=0;
-  const wait=bindWrite(channel,write,8n,()=>{callbacks++;});
+  const wait=bindWrite(channel,write,8n,()=>{},()=>{callbacks++;});
   write.arm(()=>wait.close());
 
   assert.equal(select.winner,null);
   assert.equal(channel.pendingWriters,1);
 
-  assert.deepEqual(channel.tryRead(),{ok:true,value:7n});
+  assert.deepEqual(channel.tryRead(),{ok:true,eof:false,value:7n});
   assert.equal(select.winner,0);
   assert.equal(callbacks,1);
   assert.equal(channel.pendingWriters,0);
-  assert.deepEqual(channel.tryRead(),{ok:true,value:8n});
+  assert.deepEqual(channel.tryRead(),{ok:true,eof:false,value:8n});
 });
 
 test('select cancellation detaches channel waiter',()=>{
@@ -148,7 +147,7 @@ test('select cancellation detaches channel waiter',()=>{
   const read=select.registerCase(0);
   let value=0n,callbacks=0;
   const wait=bindRead(
-    channel,read,v=>{value=v;},()=>{callbacks++;});
+    channel,read,c=>{value=c.value;},()=>{callbacks++;});
   read.arm(()=>wait.close());
 
   assert.equal(channel.pendingReaders,1);
@@ -168,13 +167,11 @@ test('stale same-channel read notification cannot consume winning write',()=>{
   let readValue=0n,readCallbacks=0,writeCallbacks=0;
 
   const readWait=bindRead(
-    channel,read,v=>{readValue=v;},()=>{readCallbacks++;});
+    channel,read,c=>{readValue=c.value;},()=>{readCallbacks++;});
   read.arm(()=>readWait.close());
 
-  // Winning write captures the active reader callback before mutation.
-  // Select loser cleanup closes that reader before the batch dispatches.
   const writeWait=bindWrite(
-    channel,write,99n,()=>{writeCallbacks++;});
+    channel,write,99n,()=>{},()=>{writeCallbacks++;});
   write.arm(()=>writeWait.close());
 
   assert.equal(select.winner,1);
@@ -183,7 +180,80 @@ test('stale same-channel read notification cannot consume winning write',()=>{
   assert.equal(readValue,0n);
   assert.equal(channel.pendingReaders,0);
   assert.equal(channel.pendingWriters,0);
-  assert.deepEqual(channel.tryRead(),{ok:true,value:99n});
+  assert.deepEqual(channel.tryRead(),{ok:true,eof:false,value:99n});
+});
+
+test('close wakes a pending selected read with EOF',()=>{
+  const channel=new SelectableI64Channel(1);
+  const select=new SelectArbiter(1);
+  const read=select.registerCase(0);
+  let result=null,callbacks=0;
+  const wait=bindRead(
+    channel,read,
+    c=>{result={hasValue:c.hasValue,eof:c.eof,value:c.value};},
+    ()=>{callbacks++;});
+  read.arm(()=>wait.close());
+
+  assert.equal(select.winner,null);
+  assert.equal(channel.close(),true);
+  assert.equal(channel.close(),false);
+  assert.equal(channel.closed,true);
+  assert.equal(select.winner,0);
+  assert.equal(callbacks,1);
+  assert.deepEqual(result,{hasValue:false,eof:true,value:0n});
+  assert.equal(channel.pendingReaders,0);
+  assert.deepEqual(channel.tryRead(),{ok:false,eof:true,value:0n});
+  assert.equal(channel.tryWrite(1n),false);
+});
+
+test('close drains buffered values before EOF',()=>{
+  const channel=new SelectableI64Channel(1,{maxWaiters:4});
+  assert.equal(channel.tryWrite(77n),true);
+  assert.equal(channel.close(),true);
+
+  const firstSelect=new SelectArbiter(1);
+  const firstRead=firstSelect.registerCase(0);
+  let first=null;
+  const firstWait=bindRead(
+    channel,firstRead,
+    c=>{first={hasValue:c.hasValue,eof:c.eof,value:c.value};},
+    ()=>{});
+  firstRead.arm(()=>firstWait.close());
+  assert.equal(firstSelect.winner,0);
+  assert.deepEqual(first,{hasValue:true,eof:false,value:77n});
+
+  const eofSelect=new SelectArbiter(1);
+  const eofRead=eofSelect.registerCase(0);
+  let eof=null;
+  const eofWait=bindRead(
+    channel,eofRead,
+    c=>{eof={hasValue:c.hasValue,eof:c.eof,value:c.value};},
+    ()=>{});
+  eofRead.arm(()=>eofWait.close());
+  assert.equal(eofSelect.winner,0);
+  assert.deepEqual(eof,{hasValue:false,eof:true,value:0n});
+});
+
+test('close wakes pending selected write with closed outcome',()=>{
+  const channel=new SelectableI64Channel(1);
+  assert.equal(channel.tryWrite(7n),true);
+  const select=new SelectArbiter(1);
+  const write=select.registerCase(0);
+  let outcome=null,callbacks=0;
+  const wait=bindWrite(
+    channel,write,8n,
+    c=>{outcome={written:c.written,closed:c.closed};},
+    ()=>{callbacks++;});
+  write.arm(()=>wait.close());
+
+  assert.equal(select.winner,null);
+  assert.equal(channel.close(),true);
+  assert.equal(select.winner,0);
+  assert.equal(callbacks,1);
+  assert.deepEqual(outcome,{written:false,closed:true});
+  assert.equal(channel.pendingWriters,0);
+  assert.deepEqual(channel.tryRead(),{ok:true,eof:false,value:7n});
+  assert.deepEqual(channel.tryRead(),{ok:false,eof:true,value:0n});
 });
 
 test('immediate readiness callback failure removes waiter',()=>{
@@ -219,16 +289,17 @@ test('foreign subscription and wrong batch fail closed',()=>{
   const second=new SelectableI64Channel(1);
   const foreign=first.subscribeReadable(()=>{});
   const batch=second.createNotificationBatch();
-  const cell=second.createReadCell();
+  const readCell=second.createReadCell();
+  const writeCell=second.createWriteCell();
 
-  assert.equal(second.tryCommitRead(foreign,cell,batch),false);
-  assert.equal(second.tryCommitWrite(foreign,1n,batch),false);
+  assert.equal(second.tryCommitRead(foreign,readCell,batch),false);
+  assert.equal(second.tryCommitWrite(foreign,1n,writeCell,batch),false);
   assert.equal(foreign.close(),true);
 
   const local=second.subscribeWritable(()=>{});
   const foreignBatch=first.createNotificationBatch();
   assert.throws(
-    ()=>second.tryCommitWrite(local,1n,foreignBatch),
+    ()=>second.tryCommitWrite(local,1n,writeCell,foreignBatch),
     /belongs to another channel/
   );
   assert.equal(local.close(),true);
@@ -243,5 +314,5 @@ test('i64 and capacity bounds fail closed',()=>{
   assert.throws(()=>channel.tryWrite(1n<<63n),/signed i64 BigInt/);
   assert.throws(()=>channel.tryWrite(-(1n<<63n)-1n),/signed i64 BigInt/);
   assert.equal(channel.tryWrite(-(1n<<63n)),true);
-  assert.deepEqual(channel.tryRead(),{ok:true,value:-(1n<<63n)});
+  assert.deepEqual(channel.tryRead(),{ok:true,eof:false,value:-(1n<<63n)});
 });
