@@ -13,7 +13,16 @@ test('Node actor denies remote file authorities and UNC-equivalent paths before 
     'file:////127.0.0.1/share/actor.mjs',
     'file:///%5C%5Cfileserver.example%5Cshare%5Cactor.mjs',
     'file:///%2Ffileserver.example/share/actor.mjs',
-    new URL('file://fileserver.example/share/actor.mjs')
+    new URL('file://fileserver.example/share/actor.mjs'),
+    // WHATWG URL normalization converts these Windows-style variants into
+    // remote authorities or UNC-equivalent leading double slashes.
+    String.raw`file:\\\\fileserver.example\\share\\actor.mjs`,
+    String.raw`file:/\\fileserver.example\\share\\actor.mjs`,
+    'file:////./UNC/fileserver.example/share/actor.mjs',
+    'file:////?/UNC/fileserver.example/share/actor.mjs',
+    'file:///%2e%2e/%2e%2e/..//fileserver.example/share/actor.mjs',
+    'file://%66ileserver.example/share/actor.mjs',
+    'file://fileserver.example./share/actor.mjs',
   ]) {
     assert.throws(
       () => spawnNodeActor({moduleUrl}),
