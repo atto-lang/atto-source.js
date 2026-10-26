@@ -10,17 +10,36 @@ function requireI64(value) {
 
 class ReadCell {
   value = 0n;
-  hasValue = false;
+  outcome = 'not_ready';
 
-  _set(value) {
+  get hasValue() { return this.outcome === 'value'; }
+  get eof() { return this.outcome === 'eof'; }
+
+  _setValue(value) {
     this.value = value;
-    this.hasValue = true;
+    this.outcome = 'value';
+  }
+
+  _setEof() {
+    this.value = 0n;
+    this.outcome = 'eof';
   }
 
   reset() {
     this.value = 0n;
-    this.hasValue = false;
+    this.outcome = 'not_ready';
   }
+}
+
+class WriteCell {
+  outcome = 'not_ready';
+
+  get written() { return this.outcome === 'written'; }
+  get closed() { return this.outcome === 'closed'; }
+
+  _setWritten() { this.outcome = 'written'; }
+  _setClosed() { this.outcome = 'closed'; }
+  reset() { this.outcome = 'not_ready'; }
 }
 
 class ChannelSubscription {
@@ -69,6 +88,7 @@ class NotificationBatch {
   }
 
   get size() { return this.#count; }
+  get closed() { return this.#closed; }
 
   _requireOwner(owner) {
     if (this.#owner !== owner)
@@ -120,6 +140,7 @@ export class SelectableI64Channel {
   #head = 0;
   #tail = 0;
   #count = 0;
+  #closed = false;
   #readers;
   #writers;
   #nextWaiterId = 1;
@@ -155,6 +176,10 @@ export class SelectableI64Channel {
     return new ReadCell();
   }
 
+  createWriteCell() {
+    return new WriteCell();
+  }
+
   subscribeReadable(notify) {
     return this.#subscribe('read',notify);
   }
@@ -174,21 +199,31 @@ export class SelectableI64Channel {
 
     const identity=subscription?._identity?.();
     if (!identity || !this._matches(
-        subscription,'read',identity.index,identity.id) ||
-        this.#count===0)
+        subscription,'read',identity.index,identity.id))
       return false;
 
-    this.#capture(this.#writers,'write',notifications);
-    const value=this.#values[this.#head];
-    this.#head=(this.#head+1)%this.#values.length;
-    this.#count--;
+    if (this.#count!==0) {
+      this.#capture(this.#writers,'write',notifications);
+      const value=this.#values[this.#head];
+      this.#head=(this.#head+1)%this.#values.length;
+      this.#count--;
+      this.#closeSlot(this.#readers[identity.index]);
+      readCell._setValue(value);
+      return true;
+    }
+
+    if (!this.#closed) return false;
+
     this.#closeSlot(this.#readers[identity.index]);
-    readCell._set(value);
+    readCell._setEof();
     return true;
   }
 
-  tryCommitWrite(subscription, value, notifications) {
+  tryCommitWrite(subscription, value, writeCell, notifications) {
     requireI64(value);
+    if (!(writeCell instanceof WriteCell))
+      throw new TypeError('writeCell must come from createWriteCell()');
+    writeCell.reset();
     if (!(notifications instanceof NotificationBatch))
       throw new TypeError(
         'notifications must come from createNotificationBatch()');
@@ -196,8 +231,16 @@ export class SelectableI64Channel {
 
     const identity=subscription?._identity?.();
     if (!identity || !this._matches(
-        subscription,'write',identity.index,identity.id) ||
-        this.#count===this.#values.length)
+        subscription,'write',identity.index,identity.id))
+      return false;
+
+    if (this.#closed) {
+      this.#closeSlot(this.#writers[identity.index]);
+      writeCell._setClosed();
+      return true;
+    }
+
+    if (this.#count===this.#values.length)
       return false;
 
     this.#capture(this.#readers,'read',notifications);
@@ -205,12 +248,13 @@ export class SelectableI64Channel {
     this.#tail=(this.#tail+1)%this.#values.length;
     this.#count++;
     this.#closeSlot(this.#writers[identity.index]);
+    writeCell._setWritten();
     return true;
   }
 
   tryWrite(value) {
     requireI64(value);
-    if (this.#count===this.#values.length) return false;
+    if (this.#closed || this.#count===this.#values.length) return false;
 
     const notifications=this.createNotificationBatch();
     this.#capture(this.#readers,'read',notifications);
@@ -234,6 +278,18 @@ export class SelectableI64Channel {
     this.#count--;
     notifications.dispatch();
     return result;
+  }
+
+  close() {
+    const readerNotifications=this.createNotificationBatch();
+    const writerNotifications=this.createNotificationBatch();
+    if (this.#closed) return false;
+    this.#closed=true;
+    this.#capture(this.#readers,'read',readerNotifications);
+    this.#capture(this.#writers,'write',writerNotifications);
+    readerNotifications.dispatch();
+    writerNotifications.dispatch();
+    return true;
   }
 
   _matches(subscription,kind,index,id) {
@@ -281,8 +337,8 @@ export class SelectableI64Channel {
     waiter.notify=notify;
 
     const ready=kind==='read'
-      ? this.#count!==0
-      : this.#count!==this.#values.length;
+      ? this.#count!==0 || this.#closed
+      : this.#closed || this.#count!==this.#values.length;
     if (ready) {
       try {
         notify(subscription);
