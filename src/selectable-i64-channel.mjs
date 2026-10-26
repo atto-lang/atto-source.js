@@ -167,10 +167,10 @@ export class SelectableI64Channel {
     if (!(readCell instanceof ReadCell))
       throw new TypeError('readCell must come from createReadCell()');
     readCell.reset();
-    notifications?._requireOwner(this);
     if (!(notifications instanceof NotificationBatch))
       throw new TypeError(
         'notifications must come from createNotificationBatch()');
+    notifications._requireOwner(this);
 
     const identity=subscription?._identity?.();
     if (!identity || !this._matches(
@@ -189,10 +189,10 @@ export class SelectableI64Channel {
 
   tryCommitWrite(subscription, value, notifications) {
     requireI64(value);
-    notifications?._requireOwner(this);
     if (!(notifications instanceof NotificationBatch))
       throw new TypeError(
         'notifications must come from createNotificationBatch()');
+    notifications._requireOwner(this);
 
     const identity=subscription?._identity?.();
     if (!identity || !this._matches(
@@ -224,13 +224,16 @@ export class SelectableI64Channel {
   tryRead() {
     if (this.#count===0) return {ok:false,value:0n};
 
+    // Allocate the public result before mutating the buffer so allocation
+    // failure cannot consume a value without a returned receipt.
+    const result={ok:true,value:0n};
     const notifications=this.createNotificationBatch();
     this.#capture(this.#writers,'write',notifications);
-    const value=this.#values[this.#head];
+    result.value=this.#values[this.#head];
     this.#head=(this.#head+1)%this.#values.length;
     this.#count--;
     notifications.dispatch();
-    return {ok:true,value};
+    return result;
   }
 
   _matches(subscription,kind,index,id) {
