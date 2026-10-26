@@ -82,4 +82,5 @@ test('function declaration modifier parity accepts define/pub orderings',async()
     if(declaration.includes('pub')) assert.equal(main(),42n);
   }
   assert.throws(()=>compileProgramV2(header+'define pub routine main(): int { return 42; }'),/public routine cannot be exported/);
+  assert.throws(()=>compileProgramV2(header+'pub define pub fnc main(): int { return 42; }'),/duplicate pub modifier/);
 });
