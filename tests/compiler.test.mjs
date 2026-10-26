@@ -81,6 +81,8 @@ test('static select forms fail closed with a capability diagnostic',()=> {
  }
  assert.doesNotThrow(()=>compile(
    'pub fnc main(): int { /* select over default: {} end */ return 1; }'));
+ assert.doesNotThrow(()=>compile(
+   'fnc select(): int { return 1; } pub fnc main(): int { return select(); }'));
 });
 
 test('CLI never publishes JS for rejected select source', async()=> {
