@@ -55,6 +55,13 @@
       "items": {
         "$ref": "#/$defs/class"
       }
+    },
+    "sourceExportBindings": {
+      "type": "array",
+      "maxItems": 2048,
+      "items": {
+        "$ref": "#/$defs/sourceExportBinding"
+      }
     }
   },
   "$defs": {
@@ -777,6 +784,78 @@
             {
               "type": "null"
             }
+          ]
+        }
+      }
+    },
+    "sourceExportBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ownerNamespaceId",
+        "localSymbolId",
+        "localKind",
+        "localName",
+        "externalName",
+        "scope",
+        "origin"
+      ],
+      "properties": {
+        "ownerNamespaceId": {
+          "anyOf": [
+            {
+              "const": "$root"
+            },
+            {
+              "$ref": "#/$defs/ident"
+            }
+          ]
+        },
+        "localSymbolId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "localKind": {
+          "enum": [
+            "module",
+            "actor",
+            "class",
+            "fnc",
+            "routine",
+            "interface",
+            "contract",
+            "trait",
+            "struct",
+            "type",
+            "const",
+            "val",
+            "let",
+            "symbol",
+            "model"
+          ]
+        },
+        "localName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "externalName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "scope": {
+          "enum": [
+            "file",
+            "pkg",
+            "public"
+          ]
+        },
+        "origin": {
+          "enum": [
+            "implicit_pub",
+            "explicit_export"
           ]
         }
       }
