@@ -88,7 +88,6 @@ class NotificationBatch {
   }
 
   get size() { return this.#count; }
-  get closed() { return this.#closed; }
 
   _requireOwner(owner) {
     if (this.#owner !== owner)
@@ -164,6 +163,7 @@ export class SelectableI64Channel {
 
   get capacity() { return this.#values.length; }
   get size() { return this.#count; }
+  get closed() { return this.#closed; }
   get pendingReaders() { return this.#activeCount(this.#readers); }
   get pendingWriters() { return this.#activeCount(this.#writers); }
   get notificationFailure() { return this.#notificationFailure; }
