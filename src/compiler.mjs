@@ -16,7 +16,19 @@ function lex(src) {
   function add(kind, value, loc) { if(out.length>=30000) throw new CompileError('token limit exceeded'); out.push({kind,value,...loc}); }
   while(i<src.length){
     if(/\s/.test(src[i])) {advance();continue;}
-    if(src.startsWith('//',i)){while(i<src.length&&src[i]!=='\n')advance();continue;}
+    if(src.startsWith('//',i)){
+      // Checked signed-i64 source cannot be silently compiled by the legacy
+      // scalar-v1 profile: this emitter currently wraps instead of trapping.
+      // Only an actual line-comment directive counts; block comments and
+      // other prose must not turn on or mask a numeric profile.
+      const loc={line,col};
+      const eol=src.indexOf('\n',i+2);
+      const tail=src.slice(i+2,eol<0?src.length:eol).trimStart();
+      if(tail.startsWith('oreslang:checked-i64'))
+        throw new CompileError('checked-i64 source requires program-v2; scalar-v1 uses provisional wrapping arithmetic',loc);
+      while(i<src.length&&src[i]!=='\n')advance();
+      continue;
+    }
     if(src.startsWith('/*',i)){
       const loc={line,col};advance();advance();let depth=1;
       while(depth&&i<src.length){
