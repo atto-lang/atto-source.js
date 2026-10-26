@@ -253,6 +253,17 @@ export function validateProgramIRV2(input) {
     if(binding.scope!=='public'&&matches.some(item=>item.pub===true))
       fail('narrow source export metadata conflicts with public local declaration');
   }
+  // A source export is not an ESM host export. It authorizes a typed,
+  // already-lowered cross-module fnc call only when the complete resolved
+  // binding table makes that exact local function family PUBLIC.
+  // File/package bindings and routines cannot widen a cross-module call.
+  function publicSourceCallable(target) {
+    return target.module!==null && target.kind==='fnc' &&
+      sourceExportBindings.some(binding=>
+        binding.ownerNamespaceId===target.module &&
+        binding.localKind==='fnc' && binding.localName===target.name &&
+        binding.scope==='public');
+  }
   const graph=headers.map(()=>new Set());
   let nodes=0;
   const captureSlots=headers.map(()=>new Set());
@@ -385,7 +396,9 @@ export function validateProgramIRV2(input) {
         if((target.returnType??'int')!==expected)fail('call return type mismatch');
         const args=sequence(expr.args,128,'call args');
         if(args.length!==target.params.length)fail('call arity mismatch');
-        if(target.module!==headers[owner].module && !target.pub)fail('cross-module private call');
+        if(target.module!==headers[owner].module &&
+           !target.pub && !publicSourceCallable(target))
+          fail('cross-module private call');
         graph[owner].add(expr.target);
         return {kind:'call',target:expr.target,args:args.map((a,i)=>
           node(a,owner,depth+1,target.paramTypes?.[i]??'int',active))};
@@ -408,7 +421,8 @@ export function validateProgramIRV2(input) {
           seen.add(slot);return slot;
         });
         if(seen.size!==target.params.length)fail('incomplete named call parameter order');
-        if(target.module!==headers[owner].module&&!target.pub)
+        if(target.module!==headers[owner].module &&
+           !target.pub && !publicSourceCallable(target))
           fail('cross-module private named call');
         graph[owner].add(expr.target);
         return {kind:'namedCall',target:expr.target,
