@@ -139,16 +139,23 @@ test('scalar-v1: real JS source-to-ESM matches shared values and bootstrap refus
   }
 });
 
-test('scalar-v1: .NET-style optional define declaration modifier', async () => {
-  const esm = compile('define pub fnc main(): int { return 40 + 2; }');
-  const mod = await import('data:text/javascript;charset=utf-8,' +
-    encodeURIComponent(esm));
-  assert.equal(mod.main(), 42n);
+test('scalar-v1: .NET-style define/pub modifier orderings', async () => {
+  for (const declaration of [
+    'define pub fnc main(): int { return 40 + 2; }',
+    'pub define fnc main(): int { return 40 + 2; }',
+    'pub fnc main(): int { return 40 + 2; }'
+  ]) {
+    const mod = await import('data:text/javascript;charset=utf-8,' +
+      encodeURIComponent(compile(declaration)));
+    assert.equal(mod.main(), 42n);
+  }
   assert.equal(check('define fnc internal(): int { return 7; }'), true);
   assert.doesNotMatch(compile('define fnc internal(): int { return 7; }'), /export \{/);
   for (const invalid of [
     'define define pub fnc main(): int { return 42; }',
     'define pub define fnc main(): int { return 42; }',
+    'pub define pub fnc main(): int { return 42; }',
+    'define pub pub fnc main(): int { return 42; }',
     'define actor Worker as end'
   ]) assert.throws(() => compile(invalid), CompileError);
 });

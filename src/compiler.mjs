@@ -66,8 +66,12 @@ class Parser {
     const functions=[];
     while(this.peek().kind!=='eof'&&!(module&&this.peek().value==='end')){
       if(functions.length>=512)throw new CompileError('function limit',this.peek());
-      this.match('define'); // Optional root declaration modifier; not a module.
-      const pub=this.match('pub');const at=this.peek();
+      // Accept only one define and one pub, in either canonical order.
+      // Deliberately do not admit pub define module in this scalar subset.
+      let pub=this.match('pub');
+      if(pub){this.match('define');}
+      else if(this.match('define')){pub=this.match('pub');}
+      const at=this.peek();
       if(!this.match('fnc')&&!this.match('routine'))throw new CompileError('unsupported declaration',at);
       const name=this.id();this.expect('(');const params=[];
       if(!this.match(')')){
