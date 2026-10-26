@@ -110,6 +110,16 @@ test('program-v2 export resolver rejects binding conflicts with canonical catego
   );
 });
 
+test('symbol remains contextual when exported as an ordinary binding name',()=>{
+  const ir=compileToProgramIRV2(
+    'export symbol as PublicSymbol; fnc symbol():int{return 1;}'
+  );
+  assert.equal(ir.sourceExportBindings.length,1);
+  assert.equal(ir.sourceExportBindings[0].localName,'symbol');
+  assert.equal(ir.sourceExportBindings[0].externalName,'PublicSymbol');
+  assert.equal(ir.sourceExportBindings[0].localKind,'fnc');
+});
+
 test('program-v2 export grammar uses stable hardened diagnostics',()=>{
   const keep='fnc keep():int{return 1;}';
   for(const [source,code] of [
