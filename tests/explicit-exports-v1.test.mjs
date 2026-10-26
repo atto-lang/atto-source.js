@@ -107,6 +107,49 @@ test('root/module aliases and scoped exports preserve emitted ESM, not host API'
   }
 });
 
+test('source-qualified module aliases resolve through public bindings only',async()=>{
+  const member='fnc hidden():int{return 7;}';
+  const moduleSource='define module Service as\n'+member+'\nend\n';
+  const program=source=>moduleSource.replace(member,source)+
+    'pub fnc main():int{return Service.value();}';
+
+  const publicAlias=program('export fnc hidden as value;\n'+member);
+  const ir=compileToProgramIRV2(publicAlias);
+  assert.ok(ir.sourceExportBindings.some(binding=>
+    binding.ownerNamespaceId==='Service' &&
+    binding.localName==='hidden' && binding.externalName==='value' &&
+    binding.scope==='public' && binding.localKind==='fnc'));
+  const compiled=compileProgramV2(publicAlias);
+  const guest=await import('data:text/javascript;charset=utf-8,'+
+    encodeURIComponent(compiled)+'#source-module-binding');
+  assert.equal(guest.main(),7n,
+    'qualified source call must use the external alias while lowering to local fnc');
+  assert.deepEqual(Object.keys(guest.Service),[],
+    'explicit Oreslang member aliases cannot widen the generated host ESM API');
+
+  assert.throws(()=>compileProgramV2(
+    publicAlias.replace('Service.value()','Service.hidden()')),
+    /private or unknown module export/,
+    'an alias-only export must not expose the private lexical spelling');
+  for(const scope of ['file','pkg']){
+    const narrowed=program('export['+scope+'] fnc hidden as value;\n'+member);
+    assert.throws(()=>compileProgramV2(narrowed),
+      /private or unknown module export/,
+      'source scope '+scope+' must not authorize cross-module qualified calls');
+  }
+  assert.throws(()=>compileProgramV2(
+    program('export routine hidden as value;\nroutine hidden():int{return 7;}')),
+    /private or unknown module export/,
+    'direct-call-only routines cannot be reified through module binding lookup');
+
+  // Preserve the existing declaration-side pub contract through the same
+  // source binding resolver, including the original public lexical name.
+  const implicitPublic=program('pub fnc value():int{return 7;}');
+  const implicitGuest=await import('data:text/javascript;charset=utf-8,'+
+    encodeURIComponent(compileProgramV2(implicitPublic))+'#implicit-module-binding');
+  assert.equal(implicitGuest.main(),7n);
+});
+
 test('inline pub plus identical explicit export is one idempotent source binding',()=>{
   const ir=compileToProgramIRV2(
     'export fnc api; pub fnc api():int{return 1;}'
