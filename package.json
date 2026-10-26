@@ -27,7 +27,8 @@
     "./actor-host.node": "./src/actor-host.node.mjs",
     "./worker-actor-client": "./src/worker-actor-client.mjs",
     "./freestanding-core": "./src/freestanding-core.mjs",
-    "./freestanding-core-link": "./src/freestanding-core-link.mjs"
+    "./freestanding-core-link": "./src/freestanding-core-link.mjs",
+    "./select-runtime": "./src/select-runtime.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
