@@ -49,10 +49,12 @@ class Parser {
   expect(v){if(!this.match(v))throw new CompileError('expected '+v+', found '+this.peek().value,this.peek());}
   id(){const t=this.peek();if(t.kind!=='id')throw new CompileError('expected identifier',t);this.pos++;return t.value;}
   parse(){
-    const module=this.match('define');if(module){this.expect('module');this.id();this.match('as');}
+    const module=this.peek().value==='define' && this.ts[this.pos+1]?.value==='module';
+    if(module){this.pos++;this.expect('module');this.id();this.match('as');}
     const functions=[];
     while(this.peek().kind!=='eof'&&!(module&&this.peek().value==='end')){
       if(functions.length>=512)throw new CompileError('function limit',this.peek());
+      this.match('define'); // Optional root declaration modifier; not a module.
       const pub=this.match('pub');const at=this.peek();
       if(!this.match('fnc')&&!this.match('routine'))throw new CompileError('unsupported declaration',at);
       const name=this.id();this.expect('(');const params=[];
