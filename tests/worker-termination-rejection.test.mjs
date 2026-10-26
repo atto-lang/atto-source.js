@@ -68,3 +68,59 @@ test('reentrant Worker error during termination is bounded to one attempt',async
   await actor.close();
   assert.equal(worker.terminations,1);
 });
+
+import {Worker} from 'node:worker_threads';
+import {spawnNodeActor} from '../src/actor-host.node.mjs';
+import {spawnBrowserActor} from '../src/actor-host.browser.mjs';
+
+test('Node spawn cleanup observes rejected terminate without masking invalid configuration',async()=>{
+  const original=Worker.prototype.terminate;
+  let calls=0;
+  Worker.prototype.terminate=function(...args) {
+    calls++;
+    // Actually release the real worker; only the returned termination promise
+    // is adversarial. The host must observe the injected rejection.
+    void Promise.resolve(original.apply(this,args)).catch(()=>{});
+    return Promise.reject(new Error('injected Node cleanup rejection'));
+  };
+  try {
+    assert.throws(()=>spawnNodeActor({
+      moduleUrl:'file:///trusted/generated.mjs',maxPending:0
+    }),/invalid mailbox limit/);
+  } finally {
+    Worker.prototype.terminate=original;
+  }
+  assert.equal(calls,1);
+  // Node's test runner also flags an unhandledRejection after this turn.
+  await new Promise(resolve=>setImmediate(resolve));
+});
+
+test('Browser spawn cleanup preserves original failure across throwing/rejecting terminate',async()=>{
+  const previous=Object.getOwnPropertyDescriptor(globalThis,'location');
+  Object.defineProperty(globalThis,'location',{
+    configurable:true,value:{href:'https://example.test/app',origin:'https://example.test'}
+  });
+  try {
+    for(const outcome of ['throw','reject']) {
+      let calls=0;
+      class StubBrowserWorker {
+        addEventListener() {}
+        postMessage() {}
+        terminate() {
+          calls++;
+          if(outcome==='throw')throw new Error('injected browser cleanup throw');
+          return Promise.reject(new Error('injected browser cleanup rejection'));
+        }
+      }
+      assert.throws(()=>spawnBrowserActor({
+        moduleUrl:'https://example.test/trusted/generated.mjs',
+        WorkerCtor:StubBrowserWorker,maxPendingBytes:0
+      }),/invalid actor mailbox byte limit/);
+      assert.equal(calls,1);
+    }
+  } finally {
+    if(previous)Object.defineProperty(globalThis,'location',previous);
+    else delete globalThis.location;
+  }
+  await new Promise(resolve=>setImmediate(resolve));
+});
