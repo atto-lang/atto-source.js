@@ -187,6 +187,26 @@ function tokenize(source) {
         value=normalizeProcessSymbolName(value);
       }
       emit('symbol',value,start);
+    } else if (c==='"'||c==="'") {
+      const quote=c;advance();let value='',closed=false;
+      while(pos<source.length){
+        if(source[pos]===quote){advance();closed=true;break;}
+        if(source[pos]==='\n'||source[pos]==='\r')fail('raw newline in string literal',start);
+        let ch=source[pos];advance();
+        if(ch==='\\'){
+          if(pos>=source.length)fail('unterminated string escape',start);
+          const escaped=source[pos];advance();
+          if(escaped==='n')ch='\n';
+          else if(escaped==='r')ch='\r';
+          else if(escaped==='t')ch='\t';
+          else if(escaped===quote||escaped==='\\')ch=escaped;
+          else fail('unsupported string escape',start);
+        }
+        value+=ch;
+        if(value.length>4096)fail('string literal exceeds 4096 characters',start);
+      }
+      if(!closed)fail('unterminated string literal',start);
+      emit('string',value,start);
     } else if (/[A-Za-z_]/.test(c)) {
       let word = '';
       while (pos < source.length && /[A-Za-z0-9_]/.test(source[pos])) {
@@ -205,7 +225,7 @@ function tokenize(source) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
     } else if (source.startsWith('->',pos) || source.startsWith('::',pos)) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
-    } else if ('(){}:,;+-*/%=.<>!?'.includes(c)) {
+    } else if ('()[]{}:,;+-*/%=.<>!?'.includes(c)) {
       emit('sym',c,start); advance();
     } else fail('unsupported character',start);
   }
@@ -275,12 +295,122 @@ class Parser {
     }
     fail('unsupported scalar type (int, bool, Symbol, Option<int>, Result<int,int>)',this.peek());
   }
+  exportKindWord(value) {
+    return new Set([
+      'module','actor','class','fnc','routine','interface','contract','trait',
+      'struct','type','const','val','let','symbol','model'
+    ]).has(value);
+  }
+  exportKind() {
+    const value=this.peek().value;
+    if(this.exportKindWord(value)){this.i++;return value;}
+    if(['string','String','int','bool','void'].includes(value))
+      fail('[EXPORT_UNKNOWN_DECLARATION_KIND] typed export prefixes are declaration families, not runtime value types',this.peek());
+    return null;
+  }
+  exportItem(kind) {
+    const at=this.peek();
+    if(this.peek().kind==='symbol'){
+      const localName='#'+this.peek().value;this.i++;
+      if(kind!==null&&kind!=='symbol')
+        fail('[EXPORT_KIND_MISMATCH] Symbol literal does not match typed export kind',at);
+      let selfIdentity=false;
+      if(this.eat('as')){
+        if(this.peek().kind==='symbol'){
+          const target='#'+this.peek().value;this.i++;
+          if(target!==localName)
+            fail('[EXPORT_SYMBOL_IDENTITY_MISMATCH] Symbol export identity must be unchanged',at);
+          selfIdentity=true;
+        }else if(this.peek().kind==='string')
+          fail('[EXPORT_LITERAL_ALIAS_UNSUPPORTED] runtime literals are not export binding names',this.peek());
+        else if(this.peek().kind==='id')
+          fail('[EXPORT_SYMBOL_BINDING_ALIAS_UNSUPPORTED] Symbol identities are not ordinary binding aliases',this.peek());
+        else fail('[EXPORT_MALFORMED_ALIAS] expected the same Symbol identity after as',this.peek());
+      }
+      return {localName,externalName:null,symbolLiteral:true,selfIdentity};
+    }
+
+    if(kind==='symbol'){
+      if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='as'&&
+          this.tokens[this.i+2]?.kind==='symbol')
+        fail('[EXPORT_SYMBOL_IDENTITY_TARGET_REQUIRES_SYMBOL_SOURCE] a Symbol identity target requires a #symbol source',this.peek());
+      fail('[EXPORT_SYMBOL_LITERAL_REQUIRED] Symbol exports name nominal #symbol identities',this.peek());
+    }
+
+    const localName=this.name();
+    let externalName=null;
+    if(this.eat('as')){
+      if(this.peek().kind==='symbol')
+        fail('[EXPORT_SYMBOL_IDENTITY_TARGET_REQUIRES_SYMBOL_SOURCE] only a Symbol source may use Symbol identity after as',this.peek());
+      if(this.peek().kind==='string')
+        fail('[EXPORT_LITERAL_ALIAS_UNSUPPORTED] runtime literals are not export binding names',this.peek());
+      externalName=this.name();
+    }
+    return {localName,externalName,symbolLiteral:false,selfIdentity:false};
+  }
+  rejectExportSuffix() {
+    const value=this.peek().value;
+    if(value==='.'||value==='::'||value==='/')
+      fail('[EXPORT_QUALIFIED_TARGET_UNSUPPORTED] v1 local exports use simple local names only',this.peek());
+    if(value==='<'||value==='>')
+      fail('[EXPORT_GENERIC_TARGET_UNSUPPORTED] export generic instantiations are not supported',this.peek());
+    if(value==='(')
+      fail('[EXPORT_CALLABLE_SIGNATURE_UNSUPPORTED] export overload selectors use the logical family name',this.peek());
+    if(value==='{')
+      fail('[EXPORT_NESTED_GROUP] nested export groups are not supported',this.peek());
+  }
+  exportDeclaration(ownerNamespace) {
+    const at=this.peek();this.expect('export');
+    let scope='public';
+    if(this.peek().value==='['||this.peek().value==='('){
+      const close=this.peek().value==='['?']':')';this.i++;
+      const raw=this.peek().value;
+      if(raw==='file')scope='file';
+      else if(raw==='pkg'||raw==='package')scope='pkg';
+      else fail('[EXPORT_UNKNOWN_SCOPE] expected file, pkg, or package export scope',this.peek());
+      this.i++;this.expect(close);
+      if(this.peek().value==='['||this.peek().value==='(')
+        fail('[EXPORT_MULTIPLE_SCOPES] export accepts exactly one scope',this.peek());
+    }
+    if(this.eat('*')){
+      if(this.eat('from'))
+        fail('[EXPORT_REEXPORT_UNSUPPORTED] export * from is reserved for future re-export syntax',at);
+      fail('[EXPORT_WILDCARD_UNSUPPORTED] wildcard exports are not enabled in v1',at);
+    }
+    if(this.eat('from'))
+      fail('[EXPORT_REEXPORT_UNSUPPORTED] export from is reserved for future re-export syntax',at);
+
+    const kind=this.exportKind(),items=[];
+    if(this.eat('{')){
+      if(this.eat('}'))fail('[EXPORT_EMPTY_GROUP] export groups cannot be empty',at);
+      for(;;){
+        if(this.peek().value===',')
+          fail('[EXPORT_MALFORMED_LIST] leading or repeated comma in export group',this.peek());
+        if(this.peek().value==='{')
+          fail('[EXPORT_NESTED_GROUP] nested export groups are not supported',this.peek());
+        if(this.exportKindWord(this.peek().value))
+          fail('[EXPORT_KIND_PREFIX_IN_GROUP] typed export kind belongs before the group',this.peek());
+        items.push(this.exportItem(kind));
+        if(this.eat(',')){if(this.eat('}'))break;continue;}
+        if(this.eat('}'))break;
+        this.rejectExportSuffix();
+        fail("[EXPORT_MALFORMED_LIST] expected ',' or '}' after export item",this.peek());
+      }
+    }else items.push(this.exportItem(kind));
+    this.rejectExportSuffix();
+    if(!this.eat(';'))
+      fail("[EXPORT_SEMICOLON_REQUIRED] export declarations must end with ';'",this.peek());
+    return {ownerNamespace,scope,kind,items,line:at.line,col:at.col};
+  }
+
   classDeclaration(pub) {
     const name=this.classIdentifier();
     this.expect('as');
     const methods=[],slots=new Set();
     while(!this.eat('end')) {
       if(this.peek().kind==='eof')fail('unterminated class '+name,this.peek());
+      if(this.peek().value==='export')
+        fail('[EXPORT_LOCAL_SCOPE] export declarations are not class members',this.peek());
       if(methods.length>=256)fail('method count limit',this.peek());
       const methodPub=this.eat('pub');
       this.eatMethodMarker();
@@ -374,6 +504,8 @@ class Parser {
     if(depth>64)fail('conditional nesting budget exceeded',this.peek());
     const statements=[];
     while(this.peek().kind!=='eof'&&!terminators.includes(this.peek().value)) {
+      if(this.peek().value==='export')
+        fail('[EXPORT_LOCAL_SCOPE] export declarations are only valid at file/root or module scope',this.peek());
       if(++this.statementNodes>MAX_TOKENS)fail('statement budget exceeded',this.peek());
       if(this.eat('return')) {
         const body=this.expression();
@@ -459,8 +591,12 @@ class Parser {
       namespace = this.name();
       this.expect(';');
     }
-    const modules=[],functions=[],classes=[],usedModules=new Set(),usedClasses=new Set();
+    const modules=[],functions=[],classes=[],sourceExports=[],
+      usedModules=new Set(),usedClasses=new Set();
     while(this.peek().kind!=='eof'){
+      if(this.peek().value==='export'){
+        sourceExports.push(this.exportDeclaration('$root'));continue;
+      }
       let prefixPub=false;
       if(this.peek().value==='pub'&&this.tokens[this.i+1]?.value==='define'){
         this.i++;prefixPub=true;
@@ -487,6 +623,9 @@ class Parser {
         let count=0;
         while(!this.eat('end')){
           if(this.peek().kind==='eof')fail('unterminated module '+name,this.peek());
+          if(this.peek().value==='export'){
+            sourceExports.push(this.exportDeclaration(name));continue;
+          }
           if(++count>512||functions.length>=512)fail('declaration budget exceeded',this.peek());
           functions.push(this.functions(name));
         }
@@ -496,7 +635,7 @@ class Parser {
       }
     }
     if(!functions.length&&!modules.length&&!classes.length)fail('empty program');
-    return {namespace,modules,functions,classes};
+    return {namespace,modules,functions,classes,sourceExports};
   }
   integer(negative = false) {
     const token=this.peek();
@@ -651,7 +790,7 @@ class Parser {
   }
 }
 function resolveProgram(parsed) {
-  const {modules,functions,classes=[]}=parsed;
+  const {modules,functions,classes=[],sourceExports=[]}=parsed;
   const slots=new Map(),exports=new Set(),symbolKinds=new Map(),classByName=new Map();
   const classTables=classes.map((cls,classIndex)=>{
     if(classByName.has(cls.name))fail('duplicate class '+cls.name);
@@ -682,6 +821,76 @@ function resolveProgram(parsed) {
     if(exports.has(cls.name))fail('class export conflicts with module/function '+cls.name);
     if(cls.pub)exports.add(cls.name);
   });
+  const familyMap=new Map(),sourceExportBindings=[],externalBindings=new Map();
+  const familyKey=(owner,kind,name)=>owner+'\0'+kind+'\0'+name;
+  function family(owner,kind,name) {
+    const key=familyKey(owner,kind,name);
+    if(!familyMap.has(key))familyMap.set(key,{
+      owner,kind,name,publicCount:0,privateCount:0,
+      localSymbolId:owner+'::'+kind+'::'+name
+    });
+    return familyMap.get(key);
+  }
+  functions.forEach(fn=>{
+    const owner=fn.module??'$root',f=family(owner,fn.kind,fn.name);
+    if(fn.pub)f.publicCount++;else f.privateCount++;
+  });
+  classes.forEach(cls=>{
+    const f=family('$root','class',cls.name);
+    if(cls.pub)f.publicCount++;else f.privateCount++;
+  });
+  modules.forEach(name=>family('$root','module',name));
+
+  function addBinding(binding) {
+    const key=binding.ownerNamespaceId+'\0'+binding.externalName;
+    const prior=externalBindings.get(key);
+    if(prior){
+      if(prior.localSymbolId===binding.localSymbolId&&prior.scope===binding.scope)return;
+      if(prior.localSymbolId===binding.localSymbolId)
+        fail('[EXPORT_SCOPE_CONFLICT] one source binding cannot have conflicting scopes');
+      fail('[EXPORT_ALIAS_COLLISION] external export name '+binding.externalName+' is already bound');
+    }
+    externalBindings.set(key,binding);sourceExportBindings.push(binding);
+  }
+
+  for(const f of familyMap.values()){
+    if(f.publicCount&&f.privateCount)
+      fail('[EXPORT_OVERLOAD_VISIBILITY_CONFLICT] logical callable family '+f.name+' mixes public and private declarations');
+    if(!f.publicCount)continue;
+    addBinding({
+      ownerNamespaceId:f.owner,localSymbolId:f.localSymbolId,localKind:f.kind,
+      localName:f.name,externalName:f.name,scope:'public',origin:'implicit_pub'
+    });
+  }
+
+  for(const declaration of sourceExports){
+    for(const item of declaration.items){
+      const requiredKind=item.symbolLiteral?'symbol':declaration.kind;
+      const candidates=[...familyMap.values()].filter(f=>
+        f.owner===declaration.ownerNamespace&&f.name===item.localName&&
+        (requiredKind===null||f.kind===requiredKind));
+      if(!candidates.length){
+        if(requiredKind!==null&&[...familyMap.values()].some(f=>
+          f.owner===declaration.ownerNamespace&&f.name===item.localName))
+          fail('[EXPORT_KIND_MISMATCH] typed export kind does not match local declaration '+item.localName);
+        fail('[EXPORT_UNKNOWN_TARGET] no local declaration matches export target '+item.localName);
+      }
+      if(candidates.length!==1)
+        fail('[EXPORT_AMBIGUOUS_TARGET] untyped export target '+item.localName+' is ambiguous');
+      const f=candidates[0];
+      if(f.publicCount&&f.privateCount)
+        fail('[EXPORT_OVERLOAD_VISIBILITY_CONFLICT] logical callable family '+f.name+' mixes public and private declarations');
+      if(f.publicCount&&declaration.scope!=='public')
+        fail('[EXPORT_SCOPE_CONFLICT] public declaration '+f.name+' cannot be exported at narrower scope');
+      const externalName=item.symbolLiteral?item.localName:(item.externalName??item.localName);
+      addBinding({
+        ownerNamespaceId:declaration.ownerNamespace,localSymbolId:f.localSymbolId,
+        localKind:f.kind,localName:f.name,externalName,scope:declaration.scope,
+        origin:'explicit_export'
+      });
+    }
+  }
+
   let nodeCount=0,nextCaptureSlot=0;
   function resolvedType(expr,owner) {
     switch(expr.kind){
@@ -884,6 +1093,7 @@ function resolveProgram(parsed) {
   resolved.forEach((_,i)=>visit(i));
   return {
     sourceNamespace:parsed.namespace,modules,functions:resolved,
+    sourceExportBindings,
     ...(resolvedClasses.length?{classes:resolvedClasses}:{})
   };
 }
