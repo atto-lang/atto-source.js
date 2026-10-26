@@ -467,6 +467,7 @@ class Parser {
       }
       if(this.eat('define')){
         const afterPub=this.eat('pub');
+        if(prefixPub&&afterPub)fail('duplicate pub modifier',this.peek());
         const declarationPub=prefixPub||afterPub;
         if(this.peek().value==='symbol')
           fail('Symbol declaration/export manifest not implemented',this.peek());
