@@ -1,0 +1,20 @@
+name: Source-local runner admission smoke (no checkout)
+on:
+  push:
+    branches:
+      - ci/runner-admission-smoke-20261026
+
+permissions: {}
+
+jobs:
+  runner-admission:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Verify that a GitHub-hosted runner executed an actual step
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "ores-truffle-oreslang/oreslang-source.js"
+          echo "SOURCE_ORG_RUNNER_SMOKE_EXECUTED=true"
+          printf 'SMOKE_COMMIT_SHA=%s\n' "$GITHUB_SHA"
