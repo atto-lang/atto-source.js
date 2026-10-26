@@ -106,9 +106,12 @@ checks, post-commit notification dispatch, and signed-i64 `BigInt` validation.
 A losing selected read cannot consume and a losing selected write cannot
 publish.
 
-This remains a one-isolate runtime substrate, not source `Channel<T>` or
-cross-Worker channel support. Future arms, close/EOF semantics, actor
-continuations, suspension and compiler lowering remain pending.
+The channel substrate now also models close as a terminal readiness event:
+buffered values drain before EOF, an empty closed channel commits selectable
+EOF, and a selected write against a closed channel terminates as closed without
+publishing. This remains a one-isolate runtime substrate, not source
+`Channel<T>` or cross-Worker channel support. Future arms, actor continuations,
+suspension and compiler lowering remain pending.
 
 ## Security boundary
 
