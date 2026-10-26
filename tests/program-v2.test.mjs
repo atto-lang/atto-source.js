@@ -56,6 +56,32 @@ test('fail closed: private module members, nested modules, namespacing and impor
     'pub fnc m(): int {return 1;} define module m pub fnc f(): int {return 2;} end'
   ]) assert.throws(()=>compileProgramV2(source),/error: program v2:/,source);
 });
+test('program-v2 static select forms fail closed before lowering',()=> {
+  const forms=[
+    'select { default: { return 1; } }',
+    'select over default: { return 1; } end',
+    'do select { default: { return 1; } }',
+    'do select over default: { return 1; } end',
+    'nb select { default: { return 1; } }',
+    'nb select over default: { return 1; } end',
+    'do nb select { default: { return 1; } }',
+    'do nb select over default: { return 1; } end',
+    'try select { default: { return 1; } }',
+    'try select over default: { return 1; } end'
+  ];
+  for(const form of forms) {
+    assert.throws(
+      ()=>compileProgramV2('pub fnc main(): int { '+form+' return 0; }'),
+      /static select requires checked Channel\/Future arbitration, actor-lane continuation, ownership and cancellation lowering in the JS backend/,
+      form
+    );
+  }
+  assert.doesNotThrow(()=>compileProgramV2(
+    'pub fnc main(): int { /* select over default: {} end */ return 1; }'));
+  assert.doesNotThrow(()=>compileProgramV2(
+    'pub define class X as pub select():int{return 1;} end'));
+});
+
 test('match literals, no fallthrough, exhaustive wildcard and subject evaluated once',async()=>{
   const code='pub fnc classify(int n): int {return match n over on -1 -> {11;} on 0 -> {22;} on _ -> {33;} end;}';
   const ns=await execute(code);
