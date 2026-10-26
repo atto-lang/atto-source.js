@@ -303,7 +303,14 @@ class Parser {
   }
   exportKind() {
     const value=this.peek().value;
-    if(this.exportKindWord(value)){this.i++;return value;}
+    if(this.exportKindWord(value)){
+      if(value==='symbol'){
+        const next=this.tokens[this.i+1];
+        const typedSymbol=next?.kind==='symbol'||next?.kind==='id'&&next.value!=='as'||next?.value==='{';
+        if(!typedSymbol)return null;
+      }
+      this.i++;return value;
+    }
     if(['string','String','int','bool','void'].includes(value))
       fail('[EXPORT_UNKNOWN_DECLARATION_KIND] typed export prefixes are declaration families, not runtime value types',this.peek());
     return null;
@@ -388,7 +395,11 @@ class Parser {
           fail('[EXPORT_MALFORMED_LIST] leading or repeated comma in export group',this.peek());
         if(this.peek().value==='{')
           fail('[EXPORT_NESTED_GROUP] nested export groups are not supported',this.peek());
-        if(this.exportKindWord(this.peek().value))
+        const groupKind=this.peek().value;
+        const nextGroup=this.tokens[this.i+1];
+        const contextualSymbolKind=groupKind==='symbol'&&
+          (nextGroup?.kind==='symbol'||nextGroup?.kind==='id'&&nextGroup.value!=='as'||nextGroup?.value==='{');
+        if(this.exportKindWord(groupKind)&&(groupKind!=='symbol'||contextualSymbolKind))
           fail('[EXPORT_KIND_PREFIX_IN_GROUP] typed export kind belongs before the group',this.peek());
         items.push(this.exportItem(kind));
         if(this.eat(',')){if(this.eat('}'))break;continue;}
