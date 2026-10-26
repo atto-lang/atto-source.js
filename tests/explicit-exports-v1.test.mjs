@@ -60,6 +60,53 @@ test('explicit source aliases preserve one local identity and still do not creat
   assert.deepEqual(Object.keys(ns),[]);
 });
 
+test('root/module aliases and scoped exports preserve emitted ESM, not host API',async()=>{
+  const baseline=[
+    'fnc internal():int{return 42;}',
+    'define module Service as',
+    '  fnc hidden():int{return 7;}',
+    'end'
+  ].join('\n');
+  const variants=[
+    {
+      scope:'public', external:'public_helper',
+      source:'export fnc internal as public_helper;\n'+baseline
+    },
+    {
+      scope:'file', external:'file_helper',
+      source:'export[file] fnc internal as file_helper;\n'+baseline
+    },
+    {
+      scope:'pkg', external:'package_helper',
+      source:'export[pkg] fnc internal as package_helper;\n'+baseline
+    },
+    {
+      scope:'public', external:'service_hidden',
+      source:baseline.replace('  fnc hidden():int',
+        '  export fnc hidden as service_hidden;\n  fnc hidden():int')
+    },
+    {
+      scope:'public', external:'second_helper',
+      source:'export fnc internal as public_helper;\n'+
+        'export fnc internal as second_helper;\n'+baseline
+    }
+  ];
+  const original=compileProgramV2(baseline);
+  for(const {scope,external,source} of variants){
+    const ir=compileToProgramIRV2(source);
+    assert.ok(ir.sourceExportBindings.some(x=>
+      x.externalName===external && x.scope===scope &&
+      x.localSymbolId.endsWith('::fnc::'+(external==='service_hidden'?'hidden':'internal'))));
+    const transpiled=compileProgramV2(source);
+    assert.equal(transpiled,original,
+      'source exports must never change generated ESM code for '+external);
+    const namespace=await import('data:text/javascript;charset=utf-8,'+
+      encodeURIComponent(transpiled)+'#source-boundary-'+external);
+    assert.deepEqual(Object.keys(namespace),[],
+      'source alias must not publish JS module host exports');
+  }
+});
+
 test('inline pub plus identical explicit export is one idempotent source binding',()=>{
   const ir=compileToProgramIRV2(
     'export fnc api; pub fnc api():int{return 1;}'
