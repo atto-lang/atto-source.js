@@ -6,3 +6,4 @@
 /scripts/ @ORESoftware
 /tools/ @ORESoftware
 /package.json @ORESoftware
+/.github/private-ci-approved-repositories.txt @ORESoftware\n/.github/workflows/private-ci-policy.yml @ORESoftware\n
