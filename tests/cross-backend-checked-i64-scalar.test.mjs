@@ -72,14 +72,16 @@ for(const [name,expression] of [
 }
 
 test('function declaration modifier parity accepts define/pub orderings',async()=>{
+  const header='// oreslang:checked-i64-v1\n';
   for(const declaration of [
     'define fnc main(): int { return 42; }',
     'define pub fnc main(): int { return 42; }',
     'pub define fnc main(): int { return 42; }',
     'pub fnc main(): int { return 42; }',
   ]){
-    const {main}=await import('data:text/javascript,'+encodeURIComponent(compileProgramV2(header+declaration)));
-    if(declaration.includes('pub')) assert.equal(main(),42n);
+    const ns=await import('data:text/javascript,'+encodeURIComponent(compileProgramV2(header+declaration)));
+    if(declaration.includes('pub')) assert.equal(ns.main(),42n);
+    else assert.equal(Object.hasOwn(ns,'main'),false,'private function must not be exported');
   }
   assert.throws(()=>compileProgramV2(header+'define pub routine main(): int { return 42; }'),/public routine cannot be exported/);
   assert.throws(()=>compileProgramV2(header+'pub define pub fnc main(): int { return 42; }'),/duplicate pub modifier/);
