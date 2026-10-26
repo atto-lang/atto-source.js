@@ -20,4 +20,14 @@ This is a **normative design contract**, not a claim that existing JS host I/O i
 
 ## Audit note
 
-The CLI `bin/oreslang-jsc.mjs` uses `node:fs/promises` for file access, but `process.stdout.write()` is called without a backpressure-aware completion path. Tooling output is separate from guest I/O; nonetheless a follow-up should make CLI writing bounded and explicitly handle pipe closure. The scalar compiler does not itself provide general guest I/O today, so this contract does **not** imply existing functional I/O parity.
+The CLI `bin/oreslang-jsc.mjs` uses `node:fs/promises` for file access and now awaits
+stdout write completion so compiler-tooling output observes backpressure. Tooling output
+remains separate from guest I/O.
+
+`tests/async-io-contract.test.mjs` is an executable default-`npm test` gate over the
+guest-reachable Node/browser runtime modules. It rejects synchronous filesystem and
+child-process APIs, `Atomics.wait`, synchronous alternative-runtime filesystem APIs,
+and XMLHttpRequest. It also compiles scalar-v1 and program-v2 fixtures and verifies that
+emitted ESM acquires no Node/require host I/O surface. This is a fail-closed boundary
+test, not functional stdlib I/O parity: the transpiler still has no general guest I/O
+lowering, and unsupported I/O must remain unsupported rather than gaining a sync fallback.
