@@ -86,7 +86,7 @@ const expected = [
 const root = new URL('../contracts/scalar/v1/', import.meta.url);
 
 function gitBlobSha(bytes) {
-  return createHash('sha1').update('blob ' + bytes.length + '\\0')
+  return createHash('sha1').update('blob ' + bytes.length + '\0')
     .update(bytes).digest('hex');
 }
 async function pinnedBytes(path) {
@@ -116,7 +116,7 @@ async function reviewedCases() {
 test('scalar-v1: .NET/WASM manifest and all 11 source files are byte-exact', async () => {
   const cases = await reviewedCases();
   for (const row of cases) {
-    assert.match(row.file, /^fixtures\\/[a-z0-9-]+\\.ores$/);
+    assert.match(row.file, /^fixtures\/[a-z0-9-]+\.ores$/);
     await pinnedBytes(row.file);
   }
 });
@@ -145,7 +145,7 @@ test('scalar-v1: .NET-style optional define declaration modifier', async () => {
     encodeURIComponent(esm));
   assert.equal(mod.main(), 42n);
   assert.equal(check('define fnc internal(): int { return 7; }'), true);
-  assert.doesNotMatch(compile('define fnc internal(): int { return 7; }'), /export \\{/);
+  assert.doesNotMatch(compile('define fnc internal(): int { return 7; }'), /export \{/);
   for (const invalid of [
     'define define pub fnc main(): int { return 42; }',
     'define pub define fnc main(): int { return 42; }',
