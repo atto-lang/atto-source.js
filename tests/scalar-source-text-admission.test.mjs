@@ -53,3 +53,16 @@ test('scalar-v1 preserves UTF-8 byte budget with valid multibyte source',()=>{
       err=>err instanceof CompileError && /invalid or oversized source/.test(err.message));
   }
 });
+
+test('scalar-v1 honors the exact UTF-8 source byte boundary',()=>{
+  // ASCII source uses one byte per UTF-16 code unit, so this source has
+  // exactly the 262144-byte limit including its source comment and program.
+  const accepted='//'+'a'.repeat(262144-3-PROGRAM.length)+'\n'+PROGRAM;
+  assert.equal(new TextEncoder().encode(accepted).length,262144);
+  assert.equal(check(accepted),true);
+  const tooLarge=accepted+' ';
+  for(const entry of [compileToIR,compile,check]) {
+    assert.throws(()=>entry(tooLarge),
+      err=>err instanceof CompileError && /invalid or oversized source/.test(err.message));
+  }
+});

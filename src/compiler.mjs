@@ -9,7 +9,10 @@ export class CompileError extends Error {
   }
 }
 function validateSourceText(src) {
-  if (typeof src !== 'string') throw new CompileError('invalid or oversized source');
+  if (typeof src !== 'string' || src.length > MAX_BYTES)
+    throw new CompileError('invalid or oversized source');
+  // UTF-8 bytes cannot be fewer than valid UTF-16 source code units.
+  // Reject obviously oversize source before scanning/allocating its encoding.
   // TextEncoder silently replaces unpaired UTF-16 surrogates with U+FFFD.
   // Reject them (and NUL) everywhere, including comments, before encoding.
   for (let i=0; i<src.length; i++) {
