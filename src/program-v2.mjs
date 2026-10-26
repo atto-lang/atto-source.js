@@ -330,8 +330,8 @@ class Parser {
     }
     return {name,pub,methods};
   }
-  functions(moduleName) {
-    const pub = this.eat('pub'), start=this.peek();
+  functions(moduleName, declaredPub=false) {
+    const pub = declaredPub || this.eat('pub'), start=this.peek();
     if (!this.eat('fnc') && !this.eat('routine')) fail('unsupported declaration',start);
     const kind = this.tokens[this.i-1].value, name = this.name();
     this.expect('(');
@@ -478,7 +478,12 @@ class Parser {
           usedClasses.add(cls.name);classes.push(cls);
           continue;
         }
-        if(declarationPub)fail('public define is only supported for classes in program-v2',this.peek());
+        if(this.peek().value==='fnc'||this.peek().value==='routine'){
+          if(functions.length>=512)fail('declaration budget exceeded',this.peek());
+          functions.push(this.functions(null,declarationPub));
+          continue;
+        }
+        if(declarationPub)fail('public define is only supported for classes/functions in program-v2',this.peek());
         this.expect('module');const name=this.name();
         if(name==='Option'||name==='Result'||name==='Symbol')
           fail('reserved portable intrinsic module name '+name);
