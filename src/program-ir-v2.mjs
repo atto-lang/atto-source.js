@@ -179,31 +179,6 @@ export function validateProgramIRV2(input) {
     });
     return {name,pub:cls.pub,methods};
   });
-  const exportExternalNames=new Set();
-  for(const binding of sourceExportBindings){
-    const externalKey=binding.ownerNamespaceId+'\0'+binding.externalName;
-    if(exportExternalNames.has(externalKey))fail('duplicate source export external name');
-    exportExternalNames.add(externalKey);
-
-    let matches=[];
-    if(binding.localKind==='module'){
-      matches=moduleNames.filter(name=>binding.ownerNamespaceId==='$root'&&
-        name===binding.localName).map(name=>({pub:false,name}));
-    }else if(binding.localKind==='class'){
-      matches=classHeaders.filter(cls=>binding.ownerNamespaceId==='$root'&&
-        cls.name===binding.localName);
-    }else if(binding.localKind==='fnc'||binding.localKind==='routine'){
-      matches=sourceFunctions.filter(fn=>
-        (fn.module??'$root')===binding.ownerNamespaceId&&
-        fn.name===binding.localName&&fn.kind===binding.localKind);
-    }
-    if(!matches.length)fail('source export metadata references missing local declaration');
-    if(binding.origin==='implicit_pub'&&!matches.every(item=>item.pub===true))
-      fail('implicit pub export metadata references non-public local declaration');
-    if(binding.scope!=='public'&&matches.some(item=>item.pub===true))
-      fail('narrow source export metadata conflicts with public local declaration');
-  }
-
   const slots=new Set(),symbolKinds=new Map(),exportNames=new Set(moduleNames);
   const headers=sourceFunctions.map(f=>{
     // Reject nulls and non-records before any optional-key introspection.
@@ -250,6 +225,33 @@ export function validateProgramIRV2(input) {
     if(cls.pub&&seenModules.has(cls.name))fail('class export conflicts with runtime module '+cls.name);
     if(cls.pub&&headers.some(h=>h.module===null&&h.pub&&h.name===cls.name))
       fail('class export conflicts with root function '+cls.name);
+  }
+
+  // Validate source-export metadata only against already-normalized local
+  // declarations. Never inspect caller-owned raw function/class objects here.
+  const exportExternalNames=new Set();
+  for(const binding of sourceExportBindings){
+    const externalKey=binding.ownerNamespaceId+'\0'+binding.externalName;
+    if(exportExternalNames.has(externalKey))fail('duplicate source export external name');
+    exportExternalNames.add(externalKey);
+
+    let matches=[];
+    if(binding.localKind==='module'){
+      matches=moduleNames.filter(name=>binding.ownerNamespaceId==='$root'&&
+        name===binding.localName).map(name=>({pub:false,name}));
+    }else if(binding.localKind==='class'){
+      matches=classHeaders.filter(cls=>binding.ownerNamespaceId==='$root'&&
+        cls.name===binding.localName);
+    }else if(binding.localKind==='fnc'||binding.localKind==='routine'){
+      matches=headers.filter(fn=>
+        (fn.module??'$root')===binding.ownerNamespaceId&&
+        fn.name===binding.localName&&fn.kind===binding.localKind);
+    }
+    if(!matches.length)fail('source export metadata references missing local declaration');
+    if(binding.origin==='implicit_pub'&&!matches.every(item=>item.pub===true))
+      fail('implicit pub export metadata references non-public local declaration');
+    if(binding.scope!=='public'&&matches.some(item=>item.pub===true))
+      fail('narrow source export metadata conflicts with public local declaration');
   }
   const graph=headers.map(()=>new Set());
   let nodes=0;
