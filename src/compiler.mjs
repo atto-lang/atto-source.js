@@ -42,6 +42,16 @@ function lex(src) {
   }
   out.push({kind:'eof',value:'<eof>',line,col});return out;
 }
+function rejectUnsupportedSelect(tokens) {
+  for (const token of tokens) {
+    if (token.kind === 'id' && token.value === 'select') {
+      throw new CompileError(
+        'static select requires checked Channel/Future arbitration, actor-lane continuation, ownership and cancellation lowering in the JS backend',
+        token
+      );
+    }
+  }
+}
 class Parser {
   constructor(tokens){this.ts=tokens;this.pos=0;this.depth=0;}
   peek(){return this.ts[this.pos];}
@@ -132,7 +142,9 @@ class Parser {
 // The isolated parser is a bootstrap adapter. Future language frontends
 // should produce this versioned IR instead of duplicating parser semantics.
 export function compileToIR(source) {
-  const parsed=new Parser(lex(source)).parse();
+  const tokens=lex(source);
+  rejectUnsupportedSelect(tokens);
+  const parsed=new Parser(tokens).parse();
   try {
     return createScalarIR(parsed);
   } catch (error) {
