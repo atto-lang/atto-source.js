@@ -11,15 +11,44 @@ function requireI64(value) {
 class ReadCell {
   value = 0n;
   hasValue = false;
+  eof = false;
 
-  _set(value) {
+  _setValue(value) {
     this.value = value;
     this.hasValue = true;
+    this.eof = false;
+  }
+
+  _setEof() {
+    this.value = 0n;
+    this.hasValue = false;
+    this.eof = true;
   }
 
   reset() {
     this.value = 0n;
     this.hasValue = false;
+    this.eof = false;
+  }
+}
+
+class WriteCell {
+  written = false;
+  closed = false;
+
+  _setWritten() {
+    this.written = true;
+    this.closed = false;
+  }
+
+  _setClosed() {
+    this.written = false;
+    this.closed = true;
+  }
+
+  reset() {
+    this.written = false;
+    this.closed = false;
   }
 }
 
@@ -110,10 +139,14 @@ class NotificationBatch {
  * Runtime-only bounded signed-i64 channel with revocable readiness
  * subscriptions. This is not source Channel<T> support.
  *
+ * Read readiness includes terminal EOF. Write readiness includes terminal
+ * closed-channel failure. That keeps a select arm from hanging forever when a
+ * channel closes while it is registered. Buffered values drain before EOF.
+ *
  * JavaScript has no lock to hold here, but the same transaction boundary as
  * LLVM/.NET is preserved: readiness callbacks are advisory; buffer mutation
- * occurs only inside a SelectArbiter conditional commit; captured opposite-
- * direction notifications dispatch only after the select commit returns.
+ * occurs only inside a SelectArbiter conditional commit; captured
+ * notifications dispatch only after the select commit returns.
  */
 export class SelectableI64Channel {
   #values;
@@ -124,6 +157,7 @@ export class SelectableI64Channel {
   #writers;
   #nextWaiterId = 1;
   #notificationFailure = null;
+  #closed = false;
 
   constructor(capacity, {maxWaiters=64}={}) {
     if (!Number.isSafeInteger(capacity) ||
@@ -143,6 +177,7 @@ export class SelectableI64Channel {
 
   get capacity() { return this.#values.length; }
   get size() { return this.#count; }
+  get closed() { return this.#closed; }
   get pendingReaders() { return this.#activeCount(this.#readers); }
   get pendingWriters() { return this.#activeCount(this.#writers); }
   get notificationFailure() { return this.#notificationFailure; }
@@ -155,12 +190,29 @@ export class SelectableI64Channel {
     return new ReadCell();
   }
 
+  createWriteCell() {
+    return new WriteCell();
+  }
+
   subscribeReadable(notify) {
     return this.#subscribe('read',notify);
   }
 
   subscribeWritable(notify) {
     return this.#subscribe('write',notify);
+  }
+
+  close() {
+    if (this.#closed) return false;
+
+    const readers=this.createNotificationBatch();
+    const writers=this.createNotificationBatch();
+    this.#capture(this.#readers,'read',readers);
+    this.#capture(this.#writers,'write',writers);
+    this.#closed=true;
+    readers.dispatch();
+    writers.dispatch();
+    return true;
   }
 
   tryCommitRead(subscription, readCell, notifications) {
@@ -174,21 +226,34 @@ export class SelectableI64Channel {
 
     const identity=subscription?._identity?.();
     if (!identity || !this._matches(
-        subscription,'read',identity.index,identity.id) ||
-        this.#count===0)
+        subscription,'read',identity.index,identity.id))
       return false;
 
-    this.#capture(this.#writers,'write',notifications);
+    if (this.#count===0) {
+      if (!this.#closed) return false;
+      this.#closeSlot(this.#readers[identity.index]);
+      readCell._setEof();
+      return true;
+    }
+
+    if (this.#closed && this.#count===1)
+      this.#capture(this.#readers,'read',notifications);
+    else
+      this.#capture(this.#writers,'write',notifications);
+
     const value=this.#values[this.#head];
     this.#head=(this.#head+1)%this.#values.length;
     this.#count--;
     this.#closeSlot(this.#readers[identity.index]);
-    readCell._set(value);
+    readCell._setValue(value);
     return true;
   }
 
-  tryCommitWrite(subscription, value, notifications) {
+  tryCommitWrite(subscription, value, writeCell, notifications) {
     requireI64(value);
+    if (!(writeCell instanceof WriteCell))
+      throw new TypeError('writeCell must come from createWriteCell()');
+    writeCell.reset();
     if (!(notifications instanceof NotificationBatch))
       throw new TypeError(
         'notifications must come from createNotificationBatch()');
@@ -196,21 +261,28 @@ export class SelectableI64Channel {
 
     const identity=subscription?._identity?.();
     if (!identity || !this._matches(
-        subscription,'write',identity.index,identity.id) ||
-        this.#count===this.#values.length)
+        subscription,'write',identity.index,identity.id))
       return false;
+
+    if (this.#closed) {
+      this.#closeSlot(this.#writers[identity.index]);
+      writeCell._setClosed();
+      return true;
+    }
+    if (this.#count===this.#values.length) return false;
 
     this.#capture(this.#readers,'read',notifications);
     this.#values[this.#tail]=value;
     this.#tail=(this.#tail+1)%this.#values.length;
     this.#count++;
     this.#closeSlot(this.#writers[identity.index]);
+    writeCell._setWritten();
     return true;
   }
 
   tryWrite(value) {
     requireI64(value);
-    if (this.#count===this.#values.length) return false;
+    if (this.#closed || this.#count===this.#values.length) return false;
 
     const notifications=this.createNotificationBatch();
     this.#capture(this.#readers,'read',notifications);
@@ -222,13 +294,15 @@ export class SelectableI64Channel {
   }
 
   tryRead() {
-    if (this.#count===0) return {ok:false,value:0n};
+    if (this.#count===0)
+      return {ok:false,eof:this.#closed,value:0n};
 
-    // Allocate the public result before mutating the buffer so allocation
-    // failure cannot consume a value without a returned receipt.
-    const result={ok:true,value:0n};
+    const result={ok:true,eof:false,value:0n};
     const notifications=this.createNotificationBatch();
-    this.#capture(this.#writers,'write',notifications);
+    if (this.#closed && this.#count===1)
+      this.#capture(this.#readers,'read',notifications);
+    else
+      this.#capture(this.#writers,'write',notifications);
     result.value=this.#values[this.#head];
     this.#head=(this.#head+1)%this.#values.length;
     this.#count--;
@@ -281,8 +355,8 @@ export class SelectableI64Channel {
     waiter.notify=notify;
 
     const ready=kind==='read'
-      ? this.#count!==0
-      : this.#count!==this.#values.length;
+      ? this.#count!==0 || this.#closed
+      : this.#count!==this.#values.length || this.#closed;
     if (ready) {
       try {
         notify(subscription);
@@ -296,8 +370,6 @@ export class SelectableI64Channel {
 
   #capture(waiters,kind,notifications) {
     notifications._requireOwner(this);
-    // Subscription objects are allocated before any buffer mutation. If
-    // allocation fails, the channel operation has not committed.
     for(let index=0;index<waiters.length;index++) {
       const waiter=waiters[index];
       if(!waiter.active||waiter.notify===null)continue;
