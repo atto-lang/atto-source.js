@@ -193,7 +193,8 @@ test('program-v2 export grammar uses stable hardened diagnostics',()=>{
     ['export[project] X; '+keep,'EXPORT_UNKNOWN_SCOPE'],
     ["export string ready as 'ready'; "+keep,'EXPORT_UNKNOWN_DECLARATION_KIND'],
     ["export const ready as 'ready'; "+keep,'EXPORT_LITERAL_ALIAS_UNSUPPORTED'],
-    ['export class Foo as "foo"; '+keep,'EXPORT_LITERAL_ALIAS_UNSUPPORTED']
+    ['export class Foo as "foo"; '+keep,'EXPORT_LITERAL_ALIAS_UNSUPPORTED'],
+    ["export symbol ready as 'ready'; "+keep,'EXPORT_LITERAL_ALIAS_UNSUPPORTED']
   ]) errorCode(source,code);
 });
 
