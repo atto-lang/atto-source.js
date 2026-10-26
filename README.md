@@ -97,6 +97,19 @@ Commit callbacks are trusted runtime primitives and must be bounded,
 synchronous, and return a boolean; Promise/thenable commits fail closed. Source
 select remains rejected until the missing channel/Future/actor layers exist.
 
+### Selectable i64 channel substrate
+
+Stacked on the JS `SelectArbiter`, the runtime now has a bounded signed-i64
+`SelectableI64Channel` proof. It uses revocable readable/writable readiness
+subscriptions, conditional read/write commits, stale-subscription identity
+checks, post-commit notification dispatch, and signed-i64 `BigInt` validation.
+A losing selected read cannot consume and a losing selected write cannot
+publish.
+
+This remains a one-isolate runtime substrate, not source `Channel<T>` or
+cross-Worker channel support. Future arms, close/EOF semantics, actor
+continuations, suspension and compiler lowering remain pending.
+
 ## Security boundary
 
 This is a code generator, **not a sandbox**. An ES module, Node worker thread or Node vm context is not a secure boundary for malicious guests. Only bundle the generated JS as a trusted artifact. This backend still has **no compiler-lowered Oreslang actor runtime** or enforced actor capability/ownership model. The experimental Worker reference is only for trusted host handlers and synchronous transpiled function calls. General native pointers, Oreslang async/await, channels, objects, collections, exceptions, and host I/O remain unsupported in the language compiler. Do not promote it to an untrusted host.
