@@ -70,3 +70,16 @@ for(const [name,expression] of [
     assert.throws(()=>main(),/ORES_I64_OVERFLOW/);
   });
 }
+
+test('function declaration modifier parity accepts define/pub orderings',async()=>{
+  for(const declaration of [
+    'define fnc main(): int { return 42; }',
+    'define pub fnc main(): int { return 42; }',
+    'pub define fnc main(): int { return 42; }',
+    'pub fnc main(): int { return 42; }',
+  ]){
+    const {main}=await import('data:text/javascript,'+encodeURIComponent(compileProgramV2(header+declaration)));
+    if(declaration.includes('pub')) assert.equal(main(),42n);
+  }
+  assert.throws(()=>compileProgramV2(header+'define pub routine main(): int { return 42; }'),/public routine cannot be exported/);
+});
