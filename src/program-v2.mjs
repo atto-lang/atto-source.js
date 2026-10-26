@@ -338,9 +338,12 @@ class Parser {
     }
 
     if(kind==='symbol'){
-      if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='as'&&
-          this.tokens[this.i+2]?.kind==='symbol')
-        fail('[EXPORT_SYMBOL_IDENTITY_TARGET_REQUIRES_SYMBOL_SOURCE] a Symbol identity target requires a #symbol source',this.peek());
+      if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='as'){
+        if(this.tokens[this.i+2]?.kind==='symbol')
+          fail('[EXPORT_SYMBOL_IDENTITY_TARGET_REQUIRES_SYMBOL_SOURCE] a Symbol identity target requires a #symbol source',this.peek());
+        if(this.tokens[this.i+2]?.kind==='string')
+          fail('[EXPORT_LITERAL_ALIAS_UNSUPPORTED] runtime literals are not export binding names',this.tokens[this.i+2]);
+      }
       fail('[EXPORT_SYMBOL_LITERAL_REQUIRED] Symbol exports name nominal #symbol identities',this.peek());
     }
 
