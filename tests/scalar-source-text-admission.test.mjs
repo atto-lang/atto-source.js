@@ -68,7 +68,7 @@ test('scalar-v1 honors the exact UTF-8 source byte boundary',()=>{
 });
 
 test('program-v2: reject over-budget UTF-16 input before scanning or encoding',()=>{
-  const huge='//'+'a'.repeat(262144)+'\\n'+PROGRAM+'\\0';
+  const huge='//'+'a'.repeat(262144)+'\n'+PROGRAM+'\0';
   for(const entry of [compileToProgramIRV2,compileProgramV2,checkProgramV2]) {
     assert.throws(()=>entry(huge),
       err=>err instanceof ProgramCompileError &&
@@ -78,7 +78,7 @@ test('program-v2: reject over-budget UTF-16 input before scanning or encoding',(
 });
 
 test('program-v2: accept exact UTF-8 source budget and reject a single excess byte',()=>{
-  const exact='//'+'a'.repeat(262144-3-PROGRAM.length)+'\\n'+PROGRAM;
+  const exact='//'+'a'.repeat(262144-3-PROGRAM.length)+'\n'+PROGRAM;
   assert.equal(new TextEncoder().encode(exact).length,262144);
   for(const entry of [compileToProgramIRV2,compileProgramV2,checkProgramV2]) {
     assert.doesNotThrow(()=>entry(exact),entry.name+' exact limit');
@@ -88,7 +88,7 @@ test('program-v2: accept exact UTF-8 source budget and reject a single excess by
       entry.name+' must reject 262145 bytes');
   }
   // Valid UTF-16 length alone does not imply valid UTF-8 byte length.
-  const multibyte='//'+'\\u{1f680}'.repeat(65536)+'\\n'+PROGRAM;
+  const multibyte='//'+'\u{1f680}'.repeat(65536)+'\n'+PROGRAM;
   assert.ok(multibyte.length<262144);
   assert.ok(new TextEncoder().encode(multibyte).length>262144);
   assert.throws(()=>compileProgramV2(multibyte),
