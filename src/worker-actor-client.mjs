@@ -41,6 +41,22 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
   let readyResolve, readyReject;
   const readyPromise = new Promise((resolve,reject) => {readyResolve = resolve; readyReject = reject;});
   void readyPromise.catch(() => {}); // callers can await actor.ready explicitly
+  // Failed Worker termination must not create an unhandled host rejection.
+  // Record the termination promise before calling the Worker to handle
+  // reentrant error events and ensure exactly one termination attempt.
+  let terminationPromise;
+  function terminateWorker() {
+    if (terminationPromise) return terminationPromise;
+    let resolveTermination, rejectTermination;
+    terminationPromise = new Promise((resolve, reject) => {
+      resolveTermination = resolve;
+      rejectTermination = reject;
+    });
+    void terminationPromise.catch(() => {});
+    try { resolveTermination(worker.terminate()); }
+    catch (error) { rejectTermination(error); }
+    return terminationPromise;
+  }
   function shutdown(error) {
     if (closed) return;
     closed = true;
@@ -59,7 +75,7 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
   // control frames must still revoke outstanding receipts, never hang them.
   function failProtocol(message) {
     shutdown(new Error(message));
-    void worker.terminate();
+    void terminateWorker();
   }
   function onFrame(frame) {
     if (closed) return;
@@ -68,18 +84,18 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
       failProtocol('invalid actor frame');return;
     }
     if (frame.kind === 'ready') {
-      if (ready) {shutdown(new Error('duplicate actor ready'));void worker.terminate();return;}
+      if (ready) {shutdown(new Error('duplicate actor ready'));void terminateWorker();return;}
       ready = true; readyResolve();
     } else if (frame.kind === 'fatal') {
       shutdown(new Error('actor startup/protocol failure: ' + errorText(frame.error)));
-      void worker.terminate();
+      void terminateWorker();
     } else if (frame.kind === 'result') {
       if (!ready) {failProtocol('actor result before ready');return;}
       // Control properties may be accessors in custom Worker transports.
       // Match and release the very same receipt, even if an id getter changes.
       const id=frame.id;
       const entry = pending.get(id);
-      if (!entry) {shutdown(new Error('unexpected actor response id'));void worker.terminate();return;}
+      if (!entry) {shutdown(new Error('unexpected actor response id'));void terminateWorker();return;}
       if (frame.ok === true) {
         // A Worker response is a new ownership boundary. Even trusted adapter
         // code can regress and return a SharedArrayBuffer, or a test Worker
@@ -116,24 +132,24 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
       try {guardedOnFrame(e.data);} catch {failProtocol('invalid actor frame');}
     });
     worker.addEventListener('error', () => {
-      shutdown(new Error('worker execution failure'));void worker.terminate();
+      shutdown(new Error('worker execution failure'));void terminateWorker();
     });
     worker.addEventListener('messageerror', () => {
-      shutdown(new Error('worker message decoding failure'));void worker.terminate();
+      shutdown(new Error('worker message decoding failure'));void terminateWorker();
     });
   } else if (typeof worker.on === 'function') {
     worker.on('message', guardedOnFrame);
     worker.on('error', err => {
       shutdown(new Error('worker execution failure: ' + errorText(err)));
-      void worker.terminate();
+      void terminateWorker();
     });
     worker.on('messageerror', () => {
-      shutdown(new Error('worker message decoding failure'));void worker.terminate();
+      shutdown(new Error('worker message decoding failure'));void terminateWorker();
     });
     worker.on('exit', code => shutdown(new Error('worker exited: ' + code)));
   } else throw new TypeError('Worker event interface unsupported');
   try {worker.postMessage({protocol: PROTOCOL,kind:'init',moduleUrl,exportName,mode,maxPending,maxPendingBytes});}
-  catch (error) {shutdown(error);void worker.terminate();}
+  catch (error) {shutdown(error);void terminateWorker();}
   function send(value, reply) {
     if (closed) return Promise.reject(new Error('actor closed'));
     if (pending.size >= maxPending) return Promise.reject(new Error('actor mailbox capacity exceeded'));
@@ -163,6 +179,6 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
     get pendingBytes() {return pendingBytes;},
     request(value) {return send(value,true);},
     tell(value) {return send(value,false);},
-    async close() {shutdown(new Error('actor closed'));await worker.terminate();}
+    async close() {shutdown(new Error('actor closed'));await terminateWorker();}
   });
 }

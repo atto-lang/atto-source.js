@@ -20,10 +20,10 @@ function validateSourceText(src) {
     if (code===0) throw new CompileError('NUL in source');
     if (code>=0xd800 && code<=0xdbff) {
       const lo=src.charCodeAt(i+1);
-      if (!(lo>=0xdc00 && lo<=0xdfff)) throw new CompileError('invalid UTF-16 source');
+      if (!(lo>=0xdc00 && lo<=0xdfff)) throw new CompileError('invalid UTF-16 in source');
       i++;
     } else if (code>=0xdc00 && code<=0xdfff) {
-      throw new CompileError('invalid UTF-16 source');
+      throw new CompileError('invalid UTF-16 in source');
     }
   }
   if (new TextEncoder().encode(src).byteLength > MAX_BYTES)
@@ -74,6 +74,33 @@ function lex(src) {
     else throw new CompileError('unsupported character',loc);
   }
   out.push({kind:'eof',value:'<eof>',line,col});return out;
+}
+function rejectUnloweredInvertedClasses(tokens) {
+  for (let i=0; i+2<tokens.length; i++) {
+    let at=i;
+    if (tokens[at]?.value==='pub' && tokens[at+1]?.value==='define') at++;
+    if (tokens[at]?.value!=='define') continue;
+    at++;
+    if (tokens[at]?.value==='pub') at++;
+    if (tokens[at]?.value==='inverted' && tokens[at+1]?.value==='class')
+      throw new CompileError(
+        'inverted class requires checked bracket-row and ownership lowering in the JS backend',
+        tokens[at]);
+  }
+}
+function rejectUnsupportedSelect(tokens) {
+  const startsStaticSelect = next =>
+    next && ['{','over','first','fair','random'].includes(next.value);
+  for (let i=0;i<tokens.length;i++) {
+    const token=tokens[i];
+    if (token.kind === 'id' && token.value === 'select' &&
+        startsStaticSelect(tokens[i+1])) {
+      throw new CompileError(
+        'static select requires checked Channel/Future arbitration, actor-lane continuation, ownership and cancellation lowering in the JS backend',
+        token
+      );
+    }
+  }
 }
 class Parser {
   constructor(tokens){this.ts=tokens;this.pos=0;this.depth=0;}
@@ -171,7 +198,10 @@ class Parser {
 // The isolated parser is a bootstrap adapter. Future language frontends
 // should produce this versioned IR instead of duplicating parser semantics.
 export function compileToIR(source) {
-  const parsed=new Parser(lex(source)).parse();
+  const tokens=lex(source);
+  rejectUnloweredInvertedClasses(tokens);
+  rejectUnsupportedSelect(tokens);
+  const parsed=new Parser(tokens).parse();
   try {
     return createScalarIR(parsed);
   } catch (error) {

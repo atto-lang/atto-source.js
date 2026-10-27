@@ -10,13 +10,13 @@ test('scalar-v1 refuses malformed source text even inside ignored comments',()=>
     ['line-comment NUL','// ignored\0\n'+PROGRAM,/NUL in source/],
     ['block-comment NUL','/* ignored\0 */\n'+PROGRAM,/NUL in source/],
     ['trailing NUL',PROGRAM+'\0',/NUL in source/],
-    ['line-comment lone high','// ignored \ud800\n'+PROGRAM,/invalid UTF-16 source/],
-    ['block-comment lone low','/* ignored \udc00 */\n'+PROGRAM,/invalid UTF-16 source/],
-    ['trailing lone high',PROGRAM+'\ud800',/invalid UTF-16 source/],
-    ['trailing lone low',PROGRAM+'\udc00',/invalid UTF-16 source/],
-    ['two high surrogates','// ignored \ud800\ud800\n'+PROGRAM,/invalid UTF-16 source/],
-    ['high then ASCII','// ignored \ud83dA\n'+PROGRAM,/invalid UTF-16 source/],
-    ['paired followed by low','// ignored \ud83d\ude80\udc00\n'+PROGRAM,/invalid UTF-16 source/]
+    ['line-comment lone high','// ignored \ud800\n'+PROGRAM,/invalid UTF-16 (?:in )?source/],
+    ['block-comment lone low','/* ignored \udc00 */\n'+PROGRAM,/invalid UTF-16 (?:in )?source/],
+    ['trailing lone high',PROGRAM+'\ud800',/invalid UTF-16 (?:in )?source/],
+    ['trailing lone low',PROGRAM+'\udc00',/invalid UTF-16 (?:in )?source/],
+    ['two high surrogates','// ignored \ud800\ud800\n'+PROGRAM,/invalid UTF-16 (?:in )?source/],
+    ['high then ASCII','// ignored \ud83dA\n'+PROGRAM,/invalid UTF-16 (?:in )?source/],
+    ['paired followed by low','// ignored \ud83d\ude80\udc00\n'+PROGRAM,/invalid UTF-16 (?:in )?source/]
   ];
   for(const [name,source,reason] of invalid) {
     for(const entry of [compileToIR,compile,check]) {

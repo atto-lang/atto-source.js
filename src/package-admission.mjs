@@ -5,6 +5,7 @@ import {constants} from 'node:fs';
 import {resolve, join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {HOST_ABI} from './host-bridge.mjs';
+import {parseStrictJsonReport} from './parity-json-strict.mjs';
 
 const SHA256=/^[0-9a-f]{64}$/;
 const SHA40=/^[0-9a-f]{40}$/;
@@ -89,7 +90,10 @@ export async function readVerifiedPackage({
   let manifest;
   try{
     const text=new TextDecoder('utf-8',{fatal:true}).decode(rawManifest);
-    manifest=JSON.parse(text);
+    // An independently pinned digest authenticates exact bytes, but JSON.parse
+    // silently uses last-wins for duplicate keys (even escaped key aliases).
+    // Reuse the bounded, duplicate-rejecting parser before materialization.
+    manifest=parseStrictJsonReport(text,65536,'package manifest');
   }catch{throw new PackageAdmissionError('invalid package JSON or UTF-8');}
   validateManifest(manifest);
   if(manifest.target!==target||manifest.moduleSha256!==expectedModuleSha256||

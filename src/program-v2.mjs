@@ -216,6 +216,20 @@ function tokenize(source) {
   emit('eof','<eof>',{line,col});
   return result;
 }
+function rejectUnsupportedStaticSelect(tokens) {
+  const startsStaticSelect = next =>
+    next && ['{','over','first','fair','random'].includes(next.value);
+  for (let i=0;i<tokens.length;i++) {
+    const token=tokens[i];
+    if (token.kind==='id' && token.value==='select' &&
+        startsStaticSelect(tokens[i+1])) {
+      fail(
+        'static select requires checked Channel/Future arbitration, actor-lane continuation, ownership and cancellation lowering in the JS backend',
+        token
+      );
+    }
+  }
+}
 class Parser {
   constructor(tokens) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;}
   peek() {return this.tokens[this.i];}
@@ -1153,7 +1167,9 @@ function emitProgram(program) {
   return out.join('\n')+'\n';
 }
 export function compileToProgramIRV2(source) {
-  const program=resolveProgram(new Parser(tokenize(source)).parse());
+  const tokens=tokenize(source);
+  rejectUnsupportedStaticSelect(tokens);
+  const program=resolveProgram(new Parser(tokens).parse());
   return validateProgramIRV2({
     schemaVersion:PROGRAM_IR_VERSION,
     dialect:PROGRAM_IR_DIALECT,
