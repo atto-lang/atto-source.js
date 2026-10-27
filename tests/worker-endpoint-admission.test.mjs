@@ -209,3 +209,26 @@ test('full mailbox rejects before touching next frame payload getter',async()=>{
   await sleep(65);
   assert.equal(h.frames.filter(f=>f.kind==='result').length,0);
 });
+
+test('reentrant payload getter cancellation avoids post-terminal copy hooks',async()=>{
+  const h=harness();h.init();
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  let copyHooks=0;
+  const payload=new Proxy({type:'add',x:40n,y:2n},{
+    getPrototypeOf(target){
+      copyHooks++;
+      return Reflect.getPrototypeOf(target);
+    }
+  });
+  h.raw({protocol:PROTOCOL,kind:'deliver',id:1,reply:true,
+    get value(){
+      h.raw({protocol:PROTOCOL,kind:'invalid'});
+      return payload;
+    }
+  });
+  assert.equal(copyHooks,0,'terminally revoked payload must never be validated or cloned');
+  assert.deepEqual(h.frames.map(f=>f.kind),['ready','fatal']);
+  assert.match(h.frames.at(-1).error,/reentrant actor frame/);
+  await sleep(15);
+  assert.deepEqual(h.frames.map(f=>f.kind),['ready','fatal']);
+});

@@ -136,7 +136,13 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     // Do not invoke an untrusted payload getter for an invalid ID or a
     // mailbox that is already full. Preserve the terminal fence after copy.
     let snapshot,bytes;
-    try{const payload=frame.value;({value:snapshot,bytes}=copyOwnedValueWithBytes(payload));}
+    try {
+      const payload=frame.value;
+      // An accessor-backed host may terminally revoke the session while the
+      // value getter executes. Do not validate/clone after that revocation.
+      if(terminal)return;
+      ({value:snapshot,bytes}=copyOwnedValueWithBytes(payload));
+    }
     catch{fail('invalid actor delivery payload');return;}
     if(terminal)return;
     if(bytes>maxPendingBytes-inFlightBytes){
