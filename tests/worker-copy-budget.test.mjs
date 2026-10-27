@@ -293,3 +293,45 @@ test('guest Number.isSafeInteger replacement cannot deny valid copy admission',(
   assert.equal(receipt.bytes,8);
   assert.equal(calls,0,'guest integer override must not execute');
 });
+
+test('guest WeakSet.prototype.has cannot erase oversized object byte charges',()=>{
+  const original=WeakSet.prototype.has;
+  let poisonedCalls=0;
+  try{
+    WeakSet.prototype.has=function(){poisonedCalls++;return true;};
+    assert.throws(()=>copyOwnedValueWithBytes(new ArrayBuffer(9*MiB)),
+      /byte budget exceeded/);
+    assert.equal(poisonedCalls,0,'copy validation must use captured WeakSet.has');
+  }finally{WeakSet.prototype.has=original;}
+});
+
+test('guest WeakSet constructor replacement cannot forge zero-byte receipts',()=>{
+  const OriginalWeakSet=globalThis.WeakSet;
+  let constructed=0;
+  try{
+    globalThis.WeakSet=class {
+      constructor(){constructed++;}
+      has(){return true;}
+      add(){return this;}
+    };
+    const original={payload:new Uint8Array(64)};
+    const receipt=copyOwnedValueWithBytes(original);
+    assert.notStrictEqual(receipt.value,original);
+    assert.equal(receipt.bytes,78,'payload key UTF-16 plus owned backing bytes');
+    assert.equal(constructed,0,'guest replacement must never be instantiated');
+  }finally{globalThis.WeakSet=OriginalWeakSet;}
+});
+
+test('guest WeakSet.prototype.add cannot break cyclic ownership receipts',()=>{
+  const original=WeakSet.prototype.add;
+  let poisonedCalls=0;
+  try{
+    WeakSet.prototype.add=function(){poisonedCalls++;return this;};
+    const source={answer:42};
+    source.self=source;
+    const receipt=copyOwnedValueWithBytes(source);
+    assert.equal(receipt.value.self,receipt.value);
+    assert.ok(receipt.bytes>0);
+    assert.equal(poisonedCalls,0,'copy validation must use captured WeakSet.add');
+  }finally{WeakSet.prototype.add=original;}
+});

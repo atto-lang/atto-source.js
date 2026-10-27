@@ -12,6 +12,11 @@ const nativeHasOwn=Object.hasOwn;
 // erase resizable-buffer capacity or BigInt byte charges during admission.
 const nativeMax=Math.max, nativeCeil=Math.ceil;
 const nativeSafeInteger=Number.isSafeInteger;
+// Guest ESM can replace WeakSet or its prototype methods to pretend every
+// object was already visited, bypassing the copy-only byte/complexity budget.
+const NativeWeakSet=WeakSet;
+const nativeWeakSetHas=NativeWeakSet.prototype.has;
+const nativeWeakSetAdd=NativeWeakSet.prototype.add;
 const getPrototype=Object.getPrototypeOf;
 const nativeTag=Object.prototype.toString;
 const arrayBufferBytes=descriptor(ArrayBuffer.prototype,'byteLength').get;
@@ -47,7 +52,7 @@ function bigintSize(value){
   return nativeCeil((hex.length-(hex[0]==='-'?1:0))/2);
 }
 function validate(value){
-  const visited=new WeakSet();
+  const visited=new NativeWeakSet();
   let nodes=0,entries=0,bytes=0;
   function charge(n){
     if(!nativeSafeInteger(n)||n<0||n>MAX_CONTENT_BYTES-bytes)
@@ -72,8 +77,8 @@ function validate(value){
     if(node===null||typeof node==='undefined'||typeof node==='boolean'||typeof node==='number')return;
     if(typeof node!=='object')throw new TypeError('unsupported actor wire value');
     if(depth>MAX_DEPTH)throw new RangeError('actor message complexity exceeded');
-    if(visited.has(node))return;
-    visited.add(node);
+    if(nativeWeakSetHas.call(visited,node))return;
+    nativeWeakSetAdd.call(visited,node);
     if(++nodes>MAX_NODES)throw new RangeError('actor message complexity exceeded');
     if(slot(sharedBytes,node)!==MISSING)
       throw new TypeError('shared-memory actor message forbidden in copy-only profile');
