@@ -8,31 +8,48 @@ export class CompileError extends Error {
     this.name = 'CompileError';
   }
 }
-function lex(src) {
-  if (typeof src !== 'string') throw new CompileError('invalid or oversized source');
-  // TextEncoder silently replaces lone UTF-16 surrogates with U+FFFD.
-  // Reject them (and NUL, including inside comments) before UTF-8 sizing:
-  // distinct caller source strings must never share the same byte identity.
-  for (let i = 0; i < src.length; i++) {
-    const unit = src.charCodeAt(i);
-    if (unit === 0) throw new CompileError('NUL in source');
-    if (unit >= 0xd800 && unit <= 0xdbff) {
-      const next = src.charCodeAt(++i);
-      if (!(next >= 0xdc00 && next <= 0xdfff))
-        throw new CompileError('invalid UTF-16 in source');
-    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+function validateSourceText(src) {
+  if (typeof src !== 'string' || src.length > MAX_BYTES)
+    throw new CompileError('invalid or oversized source');
+  // UTF-8 bytes cannot be fewer than valid UTF-16 source code units.
+  // Reject obviously oversize source before scanning/allocating its encoding.
+  // TextEncoder silently replaces unpaired UTF-16 surrogates with U+FFFD.
+  // Reject them (and NUL) everywhere, including comments, before encoding.
+  for (let i=0; i<src.length; i++) {
+    const code=src.charCodeAt(i);
+    if (code===0) throw new CompileError('NUL in source');
+    if (code>=0xd800 && code<=0xdbff) {
+      const lo=src.charCodeAt(i+1);
+      if (!(lo>=0xdc00 && lo<=0xdfff)) throw new CompileError('invalid UTF-16 in source');
+      i++;
+    } else if (code>=0xdc00 && code<=0xdfff) {
       throw new CompileError('invalid UTF-16 in source');
     }
   }
   if (new TextEncoder().encode(src).byteLength > MAX_BYTES)
     throw new CompileError('invalid or oversized source');
+}
+function lex(src) {
+  validateSourceText(src);
   const out = [];
   let i=0, line=1, col=1;
   function advance() { if(src[i]==='\n'){line++;col=1;}else col++;i++; }
   function add(kind, value, loc) { if(out.length>=30000) throw new CompileError('token limit exceeded'); out.push({kind,value,...loc}); }
   while(i<src.length){
     if(/\s/.test(src[i])) {advance();continue;}
-    if(src.startsWith('//',i)){while(i<src.length&&src[i]!=='\n')advance();continue;}
+    if(src.startsWith('//',i)){
+      // Checked signed-i64 source cannot be silently compiled by the legacy
+      // scalar-v1 profile: this emitter currently wraps instead of trapping.
+      // Only an actual line-comment directive counts; block comments and
+      // other prose must not turn on or mask a numeric profile.
+      const loc={line,col};
+      const eol=src.indexOf('\n',i+2);
+      const tail=src.slice(i+2,eol<0?src.length:eol).trimStart();
+      if(tail.startsWith('oreslang:checked-i64'))
+        throw new CompileError('checked-i64 source requires program-v2; scalar-v1 uses provisional wrapping arithmetic',loc);
+      while(i<src.length&&src[i]!=='\n')advance();
+      continue;
+    }
     if(src.startsWith('/*',i)){
       const loc={line,col};advance();advance();let depth=1;
       while(depth&&i<src.length){
@@ -92,11 +109,17 @@ class Parser {
   expect(v){if(!this.match(v))throw new CompileError('expected '+v+', found '+this.peek().value,this.peek());}
   id(){const t=this.peek();if(t.kind!=='id')throw new CompileError('expected identifier',t);this.pos++;return t.value;}
   parse(){
-    const module=this.match('define');if(module){this.expect('module');this.id();this.match('as');}
+    const module=this.peek().value==='define' && this.ts[this.pos+1]?.value==='module';
+    if(module){this.pos++;this.expect('module');this.id();this.match('as');}
     const functions=[];
     while(this.peek().kind!=='eof'&&!(module&&this.peek().value==='end')){
       if(functions.length>=512)throw new CompileError('function limit',this.peek());
-      const pub=this.match('pub');const at=this.peek();
+      // Accept only one define and one pub, in either canonical order.
+      // Deliberately do not admit pub define module in this scalar subset.
+      let pub=this.match('pub');
+      if(pub){this.match('define');}
+      else if(this.match('define')){pub=this.match('pub');}
+      const at=this.peek();
       if(!this.match('fnc')&&!this.match('routine'))throw new CompileError('unsupported declaration',at);
       const name=this.id();this.expect('(');const params=[];
       if(!this.match(')')){

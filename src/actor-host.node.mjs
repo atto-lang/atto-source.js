@@ -1,3 +1,4 @@
+import {terminateFailedWorkerSpawn} from './worker-actor-spawn-cleanup.mjs';
 import {Worker} from 'node:worker_threads';
 import {createWorkerActorClient,rejectUnsupportedWorkerPlacement} from './worker-actor-client.mjs';
 export function spawnNodeActor(options) {
@@ -8,5 +9,5 @@ export function spawnNodeActor(options) {
   if (url.protocol !== 'file:') throw new TypeError('Node actor module must be a trusted file: URL');
   const worker = new Worker(new URL('./worker-actor.node.mjs', import.meta.url), {type:'module',execArgv:[]});
   try {return createWorkerActorClient({worker,moduleUrl:url.href,exportName,mode,maxPending,maxPendingBytes});}
-  catch (error) {void worker.terminate();throw error;}
+  catch (error) {terminateFailedWorkerSpawn(worker);throw error;}
 }
