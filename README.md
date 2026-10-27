@@ -73,6 +73,14 @@ This convergence slice still has **no fields, inheritance, constructors with sou
 
 Legacy class-free program-v2 IR and generated ESM remain byte-stable: the optional `classes` IR field is emitted only when a class is actually present. The historical `--class-methods-v1` CLI and `@oreslang/source-js/class-methods-v1` API are retained as narrow compatibility adapters over this unified path; they intentionally reject richer program-v2 class features.
 
+## Fieldless class receiver calls (experimental program-v2)
+
+Within an instance method, `self.helper(x)` and unqualified `helper(x)` resolve to the same method slot in the current class (name + caller-visible arity), with class methods taking precedence over identically named file functions. Private methods are callable internally, but remain inaccessible externally. Named argument evaluation order is preserved. The generated class uses private, receiver-branded JS entrypoints with strict argument type checking.
+
+Bare `self.helper` is **rejected**, not silently converted to an unbound JS function. Recursion through method calls is rejected until bounded execution fuel exists. This slice does not add fields, constructors with parameters, general closures, first-class method references, inheritance, or `pkg::` root calls from methods.
+
+Run `node --test tests/class-receiver-calls.test.mjs tests/program-classes-v2.test.mjs` and `npm test` on an authorized Node 22 source-local runner before merging.
+
 ## Named arguments (experimental program-v2)
 
 Ordinary program-v2 function/module calls can bind exact-arity arguments by formal name, with positional arguments only before named ones. For example, `mix(1, c: 3, b: 2)` binds to `(a,b,c)` while preserving lexical expression evaluation order. The resolved `namedCall` IR carries an explicit source-to-formal permutation and validates it before ESM emission. Unknown/duplicate/missing labels and named portable intrinsics reject. Run `npm run test:named-args`.
