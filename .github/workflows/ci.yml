@@ -30,6 +30,8 @@ jobs:
           node-version: '22'
       - name: Execute checked-i64 guest differential suite
         run: node --test tests/checked-i64-arithmetic-differential.test.mjs tests/checked-i64-remainder-parity.test.mjs
+      - name: Exact-head inverted source → typed IR → Node Worker test gate
+        run: npm run test:inverted
       - run: npm test
       - run: npm run check
       - run: npm run parity:js
