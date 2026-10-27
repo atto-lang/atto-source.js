@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {createHash} from "node:crypto";
 import {compileInvertedSourceV1, InvertedSourceCompileError} from "../src/inverted-source-v1.mjs";
+import {compile as compileScalarV1} from "../src/compiler.mjs";
+import {compileProgramV2} from "../src/program-v2.mjs";
 
 const fixtureBlobs = Object.freeze({
   "positive-positional-read.ores": "3e93d20f17120c7b85a59f646e3737e1142d002d",
@@ -79,7 +81,7 @@ test("checked i64 output arithmetic traps rather than wrapping", async () => {
 });
 
 test("nominal handle ownership rejects cross-array use before emission", () => {
-  const source=header.replace("  let h = ","  let h = ") .replace(
+  const source=header.replace(
     "  let h = rows.push",
     "  let others = InvertedArray<Particle>.with_capacity(2);\n  let h = rows.push")+
     " return others[h].id; }";
@@ -104,4 +106,10 @@ test("comment lookalikes do not introduce privileged source grammar", async () =
   const source="// define inverted class Fake as\n"+header+
     " /* await, cross-actor mutable borrow */ return rows[0].id; }";
   assert.equal((await guest(source)).value,1n);
+});
+
+test("ordinary JS compiler lanes stay fail-closed on inverted guest syntax", () => {
+  const source=fixture("positive-positional-read.ores");
+  assert.throws(()=>compileScalarV1(source));
+  assert.throws(()=>compileProgramV2(source));
 });
