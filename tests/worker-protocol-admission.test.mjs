@@ -185,3 +185,34 @@ test('successful Worker responses exceeding complexity budget revoke pending rec
   assert.equal(worker.terminated,1);
   await actor.close();
 });
+
+test('mutable result kind/ok accessors are sampled once without orphaning sibling receipts',async()=>{
+  for(const field of ['kind','ok']){
+    const worker=new StubNodeWorker(),actor=client(worker);
+    worker.frame('ready');await actor.ready;
+    const first=actor.request({args:[40n,2n]});
+    const second=actor.request({args:[21n,21n]});
+    const frame={protocol:PROTOCOL,kind:'result',id:1,ok:true,value:42n,error:'denied'};
+    let reads=0;
+    if(field==='kind')Object.defineProperty(frame,'kind',{
+      get(){return ++reads===1?'result':'unrecognized';}
+    });
+    else Object.defineProperty(frame,'ok',{
+      get(){return ++reads===1?false:true;}
+    });
+    worker.emit('message',frame);
+    try{
+      assert.equal(reads,1,field+' must be read only once');
+      assert.equal(actor.pending,1,'only the matched receipt is released');
+      if(field==='kind')assert.equal(await first,42n);
+      else await assert.rejects(first,/actor delivery failed: denied/);
+      worker.frame('result',{id:2,ok:true,value:42n});
+      assert.equal(await second,42n);
+      assert.equal(actor.pendingBytes,0);
+      assert.equal(worker.terminated,0);
+    }finally{
+      await actor.close();
+      await Promise.allSettled([first,second]);
+    }
+  }
+});
