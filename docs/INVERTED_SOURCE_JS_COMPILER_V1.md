@@ -88,7 +88,7 @@ LLVM/Wasm/.NET/Forge still need their own actual compiler/guest execution.
 ## Ownership and effect boundary
 
 The typed IR validator tracks the nominal type of each allocation slot,
-same-owner affine handle references, and the declared type of every access.
+same-owner generation-checked handle references, and the declared type of every access.
 It limits control flow to one synchronous `main` with mandatory terminal
 return and deterministic resource retirement. All source loans, suspensions,
 captured mutable row views, external callbacks and field methods are rejected
