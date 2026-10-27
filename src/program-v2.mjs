@@ -885,6 +885,11 @@ function resolveProgram(parsed) {
         if(owner.ownerKind==='method'){
           if(expr.qualifier!==null)
             fail('qualified function calls inside method body unsupported');
+          // A parameter or local with the same name makes a bare call
+          // ambiguous. Require self.foo() rather than silently reinterpreting
+          // a lexical value as a class method.
+          if(owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))
+            fail('lexical name shadows implicit method call; use self.'+expr.name+'(...)');
           return resolve({kind:'selfCall',name:expr.name,args:expr.args},
             owner,depth+1,bindings);
         }
