@@ -12,6 +12,9 @@ const nativeHasOwn=Object.hasOwn;
 // erase resizable-buffer capacity or BigInt byte charges during admission.
 const nativeMax=Math.max, nativeCeil=Math.ceil;
 const nativeSafeInteger=Number.isSafeInteger;
+// Guest ESM may replace these dispatch predicates to hide exotic cloneable
+// internal slots behind Object.prototype or interrupt admission entirely.
+const nativeIsView=ArrayBuffer.isView, nativeIsArray=Array.isArray;
 // Guest ESM can replace WeakSet or its prototype methods to pretend every
 // object was already visited, bypassing the copy-only byte/complexity budget.
 const NativeWeakSet=WeakSet;
@@ -87,7 +90,7 @@ function validate(value){
       const capacity=slot(arrayBufferCapacity,node);
       charge(capacity===MISSING?raw:nativeMax(raw,capacity));return;
     }
-    if(ArrayBuffer.isView(node)){
+    if(nativeIsView(node)){
       const viewed=slot(viewBuffer,node);
       const backing=viewed!==MISSING?viewed:slot(typedBuffer,node);
       if(backing===MISSING)throw new TypeError('unsupported actor wire value');
@@ -134,7 +137,7 @@ function validate(value){
       }
       return;
     }
-    if(Array.isArray(node)){
+    if(nativeIsArray(node)){
       // Sparse arrays can request enormous clone-time backing storage with
       // few enumerable elements: the length needs its own admission bound.
       if(node.length>MAX_NODES)throw new RangeError('actor message complexity exceeded');

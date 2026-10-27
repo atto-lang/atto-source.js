@@ -335,3 +335,31 @@ test('guest WeakSet.prototype.add cannot break cyclic ownership receipts',()=>{
     assert.equal(poisonedCalls,0,'copy validation must use captured WeakSet.add');
   }finally{WeakSet.prototype.add=original;}
 });
+
+test('guest ArrayBuffer.isView replacement cannot intercept copy admission',()=>{
+  const original=ArrayBuffer.isView;
+  let intercepted=0;
+  try{
+    ArrayBuffer.isView=()=>{intercepted++;throw new Error('guest isView override called');};
+    assert.equal(copyOwnedValueWithBytes(new DataView(new ArrayBuffer(16))).bytes,16);
+    const disguised=new DataView(new ArrayBuffer(9*MiB));
+    Object.setPrototypeOf(disguised,Object.prototype);
+    assert.throws(()=>copyOwnedValueWithBytes(disguised),/byte budget exceeded/);
+    assert.equal(intercepted,0,'guest view predicate must never execute');
+  }finally{ArrayBuffer.isView=original;}
+});
+
+test('guest Array.isArray replacement cannot hide sparse arrays or intercept admission',()=>{
+  const original=Array.isArray;
+  let intercepted=0;
+  try{
+    Array.isArray=()=>{intercepted++;throw new Error('guest isArray override called');};
+    const cloned=copyOwnedValue([1,2,3]);
+    assert.equal(cloned.length,3);
+    assert.equal(cloned[0],1);
+    const sparse=new Array(8193);
+    Object.setPrototypeOf(sparse,Object.prototype);
+    assert.throws(()=>copyOwnedValueWithBytes(sparse),/complexity exceeded/);
+    assert.equal(intercepted,0,'guest array predicate must never execute');
+  }finally{Array.isArray=original;}
+});
