@@ -288,7 +288,7 @@ export function compileInvertedIRV1(input,{runtimeSpecifier="./worker-inverted-a
         break;
       case "push":
         out.push("const _v"+stmt.slot+"=_v"+stmt.owner+".push({"+
-          descriptors.map((f,i)=>JSON.stringify(f.name)+":"+scalar(stmt.values[i])).join(",")+"});");
+          descriptors.map((f,i)=>"["+JSON.stringify(f.name)+"]:"+scalar(stmt.values[i])).join(",")+"});");
         break;
       case "write":
         out.push("_v"+stmt.owner+"."+(stmt.index.kind==="position"?"writeAt(":"write(")+
