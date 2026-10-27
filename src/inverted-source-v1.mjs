@@ -130,7 +130,8 @@ class CheckedParser {
     }
     if(!returned)reject("main must return",this.peek());
     this.expect("<eof>");
-    return {schema:[...this.schemas.values()][0],statements:this.statements};
+    const declared=[...this.schemas.values()][0];
+    return {schema:{name:declared.name,fields:declared.fields},statements:this.statements};
   }
   declare(){
     const name=this.identifier();
