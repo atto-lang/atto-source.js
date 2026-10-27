@@ -201,3 +201,35 @@ test("loan facade allocation failure does not publish reader or writer rights", 
   assert.equal(rows.size, 0);
   rows.close();
 });
+
+test("host-patched Object.freeze cannot reenter loan mint to mutate or retire owner", () => {
+  const schema = spec(), x = schema.bindField("x");
+  const rows = make(schema), h = rows.push({id: 9n, x: 2, ready: true});
+  const freeze = Object.freeze;
+  const attempts = [];
+  Object.freeze = object => {
+    if (object && typeof object.getAt === "function" && typeof object.close === "function") {
+      for (const mutation of [
+        () => rows.close(),
+        () => rows.push({id: 10n, x: 1, ready: false}),
+        () => rows.write(h, x, 12),
+        () => rows.borrowWrite(x),
+        () => rows.eraseSwap(h)
+      ]) {
+        try { mutation(); attempts.push("unexpected success"); }
+        catch (error) { attempts.push(String(error)); }
+      }
+    }
+    return freeze(object);
+  };
+  let read;
+  try { read = rows.borrowRead(x); }
+  finally { Object.freeze = freeze; }
+  assert.equal(attempts.length, 5);
+  for (const message of attempts) assert.match(message, /reentrant/);
+  assert.equal(read.get(h), 2);
+  read.close();
+  rows.write(h, x, 3);
+  assert.equal(rows.read(h, x), 3);
+  rows.close();
+});
