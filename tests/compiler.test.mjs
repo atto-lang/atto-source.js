@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
-import {compile} from '../src/compiler.mjs';
+import {compile,compileToIR} from '../src/compiler.mjs';
 const fixture = name => resolve('tests/fixtures',name);
 const cli = resolve('bin/oreslang-jsc.mjs');
 
@@ -134,6 +134,23 @@ test('source cannot inject arbitrary JS or host API access',async()=>{
 });
 test('bounded input rejects oversized program',()=>{
  assert.throws(()=>compile(' '.repeat(262145)),/error:/);
+});
+test('scalar source rejects NUL and unpaired UTF-16 even in ignored comments',()=>{
+ const good='pub fnc main(): int { return 42; }';
+ const bad=[String.fromCharCode(0),String.fromCharCode(0xd800),
+   String.fromCharCode(0xdc00),String.fromCharCode(0xd800)+'x'];
+ for(const fragment of bad){
+   for(const source of [
+     fragment+good,good+' // '+fragment,good+' /* '+fragment+' */'
+   ]){
+     assert.throws(()=>compile(source),/error: (?:NUL|invalid UTF-16) in source/);
+     assert.throws(()=>compileToIR(source),/error: (?:NUL|invalid UTF-16) in source/);
+   }
+ }
+ // Valid surrogate pairs remain accepted; comments are lexically invisible.
+ const emoji=String.fromCodePoint(0x1f600);
+ assert.equal(compile(good+' // '+emoji),compile(good));
+ assert.equal(compile(good+' /* '+emoji+' */'),compile(good));
 });
 test('CLI check works and emits no compiled JS on reject',()=>{
  const ok=spawnSync(process.execPath,[cli,'--check',fixture('arithmetic.ores')],{encoding:'utf8'});
