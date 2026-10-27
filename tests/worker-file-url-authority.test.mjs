@@ -18,6 +18,9 @@ test('Node actor denies remote file authorities and UNC-equivalent paths before 
     // remote authorities or UNC-equivalent leading double slashes.
     String.raw`file:\\fileserver.example\share\actor.mjs`,
     String.raw`file:/\fileserver.example\share\actor.mjs`,
+    new URL(String.raw`file:/\fileserver.example\share\actor.mjs`),
+    String.raw`file:///tmp\actor.mjs`,
+    'file:///tmp//actor.mjs',
     'file:////./UNC/fileserver.example/share/actor.mjs',
     'file:////?/UNC/fileserver.example/share/actor.mjs',
     'file:///%2e%2e/%2e%2e/..//fileserver.example/share/actor.mjs',
