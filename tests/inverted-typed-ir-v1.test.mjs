@@ -250,3 +250,33 @@ test("typed IR rejects non-i64 +=, forged owner, field, delta, or erased handles
     header.replace("rows[h].id += 5","rows[h].id += -9223372036854775809"),
   ])assert.throws(()=>compileToInvertedIRV1(source));
 });
+
+
+test("f64 -0.0 preserves IEEE signed zero through typed IR and emitted ESM", () => {
+  const source=[
+    "define inverted class Particle as",
+    "  int id;",
+    "  float x;",
+    "end",
+    "define pub fnc main(): int {",
+    "  let rows = InvertedArray<Particle>.with_capacity(1);",
+    "  let h = rows.push(Particle {id: 42, x: -0.0});",
+    "  rows[h].x = -0.0;",
+    "  return rows[h].id;",
+    "}"
+  ].join("\n");
+  const ir=compileToInvertedIRV1(source);
+  assert.deepEqual(ir.statements[1].values[1],{type:"f64",value:"-0"});
+  assert.deepEqual(ir.statements[2].value,{type:"f64",value:"-0"});
+  const emitted=compileInvertedIRV1(ir,{runtimeSpecifier});
+  assert.match(emitted,/\["x"\]:-0\b/);
+  assert.match(emitted,/\.write\([^;\n]*,-0\);/);
+  const valid=validateInvertedIRV1(ir);
+  assert.equal(valid.statements[1].values[1].value,"-0");
+
+  const malformed=copy(ir);
+  malformed.statements[1].values[1].value="-0.0";
+  assert.throws(()=>compileInvertedIRV1(malformed),InvertedIRError);
+  malformed.statements[1].values[1].value="-0e0";
+  assert.throws(()=>compileInvertedIRV1(malformed),InvertedIRError);
+});
