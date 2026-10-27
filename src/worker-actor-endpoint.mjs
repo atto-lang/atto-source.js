@@ -138,7 +138,13 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     // Includes the one currently executing turn, not only the queued frames.
     if(inFlight>=maxPending){fail('actor mailbox capacity exceeded');return;}
     let snapshot,bytes;
-    try{({value:snapshot,bytes}=copyOwnedValueWithBytes(frame.value));}
+    try{
+      const payload=frame.value;
+      // A custom transport's getter can synchronously revoke this session.
+      // Never validate or clone an abandoned delivery after that revocation.
+      if(terminal)return;
+      ({value:snapshot,bytes}=copyOwnedValueWithBytes(payload));
+    }
     catch{fail('invalid actor delivery payload');return;}
     if(bytes>maxPendingBytes-inFlightBytes){
       fail('actor mailbox byte capacity exceeded');return;

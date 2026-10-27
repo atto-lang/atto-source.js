@@ -240,3 +240,31 @@ test('reentrant delivery value getter cannot resurrect mailbox credit after shut
   await sleep(30);
   assert.equal(h.frames.filter(f=>f.kind==='result').length,0);
 });
+
+
+test('reentrant value getter never runs post-revocation payload copy hooks',async()=>{
+  const h=harness();h.init();
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  let prototypeReads=0,valueReads=0;
+  const payload=new Proxy({type:'add',x:40n,y:2n},{
+    getPrototypeOf(target){
+      prototypeReads++;
+      return Reflect.getPrototypeOf(target);
+    }
+  });
+  h.raw({
+    protocol:PROTOCOL,kind:'deliver',id:1,reply:true,
+    get value(){
+      valueReads++;
+      // Simulate an accessor-backed host transport invoking a nested frame.
+      h.send('deliver',{id:2,reply:true,value:{type:'add',x:1n,y:2n}});
+      return payload;
+    }
+  });
+  assert.equal(valueReads,1);
+  assert.equal(prototypeReads,0,'terminal revocation must prevent copy validation');
+  assert.deepEqual(h.frames.map(f=>f.kind),['ready','fatal']);
+  assert.match(h.frames.at(-1).error,/reentrant actor frame/);
+  await sleep(20);
+  assert.deepEqual(h.frames.map(f=>f.kind),['ready','fatal']);
+});
