@@ -208,3 +208,52 @@ test('small cloneables remain supported after prototype changes',()=>{
   assert.equal(copyOwnedValue(backing).byteLength,16);
   assert.equal(copyOwnedValue(boxed).valueOf(),'hello');
 });
+
+test('guest replacement of structuredClone and Object.freeze cannot forge a copy receipt',()=>{
+  const clone=globalThis.structuredClone,freeze=Object.freeze;
+  let intercepted=0;
+  try{
+    globalThis.structuredClone=value=>{intercepted++;return value;};
+    Object.freeze=value=>value&&typeof value==='object'&&'bytes' in value?
+      {value:value.value,bytes:0}:value;
+    const source={payload:{answer:42}};
+    const receipt=copyOwnedValueWithBytes(source);
+    assert.notStrictEqual(receipt.value,source,'owned snapshot must not alias caller data');
+    assert.ok(receipt.bytes>0,'guest must not erase byte reservations');
+    assert.equal(Object.isFrozen(receipt),true,'guest must not replace frozen receipt');
+    source.payload.answer=99;
+    assert.equal(receipt.value.payload.answer,42);
+    assert.equal(intercepted,0,'guest replacement must not run');
+  }finally{
+    globalThis.structuredClone=clone;
+    Object.freeze=freeze;
+  }
+});
+
+test('guest Map/Set iterator next replacement cannot conceal oversized backing storage',()=>{
+  const oversized=new ArrayBuffer(9*MiB);
+  const cases=[
+    [Object.getPrototypeOf(new Map().entries()),new Map([['hidden',oversized]])],
+    [Object.getPrototypeOf(new Set().values()),new Set([oversized])]
+  ];
+  for(const [prototype,value] of cases){
+    const original=Object.getOwnPropertyDescriptor(prototype,'next');
+    assert.ok(original?.configurable);
+    Object.defineProperty(prototype,'next',{...original,value(){return {done:true};}});
+    try{
+      assert.throws(()=>copyOwnedValue(value),/byte budget exceeded/,
+        'native iterator must enumerate hidden oversized payload');
+    }finally{Object.defineProperty(prototype,'next',original);}
+  }
+});
+
+test('guest Object.hasOwn replacement cannot admit accessor-backed payloads',()=>{
+  const original=Object.hasOwn;
+  let invoked=0;
+  try{
+    Object.hasOwn=()=>true;
+    const value={get payload(){invoked++;return {answer:42};}};
+    assert.throws(()=>copyOwnedValue(value),/accessors forbidden/);
+    assert.equal(invoked,0,'copy validation must never invoke guest getters');
+  }finally{Object.hasOwn=original;}
+});

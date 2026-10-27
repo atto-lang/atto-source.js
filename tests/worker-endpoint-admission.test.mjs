@@ -339,3 +339,19 @@ test('patched Object.freeze cannot replace a turn reply capability',async()=>{
   assert.equal(h.frames.at(-1).value,42n);
   assert.equal(h.frames.filter(f=>f.kind==='fatal').length,0);
 });
+
+test('guest structuredClone replacement cannot alias a claimed reply before completion',async()=>{
+  const h=harness();h.init();
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  const original=globalThis.structuredClone;
+  let intercepted=0;
+  try{
+    globalThis.structuredClone=value=>{intercepted++;return value;};
+    h.send('deliver',{id:1,reply:true,value:{type:'reply-snapshot'}});
+    await h.until(()=>h.frames.some(f=>f.kind==='result'));
+    assert.deepEqual(h.frames.at(-1).value,{n:1},
+      'reply must preserve value at self.respond, not later guest mutation');
+    assert.equal(intercepted,0,'guest clone replacement must not run');
+    assert.equal(h.frames.filter(f=>f.kind==='fatal').length,0);
+  }finally{globalThis.structuredClone=original;}
+});

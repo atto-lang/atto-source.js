@@ -4,6 +4,10 @@
 const MAX_NODES=8192, MAX_DEPTH=64, MAX_CONTENT_BYTES=8*1024*1024;
 const MISSING=Symbol('no internal slot');
 const ownKeys=Reflect.ownKeys, descriptor=Object.getOwnPropertyDescriptor;
+// Trusted guest ESM shares this Worker realm. Capture copy/validation intrinsics
+// before guest code can replace them and forge an ownership or byte receipt.
+const nativeClone=globalThis.structuredClone, nativeFreeze=Object.freeze;
+const nativeHasOwn=Object.hasOwn;
 const getPrototype=Object.getPrototypeOf;
 const nativeTag=Object.prototype.toString;
 const arrayBufferBytes=descriptor(ArrayBuffer.prototype,'byteLength').get;
@@ -18,6 +22,10 @@ const blobBytes=typeof Blob==='function'?descriptor(Blob.prototype,'size').get:n
 const blobType=typeof Blob==='function'?descriptor(Blob.prototype,'type').get:null;
 const mapSize=descriptor(Map.prototype,'size').get, setSize=descriptor(Set.prototype,'size').get;
 const mapEntries=Map.prototype.entries, setValues=Set.prototype.values;
+// for...of calls the *current* iterator prototype next. Guest code can patch
+// it to hide arbitrarily large Map/Set entries from both validation passes.
+const mapNext=getPrototype(mapEntries.call(new Map())).next;
+const setNext=getPrototype(setValues.call(new Set())).next;
 const regexpSource=descriptor(RegExp.prototype,'source').get;
 const dateTime=Date.prototype.getTime;
 const stringValue=String.prototype.valueOf;
@@ -49,7 +57,7 @@ function validate(value){
         throw new TypeError('unsupported actor wire symbol key');
       charge(key.length*2);
       const d=descriptor(node,key);
-      if(!d||!Object.hasOwn(d,'value'))
+      if(!d||!nativeHasOwn(d,'value'))
         throw new TypeError('actor message accessors forbidden in copy-only profile');
       walk(d.value,depth+1);
     }
@@ -100,16 +108,20 @@ function validate(value){
     const bool=slot(booleanValue,node);
     if(bool!==MISSING){charge(1);own(node,depth);return;}
     if(slot(mapSize,node)!==MISSING){
-      for(const [k,v] of mapEntries.call(node)){
+      const iterator=mapEntries.call(node);
+      for(let step=mapNext.call(iterator);!step.done;step=mapNext.call(iterator)){
         if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
-        walk(k,depth+1);walk(v,depth+1);
+        // Native Map iterator yields an ordinary two-element entry Array.
+        // Avoid a guest-patched Array iterator in destructuring as well.
+        walk(step.value[0],depth+1);walk(step.value[1],depth+1);
       }
       return;
     }
     if(slot(setSize,node)!==MISSING){
-      for(const item of setValues.call(node)){
+      const iterator=setValues.call(node);
+      for(let step=setNext.call(iterator);!step.done;step=setNext.call(iterator)){
         if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
-        walk(item,depth+1);
+        walk(step.value,depth+1);
       }
       return;
     }
@@ -144,8 +156,8 @@ function validate(value){
 }
 export function copyOwnedValueWithBytes(value){
   validate(value);
-  const snapshot=structuredClone(value);
+  const snapshot=nativeClone(value);
   const bytes=validate(snapshot);
-  return Object.freeze({value:snapshot,bytes});
+  return nativeFreeze({value:snapshot,bytes});
 }
 export function copyOwnedValue(value){return copyOwnedValueWithBytes(value).value;}
