@@ -91,6 +91,8 @@ function index(value,owner,defined,context){
     const slot=nat(value.slot,defined.length-1,context);
     if(!defined[slot] || defined[slot].kind!=="handle" || defined[slot].owner!==owner)
       fail(context+": foreign/stale-layout handle type");
+    if(!defined[slot].live)
+      fail(context+": handle used after erase");
     return {kind:"handle",slot};
   }
   fail(context+": unsupported index form");
@@ -174,7 +176,7 @@ export function validateInvertedIRV1(input) {
         const supplied=dense(step.values,64,"row values");
         if(supplied.length!==fields.length)fail("row field count mismatch");
         const values=supplied.map((v,j)=>scalar(v,fields[j].type,"row field "+fields[j].name));
-        defined.push({kind:"handle",owner});
+        defined.push({kind:"handle",owner,live:true});
         return {kind:"push",slot,owner,values};
       }
       case "write":{
@@ -189,6 +191,8 @@ export function validateInvertedIRV1(input) {
         const slot=nat(step.handle,defined.length-1,"erase handle");
         if(!defined[slot]||defined[slot].kind!=="handle"||defined[slot].owner!==owner)
           fail("erase cross-owner/non-handle");
+        if(!defined[slot].live)fail("double erase of retired row handle");
+        defined[slot].live=false;
         return {kind:"erase",owner,handle:slot};
       }
       case "return":{
