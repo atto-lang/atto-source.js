@@ -178,6 +178,11 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
     try {
       ({value:snapshot,bytes}=copyOwnedValueWithBytes(value));
     } catch (error) {return Promise.reject(error);}
+    // Copy admission can run host JS via patched structuredClone/proxy traps.
+    // A synchronous Worker error/reentrant control frame may revoke the actor
+    // while the owned snapshot is being prepared. Never recreate a receipt
+    // after shutdown has already cleared the pending ledger.
+    if (closed) return Promise.reject(new Error('actor closed'));
     if(bytes>maxPendingBytes-pendingBytes)
       return Promise.reject(new Error('actor mailbox byte capacity exceeded'));
     const id = nextId++;
