@@ -76,17 +76,27 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     if(!frame||typeof frame!=='object'||frame.protocol!==PROTOCOL){
       fail('invalid actor frame');return;
     }
+    if(terminal)return;
     // A custom transport may pass accessor-backed frames instead of a
     // structured clone. Never re-read mutable control fields after admission.
     const kind=frame.kind;
+    if(terminal)return;
     if(kind!=='init'&&kind!=='deliver'){
       fail('invalid actor frame');return;
     }
     if(kind==='init'){
       if(initializing||initialized){fail('duplicate initialization');return;}
       initializing=true;
-      const moduleUrl=frame.moduleUrl,exportName=frame.exportName,mode=frame.mode;
-      const requestedMaxPending=frame.maxPending,requestedMaxPendingBytes=frame.maxPendingBytes;
+      const moduleUrl=frame.moduleUrl;
+      if(terminal)return;
+      const exportName=frame.exportName;
+      if(terminal)return;
+      const mode=frame.mode;
+      if(terminal)return;
+      const requestedMaxPending=frame.maxPending;
+      if(terminal)return;
+      const requestedMaxPendingBytes=frame.maxPendingBytes;
+      if(terminal)return;
       if(typeof moduleUrl!=='string'||!moduleUrl||
          typeof exportName!=='string'||
          !/^[A-Za-z_][A-Za-z0-9_]*$/.test(exportName)||
@@ -128,10 +138,12 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     // must not evaluate unrelated accessor-backed control properties.
     if(!initialized){fail('invalid or premature delivery');return;}
     const id=frame.id;
+    if(terminal)return;
     if(!Number.isSafeInteger(id)||id<=lastId){
       fail('invalid or premature delivery');return;
     }
     const wantsReply=frame.reply;
+    if(terminal)return;
     if(typeof wantsReply!=='boolean'){
       fail('invalid or premature delivery');return;
     }
