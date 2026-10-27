@@ -363,3 +363,33 @@ test('guest Array.isArray replacement cannot hide sparse arrays or intercept adm
     assert.equal(intercepted,0,'guest array predicate must never execute');
   }finally{Array.isArray=original;}
 });
+
+test('guest Array iterator cannot skip own-key admission of oversized payload',()=>{
+  const original=Array.prototype[Symbol.iterator];
+  let poisonedCalls=0,thrown;
+  try{
+    Array.prototype[Symbol.iterator]=function*(){poisonedCalls++;};
+    try{copyOwnedValueWithBytes({payload:new ArrayBuffer(9*MiB)});}
+    catch(error){thrown=error;}
+  }finally{Array.prototype[Symbol.iterator]=original;}
+  assert.match(String(thrown),/byte budget exceeded/,
+    'an overridden Array iterator must not hide own payload fields');
+  assert.equal(poisonedCalls,0,'own-key admission must use indexed iteration');
+});
+
+test('guest Array iterator cannot suppress forbidden accessor detection',()=>{
+  const original=Array.prototype[Symbol.iterator];
+  let getterCalls=0,poisonedCalls=0,thrown;
+  const hostile=Object.defineProperty({},'payload',{
+    enumerable:true,get(){getterCalls++;return 42;}
+  });
+  try{
+    Array.prototype[Symbol.iterator]=function*(){poisonedCalls++;};
+    try{copyOwnedValueWithBytes(hostile);}
+    catch(error){thrown=error;}
+  }finally{Array.prototype[Symbol.iterator]=original;}
+  assert.match(String(thrown),/accessors forbidden/,
+    'own-key iteration must still inspect accessor descriptors');
+  assert.equal(getterCalls,0,'admission must not evaluate hostile getters');
+  assert.equal(poisonedCalls,0,'guest Array iterator must not execute');
+});

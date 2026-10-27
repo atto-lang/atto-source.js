@@ -63,7 +63,12 @@ function validate(value){
     bytes+=n;
   }
   function own(node,depth){
-    for(const key of ownKeys(node)){
+    // Reflect.ownKeys returns a dense Array, but for..of consults the live
+    // Array.prototype[Symbol.iterator]. Guest ESM could replace that iterator
+    // to skip all keys and evade byte/accessor admission before nativeClone.
+    const keys=ownKeys(node);
+    for(let i=0;i<keys.length;i++){
+      const key=keys[i];
       if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
       if(typeof key==='symbol')
         throw new TypeError('unsupported actor wire symbol key');
