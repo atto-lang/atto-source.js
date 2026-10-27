@@ -16,11 +16,15 @@ class ContinuationTicket {
  * tryConsume(ticket) immediately before running the continuation. Advancing the
  * generation invalidates every outstanding ticket, so a completion queued by an
  * older actor incarnation cannot resume in a newer one.
+ * close() permanently rejects registration and clears pending tickets; it does
+ * not wait for callbacks or native workers. The scheduler must serialize
+ * consume-and-invoke with lifecycle changes on the actor lane.
  */
 export class SelectContinuationFence {
   #generation;
   #slots;
   #nextId=1;
+  #closed=false;
 
   constructor({generation=1,maxTickets=64}={}){
     if(!Number.isSafeInteger(generation)||generation<1)
@@ -32,12 +36,23 @@ export class SelectContinuationFence {
       ()=>({id:0,generation:0,active:false}));
   }
 
+  get closed(){return this.#closed;}
+
+  // Terminal shutdown is distinct from advancing to a reusable generation.
+  close(){
+    if(this.#closed)return false;
+    this.#closed=true;
+    for(const slot of this.#slots)this.#clear(slot);
+    return true;
+  }
+
   get generation(){return this.#generation;}
   get pendingTickets(){
     return this.#slots.reduce((n,slot)=>n+(slot.active?1:0),0);
   }
 
   register(expectedGeneration=this.#generation){
+    if(this.#closed)throw new Error('continuation fence is closed');
     if(expectedGeneration!==this.#generation)
       throw new Error('stale actor generation');
     const index=this.#slots.findIndex(slot=>!slot.active);
@@ -59,6 +74,7 @@ export class SelectContinuationFence {
   }
 
   advance(expectedGeneration){
+    if(this.#closed)return false;
     if(expectedGeneration!==this.#generation)return false;
     if(this.#generation>=Number.MAX_SAFE_INTEGER)
       throw new Error('actor generation exhausted');
