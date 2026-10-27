@@ -6,7 +6,9 @@ function trustedLocalWorkerModuleUrl(moduleUrl) {
   // Node versions differ in how aggressively backslashes are treated as URL
   // separators; a raw backslash must never become a platform-dependent path.
   const raw = moduleUrl instanceof URL ? moduleUrl.href : String(moduleUrl);
-  if (raw.includes('\\'))
+  // Refuse shorthand file:relative and file:/absolute spellings that Node
+  // silently normalizes into a different absolute file URL.
+  if (raw.includes('\\') || !/^file:\/\/(?:\/|localhost\/)/i.test(raw))
     throw new TypeError('Node actor module must be a trusted file: URL without remote authority or UNC path');
   const url = new URL(raw);
   // No eval/data URL or Windows UNC/network-share authority: caller must
@@ -16,8 +18,10 @@ function trustedLocalWorkerModuleUrl(moduleUrl) {
   // turn file:/\\server\\share into file:///server//share, erasing the raw
   // backslash while preserving a noncanonical UNC-like shape.
   // Percent-encoded NUL is not a valid local filename; deny before spawning.
+  // Malformed percent escapes cannot be decoded to filesystem path bytes.
   if (url.protocol !== 'file:' || url.host !== '' ||
-      url.pathname.includes('//') || /%(?:00|2f|5c)/i.test(url.pathname))
+      url.pathname.includes('//') || /%(?:00|2f|5c)/i.test(url.pathname) ||
+      /%(?![0-9a-f]{2})/i.test(url.pathname))
     throw new TypeError('Node actor module must be a trusted file: URL without remote authority or UNC path');
   return url;
 }

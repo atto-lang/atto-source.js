@@ -36,6 +36,16 @@ test('Node actor denies remote file authorities and UNC-equivalent paths before 
     'file:///tmp/%00actor.mjs',
     'file:///tmp/a%00b.mjs',
     new URL('file:///tmp/a%00b.mjs'),
+    // Node otherwise normalizes ambiguous file: shorthand into an absolute
+    // URL; malformed percent escapes fail only later during path decoding.
+    'file:actor.mjs',
+    'file:./actor.mjs',
+    'file:/tmp/actor.mjs',
+    'file://localhost',
+    'file:///tmp/%',
+    'file:///tmp/%GG',
+    'file:///tmp/%0',
+    'file:///tmp/actor.mjs%',
   ]) {
     assert.throws(
       () => spawnNodeActor({moduleUrl}),
