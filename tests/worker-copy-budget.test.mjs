@@ -257,3 +257,39 @@ test('guest Object.hasOwn replacement cannot admit accessor-backed payloads',()=
     assert.equal(invoked,0,'copy validation must never invoke guest getters');
   }finally{Object.hasOwn=original;}
 });
+
+test('guest Math.max replacement cannot hide resizable ArrayBuffer capacity',()=>{
+  const buffer=new ArrayBuffer(0,{maxByteLength:9*MiB});
+  assert.equal(buffer.resizable,true,'Node 22 resizable buffer prerequisite');
+  const original=Math.max;
+  let calls=0,thrown;
+  try{
+    Math.max=()=>{calls++;return 0;};
+    try{copyOwnedValueWithBytes(buffer);}catch(error){thrown=error;}
+  }finally{Math.max=original;}
+  assert.match(String(thrown),/byte budget exceeded/,
+    'admission must charge the maximum growth capacity');
+  assert.equal(calls,0,'guest arithmetic override must not execute');
+});
+
+test('guest Math.ceil replacement cannot erase BigInt copy reservations',()=>{
+  const original=Math.ceil;
+  let calls=0,receipt;
+  try{
+    Math.ceil=()=>{calls++;return 0;};
+    receipt=copyOwnedValueWithBytes(2n**256n);
+  }finally{Math.ceil=original;}
+  assert.ok(receipt.bytes>=33,'257-bit BigInt must reserve at least 33 bytes');
+  assert.equal(calls,0,'guest arithmetic override must not execute');
+});
+
+test('guest Number.isSafeInteger replacement cannot deny valid copy admission',()=>{
+  const original=Number.isSafeInteger;
+  let calls=0,receipt;
+  try{
+    Number.isSafeInteger=()=>{calls++;return false;};
+    receipt=copyOwnedValueWithBytes('safe');
+  }finally{Number.isSafeInteger=original;}
+  assert.equal(receipt.bytes,8);
+  assert.equal(calls,0,'guest integer override must not execute');
+});

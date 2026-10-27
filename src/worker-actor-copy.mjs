@@ -8,6 +8,10 @@ const ownKeys=Reflect.ownKeys, descriptor=Object.getOwnPropertyDescriptor;
 // before guest code can replace them and forge an ownership or byte receipt.
 const nativeClone=globalThis.structuredClone, nativeFreeze=Object.freeze;
 const nativeHasOwn=Object.hasOwn;
+// Guest ESM shares this realm. Dynamic arithmetic helpers can be replaced to
+// erase resizable-buffer capacity or BigInt byte charges during admission.
+const nativeMax=Math.max, nativeCeil=Math.ceil;
+const nativeSafeInteger=Number.isSafeInteger;
 const getPrototype=Object.getPrototypeOf;
 const nativeTag=Object.prototype.toString;
 const arrayBufferBytes=descriptor(ArrayBuffer.prototype,'byteLength').get;
@@ -40,13 +44,13 @@ function slot(reader,node){
 }
 function bigintSize(value){
   const hex=bigintHex.call(value,16);
-  return Math.ceil((hex.length-(hex[0]==='-'?1:0))/2);
+  return nativeCeil((hex.length-(hex[0]==='-'?1:0))/2);
 }
 function validate(value){
   const visited=new WeakSet();
   let nodes=0,entries=0,bytes=0;
   function charge(n){
-    if(!Number.isSafeInteger(n)||n<0||n>MAX_CONTENT_BYTES-bytes)
+    if(!nativeSafeInteger(n)||n<0||n>MAX_CONTENT_BYTES-bytes)
       throw new RangeError('actor message byte budget exceeded');
     bytes+=n;
   }
@@ -76,7 +80,7 @@ function validate(value){
     const raw=slot(arrayBufferBytes,node);
     if(raw!==MISSING){
       const capacity=slot(arrayBufferCapacity,node);
-      charge(capacity===MISSING?raw:Math.max(raw,capacity));return;
+      charge(capacity===MISSING?raw:nativeMax(raw,capacity));return;
     }
     if(ArrayBuffer.isView(node)){
       const viewed=slot(viewBuffer,node);
@@ -102,7 +106,7 @@ function validate(value){
     const str=slot(stringValue,node);
     if(str!==MISSING){charge(str.length*2);own(node,depth);return;}
     const bn=slot(function(){return bigintHex.call(this,16);},node);
-    if(bn!==MISSING){charge(Math.ceil((bn.length-(bn[0]==='-'?1:0))/2));own(node,depth);return;}
+    if(bn!==MISSING){charge(nativeCeil((bn.length-(bn[0]==='-'?1:0))/2));own(node,depth);return;}
     const num=slot(numberValue,node);
     if(num!==MISSING){charge(8);own(node,depth);return;}
     const bool=slot(booleanValue,node);
