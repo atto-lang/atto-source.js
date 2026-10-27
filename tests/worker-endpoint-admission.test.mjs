@@ -187,3 +187,56 @@ test('invalid delivery id does not inspect reply accessor',async()=>{
   assert.deepEqual(h.frames.map(f=>f.kind),['ready','fatal']);
   assert.match(h.frames.at(-1).error,/invalid or premature delivery/);
 });
+
+test('reentrant endpoint kind getter terminally revokes without invoking nested guest work',async()=>{
+  const h=harness();h.init();
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  let reads=0;
+  h.raw({
+    protocol:PROTOCOL,id:1,reply:true,value:{type:'add',x:40n,y:2n},
+    get kind(){
+      reads++;
+      h.send('deliver',{id:2,reply:true,value:{type:'add',x:20n,y:22n}});
+      return 'deliver';
+    }
+  });
+  assert.equal(reads,1);
+  assert.deepEqual(h.frames.map(f=>f.kind),['ready','fatal']);
+  assert.match(h.frames.at(-1).error,/reentrant actor frame/);
+  await sleep(30);
+  assert.equal(h.frames.filter(f=>f.kind==='result').length,0);
+  h.send('deliver',{id:3,reply:true,value:{type:'add',x:1n,y:2n}});
+  assert.deepEqual(h.frames.map(f=>f.kind),['ready','fatal']);
+});
+
+test('reentrant init descriptor cannot start import after fatal revocation',async()=>{
+  const h=harness();
+  h.raw({
+    protocol:PROTOCOL,kind:'init',
+    get moduleUrl(){h.init();return MODULE_URL;},
+    exportName:'receive',mode:'handler',maxPending:2,maxPendingBytes:1024
+  });
+  assert.deepEqual(h.frames.map(f=>f.kind),['fatal']);
+  assert.match(h.frames[0].error,/reentrant actor frame/);
+  await sleep(25);
+  assert.deepEqual(h.frames.map(f=>f.kind),['fatal']);
+});
+
+test('reentrant delivery value getter cannot resurrect mailbox credit after shutdown',async()=>{
+  const h=harness();h.init();
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  let valueReads=0;
+  h.raw({
+    protocol:PROTOCOL,kind:'deliver',id:1,reply:true,
+    get value(){
+      valueReads++;
+      h.send('deliver',{id:2,reply:true,value:{type:'add',x:40n,y:2n}});
+      return {type:'add',x:20n,y:22n};
+    }
+  });
+  assert.equal(valueReads,1);
+  assert.deepEqual(h.frames.map(f=>f.kind),['ready','fatal']);
+  assert.match(h.frames.at(-1).error,/reentrant actor frame/);
+  await sleep(30);
+  assert.equal(h.frames.filter(f=>f.kind==='result').length,0);
+});
