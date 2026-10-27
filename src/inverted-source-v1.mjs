@@ -1,5 +1,3 @@
-import { } from "./worker-inverted-array.mjs";
-
 // Intentionally opt-in compiler lane. This is a bounded, lexed, typed source
 // slice; no regular-expression rewriting of source access and no AoS fallback.
 const MAX_SOURCE = 65536;
