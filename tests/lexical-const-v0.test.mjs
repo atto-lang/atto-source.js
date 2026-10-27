@@ -1,0 +1,58 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {LexicalConstScope,LexicalConstError,lower_const_sequence} from '../src/lexical-const-v0.mjs';
+
+test('immutable locals are scoped, distinct, and never shadow parameters',()=>{
+  const root=LexicalConstScope.root(['input'],['int']);
+  const a=root.child(),b=root.child();
+  assert.deepEqual(root.resolve('input'),{kind:'param',index:0,name:'input',type:'int'});
+  assert.deepEqual(a.declare_const('first','int'),{kind:'local',slot:0,name:'first',type:'int'});
+  assert.deepEqual(b.declare_const('second','bool'),{kind:'local',slot:1,name:'second',type:'bool'});
+  assert.equal(a.resolve('second'),null);
+  assert.equal(b.resolve('first'),null);
+  assert.equal(root.resolve('first'),null);
+  assert.throws(()=>a.declare_const('input','int'),LexicalConstError);
+  assert.throws(()=>a.declare_const('first','int'),LexicalConstError);
+  assert.equal(Object.isFrozen(a.resolve('first')),true);
+});
+
+test('lexical children inherit types without leaking their bindings',()=>{
+  const root=LexicalConstScope.root([],[]);
+  root.declare_const('outer','symbol');
+  const child=root.child();
+  assert.deepEqual(child.resolve('outer'),root.resolve('outer'));
+  child.declare_const('inner','option<int>');
+  assert.equal(root.resolve('inner'),null);
+  assert.throws(()=>child.declare_const('outer','int'),/shadows/);
+});
+
+test('reject reserved names, invalid metadata and nesting over budget',()=>{
+  for(const name of ['self','return','const','Option','1x','foo-bar',''])
+    assert.throws(()=>LexicalConstScope.root([name],['int']),LexicalConstError);
+  for(const type of ['float','void','Pointer','Int',42])
+    assert.throws(()=>LexicalConstScope.root(['x'],[type]),LexicalConstError);
+  assert.throws(()=>LexicalConstScope.root(['x'],[]),LexicalConstError);
+  assert.throws(()=>LexicalConstScope.root(['x','x'],['int','bool']),/duplicate/);
+  let scope=LexicalConstScope.root([],[]);
+  for(let i=0;i<192;i++)scope=scope.child();
+  assert.throws(()=>scope.child(),/depth budget/);
+});
+
+test('lower sequence preserves lexical initializer order and return',()=>{
+  const init={kind:'int',value:'41'};
+  const body={kind:'binary',op:'+',left:{kind:'variable',name:'x'},right:{kind:'int',value:'1'}};
+  const lowered=lower_const_sequence([
+    {kind:'const',name:'x',type:'int',value:init},
+    {kind:'return',value:body}
+  ]);
+  assert.deepEqual(lowered,{kind:'localDecl',name:'x',type:'int',value:init,body});
+});
+
+test('fail closed for unsupported and malformed statement sequences',()=>{
+  for(const seq of [[],[{kind:'const',name:'x',type:'int',value:1}],
+    [{kind:'return',value:1},{kind:'return',value:2}],
+    [{kind:'let',name:'x',value:1},{kind:'return',value:1}],
+    [{kind:'return',value:1,host:'escape'}],
+    [{kind:'const',name:'__proto__',type:'int',value:1},{kind:'return',value:2}]
+  ]) assert.throws(()=>lower_const_sequence(seq),LexicalConstError);
+});
