@@ -355,3 +355,36 @@ test('guest structuredClone replacement cannot alias a claimed reply before comp
     assert.equal(h.frames.filter(f=>f.kind==='fatal').length,0);
   }finally{globalThis.structuredClone=original;}
 });
+
+
+// The trusted guest module shares this Worker realm and can replace Array's
+// iterator after endpoint import. Fatal revocation must not call that mutable
+// iterator: a thrown iterator otherwise suppresses the fatal frame entirely.
+for(const hasQueuedTurn of [false,true]){
+  test('guest-poisoned Array iterator cannot suppress endpoint fatal, queued='+hasQueuedTurn,async()=>{
+    const h=harness();h.init();
+    await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+    if(hasQueuedTurn){
+      h.send('deliver',{id:1,reply:true,value:{type:'sleep',ms:45,n:1n}});
+      h.send('deliver',{id:2,reply:true,value:{type:'add',x:40n,y:2n}});
+    }
+    const original=Array.prototype[Symbol.iterator];
+    let intercepted=0,thrown=null;
+    try{
+      Array.prototype[Symbol.iterator]=function(){
+        intercepted++;
+        throw new Error('guest iterator poisoned');
+      };
+      try{
+        h.send('deliver',{id:hasQueuedTurn?2:0,reply:true,
+          value:{type:'add',x:1n,y:2n}});
+      }catch(error){thrown=error;}
+    }finally{Array.prototype[Symbol.iterator]=original;}
+    assert.equal(thrown,null,'fatal revocation must not throw to the transport');
+    assert.equal(intercepted,0,'endpoint must not consult guest Array iterator');
+    assert.deepEqual(h.frames.map(f=>f.kind),['ready','fatal']);
+    await sleep(65);
+    assert.deepEqual(h.frames.map(f=>f.kind),['ready','fatal'],
+      'revoked queued or executing turns must not emit late results');
+  });
+}

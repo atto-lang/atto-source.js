@@ -28,7 +28,11 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     terminal=true;
     // Release queued reservations immediately. The current executing turn
     // retains its loan until its finally block runs (no forced preemption).
-    for(const item of queue){inFlight--;inFlightBytes-=item.bytes;}
+    // Guest code can replace Array.prototype[Symbol.iterator] after import.
+    // A poisoned iterator must never suppress the terminal fatal receipt.
+    for(let index=0;index<queue.length;index++){
+      inFlight--;inFlightBytes-=queue[index].bytes;
+    }
     queue.length=0;
     try{reply({kind:'fatal',error:reason});}catch{/* transport already lost */}
   }
