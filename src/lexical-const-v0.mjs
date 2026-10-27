@@ -90,6 +90,7 @@ export function lower_const_sequence(statements, fallback = null) {
   if (!Array.isArray(statements) || statements.length > MAX_BINDINGS)
     fail('invalid statement sequence');
   let result=fallback;
+  let declarationDepth=0;
   for (let i=statements.length-1; i>=0; i--) {
     const item=statements[i];
     if (!item || typeof item!=='object' || Array.isArray(item) ||
@@ -103,6 +104,7 @@ export function lower_const_sequence(statements, fallback = null) {
           result!==null) fail('unreachable or malformed return');
       result=item.value;
     } else if (item.kind==='const') {
+      if (++declarationDepth > MAX_DEPTH) fail('nested const depth budget exceeded');
       if (keys.length!==4 || !['kind','name','type','value'].every(k=>keys.includes(k)))
         fail('malformed const declaration');
       validName(item.name);validType(item.type);
