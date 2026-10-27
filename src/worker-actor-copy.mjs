@@ -21,7 +21,13 @@ const NativeWeakSet=WeakSet;
 const nativeWeakSetHas=NativeWeakSet.prototype.has;
 const nativeWeakSetAdd=NativeWeakSet.prototype.add;
 const getPrototype=Object.getPrototypeOf;
+// The guest module can rebind global constructors and Symbol after import.
+// Keep record identity, brand-tag admission and native-slot exception checks
+// attached to the original realm, not guest-controlled global bindings.
 const nativeTag=Object.prototype.toString;
+const NativeTypeError=TypeError;
+const nativeObjectPrototype=Object.prototype;
+const nativeToStringTag=Symbol.toStringTag;
 const arrayBufferBytes=descriptor(ArrayBuffer.prototype,'byteLength').get;
 // A resizable ArrayBuffer can have zero currently allocated bytes but retain a
 // much larger cloneable growth capacity. Budget the maximum, not just length.
@@ -48,7 +54,7 @@ const fileName=typeof File==='function'?
   descriptor(File.prototype,'name')?.get:null;
 function slot(reader,node){
   if(!reader)return MISSING;
-  try{return reader.call(node);}catch(e){if(e instanceof TypeError)return MISSING;throw e;}
+  try{return reader.call(node);}catch(e){if(e instanceof NativeTypeError)return MISSING;throw e;}
 }
 function bigintSize(value){
   const hex=bigintHex.call(value,16);
@@ -155,15 +161,15 @@ function validate(value){
     // Object.prototype.toString consults Symbol.toStringTag. Reject any
     // instance override before asking for the native tag, or an accessor
     // there could execute arbitrary caller JS during validation.
-    if(descriptor(node,Symbol.toStringTag))
+    if(descriptor(node,nativeToStringTag))
       throw new TypeError('unsupported actor wire symbol key');
     // Inherited Symbol.toStringTag is consulted by Object#toString too.
     // An attacker can pollute Object.prototype to make a disguised native
     // Error claim '[object Object]' without changing cloneable internal slots.
-    if(proto===Object.prototype &&
-       descriptor(Object.prototype,Symbol.toStringTag))
+    if(proto===nativeObjectPrototype &&
+       descriptor(nativeObjectPrototype,nativeToStringTag))
       throw new TypeError('unsupported actor wire inherited symbol tag');
-    if((proto!==null&&proto!==Object.prototype)||
+    if((proto!==null&&proto!==nativeObjectPrototype)||
        nativeTag.call(node)!=='[object Object]')
       throw new TypeError('unsupported actor wire object type');
     own(node,depth);

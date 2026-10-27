@@ -393,3 +393,44 @@ test('guest Array iterator cannot suppress forbidden accessor detection',()=>{
   assert.equal(getterCalls,0,'admission must not evaluate hostile getters');
   assert.equal(poisonedCalls,0,'guest Array iterator must not execute');
 });
+
+
+test('guest TypeError rebinding cannot deny native record slot admission',()=>{
+  const NativeTypeError=globalThis.TypeError;
+  let receipt;
+  try {
+    globalThis.TypeError=class GuestTypeError extends Error {};
+    receipt=copyOwnedValueWithBytes({answer:42});
+  } finally {globalThis.TypeError=NativeTypeError;}
+  assert.equal(receipt.value.answer,42);
+  assert.equal(receipt.bytes,12,'answer key is charged as UTF-16');
+});
+
+test('guest Object rebinding cannot change native plain-record identity',()=>{
+  const NativeObject=globalThis.Object;
+  let receipt;
+  try {
+    globalThis.Object=class GuestObject {};
+    receipt=copyOwnedValueWithBytes({answer:42});
+  } finally {globalThis.Object=NativeObject;}
+  assert.equal(receipt.value.answer,42);
+  assert.equal(receipt.bytes,12);
+});
+
+test('guest Symbol rebinding cannot invoke an accessor-backed toStringTag',()=>{
+  const NativeSymbol=globalThis.Symbol;
+  const value={};
+  let tagGetterCalls=0,thrown;
+  Object.defineProperty(value,NativeSymbol.toStringTag,{
+    get(){tagGetterCalls++;return 'Object';}
+  });
+  try {
+    const GuestSymbol=function GuestSymbol(){};
+    GuestSymbol.toStringTag=NativeSymbol('decoy toStringTag');
+    globalThis.Symbol=GuestSymbol;
+    try {copyOwnedValueWithBytes(value);}
+    catch(error){thrown=error;}
+  } finally {globalThis.Symbol=NativeSymbol;}
+  assert.match(String(thrown),/unsupported actor wire symbol key/);
+  assert.equal(tagGetterCalls,0,'validator must reject tag descriptor without evaluating getter');
+});
