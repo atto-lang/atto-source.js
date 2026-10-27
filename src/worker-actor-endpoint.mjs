@@ -4,6 +4,11 @@ import {copyOwnedValue,copyOwnedValueWithBytes} from './worker-actor-copy.mjs';
 // revokes the session and suppresses late replies; it does not preempt code.
 const PROTOCOL='ores.js.worker.v1';
 const MAX_CONFIGURED_PENDING_BYTES=256*1024*1024;
+// Guest ESM runs in this Worker realm and may change host prototypes. Keep
+// mailbox bookkeeping and turn-authority construction on captured intrinsics.
+const nativePush=Array.prototype.push;
+const nativeShift=Array.prototype.shift;
+const nativeFreeze=Object.freeze;
 const errorText=e=>{
   try{return String(e?.message ?? e).slice(0,512);}
   catch{return 'uninspectable actor failure';}
@@ -32,9 +37,9 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     processing=true;
     try{
       while(!terminal&&queue.length){
-        const frame=queue.shift();
+        const frame=nativeShift.call(queue);
         let completed=false,claimed=false,response;
-        const self=Object.freeze({
+        const self=nativeFreeze({
           respond(value){
             if(terminal||completed||claimed||!frame.reply)
               throw new Error('reply unavailable or already claimed');
@@ -166,7 +171,7 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     lastId=id;
     inFlight++;
     inFlightBytes+=bytes;
-    queue.push({id,reply:wantsReply,value:snapshot,bytes});
+    nativePush.call(queue,{id,reply:wantsReply,value:snapshot,bytes});
     void drain();
     } catch {fail('invalid actor frame');}
     finally {handlingInbound=false;}

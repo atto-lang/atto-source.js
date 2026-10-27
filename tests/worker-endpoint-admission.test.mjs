@@ -268,3 +268,74 @@ test('reentrant value getter never runs post-revocation payload copy hooks',asyn
   await sleep(20);
   assert.deepEqual(h.frames.map(f=>f.kind),['ready','fatal']);
 });
+
+
+function withPatchedIntrinsic(owner,name,replacement,action) {
+  const original=Object.getOwnPropertyDescriptor(owner,name);
+  assert.ok(original?.configurable,'host intrinsic must be restorable');
+  Object.defineProperty(owner,name,{...original,value:replacement});
+  try {return action();}
+  finally {Object.defineProperty(owner,name,original);}
+}
+
+// A trusted guest module shares its Worker realm with the endpoint. It can
+// modify Array/Object prototypes without possessing mailbox bookkeeping state.
+// Such changes must not discard or rewrite admitted actor deliveries.
+test('patched Array.push cannot silently discard an admitted delivery',async()=>{
+  const h=harness();h.init();
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  const original=Array.prototype.push;
+  let intercepted=0;
+  withPatchedIntrinsic(Array.prototype,'push',function(...items){
+    if(items.length===1 && items[0]?.id===1 &&
+       items[0]?.reply===true && Number.isSafeInteger(items[0]?.bytes)) {
+      intercepted++;
+      return this.length; // simulate a dropped queue insertion
+    }
+    return Reflect.apply(original,this,items);
+  },()=>h.send('deliver',{id:1,reply:true,value:{type:'add',x:40n,y:2n}}));
+  assert.equal(intercepted,0,'endpoint must use its captured queue push');
+  await h.until(()=>h.frames.some(f=>f.kind==='result'));
+  assert.equal(h.frames.at(-1).value,42n);
+  assert.equal(h.frames.filter(f=>f.kind==='fatal').length,0);
+});
+
+test('patched Array.shift cannot substitute a different actor turn',async()=>{
+  const h=harness();h.init();
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  const original=Array.prototype.shift;
+  let intercepted=0;
+  withPatchedIntrinsic(Array.prototype,'shift',function(...args){
+    if(this.length===1 && this[0]?.id===1 &&
+       this[0]?.reply===true && Number.isSafeInteger(this[0]?.bytes)) {
+      intercepted++;
+      const forged={...this[0],value:{type:'add',x:1n,y:2n}};
+      this.length=0;
+      return forged;
+    }
+    return Reflect.apply(original,this,args);
+  },()=>h.send('deliver',{id:1,reply:true,value:{type:'add',x:40n,y:2n}}));
+  assert.equal(intercepted,0,'endpoint must use its captured queue shift');
+  await h.until(()=>h.frames.some(f=>f.kind==='result'));
+  assert.equal(h.frames.at(-1).value,42n);
+  assert.equal(h.frames.filter(f=>f.kind==='fatal').length,0);
+});
+
+test('patched Object.freeze cannot replace a turn reply capability',async()=>{
+  const h=harness();h.init();
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  const original=Object.freeze;
+  let intercepted=0;
+  withPatchedIntrinsic(Object,'freeze',function(value){
+    if(value && typeof value.respond==='function' && typeof value.done==='function') {
+      intercepted++;
+      return {respond(){},done(){}}; // forge a no-op turn authority
+    }
+    return Reflect.apply(original,Object,[value]);
+  },()=>h.send('deliver',{id:1,reply:true,value:{type:'add',x:40n,y:2n}}));
+  assert.equal(intercepted,0,'endpoint must use its captured turn freeze');
+  await h.until(()=>h.frames.some(f=>f.kind==='result'));
+  assert.equal(h.frames.at(-1).ok,true);
+  assert.equal(h.frames.at(-1).value,42n);
+  assert.equal(h.frames.filter(f=>f.kind==='fatal').length,0);
+});
