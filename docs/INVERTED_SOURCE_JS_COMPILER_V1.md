@@ -88,7 +88,7 @@ LLVM/Wasm/.NET/Forge still need their own actual compiler/guest execution.
 ## Ownership and effect boundary
 
 The typed IR validator tracks the nominal type of each allocation slot,
-same-owner generation-checked handle references, and the declared type of every access.
+same-owner generation-checked handle references, **direct use-after-erase and double-erase rejection**, and the declared type of every access.
 It limits control flow to one synchronous `main` with mandatory terminal
 return and deterministic resource retirement. All source loans, suspensions,
 captured mutable row views, external callbacks and field methods are rejected
@@ -105,3 +105,7 @@ source→typed-IR→validated ESM, frozen conformance fixtures, hostile IR,
 type/ownership spoofing, and legacy compiler default behavior. Real Node and
 browser Worker execution must be recorded from exact PR head before
 promotion. No private branch is sent to an unapproved CI carrier.
+
+The direct-handle retirement checker is limited to this straight-line v1 IR: it
+proves only direct handle consumption after `erase_swap`, not aliasing,
+callbacks, borrow lifetimes, nested scopes, or concurrent actor ownership.
