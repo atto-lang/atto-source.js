@@ -45,8 +45,10 @@ test("two source-compiled inverted classes execute inside actual Node Workers",a
     }
     assert.equal(actors.length,2);
   } finally {
-    await Promise.allSettled(actors.map(actor=>actor.close()));
+    const closeResults=await Promise.allSettled(actors.map(actor=>actor.close()));
     await rm(directory,{recursive:true,force:true});
+    const failedClose=closeResults.find(result=>result.status==="rejected");
+    if(failedClose)throw failedClose.reason;
   }
 });
 
