@@ -1,0 +1,18 @@
+name: Source-free runner admission canary
+on:
+  push:
+    branches:
+      - audit/source-free-runner-admission-20261027
+permissions: {}
+jobs:
+  runner-admission:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Run source-free canary without checkout, credentials, or secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "SOURCE_FREE_RUNNER_ADMISSION_START"
+          test "${RUNNER_OS}" = "Linux"
+          echo "SOURCE_FREE_RUNNER_ADMISSION_PASS"
