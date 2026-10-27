@@ -73,6 +73,29 @@ This convergence slice still has **no fields, inheritance, constructors with sou
 
 Legacy class-free program-v2 IR and generated ESM remain byte-stable: the optional `classes` IR field is emitted only when a class is actually present. The historical `--class-methods-v1` CLI and `@oreslang/source-js/class-methods-v1` API are retained as narrow compatibility adapters over this unified path; they intentionally reject richer program-v2 class features.
 
+## Typed lexical const declarations (experimental program-v2)
+
+The function-body transpiler now supports immutable typed local bindings, e.g.
+`const int next=n+2; return next;` in a function returning `int`.
+This implementation scopes locals lexically, rejects shadowing, reading before
+initialization, duplicate declarations and assignments, and preserves
+initializer-before-body evaluation (including checked signed-i64 traps).
+The canonical program-v2 IR uses `letLocal` and `localRead` with validated
+slot identities and exact declared type. Function-body `if` branches retain
+independent scopes, and all permitted local types
+(`int`, `bool`, `Symbol`, `Option<int>`, `Result<int,int>`) are checked.
+
+This first vertical slice does **not** add mutable `let`, first-class closures,
+class-method local declarations, asynchronous captured frames, borrowed
+references, or actor-suspension semantics. It does not implement `eq/neq`
+from separate pending PR #93 until that PR is merged/rebased.
+`src/lexical-const-v0.mjs` remains a standalone compiler-only scope
+prototype as tracked by parent draft PR #95.
+
+Run `node --test tests/program-v2-lexical-const.test.mjs`, `npm test` and
+`npm run check` on an authorized Node 22 source-local runner before merge.
+See `docs/JS_COMPILER_EXACT_HEAD_ACCEPTANCE.md` for exact PR and privacy gates.
+
 ## Named arguments (experimental program-v2)
 
 Ordinary program-v2 function/module calls can bind exact-arity arguments by formal name, with positional arguments only before named ones. For example, `mix(1, c: 3, b: 2)` binds to `(a,b,c)` while preserving lexical expression evaluation order. The resolved `namedCall` IR carries an explicit source-to-formal permutation and validates it before ESM emission. Unknown/duplicate/missing labels and named portable intrinsics reject. Run `npm run test:named-args`.
