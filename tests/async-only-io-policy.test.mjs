@@ -5,6 +5,10 @@ import {compile} from '../src/compiler.mjs';
 import {compileProgramV2} from '../src/program-v2.mjs';
 
 const guestReachable = [
+  '../src/select-runtime.mjs',
+  '../src/selectable-i64-channel.mjs',
+  '../src/selectable-i64-future.mjs',
+  '../src/select-continuation-fence.mjs',
   '../src/compiler.mjs',
   '../src/freestanding-core.mjs',
   '../src/freestanding-core-link.mjs',
