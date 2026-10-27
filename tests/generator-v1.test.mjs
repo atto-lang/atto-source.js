@@ -38,10 +38,13 @@ test('program-v2 sync gen* is lazy and yields typed signed-i64 values',async()=>
   // Once it fails, later pulls must preserve the same terminal failure instead
   // of laundering it into successful DONE.
   const invalid=ns.values(41);
-  const firstFailure=assert.throws(()=>invalid.next(),/Oreslang signed i64 BigInt required/);
-  const repeatedFailure=assert.throws(()=>invalid.next(),/Oreslang signed i64 BigInt required/);
-  assert.equal(repeatedFailure,firstFailure);
-  assert.throws(()=>invalid.close(),/Oreslang signed i64 BigInt required/);
+  let firstFailure=null;
+  assert.throws(()=>invalid.next(),error=>{
+    firstFailure=error;
+    return /Oreslang signed i64 BigInt required/.test(error?.message??'');
+  });
+  assert.throws(()=>invalid.next(),error=>error===firstFailure);
+  assert.throws(()=>invalid.close(),error=>error===firstFailure);
 });
 
 test('close is idempotent, terminal is sticky, and host generator controls are sealed',async()=>{
