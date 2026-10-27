@@ -1,0 +1,103 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  compileProgramV2,
+  compileProgramIRV2,
+  compileToProgramIRV2
+} from '../src/program-v2.mjs';
+
+async function load(source) {
+  const esm=compileProgramV2(source);
+  return import('data:text/javascript;charset=utf-8,'+encodeURIComponent(esm));
+}
+
+test('program-v2 sync gen* is lazy and yields typed signed-i64 values',async()=>{
+  const ns=await load([
+    'pub gen* values(int n): Iterator<int> {',
+    '  yield n;',
+    '  yield n+1;',
+    '  return;',
+    '}',
+    'pub fnc main(): int {return 0;}'
+  ].join('\n'));
+
+  const iterator=ns.values(41n);
+  const first=iterator.next();
+  assert.deepEqual(first,{value:41n,done:false});
+  assert.equal(Object.isFrozen(first),true);
+  const second=iterator.next();
+  assert.deepEqual(second,{value:42n,done:false});
+  assert.equal(Object.isFrozen(second),true);
+  const done=iterator.next();
+  assert.equal(done.done,true);
+  assert.equal(Object.isFrozen(done),true);
+  assert.equal(iterator.next().done,true);
+
+  // Native generator function bodies do not run at construction. The Oreslang
+  // parameter boundary is therefore checked on the first pull, not creation.
+  // Once it fails, later pulls must preserve the same terminal failure instead
+  // of laundering it into successful DONE.
+  const invalid=ns.values(41);
+  const firstFailure=assert.throws(()=>invalid.next(),/Oreslang signed i64 BigInt required/);
+  const repeatedFailure=assert.throws(()=>invalid.next(),/Oreslang signed i64 BigInt required/);
+  assert.equal(repeatedFailure,firstFailure);
+  assert.throws(()=>invalid.close(),/Oreslang signed i64 BigInt required/);
+});
+
+test('close is idempotent, terminal is sticky, and host generator controls are sealed',async()=>{
+  const ns=await load('pub gen* values(): Iterator<int> {yield 1;yield 2;return;}');
+  const iterator=ns.values();
+  assert.deepEqual(iterator.next(),{value:1n,done:false});
+  assert.equal(typeof iterator.return,'undefined');
+  assert.equal(typeof iterator.throw,'undefined');
+  assert.equal(Object.isFrozen(iterator),true);
+  assert.equal(Object.getPrototypeOf(iterator),null);
+  assert.equal(iterator[Symbol.iterator](),iterator);
+  iterator.close();
+  iterator.close();
+  assert.deepEqual(iterator.next(),{value:undefined,done:true});
+  assert.deepEqual(iterator.next(),{value:undefined,done:true});
+});
+
+test('module generator exports are frozen and private generators do not leak',async()=>{
+  const ns=await load([
+    'define module source as',
+    '  gen* hidden(): Iterator<int> {yield 9;return;}',
+    '  pub gen* visible(): Iterator<int> {yield 42;return;}',
+    'end'
+  ].join('\n'));
+  assert.deepEqual(Object.keys(ns),['source']);
+  assert.deepEqual(Object.keys(ns.source),['visible']);
+  assert.ok(Object.isFrozen(ns.source));
+  assert.equal(Object.getPrototypeOf(ns.source),null);
+  assert.deepEqual(ns.source.visible().next(),{value:42n,done:false});
+  assert.equal(Object.hasOwn(ns.source,'hidden'),false);
+});
+
+test('generator IR is explicit, JSON-safe and independently revalidated',()=>{
+  const source='pub gen* values(int n): Iterator<int> {yield n;yield n+1;return;}';
+  const ir=compileToProgramIRV2(source);
+  assert.equal(ir.schemaVersion,2);
+  assert.equal(ir.generators.length,1);
+  assert.deepEqual(ir.generators[0].paramTypes,['int']);
+  assert.equal(ir.generators[0].elementType,'int');
+  assert.equal(ir.generators[0].yields.length,2);
+  const roundTrip=JSON.parse(JSON.stringify(ir));
+  assert.equal(compileProgramIRV2(roundTrip),compileProgramV2(source));
+
+  const forged={...roundTrip,generators:[{...roundTrip.generators[0],elementType:'bool'}]};
+  assert.throws(()=>compileProgramIRV2(forged),/error: program IR:/);
+  const extra={...roundTrip,generators:[{...roundTrip.generators[0],hostGlobal:'process'}]};
+  assert.throws(()=>compileProgramIRV2(extra),/error: program IR:/);
+});
+
+test('unsupported generator semantics fail closed instead of parser-only parity',()=>{
+  for(const source of [
+    'async gen* values(): AsyncIterator<int> {yield 1;return;}',
+    'suspend gen* values(): AsyncIterator<int> {yield 1;return;}',
+    'gen* values(): Iterator<int> {yield* other;return;}',
+    'gen* values(): Iterator<int> {return 1;}',
+    'gen* values(): Iterator<bool> {yield true;return;}',
+    'pub fnc use(): int {return values();} gen* values(): Iterator<int> {yield 1;return;}'
+  ]) assert.throws(()=>compileProgramV2(source),/error: program v2:/,source);
+});
