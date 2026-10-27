@@ -33,12 +33,19 @@ test('program-v2 sync gen* is lazy and yields typed signed-i64 values',async()=>
   assert.throws(()=>invalid.next(),/Oreslang signed i64 BigInt required/);
 });
 
-test('early return closes the JS sync generator and later pulls stay done',async()=>{
+test('close is idempotent, terminal is sticky, and host generator controls are sealed',async()=>{
   const ns=await load('pub gen* values(): Iterator<int> {yield 1;yield 2;return;}');
   const iterator=ns.values();
   assert.deepEqual(iterator.next(),{value:1n,done:false});
-  assert.equal(iterator.return().done,true);
-  assert.equal(iterator.next().done,true);
+  assert.equal(typeof iterator.return,'undefined');
+  assert.equal(typeof iterator.throw,'undefined');
+  assert.equal(Object.isFrozen(iterator),true);
+  assert.equal(Object.getPrototypeOf(iterator),null);
+  assert.equal(iterator[Symbol.iterator](),iterator);
+  iterator.close();
+  iterator.close();
+  assert.deepEqual(iterator.next(),{value:undefined,done:true});
+  assert.deepEqual(iterator.next(),{value:undefined,done:true});
 });
 
 test('module generator exports are frozen and private generators do not leak',async()=>{
