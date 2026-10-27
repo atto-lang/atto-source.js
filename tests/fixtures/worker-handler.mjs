@@ -23,3 +23,6 @@ export async function receive(message, self) {
       throw new Error('unrecognized actor message');
   }
 }
+
+// Synchronous call-mode entrypoint used to verify stable host ABI dispatch.
+export function sum(a,b){return a+b;}

@@ -12,6 +12,11 @@ const nativeFreeze=Object.freeze;
 // Guest ESM shares this Worker realm and can replace numeric validators after init.
 // Delivery IDs must retain strict safe-integer semantics on the host boundary.
 const nativeSafeInteger=Number.isSafeInteger;
+// Guest-loaded ESM can mutate call dispatch and export lookup intrinsics.
+// Pin these before import so the host's call ABI cannot be rewritten.
+const nativeIsArray=Array.isArray;
+const nativeApply=Reflect.apply;
+const nativeDescriptor=Object.getOwnPropertyDescriptor;
 const errorText=e=>{
   try{return String(e?.message ?? e).slice(0,512);}
   catch{return 'uninspectable actor failure';}
@@ -128,12 +133,14 @@ export function installWorkerActorEndpoint({subscribe,post}) {
         try{
           const module=await import(moduleUrl);
           if(terminal)return;
-          const fn=Object.getOwnPropertyDescriptor(module,exportName)?.value;
+          const fn=nativeDescriptor(module,exportName)?.value;
           if(typeof fn!=='function')throw new Error('actor entrypoint not found');
           receive=mode==='handler'?fn:(mail,self)=>{
-            if(!mail||!Array.isArray(mail.args)||mail.args.length>128)
+            if(!mail||!nativeIsArray(mail.args)||mail.args.length>128)
               throw new Error('invalid call arguments');
-            const result=fn(...mail.args);
+            // Reflect.apply uses the indexed arguments list, not the guest's
+            // mutable Array iterator (which spread would invoke).
+            const result=nativeApply(fn,undefined,mail.args);
             if(result&&typeof result.then==='function')
               throw new Error('async function ABI unsupported');
             self.respond(result);

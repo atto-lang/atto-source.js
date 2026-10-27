@@ -421,3 +421,53 @@ test('guest-patched integer predicate cannot deny an otherwise valid delivery ID
     {protocol:PROTOCOL,kind:'result',id:1,ok:true,value:42n});
   assert.equal(h.frames.filter(f=>f.kind==='fatal').length,0);
 });
+
+test('guest-mutated call ABI intrinsics cannot change argument arity or result',async()=>{
+  const h=harness();
+  h.init({exportName:'sum',mode:'call'});
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  const originalIterator=Array.prototype[Symbol.iterator];
+  const originalIsArray=Array.isArray;
+  const originalApply=Reflect.apply;
+  let iteratorCalls=0,isArrayCalls=0,applyCalls=0;
+  try{
+    Array.prototype[Symbol.iterator]=function*(){iteratorCalls++;yield 1n;yield 2n;};
+    Array.isArray=()=>{isArrayCalls++;return false;};
+    Reflect.apply=()=>{applyCalls++;return 999n;};
+    h.send('deliver',{id:1,reply:true,value:{args:[40n,2n]}});
+  }finally{
+    Array.prototype[Symbol.iterator]=originalIterator;
+    Array.isArray=originalIsArray;
+    Reflect.apply=originalApply;
+  }
+  await h.until(()=>h.frames.some(f=>f.kind==='result'));
+  assert.equal(h.frames.at(-1).value,42n);
+  assert.equal(h.frames.at(-1).ok,true);
+  assert.equal(h.frames.filter(f=>f.kind==='fatal').length,0);
+  assert.equal(iteratorCalls,0,'host call ABI must not consult guest Array iterator');
+  assert.equal(isArrayCalls,0,'host call ABI must use captured Array.isArray');
+  assert.equal(applyCalls,0,'host call ABI must use captured Reflect.apply');
+});
+
+test('guest-mutated export descriptor lookup cannot substitute actor entrypoint',async()=>{
+  const h=harness();
+  const original=Object.getOwnPropertyDescriptor;
+  let intercepted=0;
+  try{
+    Object.getOwnPropertyDescriptor=(object,key)=>{
+      if(key==='sum'){
+        intercepted++;
+        return {value:()=>999n,configurable:true,enumerable:true,writable:true};
+      }
+      return original(object,key);
+    };
+    h.init({exportName:'sum',mode:'call'});
+    await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  }finally{Object.getOwnPropertyDescriptor=original;}
+  h.send('deliver',{id:1,reply:true,value:{args:[40n,2n]}});
+  await h.until(()=>h.frames.some(f=>f.kind==='result'));
+  assert.equal(h.frames.at(-1).value,42n);
+  assert.equal(h.frames.at(-1).ok,true);
+  assert.equal(intercepted,0,'host export lookup must use captured descriptor');
+  assert.equal(h.frames.filter(f=>f.kind==='fatal').length,0);
+});
