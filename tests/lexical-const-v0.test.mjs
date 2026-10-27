@@ -112,3 +112,31 @@ test('nested declaration lowering fails before producing overdeep IR candidates'
   assert.equal(within.kind,'localDecl');
   assert.throws(()=>lower_const_sequence(make(193)),/nested const depth budget exceeded/);
 });
+
+test('parameter metadata getters are rejected without execution or slot allocation',()=>{
+  let calls=0;
+  const names=['safe'];
+  Object.defineProperty(names,'0',{enumerable:true,get(){calls++;return 'unsafe';}});
+  assert.throws(()=>LexicalConstScope.root(names,['int']),/invalid parameter descriptors/);
+  assert.equal(calls,0);
+  const types=['int'];
+  Object.defineProperty(types,'0',{enumerable:true,get(){calls++;return 'int';}});
+  assert.throws(()=>LexicalConstScope.root(['safe'],types),/invalid parameter descriptors/);
+  assert.equal(calls,0);
+  assert.throws(()=>LexicalConstScope.root(new Array(1),['int']),/invalid parameter descriptors/);
+  assert.throws(()=>LexicalConstScope.root(['safe'],new Array(1)),/invalid parameter descriptors/);
+  const root=LexicalConstScope.root(['safe'],['int']);
+  assert.equal(root.child().declare_const('next','int').slot,0);
+});
+
+test('lexical statement sequence refuses accessor and sparse array slots without calling them',()=>{
+  let calls=0;
+  const accessor=[{kind:'return',value:{kind:'int',value:'1'}}];
+  Object.defineProperty(accessor,'0',{enumerable:true,get(){
+    calls++;return {kind:'return',value:{kind:'int',value:'2'}};
+  }});
+  assert.throws(()=>lower_const_sequence(accessor),/invalid lexical statement slot/);
+  assert.equal(calls,0);
+  assert.throws(()=>lower_const_sequence(new Array(1)),/invalid lexical statement slot/);
+  assert.deepEqual(lower_const_sequence([{kind:'return',value:42}]),42);
+});
