@@ -15,6 +15,7 @@ export function installWorkerActorEndpoint({subscribe,post}) {
   let initializing=false,initialized=false,terminal=false,receive=null;
   let processing=false,inFlight=0,inFlightBytes=0,lastId=0,maxPending=0,maxPendingBytes=0;
   const queue=[];
+  let receivingFrame=false;
   const reply=frame=>post({protocol:PROTOCOL,...frame});
   function fail(reason){
     if(terminal)return;
@@ -66,35 +67,47 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     }finally{processing=false;}
   }
   subscribe(frame=>{
+    // Real Worker transports clone frames, but injected host adapters may
+    // synchronously reenter through accessor-backed properties.
+    if(receivingFrame){fail('reentrant actor frame');return;}
+    receivingFrame=true;
     try {
     if(terminal)return;
-    if(!frame||typeof frame!=='object'||frame.protocol!==PROTOCOL||
-       !['init','deliver'].includes(frame.kind)){
+    if(!frame||typeof frame!=='object'){
       fail('invalid actor frame');return;
     }
-    if(frame.kind==='init'){
+    const protocol=frame.protocol,kind=frame.kind;
+    if(terminal)return;
+    if(protocol!==PROTOCOL||!['init','deliver'].includes(kind)){
+      fail('invalid actor frame');return;
+    }
+    if(kind==='init'){
       if(initializing||initialized){fail('duplicate initialization');return;}
       initializing=true;
-      if(typeof frame.moduleUrl!=='string'||!frame.moduleUrl||
-         typeof frame.exportName!=='string'||
-         !/^[A-Za-z_][A-Za-z0-9_]*$/.test(frame.exportName)||
-         !['handler','call'].includes(frame.mode)||
-         !Number.isSafeInteger(frame.maxPending)||
-         frame.maxPending<1||frame.maxPending>65536||
-         !Number.isSafeInteger(frame.maxPendingBytes)||
-         frame.maxPendingBytes<1||
-         frame.maxPendingBytes>MAX_CONFIGURED_PENDING_BYTES){
+      const moduleUrl=frame.moduleUrl,exportName=frame.exportName;
+      const mode=frame.mode,pendingLimit=frame.maxPending;
+      const pendingByteLimit=frame.maxPendingBytes;
+      if(terminal)return;
+      if(typeof moduleUrl!=='string'||!moduleUrl||
+         typeof exportName!=='string'||
+         !/^[A-Za-z_][A-Za-z0-9_]*$/.test(exportName)||
+         !['handler','call'].includes(mode)||
+         !Number.isSafeInteger(pendingLimit)||
+         pendingLimit<1||pendingLimit>65536||
+         !Number.isSafeInteger(pendingByteLimit)||
+         pendingByteLimit<1||
+         pendingByteLimit>MAX_CONFIGURED_PENDING_BYTES){
         fail('invalid actor module descriptor');return;
       }
-      maxPending=frame.maxPending;
-      maxPendingBytes=frame.maxPendingBytes;
+      maxPending=pendingLimit;
+      maxPendingBytes=pendingByteLimit;
       void (async()=>{
         try{
-          const module=await import(frame.moduleUrl);
+          const module=await import(moduleUrl);
           if(terminal)return;
-          const fn=Object.getOwnPropertyDescriptor(module,frame.exportName)?.value;
+          const fn=Object.getOwnPropertyDescriptor(module,exportName)?.value;
           if(typeof fn!=='function')throw new Error('actor entrypoint not found');
-          receive=frame.mode==='handler'?fn:(mail,self)=>{
+          receive=mode==='handler'?fn:(mail,self)=>{
             if(!mail||!Array.isArray(mail.args)||mail.args.length>128)
               throw new Error('invalid call arguments');
             const result=fn(...mail.args);
@@ -110,23 +123,29 @@ export function installWorkerActorEndpoint({subscribe,post}) {
       })();
       return;
     }
-    if(!initialized||!Number.isSafeInteger(frame.id)||frame.id<=lastId||
-       typeof frame.reply!=='boolean'){
+    // Bind the control identity once. Re-reading a getter here could validate
+    // one ID, advance lastId using another, then reply to a third receipt.
+    const id=frame.id,replyRequested=frame.reply,payload=frame.value;
+    if(terminal)return;
+    if(!initialized||!Number.isSafeInteger(id)||id<=lastId||
+       typeof replyRequested!=='boolean'){
       fail('invalid or premature delivery');return;
     }
     // Includes the one currently executing turn, not only the queued frames.
     if(inFlight>=maxPending){fail('actor mailbox capacity exceeded');return;}
     let snapshot,bytes;
-    try{({value:snapshot,bytes}=copyOwnedValueWithBytes(frame.value));}
+    try{({value:snapshot,bytes}=copyOwnedValueWithBytes(payload));}
     catch{fail('invalid actor delivery payload');return;}
+    if(terminal)return;
     if(bytes>maxPendingBytes-inFlightBytes){
       fail('actor mailbox byte capacity exceeded');return;
     }
-    lastId=frame.id;
+    lastId=id;
     inFlight++;
     inFlightBytes+=bytes;
-    queue.push({id:frame.id,reply:frame.reply,value:snapshot,bytes});
+    queue.push({id,reply:replyRequested,value:snapshot,bytes});
     void drain();
     } catch {fail('invalid actor frame');}
+    finally {receivingFrame=false;}
   });
 }

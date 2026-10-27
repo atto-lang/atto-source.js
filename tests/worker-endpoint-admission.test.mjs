@@ -126,3 +126,60 @@ test('pre-ready invalid frame makes late import completion inert',async()=>{
   await sleep(20);
   assert.deepEqual(h.frames.map(f=>f.kind),['fatal']);
 });
+
+test('accessor-backed delivery ID is bound once across validation, credit and reply',async()=>{
+  const h=harness();h.init();
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  let reads=0;
+  h.raw({protocol:PROTOCOL,kind:'deliver',reply:true,
+    get id(){return ++reads;},
+    value:{type:'add',x:40n,y:2n}
+  });
+  await h.until(()=>h.frames.some(f=>f.kind==='result'));
+  assert.equal(reads,1);
+  assert.equal(h.frames.at(-1).id,1);
+  assert.equal(h.frames.at(-1).value,42n);
+  assert.equal(h.frames.filter(f=>f.kind==='fatal').length,0);
+});
+
+test('accessor-backed reply mode cannot change between admission and handler turn',async()=>{
+  const h=harness();h.init();
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  let reads=0;
+  h.raw({protocol:PROTOCOL,kind:'deliver',id:1,
+    get reply(){reads++;return reads===1;},
+    value:{type:'add',x:40n,y:2n}
+  });
+  await h.until(()=>h.frames.some(f=>f.kind==='result'));
+  assert.equal(reads,1);
+  assert.equal(h.frames.at(-1).ok,true);
+  assert.equal(h.frames.at(-1).value,42n);
+});
+
+test('reentrant accessor-delivered frame seals endpoint without orphaned queued turn',async()=>{
+  const h=harness();h.init();
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  h.raw({protocol:PROTOCOL,kind:'deliver',id:1,reply:true,
+    get value(){
+      h.send('deliver',{id:2,reply:true,value:{type:'add',x:1n,y:2n}});
+      return {type:'add',x:40n,y:2n};
+    }
+  });
+  assert.equal(h.frames.filter(f=>f.kind==='fatal').length,1);
+  assert.match(h.frames.find(f=>f.kind==='fatal').error,/reentrant actor frame/);
+  await sleep(20);
+  assert.equal(h.frames.filter(f=>f.kind==='result').length,0);
+});
+
+test('module descriptor is captured before async import and cannot drift',async()=>{
+  const h=harness();let reads=0;
+  h.raw({protocol:PROTOCOL,kind:'init',
+    get moduleUrl(){reads++;return reads===1?MODULE_URL:'data:text/javascript,export%20function%20receive(){}';},
+    exportName:'receive',mode:'handler',maxPending:2,maxPendingBytes:32*1024*1024
+  });
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  assert.equal(reads,1);
+  h.send('deliver',{id:1,reply:true,value:{type:'add',x:40n,y:2n}});
+  await h.until(()=>h.frames.some(f=>f.kind==='result'));
+  assert.equal(h.frames.at(-1).value,42n);
+});
