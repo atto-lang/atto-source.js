@@ -29,7 +29,7 @@ test('CLI --check reports OK after acknowledged stdout write', async () => {
   const result = await runCli();
   assert.equal(result.code, 0, result.diagnostic);
   assert.equal(result.signal, null);
-  assert.equal(result.output, 'OK\\n');
+  assert.equal(result.output, 'OK\n');
   assert.equal(result.diagnostic, '');
 });
 
