@@ -131,3 +131,63 @@ test('missing tickets are rejected without consuming a live reservation',()=>{
   assert.equal(fence.pendingTickets,1);
   assert.equal(fence.tryConsume(ticket),true);
 });
+
+test('terminal close invalidates all tickets and cannot reopen',()=>{
+  const fence=new SelectContinuationFence({maxTickets:2});
+  const tickets=[fence.register(),fence.register()];
+  assert.equal(fence.closed,false);
+  assert.equal(fence.close(),true);
+  assert.equal(fence.closed,true);
+  assert.equal(fence.close(),false);
+  assert.equal(fence.pendingTickets,0);
+  assert.equal(fence.generation,1);
+  assert.equal(fence.advance(1),false);
+  assert.throws(()=>fence.register(1),/closed/);
+  for(const ticket of tickets){
+    assert.equal(ticket.active,false);
+    assert.equal(ticket.close(),false);
+    assert.equal(fence.tryConsume(ticket),false);
+  }
+});
+
+test('close succeeds even at exhausted generation',()=>{
+  const fence=new SelectContinuationFence({generation:Number.MAX_SAFE_INTEGER});
+  fence.register();
+  assert.equal(fence.close(),true);
+  assert.equal(fence.advance(Number.MAX_SAFE_INTEGER),false);
+  assert.equal(fence.pendingTickets,0);
+  assert.throws(()=>fence.register(),/closed/);
+});
+
+test('queued delivery observes terminal close before invoking callback',async()=>{
+  const fence=new SelectContinuationFence();
+  const ticket=fence.register();
+  let delivered=0;
+  const delivery=Promise.resolve().then(()=>{
+    if(fence.tryConsume(ticket))delivered++;
+  });
+  fence.close();
+  await delivery;
+  assert.equal(delivered,0);
+});
+
+test('completion before terminal close remains one-shot',async()=>{
+  const fence=new SelectContinuationFence();
+  const ticket=fence.register();
+  let delivered=0;
+  await Promise.resolve().then(()=>{
+    if(fence.tryConsume(ticket))delivered++;
+  });
+  assert.equal(fence.close(),true);
+  assert.equal(fence.tryConsume(ticket),false);
+  assert.equal(delivered,1);
+});
+
+test('terminal close is local to its owning fence',()=>{
+  const stopped=new SelectContinuationFence();
+  const sibling=new SelectContinuationFence();
+  const ticket=sibling.register();
+  stopped.close();
+  assert.equal(sibling.closed,false);
+  assert.equal(sibling.tryConsume(ticket),true);
+});
