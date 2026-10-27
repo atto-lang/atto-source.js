@@ -27,7 +27,7 @@ and exact-head compiler/browser/sanitizer acceptance.
 node --test tests/lexical-const-v0.test.mjs
 ```
 
-Local Node 22.16.0 execution on October 27, 2026 passed all **nine**
+Local Node 22.16.0 execution on October 27, 2026 passed all **ten**
 unit tests with zero failures/skips. A private-scope security audit reproduced
 a defect in the initial five-test version: the public constructor accepted a
 caller-controlled slot allocator and scope depth. These inputs could forge
@@ -36,9 +36,9 @@ derives both from a privately branded parent; it rejects extra arguments,
 forged instances, and excessive nesting. A private lexical lookup also prevents
 an overridden public `resolve` method from bypassing shadowing rejection.
 
-The final local source/test Git blob SHAs match the committed files:
-- `src/lexical-const-v0.mjs`: `cc7a8dcc6281e7923ad31cfe9a19e9f286a8d45a`
-- `tests/lexical-const-v0.test.mjs`: `54f21f03a212dd467d3ea7f06595fc7f78d0b8cb`
+An additional regression enforces the 192-level nested-const lowering budget before producing a deeply nested IR candidate. The final local source/test Git blob SHAs match the committed files:
+- `src/lexical-const-v0.mjs`: `5097ada9e838fce6dd934c48806c3916971a56ca`
+- `tests/lexical-const-v0.test.mjs`: `cb4805049dfcfa03166657a3c7fbc25c3beb15e7`
 
 This is **local two-file isolated execution**, not source-org GitHub Actions
 execution or a full compiler test. Do not generalize these results to PRs
