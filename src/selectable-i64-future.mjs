@@ -1,3 +1,5 @@
+const SUBSCRIPTIONS = new WeakMap();
+
 const I64_MIN=-(1n<<63n);
 const I64_MAX=(1n<<63n)-1n;
 
@@ -12,6 +14,12 @@ class Subscription {
   constructor(owner,index,id){this.owner=owner;this.index=index;this.id=id;}
   get active(){return this.owner._matches(this);}
   close(){return this.owner._close(this);}
+}
+
+function issueSubscription(owner,index,id) {
+  const sub = new Subscription(owner,index,id);
+  SUBSCRIPTIONS.set(sub,{owner,index,id});
+  return Object.freeze(sub);
 }
 
 export class SelectableI64Future {
@@ -41,7 +49,7 @@ export class SelectableI64Future {
     if(index<0)throw new Error('future waiter capacity exhausted');
     if(this.#nextId>=Number.MAX_SAFE_INTEGER)
       throw new Error('future waiter identity exhausted');
-    const sub=new Subscription(this,index,this.#nextId++);
+    const sub=issueSubscription(this,index,this.#nextId++);
     const waiter=this.#waiters[index];
     waiter.id=sub.id;waiter.active=true;waiter.notify=notify;
     if(this.#status!=='pending'){
@@ -55,7 +63,7 @@ export class SelectableI64Future {
       throw new TypeError('result cell must come from this runtime');
     cell.reset();
     if(!this._matches(sub)||this.#status==='pending')return false;
-    this.#closeSlot(this.#waiters[sub.index]);
+    this.#closeSlot(this.#waiters[SUBSCRIPTIONS.get(sub).index]);
     cell.status=this.#status;
     cell.value=this.#value;
     cell.error=this.#error;
@@ -76,16 +84,15 @@ export class SelectableI64Future {
   cancel(){return this.#complete('cancelled',0n,null);}
 
   _matches(sub){
-    if(!(sub instanceof Subscription)||sub.owner!==this||
-       !Number.isSafeInteger(sub.index)||sub.index<0||
-       sub.index>=this.#waiters.length)return false;
-    const waiter=this.#waiters[sub.index];
-    return waiter.active&&waiter.id===sub.id;
+    const identity=SUBSCRIPTIONS.get(sub);
+    if(!identity || identity.owner!==this)return false;
+    const waiter=this.#waiters[identity.index];
+    return waiter.active&&waiter.id===identity.id;
   }
 
   _close(sub){
     if(!this._matches(sub))return false;
-    this.#closeSlot(this.#waiters[sub.index]);
+    this.#closeSlot(this.#waiters[SUBSCRIPTIONS.get(sub).index]);
     return true;
   }
 
@@ -95,7 +102,7 @@ export class SelectableI64Future {
     for(let i=0;i<this.#waiters.length;i++){
       const w=this.#waiters[i];
       if(w.active&&w.notify!==null)
-        notices.push([w.notify,new Subscription(this,i,w.id)]);
+        notices.push([w.notify,issueSubscription(this,i,w.id)]);
     }
     this.#status=status;this.#value=value;this.#error=error;
     let first=null;
