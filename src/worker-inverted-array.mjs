@@ -243,11 +243,11 @@ export class WorkerInvertedArray {
     const state = this.#loans[ordinal];
     if (state.writer || (kind === "write" && state.readers !== 0))
       throw new Error("conflicting inverted column loan");
-    if (kind === "read") {
-      if (state.readers === Number.MAX_SAFE_INTEGER)
-        throw new RangeError("inverted column reader count exhausted");
-      state.readers++;
-    } else state.writer = true;
+    if (kind === "read" && state.readers === Number.MAX_SAFE_INTEGER)
+      throw new RangeError("inverted column reader count exhausted");
+    // Construct the immutable loan facade before publishing any loan rights.
+    // A thrown allocation/Proxy-injected Object.freeze must never strand the
+    // column in a permanently borrowed state.
     const loan = {kind, closed: false};
     const close = () => {
       if (loan.closed) return;
@@ -278,7 +278,11 @@ export class WorkerInvertedArray {
         this.#write(this.#index.resolve(handle), ordinal, value, loan);
       };
     }
-    return Object.freeze(result);
+    const facade = Object.freeze(result);
+    // No fallible operations between publishing rights and returning facade.
+    if (kind === "read") state.readers++;
+    else state.writer = true;
+    return facade;
   }
 
   snapshot(binding) {
