@@ -11,11 +11,21 @@ import {compileClassMethodsV1,checkClassMethodsV1} from '../src/class-methods-v1
 import {compileFreestandingCore,checkFreestandingCore} from '../src/freestanding-core.mjs';
 import {compileLinkedFreestandingCore,checkLinkedFreestandingCore} from '../src/freestanding-core-link.mjs';
 
-// CLI writes must observe backpressure and surface pipe errors.
+// CLI writes must observe backpressure and surface pipe errors. Node may
+// invoke the write callback AND emit an 'error' event (notably EPIPE); handling
+// only the callback turns an otherwise caught failure into an uncaught crash.
+// Keep one listener for the CLI lifetime so the event cannot outlive a write.
+let stdoutError = null;
+process.stdout.on('error', error => {
+  stdoutError ??= error;
+  process.exitCode = 1;
+});
 async function writeStdout(data) {
+  if (stdoutError) throw stdoutError;
   await new Promise((resolve, reject) => {
     process.stdout.write(data, error => error ? reject(error) : resolve());
   });
+  if (stdoutError) throw stdoutError;
 }
 
 const MAX_SOURCE_BYTES=262144;
