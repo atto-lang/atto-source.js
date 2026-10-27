@@ -95,6 +95,10 @@ test('generator IR is explicit, JSON-safe and independently revalidated',()=>{
   assert.throws(()=>compileProgramIRV2(forged),/error: program IR:/);
   const extra={...roundTrip,generators:[{...roundTrip.generators[0],hostGlobal:'process'}]};
   assert.throws(()=>compileProgramIRV2(extra),/error: program IR:/);
+  const reservedName={...roundTrip,generators:[{...roundTrip.generators[0],name:'if'}]};
+  assert.throws(()=>compileProgramIRV2(reservedName),/reserved generator identifier/);
+  const reservedParam={...roundTrip,generators:[{...roundTrip.generators[0],params:['return']}]};
+  assert.throws(()=>compileProgramIRV2(reservedParam),/reserved generator identifier/);
 });
 
 test('unsupported generator semantics fail closed instead of parser-only parity',()=>{
@@ -104,6 +108,8 @@ test('unsupported generator semantics fail closed instead of parser-only parity'
     'gen* values(): Iterator<int> {yield* other;return;}',
     'gen* values(): Iterator<int> {return 1;}',
     'gen* values(): Iterator<bool> {yield true;return;}',
-    'pub fnc use(): int {return values();} gen* values(): Iterator<int> {yield 1;return;}'
+    'pub fnc use(): int {return values();} gen* values(): Iterator<int> {yield 1;return;}',
+    'gen* if(): Iterator<int> {yield 1;return;}',
+    'gen* values(int return): Iterator<int> {yield return;return;}'
   ]) assert.throws(()=>compileProgramV2(source),/error: program v2:/,source);
 });
