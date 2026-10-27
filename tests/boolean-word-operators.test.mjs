@@ -7,12 +7,12 @@ import {compileFreestandingCore} from '../src/freestanding-core.mjs';
 const load=source=>import('data:text/javascript;charset=utf-8,'+
   encodeURIComponent(compileProgramV2(source)));
 
-test('eq/ne normalize to existing checked typed comparison IR',async()=>{
+test('eq/neq normalize to existing checked typed comparison IR',async()=>{
   const source=[
     'pub fnc same(int a,int b):bool{return a eq b;}',
-    'pub fnc different(int a,int b):bool{return a ne b;}',
+    'pub fnc different(int a,int b):bool{return a neq b;}',
     'pub fnc precedence(int a):bool{return a+2*3 eq 7;}',
-    'pub fnc symbolic():bool{return #ready eq #ready and #ready ne #error;}'
+    'pub fnc symbolic():bool{return #ready eq #ready and #ready neq #error;}'
   ].join('\n');
   const ir=compileToProgramIRV2(source);
   assert.equal(ir.functions[0].body.op,'==');
@@ -20,6 +20,7 @@ test('eq/ne normalize to existing checked typed comparison IR',async()=>{
   assert.equal(ir.functions[3].body.kind,'if');
   assert.equal(ir.functions[3].body.condition.kind,'symbolCompare');
   assert.equal(ir.functions[3].body.condition.op,'==');
+  assert.equal(ir.functions[3].body.yes.op,'!=');
   const round=JSON.parse(JSON.stringify(ir));
   assert.deepEqual(validateProgramIRV2(round),ir);
   assert.equal(compileProgramIRV2(round),compileProgramV2(source));
@@ -90,6 +91,7 @@ test('freestanding core and fieldless methods preserve word-operator semantics',
 
 test('non-bool source and forged noncanonical comparator IR fail closed',()=>{
   const invalid=[
+    'pub fnc bad(int a,int b):bool{return a ne b;}', // obsolete spelling must not be accepted
     'pub fnc bad():bool{return 1 and true;}',
     'pub fnc bad():bool{return true and 1;}',
     'pub fnc bad():bool{return 1 or false;}',
