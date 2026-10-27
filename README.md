@@ -55,7 +55,7 @@ Run `npm run test:core-bool`; the browser ESM smoke also covers pure boolean com
 
 ## Typed word operators (experimental program-v2)
 
-Program-v2 supports `eq` and `ne` as source aliases for typed `==` and `!=` (including nominal `Symbol` equality), plus `not`, `and` and `or` for strict `bool` values. Precedence is unary `not`, arithmetic, comparison, `and`, `or`, then the conditional `? :`; parentheses override precedence. `and` and `or` short-circuit their right operand, including checked-i64 overflow and remainder traps, by lowering into the existing validated lazy conditional IR. No JavaScript truthiness, host-side coercions, effectful calls, or new IR operators are admitted. The scalar-v1 profile is intentionally unchanged.
+Program-v2 supports `eq` and `neq` as source aliases for typed `==` and `!=` (including nominal `Symbol` equality), plus `not`, `and` and `or` for strict `bool` values. Precedence is unary `not`, arithmetic, comparison, `and`, `or`, then the conditional `? :`; parentheses override precedence. `and` and `or` short-circuit their right operand, including checked-i64 overflow and remainder traps, by lowering into the existing validated lazy conditional IR. No JavaScript truthiness, host-side coercions, effectful calls, or new IR operators are admitted. The scalar-v1 profile is intentionally unchanged.
 
 Run `node --test tests/boolean-word-operators.test.mjs` to exercise the source, canonical IR, generated ESM, freestanding core and class-method paths. These are experimental syntax extensions, not full Java/LLVM semantic parity.
 
