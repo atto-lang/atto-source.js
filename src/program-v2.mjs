@@ -69,7 +69,11 @@ function requireWellFormedCheckedI64Header(source) {
   return enabled;
 }
 function validateSourceText(source) {
-  if(typeof source!=='string')fail('oversized or invalid source');
+  // A UTF-8 encoding is never shorter than the source's UTF-16 code-unit
+  // count. Enforce this cheap upper bound before walking the input or
+  // allocating a full UTF-8 buffer; exact multibyte limits are checked below.
+  if(typeof source!=='string'||source.length>MAX_BYTES)
+    fail('oversized or invalid source');
   // TextEncoder replaces lone UTF-16 surrogates. Reject before encoding so
   // comments and other lexically ignored regions cannot change byte identity.
   for(let i=0;i<source.length;i++){
@@ -344,8 +348,8 @@ class Parser {
     }
     return {name,pub,methods};
   }
-  functions(moduleName) {
-    const pub = this.eat('pub'), start=this.peek();
+  functions(moduleName, declaredPub=false) {
+    const pub = declaredPub || this.eat('pub'), start=this.peek();
     if (!this.eat('fnc') && !this.eat('routine')) fail('unsupported declaration',start);
     const kind = this.tokens[this.i-1].value, name = this.name();
     this.expect('(');
@@ -481,6 +485,7 @@ class Parser {
       }
       if(this.eat('define')){
         const afterPub=this.eat('pub');
+        if(prefixPub&&afterPub)fail('duplicate pub modifier',this.peek());
         const declarationPub=prefixPub||afterPub;
         if(this.peek().value==='symbol')
           fail('Symbol declaration/export manifest not implemented',this.peek());
@@ -492,7 +497,12 @@ class Parser {
           usedClasses.add(cls.name);classes.push(cls);
           continue;
         }
-        if(declarationPub)fail('public define is only supported for classes in program-v2',this.peek());
+        if(this.peek().value==='fnc'||this.peek().value==='routine'){
+          if(functions.length>=512)fail('declaration budget exceeded',this.peek());
+          functions.push(this.functions(null,declarationPub));
+          continue;
+        }
+        if(declarationPub)fail('public define is only supported for classes/functions in program-v2',this.peek());
         this.expect('module');const name=this.name();
         if(name==='Option'||name==='Result'||name==='Symbol')
           fail('reserved portable intrinsic module name '+name);
