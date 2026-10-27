@@ -46,7 +46,9 @@ function literalType(token, signed = false) {
   if (/^[0-9]+\.[0-9]+$/.test(token.value)) {
     const n = Number(token.value) * (signed ? -1 : 1);
     if (!Number.isFinite(n)) reject("nonfinite f64 literal",token);
-    return {type:"f64",js:JSON.stringify(n),value:String(n)};
+    // String(-0) collapses the IEEE-754 sign bit. Preserve it explicitly.
+    const value=Object.is(n,-0) ? "-0" : String(n);
+    return {type:"f64",js:value,value};
   }
   if (!signed && (token.value === "true" || token.value === "false"))
     return {type:"bool",js:token.value,value:token.value};
