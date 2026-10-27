@@ -74,7 +74,7 @@ test('freestanding core and fieldless methods preserve word-operator semantics',
     ' pub fnc permitted(bool enabled,int value):bool{return enabled and value eq 42;}',
     'end'
   ].join('\n'));
-  assert.doesNotMatch(esm,/^\\s*import\\b/m);
+  assert.doesNotMatch(esm,/^\s*import\b/m);
   const core=await import('data:text/javascript,'+encodeURIComponent(esm));
   assert.equal(core.core.permitted(true,42n),true);
   assert.equal(core.core.permitted(false,42n),false);
