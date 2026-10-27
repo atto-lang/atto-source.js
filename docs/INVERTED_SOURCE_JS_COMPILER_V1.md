@@ -109,3 +109,27 @@ promotion. No private branch is sent to an unapproved CI carrier.
 The direct-handle retirement checker is limited to this straight-line v1 IR: it
 proves only direct handle consumption after `erase_swap`, not aliasing,
 callbacks, borrow lifetimes, nested scopes, or concurrent actor ownership.
+
+## Exact-head Node Worker admission gate
+
+This stacked branch adds `tests/inverted-worker-node.test.mjs`, which compiles
+the two shared positive fixtures into temporary, read-restricted ESM files,
+loads them using actual Node 22 worker_threads actor instances, calls the
+generated `main` twice per Worker (proving fresh ownership per call), and
+checks both answers equal `42n`. It rejects all four negative source
+fixtures before a Worker artifact can be created. Worker retirement and
+temporary-file cleanup are mandatory; a rejected close fails the test.
+
+The CI workflow runs `npm run test:inverted` as a named exact-head step
+and `npm test` also includes the new test. `test:workers` includes it
+as well. These steps are **authored, not yet evidenced as executed**.
+A run that stays queued or produces failed jobs without recorded steps
+is `NOT_EXECUTED`, not proof of failure or success of the implementation.
+
+Generated row literals emit computed own-data keys for every nominal field,
+including `["__proto__"]`; a regression checks that the field remains
+a scalar and does not mutate the JavaScript row object's prototype.
+
+The explicit trusted `file:` runtimeSpecifier is required for temporary
+ESM files generated outside the source tree. Browser Blob ESM imports require
+a separate audited trusted runtime URL policy and remain **unverified**.
