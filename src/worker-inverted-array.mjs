@@ -37,7 +37,7 @@ export class InvertedSchema {
       const name = Object.getOwnPropertyDescriptor(item, "name");
       const type = Object.getOwnPropertyDescriptor(item, "type");
       if (!name || !type || !Object.hasOwn(name, "value") || !Object.hasOwn(type, "value") ||
-          typeof name.value !== "string" || !/^[$A-Za-z_][$\\w]*$/.test(name.value) ||
+          typeof name.value !== "string" || !/^[$A-Za-z_][$\w]*$/.test(name.value) ||
           this.#byName.has(name.value) || !KINDS.has(type.value))
         throw new TypeError("invalid inverted field declaration");
       const declaration = Object.freeze({name: name.value, type: type.value});
