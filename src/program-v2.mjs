@@ -1183,9 +1183,9 @@ function emitProgram(program) {
     out.push('const _inner=_gbody'+i+'('+params.join(',')+');');
     out.push('let _closed=false,_failure=null;');
     out.push('const _iter=Object.create(null);');
-    out.push('Object.defineProperty(_iter,"next",{value:function(){if(_failure!==null)throw _failure;if(_closed)return Object.freeze({value:undefined,done:true});try{const _step=_inner.next();if(_step.done)_closed=true;return Object.freeze({value:_step.value,done:_step.done});}catch(_error){_closed=true;_failure=_error;throw _error;}},enumerable:true});');
-    out.push('Object.defineProperty(_iter,"close",{value:function(){if(_closed&&_failure===null)return;_closed=true;_failure=null;try{_inner.return();}catch(_error){_failure=_error;throw _error;}},enumerable:true});');
-    out.push('Object.defineProperty(_iter,Symbol.iterator,{value:function(){return this;}});');
+    out.push('Object.defineProperty(_iter,"next",{value:()=>{if(_failure!==null)throw _failure;if(_closed)return Object.freeze({value:undefined,done:true});try{const _step=_inner.next();if(_step.done)_closed=true;return Object.freeze({value:_step.value,done:_step.done});}catch(_error){_closed=true;_failure=_error;throw _error;}},enumerable:true});');
+    out.push('Object.defineProperty(_iter,"close",{value:()=>{if(_closed&&_failure===null)return;_closed=true;_failure=null;try{_inner.return();}catch(_error){_failure=_error;throw _error;}},enumerable:true});');
+    out.push('Object.defineProperty(_iter,Symbol.iterator,{value:()=>_iter});');
     out.push('return Object.freeze(_iter);');
     out.push('}');
   });
@@ -1224,10 +1224,11 @@ function emitProgram(program) {
   }
   function exportGenerator(indices) {
     const name='_gdispatch'+(dispatcherNumber++);
-    out.push('function '+name+'(..._args){switch(_args.length){');
+    out.push('const '+name+'=(..._args)=>{switch(_args.length){');
     for(const i of indices)
       out.push('case '+program.generators[i].params.length+':return _g'+i+'(..._args);');
-    out.push('default:throw new TypeError("Oreslang generator overload arity mismatch");}}');
+    out.push('default:throw new TypeError("Oreslang generator overload arity mismatch");}};');
+    out.push('Object.freeze('+name+');');
     return name;
   }
   function publicGeneratorGroups(module) {
