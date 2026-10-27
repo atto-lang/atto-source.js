@@ -175,3 +175,29 @@ test("Proxy field validation cannot reenter mutation or retire the owning array"
   assert.equal(rows.read(second, id), 2n);
   rows.close();
 });
+
+test("loan facade allocation failure does not publish reader or writer rights", () => {
+  const schema = spec(), rows = make(schema), x = schema.bindField("x");
+  const h = rows.push({id: 5n, x: 5, ready: true});
+  const freeze = Object.freeze;
+  Object.freeze = value => {
+    if (value && typeof value.getAt === "function" && typeof value.close === "function")
+      throw Error("injected loan facade allocation failure");
+    return freeze(value);
+  };
+  try {
+    assert.throws(() => rows.borrowRead(x), /injected loan facade/);
+    assert.throws(() => rows.borrowWrite(x), /injected loan facade/);
+  } finally {
+    Object.freeze = freeze;
+  }
+  assert.equal(rows.read(h, x), 5);
+  rows.write(h, x, 6);
+  const w = rows.borrowWrite(x);
+  w.set(h, 7);
+  w.close();
+  assert.equal(rows.read(h, x), 7);
+  rows.eraseSwap(h);
+  assert.equal(rows.size, 0);
+  rows.close();
+});
