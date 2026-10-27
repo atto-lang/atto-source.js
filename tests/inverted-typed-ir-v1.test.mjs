@@ -142,3 +142,25 @@ test("direct handles are retired affine values; survivors remain valid after swa
     assert.throws(()=>compileProgramV2(header+body,{experimentalInvertedV1:true}),InvertedIRError);
   }
 });
+
+
+test("nominal __proto__ field is emitted as an own-data scalar, never object prototype", async () => {
+  const source=[
+    "define inverted class Particle as",
+    "  int __proto__;",
+    "  float x;",
+    "  bool ready;",
+    "end",
+    "define pub fnc main(): int {",
+    "  let rows = InvertedArray<Particle>.with_capacity(2);",
+    "  let h = rows.push(Particle {__proto__: 42, x: 1.0, ready: true});",
+    "  return rows[h].__proto__;",
+    "}"
+  ].join("\n");
+  const ir=compileToInvertedIRV1(source);
+  const esm=compileInvertedIRV1(ir,{runtimeSpecifier});
+  assert.match(esm,/\["__proto__"\]:42n/);
+  assert.doesNotMatch(esm,/\{"__proto__":42n/);
+  assert.equal(await main(esm),42n);
+  assert.equal(await main(compileProgramV2(source,{experimentalInvertedV1:true,runtimeSpecifier})),42n);
+});
