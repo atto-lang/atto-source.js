@@ -1,0 +1,107 @@
+/**
+ * Experimental compiler-only lexical binding foundation. No source syntax,
+ * JavaScript runtime variable exposure, closure capture or mutation lowering.
+ */
+const TYPES = new Set(['int', 'bool', 'symbol', 'option<int>', 'result<int,int>']);
+const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const RESERVED = new Set([
+  'self','return','const','let','val','if','then','else','fi','end',
+  'true','false','new','class','actor','pub','define','module','fnc','routine',
+  'Option','Result','Symbol','int','bool','void','match','on',
+  '__proto__','prototype','constructor'
+]);
+const MAX_BINDINGS = 30000;
+const MAX_DEPTH = 192;
+
+export class LexicalConstError extends Error {
+  constructor(message) {
+    super('error: lexical const v0: ' + message);
+    this.name = 'LexicalConstError';
+  }
+}
+const fail = message => { throw new LexicalConstError(message); };
+const validName = name => {
+  if (typeof name !== 'string' || !IDENT.test(name) || RESERVED.has(name))
+    fail('invalid or reserved binding name');
+  return name;
+};
+const validType = type => {
+  if (typeof type !== 'string' || !TYPES.has(type)) fail('unsupported binding type');
+  return type;
+};
+
+export class LexicalConstScope {
+  #parent;
+  #slots;
+  #bindings = new Map();
+  #depth;
+  constructor(parent = null, slots = {next: 0}, depth = 0) {
+    if (parent !== null && !(parent instanceof LexicalConstScope)) fail('invalid scope parent');
+    if (!Number.isSafeInteger(depth) || depth < 0 || depth > MAX_DEPTH)
+      fail('scope depth budget exceeded');
+    this.#parent = parent;
+    this.#slots = slots;
+    this.#depth = depth;
+  }
+  static root(parameters = [], paramTypes = []) {
+    if (!Array.isArray(parameters) || !Array.isArray(paramTypes) ||
+        parameters.length !== paramTypes.length || parameters.length > 128)
+      fail('invalid parameters');
+    const scope = new LexicalConstScope();
+    for (let i=0; i<parameters.length; i++) {
+      const name=validName(parameters[i]), type=validType(paramTypes[i]);
+      if (scope.#bindings.has(name)) fail('duplicate parameter ' + name);
+      scope.#bindings.set(name,Object.freeze({kind:'param',index:i,name,type}));
+    }
+    return scope;
+  }
+  child() {
+    if (this.#depth >= MAX_DEPTH) fail('scope depth budget exceeded');
+    return new LexicalConstScope(this,this.#slots,this.#depth+1);
+  }
+  declare_const(name,type) {
+    validName(name);validType(type);
+    if (this.resolve(name)!==null) fail('binding shadows an existing name ' + name);
+    if (this.#slots.next >= MAX_BINDINGS) fail('binding slot budget exceeded');
+    const binding=Object.freeze({kind:'local',name,type,slot:this.#slots.next++});
+    this.#bindings.set(name,binding);
+    return binding;
+  }
+  resolve(name) {
+    validName(name);
+    return this.#bindings.get(name) ?? this.#parent?.resolve(name) ?? null;
+  }
+}
+
+/**
+ * Build a nested lexical declaration tree from a bounded statement sequence.
+ * The initializer runs before the continuation, exactly once. Callers must
+ * resolve/type-check expressions before admitting this tree to program IR.
+ */
+export function lower_const_sequence(statements, fallback = null) {
+  if (!Array.isArray(statements) || statements.length > MAX_BINDINGS)
+    fail('invalid statement sequence');
+  let result=fallback;
+  for (let i=statements.length-1; i>=0; i--) {
+    const item=statements[i];
+    if (!item || typeof item!=='object' || Array.isArray(item) ||
+        Object.getPrototypeOf(item)!==Object.prototype)
+      fail('invalid lexical statement');
+    const keys=Reflect.ownKeys(item);
+    if(keys.some(k=>typeof k!=='string'||!Object.hasOwn(Object.getOwnPropertyDescriptor(item,k),'value')))
+      fail('accessor or symbol-keyed statement');
+    if (item.kind==='return') {
+      if (keys.length!==2 || !keys.includes('kind') || !keys.includes('value') ||
+          result!==null) fail('unreachable or malformed return');
+      result=item.value;
+    } else if (item.kind==='const') {
+      if (keys.length!==4 || !['kind','name','type','value'].every(k=>keys.includes(k)))
+        fail('malformed const declaration');
+      validName(item.name);validType(item.type);
+      if (result===null) fail('const declaration requires returning continuation');
+      result={kind:'localDecl',name:item.name,type:item.type,value:item.value,body:result};
+    } else fail('unsupported lexical statement');
+  }
+  if (result===null) fail('missing return');
+  return result;
+}
