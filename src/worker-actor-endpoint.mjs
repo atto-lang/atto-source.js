@@ -14,6 +14,8 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     throw new TypeError('invalid actor endpoint transport');
   let initializing=false,initialized=false,terminal=false,receive=null;
   let processing=false,inFlight=0,inFlightBytes=0,lastId=0,maxPending=0,maxPendingBytes=0;
+  // Guard synchronous custom-transport recursion before it can dispatch guest work.
+  let handlingInbound=false;
   const queue=[];
   const reply=frame=>post({protocol:PROTOCOL,...frame});
   function fail(reason){
@@ -66,6 +68,9 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     }finally{processing=false;}
   }
   subscribe(frame=>{
+    if(terminal)return;
+    if(handlingInbound){fail('reentrant actor frame');return;}
+    handlingInbound=true;
     try {
     if(terminal)return;
     if(!frame||typeof frame!=='object'||frame.protocol!==PROTOCOL){
@@ -93,6 +98,8 @@ export function installWorkerActorEndpoint({subscribe,post}) {
          requestedMaxPendingBytes>MAX_CONFIGURED_PENDING_BYTES){
         fail('invalid actor module descriptor');return;
       }
+      // An accessor may synchronously reenter and terminally revoke this session.
+      if(terminal)return;
       maxPending=requestedMaxPending;
       maxPendingBytes=requestedMaxPendingBytes;
       void (async()=>{
@@ -136,11 +143,14 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     if(bytes>maxPendingBytes-inFlightBytes){
       fail('actor mailbox byte capacity exceeded');return;
     }
+    // Reentrancy during value snapshot must not commit abandoned reservations.
+    if(terminal)return;
     lastId=id;
     inFlight++;
     inFlightBytes+=bytes;
     queue.push({id,reply:wantsReply,value:snapshot,bytes});
     void drain();
     } catch {fail('invalid actor frame');}
+    finally {handlingInbound=false;}
   });
 }
