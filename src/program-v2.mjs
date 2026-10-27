@@ -1184,7 +1184,7 @@ function emitProgram(program) {
     out.push('let _closed=false,_failure=null;');
     out.push('const _iter=Object.create(null);');
     out.push('Object.defineProperty(_iter,"next",{value:function(){if(_failure!==null)throw _failure;if(_closed)return Object.freeze({value:undefined,done:true});try{const _step=_inner.next();if(_step.done)_closed=true;return Object.freeze({value:_step.value,done:_step.done});}catch(_error){_closed=true;_failure=_error;throw _error;}},enumerable:true});');
-    out.push('Object.defineProperty(_iter,"close",{value:function(){if(_failure!==null)throw _failure;if(_closed)return;_closed=true;try{_inner.return();}catch(_error){_failure=_error;throw _error;}},enumerable:true});');
+    out.push('Object.defineProperty(_iter,"close",{value:function(){if(_closed&&_failure===null)return;_closed=true;_failure=null;try{_inner.return();}catch(_error){_failure=_error;throw _error;}},enumerable:true});');
     out.push('Object.defineProperty(_iter,Symbol.iterator,{value:function(){return this;}});');
     out.push('return Object.freeze(_iter);');
     out.push('}');
