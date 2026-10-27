@@ -1,0 +1,14 @@
+define inverted class Particle as
+    int id;
+    float x;
+    bool ready;
+end
+
+define pub fnc main(): int {
+    let rows = InvertedArray<Particle>.with_capacity(3);
+    let a = rows.push(Particle { id: 1, x: 1.0, ready: true });
+    let b = rows.push(Particle { id: 42, x: 2.0, ready: false });
+    let c = rows.push(Particle { id: 9, x: 3.0, ready: true });
+    rows.erase_swap(a);
+    return rows[b].id;
+}
