@@ -99,6 +99,17 @@ test('generator IR is explicit, JSON-safe and independently revalidated',()=>{
   assert.throws(()=>compileProgramIRV2(reservedName),/reserved generator identifier/);
   const reservedParam={...roundTrip,generators:[{...roundTrip.generators[0],params:['return']}]};
   assert.throws(()=>compileProgramIRV2(reservedParam),/reserved generator identifier/);
+
+  const mixed=compileToProgramIRV2(
+    'fnc f(): int {return 0;} gen* g(): Iterator<int> {yield 1;return;}');
+  const oversized={
+    ...mixed,
+    functions:Array.from({length:512},(_,i)=>({...mixed.functions[0],name:'f'+i})),
+    generators:[{...mixed.generators[0],name:'g'}]
+  };
+  assert.throws(
+    ()=>compileProgramIRV2(oversized),
+    /caller-visible function\/generator declaration budget exceeded/);
 });
 
 test('generator names reject the full native reserved-name parity set',()=>{
