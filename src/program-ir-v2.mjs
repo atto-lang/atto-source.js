@@ -232,9 +232,10 @@ export function validateProgramIRV2(input) {
     const slot=(module===null?'@file/':'@module/'+module+'/')+name+'/'+params.length;
     if(slots.has(slot))fail('duplicate caller-visible generator/function arity '+slot);
     const family=slot.slice(0,slot.lastIndexOf('/'));
-    if(symbolKinds.has(family)&&symbolKinds.get(family)!=='generator')
-      fail('generator/function overload kind conflict '+family);
-    symbolKinds.set(family,'generator');slots.add(slot);
+    // Callable identity is name + value arity; preserve the existing family
+    // marker when a differently-ary ordinary function already owns the name.
+    if(!symbolKinds.has(family))symbolKinds.set(family,'generator');
+    slots.add(slot);
     if(module===null&&gen.pub)exportNames.add(name);
     return {module,name,pub:gen.pub,params,paramTypes:[...paramTypes],elementType:'int',yields};
   });
