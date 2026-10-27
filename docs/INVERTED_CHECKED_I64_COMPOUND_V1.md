@@ -50,3 +50,18 @@ stepful exact-head Node 22 / Chrome execution, source and artifact SHA
 checks, and owner/effect/compiler review before it can merge. **No private
 source mirroring to another GitHub organization** without independent
 source transfer authorization and destination allowlisting.
+
+## Audit hardening: signed f64 zero
+
+A separate numeric-parity defect was found while auditing this stack: source
+`-0.0` was lowered to typed `f64` IR string `"0"`, silently converting
+negative zero to positive zero. The compiler now retains the canonical scalar
+encoding `"-0"`, the typed IR validator accepts only that specific negative
+zero spelling, and guest ESM emits `-0`. It continues rejecting malformed
+noncanonical scalar encodings such as `-0.0` and `-0e0` supplied as direct IR.
+
+Regression coverage exercises source → validated IR → emitted ESM and
+independently proves negative zero survives packed SoA push, indexed writes,
+and swap-delete via `Object.is(value,-0)`. Isolated V8 evidence against exact
+current test/runtime blobs: **11/11** authored runtime cases passed. This is
+not an exact-head Node/browser job.
