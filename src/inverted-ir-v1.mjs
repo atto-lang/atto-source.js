@@ -70,7 +70,8 @@ function scalar(value,type,context) {
     // Preserve only canonical finite JS literals, with no NaN/Infinity,
     // exponent ambiguities or executable text passing to ESM generation.
     const number=Number(s);
-    if(!Number.isFinite(number) || String(number)!==s)
+    if(!Number.isFinite(number) ||
+       !(String(number)===s || (s==="-0" && Object.is(number,-0))))
       fail(context+": invalid canonical finite f64");
   } else if(type==="bool" && s!=="true" && s!=="false")
     fail(context+": invalid bool");
