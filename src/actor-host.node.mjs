@@ -15,8 +15,9 @@ function trustedLocalWorkerModuleUrl(moduleUrl) {
   // Reject repeated path separators too: newer Node 22 URL normalization can
   // turn file:/\\server\\share into file:///server//share, erasing the raw
   // backslash while preserving a noncanonical UNC-like shape.
+  // Percent-encoded NUL is not a valid local filename; deny before spawning.
   if (url.protocol !== 'file:' || url.host !== '' ||
-      url.pathname.includes('//') || /%(?:2f|5c)/i.test(url.pathname))
+      url.pathname.includes('//') || /%(?:00|2f|5c)/i.test(url.pathname))
     throw new TypeError('Node actor module must be a trusted file: URL without remote authority or UNC path');
   return url;
 }
