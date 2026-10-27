@@ -42,6 +42,19 @@ function lex(src) {
   }
   out.push({kind:'eof',value:'<eof>',line,col});return out;
 }
+function rejectUnloweredInvertedClasses(tokens) {
+  for (let i=0; i+2<tokens.length; i++) {
+    let at=i;
+    if (tokens[at]?.value==='pub' && tokens[at+1]?.value==='define') at++;
+    if (tokens[at]?.value!=='define') continue;
+    at++;
+    if (tokens[at]?.value==='pub') at++;
+    if (tokens[at]?.value==='inverted' && tokens[at+1]?.value==='class')
+      throw new CompileError(
+        'inverted class requires checked bracket-row and ownership lowering in the JS backend',
+        tokens[at]);
+  }
+}
 class Parser {
   constructor(tokens){this.ts=tokens;this.pos=0;this.depth=0;}
   peek(){return this.ts[this.pos];}
@@ -132,7 +145,9 @@ class Parser {
 // The isolated parser is a bootstrap adapter. Future language frontends
 // should produce this versioned IR instead of duplicating parser semantics.
 export function compileToIR(source) {
-  const parsed=new Parser(lex(source)).parse();
+  const tokens=lex(source);
+  rejectUnloweredInvertedClasses(tokens);
+  const parsed=new Parser(tokens).parse();
   try {
     return createScalarIR(parsed);
   } catch (error) {
