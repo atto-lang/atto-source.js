@@ -69,7 +69,11 @@ function requireWellFormedCheckedI64Header(source) {
   return enabled;
 }
 function validateSourceText(source) {
-  if(typeof source!=='string')fail('oversized or invalid source');
+  // A UTF-8 encoding is never shorter than the source's UTF-16 code-unit
+  // count. Enforce this cheap upper bound before walking the input or
+  // allocating a full UTF-8 buffer; exact multibyte limits are checked below.
+  if(typeof source!=='string'||source.length>MAX_BYTES)
+    fail('oversized or invalid source');
   // TextEncoder replaces lone UTF-16 surrogates. Reject before encoding so
   // comments and other lexically ignored regions cannot change byte identity.
   for(let i=0;i<source.length;i++){
