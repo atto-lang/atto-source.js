@@ -12,7 +12,11 @@ const NativeUint8Array=Uint8Array;
 const getU32=DataView.prototype.getUint32;
 const putU32=DataView.prototype.setUint32;
 const getF64=DataView.prototype.getFloat64;
+const getI64=DataView.prototype.getBigInt64;
 const putF64=DataView.prototype.setFloat64;
+const putI64=DataView.prototype.setBigInt64;
+const MIN_I64=-(1n<<63n);
+const MAX_I64=(1n<<63n)-1n;
 const getU8=DataView.prototype.getUint8;
 const putU8=DataView.prototype.setUint8;
 const fill=Uint8Array.prototype.fill;
@@ -46,6 +50,7 @@ export class WorkerMixedLayout {
     switch(this.#geometry.typeOf(field)){
       case "u32":case "ref32":return getU32.call(this.#view,at,true);
       case "f64":return getF64.call(this.#view,at,true);
+      case "i64":return getI64.call(this.#view,at,true);
       case "bool": {
         const encoded=getU8.call(this.#view,at);
         if (encoded > 1) throw new RangeError("noncanonical bool byte in actor storage");
@@ -63,6 +68,10 @@ export class WorkerMixedLayout {
         if(!nativeInteger(value)||value<0||value>0xffffffff)
           throw new RangeError("u32/ref32 must be an unsigned 32-bit word");
         putU32.call(this.#view,at,value,true);return;
+      case "i64":
+        if(typeof value!=="bigint"||value<MIN_I64||value>MAX_I64)
+          throw new RangeError("i64 requires a signed 64-bit bigint");
+        putI64.call(this.#view,at,value,true);return;
       case "f64":
         if(typeof value!=="number")throw new TypeError("f64 required");
         putF64.call(this.#view,at,value,true);return;
