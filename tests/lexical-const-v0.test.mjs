@@ -101,3 +101,14 @@ test('local shadowing gate is immune to overridden public resolver',()=>{
   root.resolve=()=>null;
   assert.throws(()=>child.declare_const('owner','int'),/shadows/);
 });
+
+
+test('nested declaration lowering fails before producing overdeep IR candidates',()=>{
+  const make=length=>[
+    ...Array.from({length},(_,i)=>({kind:'const',name:'c'+i,type:'int',value:{kind:'int',value:'1'}})),
+    {kind:'return',value:{kind:'int',value:'2'}}
+  ];
+  const within=lower_const_sequence(make(192));
+  assert.equal(within.kind,'localDecl');
+  assert.throws(()=>lower_const_sequence(make(193)),/nested const depth budget exceeded/);
+});
