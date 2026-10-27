@@ -30,7 +30,9 @@ const GENERATOR_RESERVED=new Set([
   'eq','neq','nb','select','readch','writech','cb','shared','untrusted','type','types',
   'typeof','interface','trait','struct','impl','abstract','void','static','pub','private',
   'return','defer','val','const','let','mut','borrow','self','true','false','null','obj',
-  'arr','Iterator','AsyncIterator','int'
+  'arr','Iterator','AsyncIterator','int','define','class','enum','pattern','module',
+  'contract','conforms','namespace','gpu','cpu','quantum','over','structural','bool','pure',
+  'Some','None','Ok','Err','using','requires','serial','critical-read','critical-write','nb-select'
 ]);
 export class ProgramIRError extends Error {
   constructor(detail) {super('error: program IR: '+detail);this.name='ProgramIRError';}
