@@ -35,12 +35,15 @@ export class LexicalConstScope {
   #slots;
   #bindings = new Map();
   #depth;
-  constructor(parent = null, slots = {next: 0}, depth = 0) {
+  constructor(parent = null) {
+    // Never accept caller-controlled slot allocators or nesting depth. They
+    // could reset slot identity, create negative slots or bypass scope budgets.
+    if (arguments.length > 1) fail('scope allocator/depth override forbidden');
     if (parent !== null && !(parent instanceof LexicalConstScope)) fail('invalid scope parent');
-    if (!Number.isSafeInteger(depth) || depth < 0 || depth > MAX_DEPTH)
-      fail('scope depth budget exceeded');
+    const depth = parent === null ? 0 : parent.#depth + 1;
+    if (depth > MAX_DEPTH) fail('scope depth budget exceeded');
     this.#parent = parent;
-    this.#slots = slots;
+    this.#slots = parent === null ? {next: 0} : parent.#slots;
     this.#depth = depth;
   }
   static root(parameters = [], paramTypes = []) {
@@ -56,8 +59,7 @@ export class LexicalConstScope {
     return scope;
   }
   child() {
-    if (this.#depth >= MAX_DEPTH) fail('scope depth budget exceeded');
-    return new LexicalConstScope(this,this.#slots,this.#depth+1);
+    return new LexicalConstScope(this);
   }
   declare_const(name,type) {
     validName(name);validType(type);
