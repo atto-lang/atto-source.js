@@ -14,8 +14,9 @@ test('Node actor denies remote file authorities and UNC-equivalent paths before 
     'file:///%5C%5Cfileserver.example%5Cshare%5Cactor.mjs',
     'file:///%2Ffileserver.example/share/actor.mjs',
     new URL('file://fileserver.example/share/actor.mjs'),
-    // WHATWG URL normalization converts these Windows-style variants into
-    // remote authorities or UNC-equivalent leading double slashes.
+    // WHATWG normalization differs across Node 22 patch releases: these
+    // variants may become authorities, leading/repeated slashes, or otherwise
+    // noncanonical file paths. All must be denied before Worker creation.
     String.raw`file:\\fileserver.example\share\actor.mjs`,
     String.raw`file:/\fileserver.example\share\actor.mjs`,
     new URL(String.raw`file:/\fileserver.example\share\actor.mjs`),
