@@ -185,6 +185,14 @@ export function validateInvertedIRV1(input) {
         const idx=index(step.index,owner,defined,"write index");
         return {kind:"write",owner,index:idx,field,value:scalar(step.value,fields[field].type,"write value")};
       }
+      case "add_i64":{
+        ownRecord(step,["kind","owner","index","field","delta"],"checked column add");
+        const owner=getOwner(step.owner,"add owner"),field=getField(step.field,"add field");
+        if(fields[field].type!=="i64")fail("checked add requires i64 field");
+        const idx=index(step.index,owner,defined,"add index");
+        const delta=scalar(step.delta,"i64","add delta");
+        return {kind:"add_i64",owner,index:idx,field,delta};
+      }
       case "erase":{
         ownRecord(step,["kind","owner","handle"],"erase");
         const owner=getOwner(step.owner,"erase owner");
