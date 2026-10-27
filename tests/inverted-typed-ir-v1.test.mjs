@@ -99,3 +99,20 @@ test("direct IR handle ownership and indexed field value checks are mandatory", 
   };
   assert.throws(()=>compileInvertedIRV1(malicious),InvertedIRError);
 });
+
+test("hostile IR kind accessors are rejected without evaluating getters", () => {
+  let getterCalls=0;
+  const base=compileToInvertedIRV1(source);
+  for(const mutate of [
+    p=>Object.defineProperty(p.statements[0],"kind",{get(){getterCalls++;throw Error("kind getter executed");}}),
+    p=>Object.defineProperty(p.statements.at(-1).expr,"kind",{get(){getterCalls++;throw Error("expression getter executed");}}),
+    p=>{p.statements[1].values[0].value="10";
+      p.statements.at(-1).expr={kind:"read",owner:0,index:{kind:"position",value:"0"},field:0};
+      Object.defineProperty(p.statements.at(-1).expr.index,"kind",{get(){getterCalls++;throw Error("index getter executed");}});}
+  ]) {
+    const p=copy(base);
+    mutate(p);
+    assert.throws(()=>compileInvertedIRV1(p),InvertedIRError);
+  }
+  assert.equal(getterCalls,0);
+});
