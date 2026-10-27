@@ -127,32 +127,44 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
       }
     }
   }
-  // A custom Worker adapter or test transport may deliver accessor-backed
-  // frames rather than structured-cloned records. An event callback must
-  // never throw before revoking outstanding message reservations.
-  function guardedOnFrame(frame) {
-    try {onFrame(frame);} catch {failProtocol('invalid actor frame');}
+  // Real Workers deliver events asynchronously, but injected/custom transports
+  // may synchronously reenter a callback through accessor-backed frame data
+  // or error messages. Do not let a nested reply settle a receipt before the
+  // enclosing failed frame has been adjudicated.
+  let dispatchingHostEvent = false;
+  function dispatchHostEvent(action) {
+    if (dispatchingHostEvent) {
+      failProtocol('reentrant actor event');
+      return;
+    }
+    dispatchingHostEvent = true;
+    try {action();}
+    catch {failProtocol('invalid actor frame');}
+    finally {dispatchingHostEvent = false;}
   }
   if (typeof worker.addEventListener === 'function') {
-    worker.addEventListener('message', e => {
-      try {guardedOnFrame(e.data);} catch {failProtocol('invalid actor frame');}
-    });
-    worker.addEventListener('error', () => {
-      shutdown(new Error('worker execution failure'));void terminateWorker();
-    });
-    worker.addEventListener('messageerror', () => {
-      shutdown(new Error('worker message decoding failure'));void terminateWorker();
-    });
-  } else if (typeof worker.on === 'function') {
-    worker.on('message', guardedOnFrame);
-    worker.on('error', err => {
-      shutdown(new Error('worker execution failure: ' + errorText(err)));
+    worker.addEventListener('message', event =>
+      dispatchHostEvent(() => onFrame(event.data)));
+    worker.addEventListener('error', () => dispatchHostEvent(() => {
+      shutdown(new Error('worker execution failure'));
       void terminateWorker();
-    });
-    worker.on('messageerror', () => {
-      shutdown(new Error('worker message decoding failure'));void terminateWorker();
-    });
-    worker.on('exit', code => shutdown(new Error('worker exited: ' + code)));
+    }));
+    worker.addEventListener('messageerror', () => dispatchHostEvent(() => {
+      shutdown(new Error('worker message decoding failure'));
+      void terminateWorker();
+    }));
+  } else if (typeof worker.on === 'function') {
+    worker.on('message', frame => dispatchHostEvent(() => onFrame(frame)));
+    worker.on('error', error => dispatchHostEvent(() => {
+      shutdown(new Error('worker execution failure: ' + errorText(error)));
+      void terminateWorker();
+    }));
+    worker.on('messageerror', () => dispatchHostEvent(() => {
+      shutdown(new Error('worker message decoding failure'));
+      void terminateWorker();
+    }));
+    worker.on('exit', code => dispatchHostEvent(() =>
+      shutdown(new Error('worker exited: ' + code))));
   } else throw new TypeError('Worker event interface unsupported');
   try {worker.postMessage({protocol: PROTOCOL,kind:'init',moduleUrl,exportName,mode,maxPending,maxPendingBytes});}
   catch (error) {shutdown(error);void terminateWorker();}
