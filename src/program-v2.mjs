@@ -547,7 +547,7 @@ class Parser {
         if (op === '/') fail('division unsupported in provisional int profile',this.peek());
         // Word operators lower to already-validated typed comparisons and
         // lazy conditionals, never JS truthiness or eager bitwise operators.
-        const compare=['<','>','<=','>=','==','!=','eq','ne'].includes(op);
+        const compare=['<','>','<=','>=','==','!=','eq','neq'].includes(op);
         const logical=op==='and'||op==='or';
         const prec=op==='*'||op==='%'?20:op==='+'||op==='-'?10:
           compare?5:op==='and'?4:op==='or'?3:-1;
@@ -560,7 +560,7 @@ class Parser {
             : {kind:'if',condition:left,yes:{kind:'bool',value:true},no:right};
         }else{
           left={kind:compare?'compare':'binary',
-            op:op==='eq'?'==':op==='ne'?'!=':op,left,right};
+            op:op==='eq'?'==':op==='neq'?'!=':op,left,right};
         }
       }
       return left;
