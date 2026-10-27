@@ -8,6 +8,7 @@
 | [#94](https://github.com/ores-truffle-oreslang/oreslang-source.js/pull/94) | Receiver-bound `self` calls | `ebef59ade530d05a7c85b7b4fa72cd52e93fe1e5` | `node --test tests/class-receiver-calls.test.mjs` |
 | [#95](https://github.com/ores-truffle-oreslang/oreslang-source.js/pull/95) | Compiler-only hardened lexical scopes | `88137624c933884ce23e9462fc6f263dafbdcae6` | `node --test tests/lexical-const-v0.test.mjs` |
 | This stacked branch | Program-v2 typed lexical `const` end-to-end | Pin **the current head** from GitHub immediately before execution | `node --test tests/program-v2-lexical-const.test.mjs` |
+| Combined class + lexical branch | Receiver-bound class methods and typed method-local `const` | Pin **the current combined head** immediately before execution | `node --test tests/program-v2-class-local-self.test.mjs tests/class-receiver-calls.test.mjs` |
 
 Every head SHA must be freshly checked before certifying that run. A successful run
 of one PR does **not** certify another PR's head; the stacked branch has #95's
@@ -24,6 +25,7 @@ git rev-parse HEAD
 git rev-parse HEAD^{tree}
 git status --porcelain
 node --test tests/program-v2-lexical-const.test.mjs
+node --test tests/program-v2-class-local-self.test.mjs tests/class-receiver-calls.test.mjs
 npm run test:program-classes
 npm run test:class-methods
 npm run test:core-bool
@@ -85,3 +87,27 @@ The harness substitutes a UTF-8 length encoder and evaluates generated ESM
 without Node's module loader; it is **not Node 22 CLI, full repository tests,
 or GitHub Actions execution**. Previously PR #95's 10 isolated local tests
 passed on Node 22.16.0, also without exact-source runner receipt.
+
+
+## Combined class/local preview, no merge certification
+
+This stacked branch on #96 includes equivalent source/IR handling for #94's
+`self.method(...)` and implicit class-method calls, with an extra
+lexical-name ambiguity gate: when a parameter or `const` local has the method
+name, unqualified `method(...)` rejects and `self.method(...)` remains valid.
+Private methods stay callable only through receiver-bound private entrypoints.
+Method-local `letLocal` and `localRead` nodes are checked against a per-method
+scope, bounded slot set and type at each use. Method-call cycles fail closed.
+
+The private lexical IIFEs in generated ESM are non-escaping implementation
+details. Do not claim user-facing general closure types, ownership-safe closure
+escapes, async captured frames, or actor-state borrow semantics.
+
+An in-memory V8 test harness replayed nine new combined test cases, seven
+existing #96 const tests and five exact-blob #94 receiver tests (**21/21**).
+This harness substitutes a host encoder and evaluates stripped export wrappers,
+so it does **not** replace the full Node 22 module loader, GitHub Actions,
+browser Worker checks or trusted exact-commit CI. All committed test files must
+run on an authorized immutable-source runner, followed by an independent review.
+
+The independent #93 word-operator PR must be integrated/rebased separately.
