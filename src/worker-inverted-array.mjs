@@ -194,6 +194,7 @@ export class WorkerInvertedArray {
 
   #write(row, ordinal, value, loan = null) {
     this.#live();
+    if (this.#transaction) throw new Error("reentrant inverted field mutation");
     const rights = this.#loans[ordinal];
     if (loan === null && (rights.writer || rights.readers))
       throw new Error("inverted field loan prevents external write");
@@ -238,6 +239,7 @@ export class WorkerInvertedArray {
 
   #borrow(binding, kind) {
     const ordinal = this.#ordinal(binding);
+    if (this.#transaction) throw new Error("reentrant inverted loan admission");
     const state = this.#loans[ordinal];
     if (state.writer || (kind === "write" && state.readers !== 0))
       throw new Error("conflicting inverted column loan");
