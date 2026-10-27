@@ -21,7 +21,12 @@ test('program-v2 sync gen* is lazy and yields typed signed-i64 values',async()=>
     'pub fnc main(): int {return 0;}'
   ].join('\n'));
 
+  assert.equal(Object.isFrozen(ns.values),true);
+  assert.throws(()=>Reflect.construct(ns.values,[41n]),TypeError);
   const iterator=ns.values(41n);
+  assert.throws(()=>Reflect.construct(iterator.next,[]),TypeError);
+  assert.throws(()=>Reflect.construct(iterator.close,[]),TypeError);
+  assert.throws(()=>Reflect.construct(iterator[Symbol.iterator],[]),TypeError);
   const first=iterator.next();
   assert.deepEqual(first,{value:41n,done:false});
   assert.equal(Object.isFrozen(first),true);
