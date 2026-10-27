@@ -5,6 +5,7 @@ import {readFile,mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve,sep,extname} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {readBrowserWorkerFixture} from './browser-worker-fixture-path.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const profile=await mkdtemp(join(tmpdir(),'ores-core-browser-'));
@@ -15,7 +16,9 @@ const server=createServer(async(request,response)=>{
     const pathname=decodeURIComponent(url.pathname);
     const file=resolve(root,pathname.startsWith('/')?pathname.slice(1):pathname);
     if(!file.startsWith(resolve(root)+sep)) {response.writeHead(403);response.end();return;}
-    const contents=await readFile(file);
+    // A lexical root-prefix check does not stop an in-tree symlink from
+    // resolving outside the checkout. Reuse the symlink-safe bounded reader.
+    const {body:contents}=await readBrowserWorkerFixture(root,request.url);
     response.setHeader('Cache-Control','no-store');
     response.setHeader('Content-Type',extname(file)==='.html'?'text/html; charset=utf-8':
       extname(file)==='.ores'?'text/plain; charset=utf-8':'text/javascript; charset=utf-8');
