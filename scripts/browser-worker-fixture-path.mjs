@@ -8,8 +8,10 @@ import {resolve,extname,sep} from 'node:path';
 const MIME=Object.freeze({
   '.html':'text/html; charset=utf-8',
   '.mjs':'text/javascript; charset=utf-8',
-  '.ores':'text/plain; charset=utf-8'
+  '.ores':'text/plain; charset=utf-8',
+  '.json':'application/json; charset=utf-8'
 });
+const JSON_FIXTURE='/tests/fixtures/conformance-option-result-match-i64-v0.json';
 const MAX_FIXTURE_BYTES=1048576;
 export class BrowserWorkerFixtureAccessError extends Error {
   constructor() {
@@ -36,7 +38,8 @@ export async function resolveBrowserWorkerFixture(root,requestUrl) {
   const file=resolve(directory,pathname.slice(1));
   if(!allow.some(prefix=>file.startsWith(prefix)))deny();
   const extension=extname(file);
-  if(!Object.hasOwn(MIME,extension))deny();
+  if(!Object.hasOwn(MIME,extension)||
+     (extension==='.json'&&pathname!==JSON_FIXTURE))deny();
   // Reject every path symlink, not just escapes: even an allowed internal
   // symlink can be retargeted between canonicalization and file opening.
   const parts=file.slice(directory.length+1).split(sep);
