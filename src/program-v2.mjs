@@ -783,9 +783,11 @@ function resolveProgram(parsed) {
     const qualified=(gen.module===null?'@file/':'@module/'+gen.module+'/')+gen.name;
     const slot=qualified+'/'+gen.params.length;
     if(slots.has(slot))fail('duplicate caller-visible arity '+slot);
-    if(symbolKinds.has(qualified)&&symbolKinds.get(qualified)!=='generator')
-      fail('generator/function overload families cannot mix in JS program-v2 '+qualified);
-    symbolKinds.set(qualified,'generator');
+    // Callable identity is name + value arity. A generator and ordinary
+    // function may therefore share a family when their arities differ.
+    // Preserve an existing function-family marker so wrong-arity diagnostics
+    // remain available to ordinary source calls.
+    if(!symbolKinds.has(qualified))symbolKinds.set(qualified,'generator');
     // Generator targets are not source-callable in this bounded slice, so use
     // a distinct non-function slot marker rather than a function target index.
     slots.set(slot,'generator:'+i);
@@ -1244,62 +1246,43 @@ function emitProgram(program) {
     out.push('return '+emitExpr(fn.body)+';','}');
   });
   let dispatcherNumber=0;
-  function exportCallable(indices) {
-    // Always use the public arity dispatcher, even for one overload.
+  function publicCallableGroups(module) {
+    const result=new Map();
+    const group=name=>{
+      if(!result.has(name))result.set(name,{functions:[],generators:[]});
+      return result.get(name);
+    };
+    program.functions.forEach((fn,i)=>{
+      if(fn.module===module&&fn.pub)group(fn.name).functions.push(i);
+    });
+    (program.generators??[]).forEach((gen,i)=>{
+      if(gen.module===module&&gen.pub)group(gen.name).generators.push(i);
+    });
+    return result;
+  }
+  function exportCallableGroup(group) {
+    // One dispatcher owns the exported name across ordinary functions and
+    // generators. Same-arity collisions were rejected during resolution.
     const name='_dispatch'+(dispatcherNumber++);
     out.push('function '+name+'(..._args){switch(_args.length){');
-    for(const i of indices) {
+    for(const i of group.functions)
       out.push('case '+program.functions[i].params.length+':return _f'+i+'(..._args);');
-    }
+    for(const i of group.generators)
+      out.push('case '+program.generators[i].params.length+':return _g'+i+'(..._args);');
     out.push('default:throw new TypeError("Oreslang overload arity mismatch");}}');
     return name;
   }
-  function publicGroups(module) {
-    const result=new Map();
-    program.functions.forEach((fn,i)=>{
-      if(fn.module===module && fn.pub) {
-        if(!result.has(fn.name))result.set(fn.name,[]);
-        result.get(fn.name).push(i);
-      }
-    });
-    return result;
-  }
-  function exportGenerator(indices) {
-    const name='_gdispatch'+(dispatcherNumber++);
-    out.push('function '+name+'(..._args){switch(_args.length){');
-    for(const i of indices)
-      out.push('case '+program.generators[i].params.length+':return _g'+i+'(..._args);');
-    out.push('default:throw new TypeError("Oreslang generator overload arity mismatch");}}');
-    return name;
-  }
-  function publicGeneratorGroups(module) {
-    const result=new Map();
-    (program.generators??[]).forEach((gen,i)=>{
-      if(gen.module===module&&gen.pub){
-        if(!result.has(gen.name))result.set(gen.name,[]);
-        result.get(gen.name).push(i);
-      }
-    });
-    return result;
-  }
   program.modules.forEach((module,i)=>{
     out.push('const _module'+i+'=Object.create(null);');
-    for(const [name,indices] of publicGroups(module)) {
-      const callable=exportCallable(indices);
-      out.push('Object.defineProperty(_module'+i+','+JSON.stringify(name)+',{value:'+callable+',enumerable:true,configurable:false,writable:false});');
-    }
-    for(const [name,indices] of publicGeneratorGroups(module)) {
-      const callable=exportGenerator(indices);
+    for(const [name,group] of publicCallableGroups(module)) {
+      const callable=exportCallableGroup(group);
       out.push('Object.defineProperty(_module'+i+','+JSON.stringify(name)+',{value:'+callable+',enumerable:true,configurable:false,writable:false});');
     }
     out.push('Object.freeze(_module'+i+');');
     out.push('export { _module'+i+' as '+JSON.stringify(module)+' };');
   });
-  for(const [name,indices] of publicGroups(null)) {
-    out.push('export { '+exportCallable(indices)+' as '+JSON.stringify(name)+' };');
-  }
-  for(const [name,indices] of publicGeneratorGroups(null)) {
-    out.push('export { '+exportGenerator(indices)+' as '+JSON.stringify(name)+' };');
+  for(const [name,group] of publicCallableGroups(null)) {
+    out.push('export { '+exportCallableGroup(group)+' as '+JSON.stringify(name)+' };');
   }
   (program.classes??[]).forEach((cls,i)=>{
     if(cls.pub)out.push('export { _class'+i+' as '+JSON.stringify(cls.name)+' };');
