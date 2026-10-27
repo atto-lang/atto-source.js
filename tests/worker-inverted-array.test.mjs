@@ -155,3 +155,21 @@ test("column read/write loan exclusion, structural fencing and retirement", () =
   assert.throws(() => live.getAt(0), /closed|released/);
   live.close();
 });
+
+test("Proxy field validation cannot reenter mutation or retire the owning array", () => {
+  const schema = spec(), rows = make(schema), id = schema.bindField("id");
+  const first = rows.push({id: 1n, x: 1, ready: true});
+  const row = new Proxy({id: 2n, x: 2, ready: false}, {
+    ownKeys(target) {
+      assert.throws(() => rows.push({id: 99n, x: 0, ready: false}), /reentrant/);
+      assert.throws(() => rows.eraseSwap(first), /reentrant/);
+      assert.throws(() => rows.close(), /reentrant/);
+      return Reflect.ownKeys(target);
+    }
+  });
+  const second = rows.push(row);
+  assert.equal(rows.size, 2);
+  assert.equal(rows.read(first, id), 1n);
+  assert.equal(rows.read(second, id), 2n);
+  rows.close();
+});
