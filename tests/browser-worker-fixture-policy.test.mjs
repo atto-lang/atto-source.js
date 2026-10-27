@@ -21,6 +21,9 @@ async function withSandbox(callback){
     await writeFile(join(root,'secret.mjs'),'secret content');
     await writeFile(join(root,'.github','workflows','secrets.mjs'),'secret content');
     await writeFile(join(root,'tests','fixtures','wrong.json'),'{}');
+    await writeFile(
+      join(root,'tests','fixtures','conformance-option-result-match-i64-v0.json'),
+      '{"testVectors":[]}');
     await writeFile(join(root,'tests','fixtures','oversized.mjs'),'x'.repeat(1048577));
     await mkdir(join(root,'src','directory.mjs'));
     await symlink(join(root,'secret.mjs'),join(root,'src','escaped.mjs'));
@@ -46,6 +49,10 @@ test('allow regular fixture files with MIME, byte reads and HEAD',async()=>{
     const c=await readBrowserWorkerFixture(root,'/tests/worker.html',{head:true});
     assert.equal(c.contentType,'text/html; charset=utf-8');
     assert.equal(c.body,undefined);
+    const d=await readBrowserWorkerFixture(
+      root,'/tests/fixtures/conformance-option-result-match-i64-v0.json');
+    assert.equal(d.contentType,'application/json; charset=utf-8');
+    assert.deepEqual(JSON.parse(d.body.toString('utf8')), {testVectors:[]});
   });
 });
 
