@@ -168,3 +168,22 @@ Audit gate: exported file-root routines must remain direct-call-only and cannot 
 ## Concrete ADT matching (integration draft)
 
 Opt-in typed `Option<int>` / `Result<int,int>` and exhaustive `Some/None` / `Ok/Err` expressions use validated `intrinsic`, `adtMatch`, and `capture` IR nodes. Payload bindings are local to the selected match arm. The experimental ADT parser also permits a legacy `return` spelling in arm bodies as expression sugar; it must never return from the enclosing function. Source `if` remains statement-only; `?:` is the value operator. Arbitrary ADTs and general ownership are not supported. Exact-head Node/browser and cross-backend conformance remain blocking release gates.
+
+
+## Synchronous generator slice (experimental program-v2)
+
+Program-v2 now has an explicit, verified synchronous generator path for the canonical spelling:
+
+```ores
+pub gen* values(int start): Iterator<int> {
+  yield start;
+  yield start + 1;
+  return;
+}
+```
+
+Generators are represented in a separate optional `generators` section of program IR v2. Existing function-only IR keeps its historical shape. The validator independently checks exact record fields, module ownership, name/arity collisions, integer-only parameter/element types, bounded yield lists, and every yielded expression before code generation. Generated ESM uses a native `function*` only as the backend implementation of the verified activation; construction remains lazy, including parameter validation, and each pull advances at most to the next yield.
+
+The initial slice is deliberately narrow: `Iterator<int>`, integer parameters, sequential `yield expr;`, and bare `return;`. Public root/module generators are callable through the host iterator bridge. Private generators do not become ESM/module exports. Source-level calls/for-of over generator values, `yield*`, generator methods, non-int element types, `async gen*`, and `suspend gen*` remain fail-closed. In particular, parser acceptance is not used to claim async-iterator parity.
+
+The normative cross-backend contract is tracked in `oreslang-common-source#161`; shared six-compiler target fixtures are in `oreslang-platform-conformance#176`. JS async/suspend continuation work remains tracked by issue #76.
