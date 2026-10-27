@@ -85,3 +85,19 @@ test('root scopes isolate slot allocators and preserve binding inheritance',()=>
   assert.equal(right.resolve('a'),null);
   assert.equal(left.resolve('b'),null);
 });
+
+
+test('parent must carry genuine private brand; forged prototypes cannot steal depth',()=>{
+  const imposter=Object.create(LexicalConstScope.prototype);
+  assert.throws(()=>new LexicalConstScope(imposter),/invalid scope parent/);
+  assert.throws(()=>LexicalConstScope.prototype.child.call(imposter),/invalid scope parent/);
+});
+
+test('local shadowing gate is immune to overridden public resolver',()=>{
+  const root=LexicalConstScope.root(['owner'],['int']);
+  const child=root.child();
+  child.resolve=()=>null;
+  assert.throws(()=>child.declare_const('owner','int'),/shadows/);
+  root.resolve=()=>null;
+  assert.throws(()=>child.declare_const('owner','int'),/shadows/);
+});
