@@ -1,3 +1,4 @@
+import {validateInvertedIRV1,INVERTED_IR_VERSION,INVERTED_IR_DIALECT,INVERTED_IR_INT_MODEL} from "./inverted-ir-v1.mjs";
 // Intentionally opt-in compiler lane. This is a bounded, lexed, typed source
 // slice; no regular-expression rewriting of source access and no AoS fallback.
 const MAX_SOURCE = 65536;
@@ -40,15 +41,15 @@ function literalType(token, signed = false) {
   if (/^[0-9]+$/.test(token.value)) {
     const n = BigInt(token.value) * (signed ? -1n : 1n);
     if (n < MIN_I64 || n > MAX_I64) reject("signed i64 literal overflow",token);
-    return {type:"i64",js:n.toString()+"n"};
+    return {type:"i64",js:n.toString()+"n",value:n.toString(),expr:{kind:"literal",value:n.toString()}};
   }
   if (/^[0-9]+\.[0-9]+$/.test(token.value)) {
     const n = Number(token.value) * (signed ? -1 : 1);
     if (!Number.isFinite(n)) reject("nonfinite f64 literal",token);
-    return {type:"f64",js:JSON.stringify(n)};
+    return {type:"f64",js:JSON.stringify(n),value:String(n)};
   }
   if (!signed && (token.value === "true" || token.value === "false"))
-    return {type:"bool",js:token.value};
+    return {type:"bool",js:token.value,value:token.value};
   reject("scalar literal required",token);
 }
 
@@ -123,7 +124,7 @@ class CheckedParser {
         const value=this.sum();
         if(value.type!=="i64")reject("return type is not i64",this.peek());
         this.expect(";");
-        this.statements.push("return "+value.js+";");
+        this.statements.push({kind:"return",expr:value.expr});
         returned=true;
       } else this.mutation();
     }
@@ -146,7 +147,7 @@ class CheckedParser {
       this.expect(")");this.expect(";");
       const symbol="_v"+this.next++;
       this.locals.set(name,{kind:"array",nominal:type,symbol});
-      this.statements.push("const "+symbol+"=new WorkerInvertedArray(_schema,{capacity:"+n+"});_owners.push("+symbol+");");
+      this.statements.push({kind:"alloc",slot:Number(symbol.slice(2)),capacity:Number(n)});
       return;
     }
     const arrayName=this.identifier(),array=this.local(arrayName);
@@ -164,15 +165,15 @@ class CheckedParser {
       this.expect(":");
       const value=this.literal();
       if(value.type!==field.type)reject("row field type mismatch: "+fieldName,this.peek());
-      values.set(fieldName,value.js);
+      values.set(fieldName,{type:value.type,value:value.value});
       if(!this.take(",")){this.expect("}");break;}
     }
     if(values.size!==schema.fields.length)reject("row missing declared fields",this.peek());
     this.expect(")");this.expect(";");
     const symbol="_v"+this.next++;
     this.locals.set(name,{kind:"handle",nominal:array.nominal,owner:array.symbol,symbol});
-    const row="{"+schema.fields.map(f=>JSON.stringify(f.name)+":"+values.get(f.name)).join(",")+"}";
-    this.statements.push("const "+symbol+"="+array.symbol+".push("+row+");");
+    this.statements.push({kind:"push",slot:Number(symbol.slice(2)),
+      owner:Number(array.symbol.slice(2)),values:schema.fields.map(f=>values.get(f.name))});
   }
   selector(name,forWrite=false){
     const arr=this.local(name);
@@ -194,10 +195,11 @@ class CheckedParser {
     const fieldName=this.identifier();
     const field=this.schemas.get(arr.nominal).byName.get(fieldName);
     if(!field)reject("unknown inverted field "+fieldName,this.peek());
-    const ordinal="_field"+field.ordinal;
-    const access=arr.symbol+"."+(handle?"read(":"readAt(")+index+","+ordinal+")";
-    const update=value=>arr.symbol+"."+(handle?"write(":"writeAt(")+index+","+ordinal+","+value+");";
-    return {type:field.type,js:access,update};
+    const owner=Number(arr.symbol.slice(2));
+    const idx=handle ? {kind:"handle",slot:Number(index.slice(2))} :
+      {kind:"position",value:BigInt(index.slice(0,-1)).toString()};
+    return {type:field.type,expr:{kind:"read",owner,index:idx,field:field.ordinal},
+      writeNode:value=>({kind:"write",owner,index:idx,field:field.ordinal,value})};
   }
   mutation(){
     const name=this.identifier();
@@ -209,7 +211,7 @@ class CheckedParser {
       if(h.kind!=="handle" || h.owner!==arr.symbol || h.nominal!==arr.nominal)
         reject("erase_swap needs same-owner row handle",this.peek());
       this.expect(")");this.expect(";");
-      this.statements.push(arr.symbol+".eraseSwap("+h.symbol+");");
+      this.statements.push({kind:"erase",owner:Number(arr.symbol.slice(2)),handle:Number(h.symbol.slice(2))});
       return;
     }
     const field=this.selector(name,true);
@@ -217,7 +219,7 @@ class CheckedParser {
     const val=this.literal();
     if(val.type!==field.type)reject("indexed assignment type mismatch",this.peek());
     this.expect(";");
-    this.statements.push(field.update(val.js));
+    this.statements.push(field.writeNode({type:val.type,value:val.value}));
   }
   atom(){
     const t=this.peek();
@@ -228,32 +230,81 @@ class CheckedParser {
   sum(){
     const first=this.atom();
     if(first.type!=="i64")reject("integer return expression required",this.peek());
-    let expr=first.js;
+    let expr=first.expr;
     while(this.take("+")){
       const next=this.atom();
       if(next.type!=="i64")reject("i64 addition requires i64 operands",this.peek());
-      expr="_checked_add("+expr+","+next.js+")";
+      expr={kind:"add",left:expr,right:next.expr};
     }
-    return {type:"i64",js:expr};
+    return {type:"i64",expr};
   }
 }
 
-export function compileInvertedSourceV1(source,{runtimeSpecifier="./worker-inverted-array.mjs"}={}){
-  // runtimeSpecifier is privileged build configuration, never guest source.
+export function compileToInvertedIRV1(source) {
+  const parsed=new CheckedParser(tokenize(source)).parse();
+  return validateInvertedIRV1({
+    schemaVersion:INVERTED_IR_VERSION,
+    dialect:INVERTED_IR_DIALECT,
+    integerModel:INVERTED_IR_INT_MODEL,
+    ...parsed
+  });
+}
+
+export function compileInvertedIRV1(input,{runtimeSpecifier="./worker-inverted-array.mjs"}={}){
+  // This is a trusted host build option, never a user/source expression.
   if(typeof runtimeSpecifier!=="string" || runtimeSpecifier.length>1024 ||
      !(runtimeSpecifier.startsWith("./") || runtimeSpecifier.startsWith("file:")))
     reject("unsupported trusted runtime import specifier");
-  const program=new CheckedParser(tokenize(source)).parse();
-  const declarations=program.schema.fields.map(f=>({name:f.name,type:f.type}));
+  const ir=validateInvertedIRV1(input);
+  const descriptors=ir.schema.fields;
+  const scalar=value=>{
+    if(value.type==="i64")return value.value+"n";
+    return value.value;
+  };
+  const rowIndex=idx=>idx.kind==="position"?idx.value+"n":"_v"+idx.slot;
+  function expression(expr,depth=0){
+    if(depth>128)reject("inverted IR emission depth exceeded");
+    if(expr.kind==="literal")return expr.value+"n";
+    if(expr.kind==="read")return "_v"+expr.owner+"."+
+      (expr.index.kind==="position"?"readAt(":"read(")+
+      rowIndex(expr.index)+",_field"+expr.field+")";
+    if(expr.kind==="add")
+      return "_checked_add("+expression(expr.left,depth+1)+","+expression(expr.right,depth+1)+")";
+    reject("invalid emitted IR expression");
+  }
   const out=[
-    "// Generated from checked Oreslang inverted-class v1 source; no dynamic names or AoS rows.",
+    "// Generated from validated Oreslang inverted IR v1; actor-independent SoA.",
     "import {InvertedSchema,WorkerInvertedArray} from "+JSON.stringify(runtimeSpecifier)+";",
-    "const _schema=new InvertedSchema("+JSON.stringify(declarations)+");",
-    ...program.schema.fields.map((f,i)=>"const _field"+i+"=_schema.bindField("+JSON.stringify(f.name)+");"),
+    "const _schema=new InvertedSchema("+JSON.stringify(descriptors)+");",
+    ...descriptors.map((f,i)=>"const _field"+i+"=_schema.bindField("+JSON.stringify(f.name)+");"),
     "function _checked_add(a,b){const v=a+b;if(typeof a!==\"bigint\"||typeof b!==\"bigint\"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new RangeError(\"ORES_I64_OVERFLOW\");return v;}",
-    "export function main(){const _owners=[];try{",
-    ...program.statements,
-    "}finally{for(let _i=_owners.length-1;_i>=0;_i--)_owners[_i].close();}}"
+    "export function main(){const _owners=[];try{"
   ];
+  for(const stmt of ir.statements){
+    switch(stmt.kind){
+      case "alloc":
+        out.push("const _v"+stmt.slot+"=new WorkerInvertedArray(_schema,{capacity:"+stmt.capacity+"});_owners.push(_v"+stmt.slot+");");
+        break;
+      case "push":
+        out.push("const _v"+stmt.slot+"=_v"+stmt.owner+".push({"+
+          descriptors.map((f,i)=>JSON.stringify(f.name)+":"+scalar(stmt.values[i])).join(",")+"});");
+        break;
+      case "write":
+        out.push("_v"+stmt.owner+"."+(stmt.index.kind==="position"?"writeAt(":"write(")+
+          rowIndex(stmt.index)+",_field"+stmt.field+","+scalar(stmt.value)+");");
+        break;
+      case "erase":
+        out.push("_v"+stmt.owner+".eraseSwap(_v"+stmt.handle+");");
+        break;
+      case "return":
+        out.push("return "+expression(stmt.expr)+";");
+        break;
+      default:reject("invalid admitted IR statement");
+    }
+  }
+  out.push("}finally{for(let _i=_owners.length-1;_i>=0;_i--)_owners[_i].close();}}");
   return out.join("\n")+"\n";
+}
+export function compileInvertedSourceV1(source,options={}) {
+  return compileInvertedIRV1(compileToInvertedIRV1(source),options);
 }
