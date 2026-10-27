@@ -889,6 +889,8 @@ function resolveProgram(parsed) {
           if(symbolKinds.has(key)) fail('call arity mismatch for '+key);
           fail('unresolved callable '+key);
         }
+        if(typeof target!=='number')
+          fail('generator values are not source-callable in JS sync generator v1; consume them through the iterator ABI');
         if(expr.qualifier!==null && mod!==owner.module && !functions[target].pub) fail('private module member '+key);
         const bound=bindArguments(functions[target].params,expr.args,key,
           owner,depth,bindings);
