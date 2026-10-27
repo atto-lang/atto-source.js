@@ -82,6 +82,7 @@ export class WorkerInvertedArray {
   #loans;
   #capacity;
   #closed = false;
+  #transaction = false;
 
   constructor(schema, {capacity, maxBytes = 16 * 1024 * 1024} = {}) {
     if (!(schema instanceof InvertedSchema))
@@ -107,6 +108,7 @@ export class WorkerInvertedArray {
 
   #structural() {
     this.#live();
+    if (this.#transaction) throw new Error("reentrant inverted structural mutation");
     if (this.#loans.some(loan => loan.readers !== 0 || loan.writer))
       throw new Error("inverted structural change conflicts with a column loan");
   }
@@ -136,19 +138,24 @@ export class WorkerInvertedArray {
 
   push(row) {
     this.#structural();
-    if (this.#index.size >= this.#capacity)
-      throw new RangeError("inverted array at bounded capacity");
-    // Validate getters, field kinds and i64 overflow before touching columns.
-    const values = this.#values(row);
-    const position = this.#index.size;
+    this.#transaction = true;
     try {
-      for (let i = 0; i < values.length; i++)
-        this.#store.write(position, this.#schema.fields[i].name, values[i]);
-      // The index mints the handle BEFORE publishing the logical row.
-      return this.#index.push();
-    } catch (error) {
-      this.#clear(position); // no unreachable live row or stale payload
-      throw error;
+      if (this.#index.size >= this.#capacity)
+        throw new RangeError("inverted array at bounded capacity");
+      // Proxy traps may run during validation; same-array mutation/close is
+      // fenced throughout validation, physical writes and handle issuance.
+      const values = this.#values(row);
+      const position = this.#index.size;
+      try {
+        for (let i = 0; i < values.length; i++)
+          this.#store.write(position, this.#schema.fields[i].name, values[i]);
+        return this.#index.push();
+      } catch (error) {
+        this.#clear(position);
+        throw error;
+      }
+    } finally {
+      this.#transaction = false;
     }
   }
 
@@ -157,18 +164,22 @@ export class WorkerInvertedArray {
 
   eraseSwap(handle) {
     this.#structural();
-    const position = this.#index.resolve(handle);
-    const tail = this.#index.size - 1;
-    // Prepare every field value while the old mapping is still valid.
-    const fields = this.#schema.fields;
-    const moved = position === tail ? null :
-      fields.map(field => this.#store.read(tail, field.name));
-    // Recycle allocation can throw; in that case the physical data remains
-    // unchanged. After success all remaining operations are primitive writes.
-    this.#index.eraseSwap(handle);
-    if (moved) for (let i = 0; i < fields.length; i++)
-      this.#store.write(position, fields[i].name, moved[i]);
-    this.#clear(tail);
+    this.#transaction = true;
+    try {
+      const position = this.#index.resolve(handle);
+      const tail = this.#index.size - 1;
+      const fields = this.#schema.fields;
+      const moved = position === tail ? null :
+        fields.map(field => this.#store.read(tail, field.name));
+      // Row-index recycle allocation can throw; preserve columns until it
+      // succeeds, then publish moved columns and scrub the retired tail.
+      this.#index.eraseSwap(handle);
+      if (moved) for (let i = 0; i < fields.length; i++)
+        this.#store.write(position, fields[i].name, moved[i]);
+      this.#clear(tail);
+    } finally {
+      this.#transaction = false;
+    }
   }
 
   #read(row, ordinal, loan = null) {
@@ -279,6 +290,7 @@ export class WorkerInvertedArray {
   }
 
   close() {
+    if (this.#transaction) throw new Error("reentrant inverted close");
     if (this.#closed) return;
     this.#closed = true; // revoke every outstanding handle/loan first
     this.#index.close();
