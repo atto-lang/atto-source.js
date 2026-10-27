@@ -55,6 +55,20 @@ function rejectUnloweredInvertedClasses(tokens) {
         tokens[at]);
   }
 }
+function rejectUnsupportedSelect(tokens) {
+  const startsStaticSelect = next =>
+    next && ['{','over','first','fair','random'].includes(next.value);
+  for (let i=0;i<tokens.length;i++) {
+    const token=tokens[i];
+    if (token.kind === 'id' && token.value === 'select' &&
+        startsStaticSelect(tokens[i+1])) {
+      throw new CompileError(
+        'static select requires checked Channel/Future arbitration, actor-lane continuation, ownership and cancellation lowering in the JS backend',
+        token
+      );
+    }
+  }
+}
 class Parser {
   constructor(tokens){this.ts=tokens;this.pos=0;this.depth=0;}
   peek(){return this.ts[this.pos];}
@@ -147,6 +161,7 @@ class Parser {
 export function compileToIR(source) {
   const tokens=lex(source);
   rejectUnloweredInvertedClasses(tokens);
+  rejectUnsupportedSelect(tokens);
   const parsed=new Parser(tokens).parse();
   try {
     return createScalarIR(parsed);
