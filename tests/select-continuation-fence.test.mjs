@@ -132,6 +132,33 @@ test('missing tickets are rejected without consuming a live reservation',()=>{
   assert.equal(fence.tryConsume(ticket),true);
 });
 
+test('ticket identity is immutable and reconstruction cannot consume a current reservation',()=>{
+  const fence=new SelectContinuationFence({maxTickets:1});
+  const old=fence.register();
+  assert.equal(Object.isFrozen(old),true);
+  assert.throws(()=>{old.generation=2;},TypeError);
+  assert.equal(fence.advance(1),true);
+  const live=fence.register(2);
+  const reconstructed=new old.constructor(fence,live.index,live.id,live.generation);
+  assert.equal(fence.tryConsume(reconstructed),false);
+  assert.equal(fence.tryConsume({...live}),false);
+  assert.equal(fence.tryConsume(old),false);
+  assert.equal(fence.pendingTickets,1);
+  assert.equal(fence.tryConsume(live),true);
+});
+
+test('unissued getter-bearing tickets cannot run code or clear live reservations',()=>{
+  const fence=new SelectContinuationFence();
+  const live=fence.register();
+  let reads=0;
+  const invalid={get owner(){reads++;throw Error('unexpected getter');}};
+  assert.equal(fence.tryConsume(invalid),false);
+  assert.equal(fence._close(invalid),false);
+  assert.equal(reads,0);
+  assert.equal(fence.pendingTickets,1);
+  assert.equal(fence.tryConsume(live),true);
+});
+
 test('terminal close invalidates all tickets and cannot reopen',()=>{
   const fence=new SelectContinuationFence({maxTickets:2});
   const tickets=[fence.register(),fence.register()];

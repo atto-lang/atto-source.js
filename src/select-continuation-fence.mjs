@@ -1,3 +1,5 @@
+const TICKETS = new WeakMap();
+
 class ContinuationTicket {
   constructor(owner,index,id,generation){
     this.owner=owner;
@@ -7,6 +9,12 @@ class ContinuationTicket {
   }
   get active(){return this.owner._matches(this,false);}
   close(){return this.owner._close(this);}
+}
+
+function issueTicket(owner,index,id,generation) {
+  const ticket=new ContinuationTicket(owner,index,id,generation);
+  TICKETS.set(ticket,{owner,index,id,generation});
+  return Object.freeze(ticket);
 }
 
 /**
@@ -64,12 +72,12 @@ export class SelectContinuationFence {
     slot.id=id;
     slot.generation=this.#generation;
     slot.active=true;
-    return new ContinuationTicket(this,index,id,this.#generation);
+    return issueTicket(this,index,id,this.#generation);
   }
 
   tryConsume(ticket){
     if(!this._matches(ticket,true))return false;
-    this.#clear(this.#slots[ticket.index]);
+    this.#clear(this.#slots[TICKETS.get(ticket).index]);
     return true;
   }
 
@@ -84,18 +92,17 @@ export class SelectContinuationFence {
   }
 
   _matches(ticket,requireCurrent){
-    if(!(ticket instanceof ContinuationTicket)||ticket.owner!==this||
-       !Number.isSafeInteger(ticket.index)||ticket.index<0||
-       ticket.index>=this.#slots.length)return false;
-    const slot=this.#slots[ticket.index];
-    if(!slot.active||slot.id!==ticket.id||
-       slot.generation!==ticket.generation)return false;
-    return !requireCurrent||ticket.generation===this.#generation;
+    const identity=TICKETS.get(ticket);
+    if(!identity || identity.owner!==this)return false;
+    const slot=this.#slots[identity.index];
+    if(!slot.active||slot.id!==identity.id||
+       slot.generation!==identity.generation)return false;
+    return !requireCurrent||identity.generation===this.#generation;
   }
 
   _close(ticket){
     if(!this._matches(ticket,false))return false;
-    this.#clear(this.#slots[ticket.index]);
+    this.#clear(this.#slots[TICKETS.get(ticket).index]);
     return true;
   }
 

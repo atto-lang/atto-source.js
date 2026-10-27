@@ -122,3 +122,29 @@ test('foreign subscription and i64 bounds fail closed',()=>{
   assert.throws(()=>second.resolve(1),/signed i64 BigInt/);
   assert.throws(()=>second.resolve(1n<<63n),/signed i64 BigInt/);
 });
+
+test('issued subscriptions have immutable identity and reject reconstructed handles',()=>{
+  const future=new SelectableI64Future({maxWaiters:1});
+  const old=future.subscribeReady(()=>{});
+  assert.equal(Object.isFrozen(old),true);
+  assert.throws(()=>{old.id=999;},TypeError);
+  assert.equal(old.close(),true);
+  const live=future.subscribeReady(()=>{});
+  const reconstructed=new old.constructor(future,live.index,live.id);
+  assert.equal(future._close(reconstructed),false);
+  assert.equal(future._close({...live}),false);
+  assert.equal(old.close(),false);
+  assert.equal(future.pendingWaiters,1);
+  assert.equal(live.close(),true);
+});
+
+test('invalid subscription getters are never executed during admission',()=>{
+  const future=new SelectableI64Future();
+  const live=future.subscribeReady(()=>{});
+  let reads=0;
+  const invalid={get owner(){reads++;throw Error('unexpected getter');}};
+  assert.equal(future._close(invalid),false);
+  assert.equal(future._close(null),false);
+  assert.equal(reads,0);
+  assert.equal(live.close(),true);
+});
