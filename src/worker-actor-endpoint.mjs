@@ -9,6 +9,9 @@ const MAX_CONFIGURED_PENDING_BYTES=256*1024*1024;
 const nativePush=Array.prototype.push;
 const nativeShift=Array.prototype.shift;
 const nativeFreeze=Object.freeze;
+// Guest ESM shares this Worker realm and can replace numeric validators after init.
+// Delivery IDs must retain strict safe-integer semantics on the host boundary.
+const nativeSafeInteger=Number.isSafeInteger;
 const errorText=e=>{
   try{return String(e?.message ?? e).slice(0,512);}
   catch{return 'uninspectable actor failure';}
@@ -110,9 +113,9 @@ export function installWorkerActorEndpoint({subscribe,post}) {
          typeof exportName!=='string'||
          !/^[A-Za-z_][A-Za-z0-9_]*$/.test(exportName)||
          !['handler','call'].includes(mode)||
-         !Number.isSafeInteger(requestedMaxPending)||
+         !nativeSafeInteger(requestedMaxPending)||
          requestedMaxPending<1||requestedMaxPending>65536||
-         !Number.isSafeInteger(requestedMaxPendingBytes)||
+         !nativeSafeInteger(requestedMaxPendingBytes)||
          requestedMaxPendingBytes<1||
          requestedMaxPendingBytes>MAX_CONFIGURED_PENDING_BYTES){
         fail('invalid actor module descriptor');return;
@@ -148,7 +151,7 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     if(!initialized){fail('invalid or premature delivery');return;}
     const id=frame.id;
     if(terminal)return;
-    if(!Number.isSafeInteger(id)||id<=lastId){
+    if(!nativeSafeInteger(id)||id<=lastId){
       fail('invalid or premature delivery');return;
     }
     const wantsReply=frame.reply;

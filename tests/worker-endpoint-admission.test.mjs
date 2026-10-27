@@ -388,3 +388,36 @@ for(const hasQueuedTurn of [false,true]){
       'revoked queued or executing turns must not emit late results');
   });
 }
+
+test('guest-patched integer predicate cannot admit a fractional delivery ID',async()=>{
+  const h=harness();h.init();
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  const original=Number.isSafeInteger;
+  let intercepted=0;
+  try{
+    Number.isSafeInteger=()=>{intercepted++;return true;};
+    h.send('deliver',{id:1.5,reply:true,value:{type:'add',x:40n,y:2n}});
+  }finally{Number.isSafeInteger=original;}
+  assert.equal(intercepted,0,'delivery admission must use the captured predicate');
+  assert.deepEqual(h.frames.map(f=>f.kind),['ready','fatal']);
+  assert.match(h.frames.at(-1).error,/invalid or premature delivery/);
+  await sleep(20);
+  assert.equal(h.frames.filter(f=>f.kind==='result').length,0,
+    'invalid delivery must not dispatch a guest turn');
+});
+
+test('guest-patched integer predicate cannot deny an otherwise valid delivery ID',async()=>{
+  const h=harness();h.init();
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  const original=Number.isSafeInteger;
+  let intercepted=0;
+  try{
+    Number.isSafeInteger=()=>{intercepted++;return false;};
+    h.send('deliver',{id:1,reply:true,value:{type:'add',x:40n,y:2n}});
+  }finally{Number.isSafeInteger=original;}
+  assert.equal(intercepted,0,'valid delivery must use captured safe-integer semantics');
+  await h.until(()=>h.frames.some(f=>f.kind==='result'));
+  assert.deepEqual(h.frames.at(-1),
+    {protocol:PROTOCOL,kind:'result',id:1,ok:true,value:42n});
+  assert.equal(h.frames.filter(f=>f.kind==='fatal').length,0);
+});
