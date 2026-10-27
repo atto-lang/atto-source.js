@@ -1,3 +1,4 @@
+import {terminateFailedWorkerSpawn} from './worker-actor-spawn-cleanup.mjs';
 import {createWorkerActorClient,rejectUnsupportedWorkerPlacement} from './worker-actor-client.mjs';
 export function spawnBrowserActor(options) {
   rejectUnsupportedWorkerPlacement(options);
@@ -10,5 +11,5 @@ export function spawnBrowserActor(options) {
     throw new TypeError('browser actor module must be same-origin http(s) or blob URL');
   const worker = new WorkerCtor(new URL('./worker-actor.browser.mjs', import.meta.url), {type:'module'});
   try {return createWorkerActorClient({worker,moduleUrl:url.href,exportName,mode,maxPending,maxPendingBytes});}
-  catch (error) {void worker.terminate();throw error;}
+  catch (error) {terminateFailedWorkerSpawn(worker);throw error;}
 }
