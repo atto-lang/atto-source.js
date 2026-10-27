@@ -2,15 +2,21 @@ import {terminateFailedWorkerSpawn} from './worker-actor-spawn-cleanup.mjs';
 import {Worker} from 'node:worker_threads';
 import {createWorkerActorClient,rejectUnsupportedWorkerPlacement} from './worker-actor-client.mjs';
 function trustedLocalWorkerModuleUrl(moduleUrl) {
-  const url = new URL(moduleUrl);
+  // Inspect one stable string representation before WHATWG normalization.
+  // Node versions differ in how aggressively backslashes are treated as URL
+  // separators; a raw backslash must never become a platform-dependent path.
+  const raw = moduleUrl instanceof URL ? moduleUrl.href : String(moduleUrl);
+  if (raw.includes('\\'))
+    throw new TypeError('Node actor module must be a trusted file: URL without remote authority or UNC path');
+  const url = new URL(raw);
   // No eval/data URL or Windows UNC/network-share authority: caller must
   // supply a prebuilt trusted local ESM artifact. A file: scheme alone is
   // insufficient: file://server/share resolves to a UNC path on Windows.
-  // Also reject authority-less //server paths and encoded path separators.
-  // Keep this normalization gate independent of Worker creation so every
-  // rejection is decided before any worker-side code can execute.
+  // Reject repeated path separators too: newer Node 22 URL normalization can
+  // turn file:/\\server\\share into file:///server//share, erasing the raw
+  // backslash while preserving a noncanonical UNC-like shape.
   if (url.protocol !== 'file:' || url.host !== '' ||
-      url.pathname.startsWith('//') || /%(?:2f|5c)/i.test(url.pathname))
+      url.pathname.includes('//') || /%(?:2f|5c)/i.test(url.pathname))
     throw new TypeError('Node actor module must be a trusted file: URL without remote authority or UNC path');
   return url;
 }
