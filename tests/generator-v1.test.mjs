@@ -41,7 +41,8 @@ test('program-v2 sync gen* is lazy and yields typed signed-i64 values',async()=>
   const firstFailure=assert.throws(()=>invalid.next(),/Oreslang signed i64 BigInt required/);
   const repeatedFailure=assert.throws(()=>invalid.next(),/Oreslang signed i64 BigInt required/);
   assert.equal(repeatedFailure,firstFailure);
-  assert.throws(()=>invalid.close(),/Oreslang signed i64 BigInt required/);
+  invalid.close();
+  assert.deepEqual(invalid.next(),{value:undefined,done:true});
 });
 
 test('close is idempotent, terminal is sticky, and host generator controls are sealed',async()=>{
