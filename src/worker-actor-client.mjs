@@ -79,41 +79,52 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
   }
   function onFrame(frame) {
     if (closed) return;
-    if (!frame || typeof frame !== 'object' || frame.protocol !== PROTOCOL ||
-        !['ready','fatal','result'].includes(frame.kind)) {
+    if (!frame || typeof frame !== 'object') {
       failProtocol('invalid actor frame');return;
     }
-    if (frame.kind === 'ready') {
-      if (ready) {shutdown(new Error('duplicate actor ready'));void terminateWorker();return;}
+    // Do not reread accessor-backed control fields after validating them.
+    // A getter can synchronously dispatch a nested host event, terminally
+    // revoke the session, and then return an otherwise plausible value.
+    const protocol=frame.protocol,kind=frame.kind;
+    if (closed) return;
+    if (protocol !== PROTOCOL || !['ready','fatal','result'].includes(kind)) {
+      failProtocol('invalid actor frame');return;
+    }
+    if (kind === 'ready') {
+      if (ready) {failProtocol('duplicate actor ready');return;}
       ready = true; readyResolve();
-    } else if (frame.kind === 'fatal') {
-      shutdown(new Error('actor startup/protocol failure: ' + errorText(frame.error)));
+    } else if (kind === 'fatal') {
+      const reason=errorText(frame.error);
+      if (closed) return;
+      shutdown(new Error('actor startup/protocol failure: ' + reason));
       void terminateWorker();
-    } else if (frame.kind === 'result') {
+    } else if (kind === 'result') {
       if (!ready) {failProtocol('actor result before ready');return;}
-      // Control properties may be accessors in custom Worker transports.
-      // Match and release the very same receipt, even if an id getter changes.
+      // The ID and result discriminator identify a single immutable receipt.
       const id=frame.id;
-      const entry = pending.get(id);
-      if (!entry) {shutdown(new Error('unexpected actor response id'));void terminateWorker();return;}
-      if (frame.ok === true) {
-        // A Worker response is a new ownership boundary. Even trusted adapter
-        // code can regress and return a SharedArrayBuffer, or a test Worker
-        // can forge a success frame. Never expose such aliases to callers.
+      if (closed) return;
+      const entry=pending.get(id);
+      if (!entry) {failProtocol('unexpected actor response id');return;}
+      const ok=frame.ok;
+      if (closed || pending.get(id)!==entry) return;
+      if (ok === true) {
+        // Copy-only values are validated before resolution. A custom frame's
+        // value getter may reenter Worker dispatch during this read, so check
+        // terminal state AFTER it returns and before settling the receipt.
         let snapshot;
         try {snapshot = entry.reply ? copyOwnedValue(frame.value) : undefined;}
         catch {
-          failProtocol('invalid actor response payload');
+          if (!closed) failProtocol('invalid actor response payload');
           return;
         }
+        if (closed || pending.get(id)!==entry) return;
         release(id);
         entry.resolve(snapshot);
-      } else if (frame.ok === false) {
-        // Parse the negative result before revoking its receipt. An accessor-
-        // throwing frame.error must fail the whole protocol and reject every
-        // outstanding promise, including this one. Releasing first would
-        // orphan the promise because shutdown no longer finds its entry.
+      } else if (ok === false) {
+        // A negative result's error getter may also trigger nested dispatch.
+        // Only the first terminal event may decide the request outcome.
         const reason=errorText(frame.error);
+        if (closed || pending.get(id)!==entry) return;
         release(id);
         entry.reject(new Error('actor delivery failed: '+reason));
       } else {

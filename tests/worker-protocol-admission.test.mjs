@@ -191,8 +191,10 @@ test('reentrant response error getter cannot replace a failed receipt with succe
   worker.frame('ready');await actor.ready;
   const pending=assert.rejects(actor.request({args:[1n,2n]}),/reentrant actor event/);
   await nextTurn();
-  worker.frame('result',{id:1,ok:false,get error(){
-    worker.frame('result',{id:1,ok:true,value:42n});
+  // Emit directly: StubNodeWorker.frame() spreads the supplied object,
+  // which invokes accessors before the outer event begins.
+  worker.emit('message',{protocol:PROTOCOL,kind:'result',id:1,ok:false,get error(){
+    worker.emit('message',{protocol:PROTOCOL,kind:'result',id:1,ok:true,value:42n});
     return 'failed request';
   }});
   await pending;
@@ -230,5 +232,91 @@ test('reentrant browser message data getter fails closed before nested success',
   await pending;
   assert.equal(actor.pending,0);
   assert.equal(worker.terminated,1);
+  await actor.close();
+});
+
+test('nested Worker callback during response value access cannot resolve revoked receipt',async()=>{
+  const worker=new StubNodeWorker(),actor=client(worker);
+  worker.frame('ready');await actor.ready;
+  const pending=assert.rejects(actor.request({args:[1n,2n]}),/reentrant actor event/);
+  await nextTurn();
+  let reads=0;
+  worker.emit('message',{protocol:PROTOCOL,kind:'result',id:1,ok:true,
+    get value(){
+      reads++;
+      worker.emit('message',{protocol:PROTOCOL,kind:'result',id:1,ok:true,value:42n});
+      return 42n;
+    }
+  });
+  await pending;
+  assert.equal(reads,1);
+  assert.equal(actor.pending,0);
+  assert.equal(actor.pendingBytes,0);
+  assert.equal(worker.terminated,1);
+  await actor.close();
+});
+
+test('nested Worker callback during ok getter cannot commit an earlier result',async()=>{
+  const worker=new StubNodeWorker(),actor=client(worker);
+  worker.frame('ready');await actor.ready;
+  const pending=assert.rejects(actor.request({args:[1n,2n]}),/reentrant actor event/);
+  await nextTurn();
+  worker.emit('message',{protocol:PROTOCOL,kind:'result',id:1,value:42n,
+    get ok(){
+      worker.emit('message',{protocol:PROTOCOL,kind:'result',id:1,ok:true,value:42n});
+      return true;
+    }
+  });
+  await pending;
+  assert.equal(actor.pending,0);
+  assert.equal(actor.pendingBytes,0);
+  assert.equal(worker.terminated,1);
+  await actor.close();
+});
+
+test('response discriminator is captured once under accessor-backed transport',async()=>{
+  const worker=new StubNodeWorker(),actor=client(worker);
+  worker.frame('ready');await actor.ready;
+  const pending=actor.request({args:[1n,2n]});
+  await nextTurn();
+  let reads=0;
+  worker.emit('message',{protocol:PROTOCOL,kind:'result',id:1,error:'denied',
+    get ok(){reads++;return reads!==1;}
+  });
+  await assert.rejects(pending,/actor delivery failed: denied/);
+  assert.equal(reads,1);
+  assert.equal(actor.pending,0);
+  assert.equal(worker.terminated,0);
+  await actor.close();
+});
+
+test('reentrant startup kind getter cannot signal readiness after terminal revocation',async()=>{
+  const worker=new StubNodeWorker(),actor=client(worker);
+  const ready=assert.rejects(actor.ready,/reentrant actor event/);
+  const pending=assert.rejects(actor.request({args:[1n,2n]}),/reentrant actor event/);
+  worker.emit('message',{protocol:PROTOCOL,get kind(){
+    worker.emit('message',{protocol:PROTOCOL,kind:'ready'});
+    return 'ready';
+  }});
+  await Promise.all([ready,pending]);
+  assert.equal(actor.pending,0);
+  assert.equal(actor.pendingBytes,0);
+  assert.equal(worker.terminated,1);
+  await actor.close();
+});
+
+test('startup kind is read once and cannot switch after admission validation',async()=>{
+  const worker=new StubNodeWorker(),actor=client(worker);
+  let reads=0;
+  worker.emit('message',{protocol:PROTOCOL,get kind(){
+    return ++reads===1?'ready':'fatal';
+  }});
+  await actor.ready;
+  assert.equal(reads,1);
+  const pending=actor.request({args:[1n,2n]});
+  await nextTurn();
+  worker.emit('message',{protocol:PROTOCOL,kind:'result',id:1,ok:true,value:42n});
+  assert.equal(await pending,42n);
+  assert.equal(worker.terminated,0);
   await actor.close();
 });
