@@ -164,3 +164,89 @@ test("nominal __proto__ field is emitted as an own-data scalar, never object pro
   assert.equal(await main(esm),42n);
   assert.equal(await main(compileProgramV2(source,{experimentalInvertedV1:true,runtimeSpecifier})),42n);
 });
+
+
+test("checked compound i64 positional/handle source lowering produces 42n", async () => {
+  const header=[
+    "define inverted class Particle as",
+    "  int id;",
+    "  float x;",
+    "  bool ready;",
+    "end",
+    "define pub fnc main(): int {",
+    "  let rows = InvertedArray<Particle>.with_capacity(3);",
+    "  let h = rows.push(Particle {id: 37, x: 1.0, ready: true});"
+  ].join("\n")+"\n";
+  for(const update of ["rows[h].id += 5;","rows[0].id += 5;"]) {
+    const input=header+update+" return rows[h].id; }";
+    const ir=compileToInvertedIRV1(input);
+    const op=ir.statements.find(s=>s.kind==="add_i64");
+    assert.deepEqual(op.delta,{type:"i64",value:"5"});
+    const esm=compileInvertedIRV1(ir,{runtimeSpecifier});
+    assert.match(esm,/\.addI64(?:At)?\(/);
+    assert.doesNotMatch(esm,/\.readAt\([^;\n]*\.writeAt\(/);
+    assert.equal(await main(esm),42n);
+    assert.equal(await main(compileProgramV2(input,{
+      experimentalInvertedV1:true,runtimeSpecifier
+    })),42n);
+  }
+});
+
+test("signed i64 compound overflow traps and never wraps", async () => {
+  const head=[
+    "define inverted class Particle as",
+    "  int id;",
+    "end",
+    "define pub fnc main(): int {",
+    "  let rows = InvertedArray<Particle>.with_capacity(2);",
+    "  let h = rows.push(Particle {id: 9223372036854775807});",
+    "  rows[h].id += 1;",
+    "  return rows[h].id;",
+    "}"
+  ].join("\n");
+  const mod=await import("data:text/javascript,"+encodeURIComponent(
+    compileProgramV2(head,{experimentalInvertedV1:true,runtimeSpecifier})
+  ));
+  assert.throws(()=>mod.main(),/ORES_I64_OVERFLOW/);
+});
+
+test("typed IR rejects non-i64 +=, forged owner, field, delta, or erased handles", () => {
+  const header=[
+    "define inverted class Particle as",
+    "  int id;",
+    "  float x;",
+    "  bool ready;",
+    "end",
+    "define pub fnc main(): int {",
+    "  let rows = InvertedArray<Particle>.with_capacity(2);",
+    "  let h = rows.push(Particle {id: 37, x: 1.0, ready: true});",
+    "  rows[h].id += 5;",
+    "  return rows[h].id;",
+    "}"
+  ].join("\n");
+  const ir=compileToInvertedIRV1(header);
+  const tamper=[
+    q=>{q.statements[2].owner=1;},
+    q=>{q.statements[2].field=1;},
+    q=>{q.statements[2].index.slot=0;},
+    q=>{q.statements[2].delta.type="f64";},
+    q=>{q.statements[2].delta.value="9223372036854775808";},
+    q=>{q.statements[2].delta.value="1;throw Error()";},
+    q=>{q.statements[2].index={kind:"position",value:"1n"};},
+    q=>{q.statements[2].op="+";},
+    q=>{q.statements.splice(2,0,{kind:"erase",owner:0,handle:1});},
+    q=>{q.statements[2].kind="write";},
+  ];
+  for(const attack of tamper) {
+    const candidate=copy(ir);
+    attack(candidate);
+    assert.throws(()=>compileInvertedIRV1(candidate),InvertedIRError);
+  }
+  for(const source of [
+    header.replace("rows[h].id += 5","rows[h].x += 5"),
+    header.replace("rows[h].id += 5","rows[h].ready += 5"),
+    header.replace("rows[h].id += 5","rows[h].id += true"),
+    header.replace("rows[h].id += 5","rows[h].id += 9223372036854775808"),
+    header.replace("rows[h].id += 5","rows[h].id += -9223372036854775809"),
+  ])assert.throws(()=>compileToInvertedIRV1(source));
+});
