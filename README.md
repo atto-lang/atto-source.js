@@ -53,6 +53,12 @@ The experimental program-v2 and `--freestanding-core` backend now also support f
 
 Run `npm run test:core-bool`; the browser ESM smoke also covers pure boolean compilation. The source is still an **experimental narrow subset**: `Option`/`Result`, records, full comparison/equality generics, and actor declarations are not yet supported.
 
+## Typed word operators (experimental program-v2)
+
+Program-v2 supports `eq` and `ne` as source aliases for typed `==` and `!=` (including nominal `Symbol` equality), plus `not`, `and` and `or` for strict `bool` values. Precedence is unary `not`, arithmetic, comparison, `and`, `or`, then the conditional `? :`; parentheses override precedence. `and` and `or` short-circuit their right operand, including checked-i64 overflow and remainder traps, by lowering into the existing validated lazy conditional IR. No JavaScript truthiness, host-side coercions, effectful calls, or new IR operators are admitted. The scalar-v1 profile is intentionally unchanged.
+
+Run `node --test tests/boolean-word-operators.test.mjs` to exercise the source, canonical IR, generated ESM, freestanding core and class-method paths. These are experimental syntax extensions, not full Java/LLVM semantic parity.
+
 ## Symbol literals (experimental program-v2)
 
 The typed program-v2 subset now accepts nominal `Symbol` parameters/results and strict PROCESS Symbol literals such as `#ready` and `#"http.ok"`. Names use Java-aligned pre-normalization/UTF-8 budgets and NFC/control/bidi validation. Generated values are fresh/non-interned and artifact-branded; forged host objects do not satisfy the Symbol ABI. Typed `==`/`!=` use logical `(kind,name)` equality rather than JavaScript object identity.
