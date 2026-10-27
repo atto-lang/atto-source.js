@@ -116,3 +116,29 @@ test("hostile IR kind accessors are rejected without evaluating getters", () => 
   }
   assert.equal(getterCalls,0);
 });
+
+test("direct handles are retired affine values; survivors remain valid after swap-delete", async () => {
+  const header=`define inverted class Particle as
+    int id;
+    float x;
+    bool ready;
+  end
+  define pub fnc main(): int {
+    let rows = InvertedArray<Particle>.with_capacity(3);
+    let a = rows.push(Particle {id: 1, x: 1.0, ready: true});
+    let b = rows.push(Particle {id: 42, x: 2.0, ready: false});
+    rows.erase_swap(a);
+  `;
+  const valid=header+"return rows[b].id; }";
+  assert.equal(await main(compileProgramV2(valid,{
+    experimentalInvertedV1:true,runtimeSpecifier
+  })),42n);
+  for(const body of [
+    "return rows[a].id; }",
+    "rows.erase_swap(a); return rows[b].id; }",
+    "rows[a].id = 5; return rows[b].id; }"
+  ]) {
+    assert.throws(()=>compileToInvertedIRV1(header+body),InvertedIRError);
+    assert.throws(()=>compileProgramV2(header+body,{experimentalInvertedV1:true}),InvertedIRError);
+  }
+});
