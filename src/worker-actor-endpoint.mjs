@@ -125,7 +125,7 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     }
     // Bind the control identity once. Re-reading a getter here could validate
     // one ID, advance lastId using another, then reply to a third receipt.
-    const id=frame.id,replyRequested=frame.reply,payload=frame.value;
+    const id=frame.id,replyRequested=frame.reply;
     if(terminal)return;
     if(!initialized||!Number.isSafeInteger(id)||id<=lastId||
        typeof replyRequested!=='boolean'){
@@ -133,8 +133,10 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     }
     // Includes the one currently executing turn, not only the queued frames.
     if(inFlight>=maxPending){fail('actor mailbox capacity exceeded');return;}
+    // Do not invoke an untrusted payload getter for an invalid ID or a
+    // mailbox that is already full. Preserve the terminal fence after copy.
     let snapshot,bytes;
-    try{({value:snapshot,bytes}=copyOwnedValueWithBytes(payload));}
+    try{const payload=frame.value;({value:snapshot,bytes}=copyOwnedValueWithBytes(payload));}
     catch{fail('invalid actor delivery payload');return;}
     if(terminal)return;
     if(bytes>maxPendingBytes-inFlightBytes){

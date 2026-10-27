@@ -183,3 +183,29 @@ test('module descriptor is captured before async import and cannot drift',async(
   await h.until(()=>h.frames.some(f=>f.kind==='result'));
   assert.equal(h.frames.at(-1).value,42n);
 });
+
+test('invalid endpoint ID rejects before touching an accessor-backed payload',async()=>{
+  const h=harness();h.init();
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  let getterReads=0;
+  h.raw({protocol:PROTOCOL,kind:'deliver',id:0,reply:true,
+    get value(){getterReads++;throw new Error('payload getter must not execute');}
+  });
+  assert.equal(getterReads,0);
+  assert.equal(h.frames.at(-1).kind,'fatal');
+  assert.match(h.frames.at(-1).error,/invalid or premature delivery/);
+});
+
+test('full mailbox rejects before touching next frame payload getter',async()=>{
+  const h=harness();h.init({maxPending:1});
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  h.send('deliver',{id:1,reply:true,value:{type:'sleep',ms:45,n:1n}});
+  let getterReads=0;
+  h.raw({protocol:PROTOCOL,kind:'deliver',id:2,reply:true,
+    get value(){getterReads++;throw new Error('payload getter must not execute');}
+  });
+  assert.equal(getterReads,0);
+  assert.equal(h.frames.find(f=>f.kind==='fatal')?.error,'actor mailbox capacity exceeded');
+  await sleep(65);
+  assert.equal(h.frames.filter(f=>f.kind==='result').length,0);
+});
