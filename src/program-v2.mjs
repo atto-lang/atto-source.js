@@ -358,7 +358,7 @@ class Parser {
     if(this.eat('async'))mode='async';
     else if(this.eat('suspend')||this.eat('suspends'))mode='suspend';
     if(this.eat('gen'))this.expect('*');
-    else if(this.eat('generator'))this.eat('*');
+    else if(this.eat('generator'))this.expect('*');
     else fail('generator marker expected',start);
     if(mode!=='sync')
       fail(mode+' gen* requires the JS async continuation/cleanup ABI and is not implemented yet',start);
