@@ -8,8 +8,11 @@ API: `compileInvertedSourceV1(source, {runtimeSpecifier})` exports an ESM
 source string. Default runtime location `./worker-inverted-array.mjs` is
 relative to the emitted module. Tests supply an explicit trusted `file:`
 specifier and execute that *actual ESM* with Node's module loader; this is
-not string-rewriting the emitted guest program. The regular `compile` and
-`compileProgramV2` commands are deliberately **not changed**.
+not string-rewriting the emitted guest program. The default scalar `compile` API stays unchanged; the existing
+`compileProgramV2` API now accepts **only host-authorized**
+`{experimentalInvertedV1:true, runtimeSpecifier:"file:/trusted/..."}`.
+Without this opt-in, inverted source still fails closed. The CLI has **no**
+inverted flag yet: this is a library API integration, not a shipping CLI route.
 
 ## Accepted source fragment
 
@@ -35,8 +38,14 @@ and bounded statements. Fields: `int`/`i64`, `float`/`f64`,
 `push`, `erase_swap(h)`, typed indexed field `=`, and an i64 return
 expression of checked integer literals or indexed `i64` fields with `+`.
 
-The parser produces checked structured field/owner/index bindings, then
-emits private numeric locals and statically bound `InvertedSchema` tokens.
+The parser now produces **versioned, detached, strictly validated typed IR**
+with owner slots, field ordinals, scalar types, and checked expression nodes.
+The emitter rejects unknown or forged IR shapes, cross-owner handles, invalid
+field types, malformed literals, and post-return instructions, before
+generating private numeric locals and nominal `InvertedSchema` tokens.
+Direct IR entry: `compileInvertedIRV1(ir, {runtimeSpecifier})`;
+source IR entry: `compileToInvertedIRV1(source)`.
+This IR is a **backend-local staging seam**, not canonical shared HIR/MIR.
 `rows[i]` is a current-dense positional lookup and `rows[h]` uses an
 opaque generation-checked handle bound to the exact declared owner. No
 reflection, string macro, implicit AoS row storage, dynamic fallback,
@@ -75,3 +84,24 @@ explicitly permit it.
 
 Source-level support elsewhere in the general JS compiler remains gated.
 LLVM/Wasm/.NET/Forge still need their own actual compiler/guest execution.
+
+## Ownership and effect boundary
+
+The typed IR validator tracks the nominal type of each allocation slot,
+same-owner affine handle references, and the declared type of every access.
+It limits control flow to one synchronous `main` with mandatory terminal
+return and deterministic resource retirement. All source loans, suspensions,
+captured mutable row views, external callbacks and field methods are rejected
+rather than admitted without a lifetime/effect analysis. These checks are
+**not** a full Oreslang borrow checker.
+
+The normal `program-v2` and old scalar entry points never dispatch to this
+implementation unless the host expressly passes the experimental option.
+Under this opt-in the inverted parser is authoritative; scalar source is not
+silently reinterpreted by its fallback parser.
+
+New Node checks in `tests/inverted-typed-ir-v1.test.mjs` exercise
+source→typed-IR→validated ESM, frozen conformance fixtures, hostile IR,
+type/ownership spoofing, and legacy compiler default behavior. Real Node and
+browser Worker execution must be recorded from exact PR head before
+promotion. No private branch is sent to an unapproved CI carrier.
