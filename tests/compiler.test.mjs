@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
-import {compile} from '../src/compiler.mjs';
+import {compile,compileToIR} from '../src/compiler.mjs';
 const fixture = name => resolve('tests/fixtures',name);
 const cli = resolve('bin/oreslang-jsc.mjs');
 
@@ -72,6 +72,48 @@ test('fail-closed: unsupported language features and syntax',()=>{
  ];
  for (const source of invalid) assert.throws(()=>compile(source),/error:/,source);
 });
+
+test('static select forms fail closed with a capability diagnostic',()=> {
+ const forms=[
+  'select { default: { return 1; } }',
+  'select over default: { return 1; } end',
+  'do select { default: { return 1; } }',
+  'do select over default: { return 1; } end',
+  'nb select { default: { return 1; } }',
+  'nb select over default: { return 1; } end',
+  'do nb select { default: { return 1; } }',
+  'do nb select over default: { return 1; } end',
+  'try select { default: { return 1; } }',
+  'try select over default: { return 1; } end'
+ ];
+ for(const form of forms) {
+  const source='pub fnc main(): int { '+form+' return 0; }';
+  assert.throws(()=>compile(source),
+    /static select requires checked Channel\/Future arbitration, actor-lane continuation, ownership and cancellation lowering in the JS backend/,
+    form);
+ }
+ assert.doesNotThrow(()=>compile(
+   'pub fnc main(): int { /* select over default: {} end */ return 1; }'));
+ assert.doesNotThrow(()=>compile(
+   'fnc select(): int { return 1; } pub fnc main(): int { return select(); }'));
+});
+
+test('CLI never publishes JS for rejected select source', async()=> {
+ const dir=await mkdtemp(join(tmpdir(),'ores-js-select-reject-'));
+ const source=join(dir,'select.ores');
+ const output=join(dir,'select.mjs');
+ try {
+  await writeFile(source,
+    'pub fnc main(): int { nb select over default: { return 1; } end return 0; }');
+  const run=spawnSync(process.execPath,[cli,source,'--out='+output],{encoding:'utf8'});
+  assert.notEqual(run.status,0);
+  assert.match(run.stderr,/static select requires checked Channel\/Future arbitration/);
+  await assert.rejects(readFile(output),{code:'ENOENT'});
+ } finally {
+  await rm(dir,{recursive:true,force:true});
+ }
+});
+
 test('pointer-style source syntax and legacy mutable borrow fail closed',()=>{
  assert.throws(()=>compile('pub fnc main(): int { return rt ref value; }'),/pointer-style runtime operation/);
  assert.throws(()=>compile('pub fnc main(): int { return rt deref value; }'),/pointer-style runtime operation/);
@@ -92,6 +134,23 @@ test('source cannot inject arbitrary JS or host API access',async()=>{
 });
 test('bounded input rejects oversized program',()=>{
  assert.throws(()=>compile(' '.repeat(262145)),/error:/);
+});
+test('scalar source rejects NUL and unpaired UTF-16 even in ignored comments',()=>{
+ const good='pub fnc main(): int { return 42; }';
+ const bad=[String.fromCharCode(0),String.fromCharCode(0xd800),
+   String.fromCharCode(0xdc00),String.fromCharCode(0xd800)+'x'];
+ for(const fragment of bad){
+   for(const source of [
+     fragment+good,good+' // '+fragment,good+' /* '+fragment+' */'
+   ]){
+     assert.throws(()=>compile(source),/error: (?:NUL|invalid UTF-16) in source/);
+     assert.throws(()=>compileToIR(source),/error: (?:NUL|invalid UTF-16) in source/);
+   }
+ }
+ // Valid surrogate pairs remain accepted; comments are lexically invisible.
+ const emoji=String.fromCodePoint(0x1f600);
+ assert.equal(compile(good+' // '+emoji),compile(good));
+ assert.equal(compile(good+' /* '+emoji+' */'),compile(good));
 });
 test('CLI check works and emits no compiled JS on reject',()=>{
  const ok=spawnSync(process.execPath,[cli,'--check',fixture('arithmetic.ores')],{encoding:'utf8'});

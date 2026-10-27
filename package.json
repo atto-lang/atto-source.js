@@ -27,7 +27,11 @@
     "./actor-host.node": "./src/actor-host.node.mjs",
     "./worker-actor-client": "./src/worker-actor-client.mjs",
     "./freestanding-core": "./src/freestanding-core.mjs",
-    "./freestanding-core-link": "./src/freestanding-core-link.mjs"
+    "./freestanding-core-link": "./src/freestanding-core-link.mjs",
+    "./select-runtime": "./src/select-runtime.mjs",
+    "./selectable-i64-channel": "./src/selectable-i64-channel.mjs",
+    "./selectable-i64-future": "./src/selectable-i64-future.mjs",
+    "./select-continuation-fence": "./src/select-continuation-fence.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"

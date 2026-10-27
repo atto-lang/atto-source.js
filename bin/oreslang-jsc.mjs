@@ -11,6 +11,23 @@ import {compileClassMethodsV1,checkClassMethodsV1} from '../src/class-methods-v1
 import {compileFreestandingCore,checkFreestandingCore} from '../src/freestanding-core.mjs';
 import {compileLinkedFreestandingCore,checkLinkedFreestandingCore} from '../src/freestanding-core-link.mjs';
 
+// CLI writes must observe backpressure and surface pipe errors. Node may
+// invoke the write callback AND emit an 'error' event (notably EPIPE); handling
+// only the callback turns an otherwise caught failure into an uncaught crash.
+// Keep one listener for the CLI lifetime so the event cannot outlive a write.
+let stdoutError = null;
+process.stdout.on('error', error => {
+  stdoutError ??= error;
+  process.exitCode = 1;
+});
+async function writeStdout(data) {
+  if (stdoutError) throw stdoutError;
+  await new Promise((resolve, reject) => {
+    process.stdout.write(data, error => error ? reject(error) : resolve());
+  });
+  if (stdoutError) throw stdoutError;
+}
+
 const MAX_SOURCE_BYTES=262144;
 async function readSource(path, {rejectBom = false} = {}) {
   // The pre-open check rejects symlinks on platforms lacking O_NOFOLLOW.
@@ -81,20 +98,20 @@ try {
      createHash('sha256').update(coreSource,'utf8').digest('hex')!==coreSha256)
     throw Error('linked core SHA-256 mismatch');
   if (factOnly) {
-    process.stdout.write(JSON.stringify(staticFactsV0(source))+'\n');
+    await writeStdout(JSON.stringify(staticFactsV0(source))+'\n');
   } else if (checkOnly) {
     if (linkedCore) checkLinkedFreestandingCore({coreSource,appSource:source});
     else if (freestanding) checkFreestandingCore(source);
     else if (extended) checkProgramV2(source);
     else if (methodOnly) checkClassMethodsV1(source);
     else check(source);
-    process.stdout.write('OK\n');
+    await writeStdout('OK\n');
   } else {
     const output=linkedCore?compileLinkedFreestandingCore({coreSource,appSource:source}):
       freestanding?compileFreestandingCore(source):
       extended?compileProgramV2(source):
       methodOnly?compileClassMethodsV1(source):compile(source);
-    if (!extras.length) process.stdout.write(output);
+    if (!extras.length) await writeStdout(output);
     else {
       const outputPath=extras[0].slice('--out='.length);
       if (!outputPath || !isAbsolute(outputPath))
