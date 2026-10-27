@@ -65,6 +65,28 @@ test('close is idempotent, terminal is sticky, and host generator controls are s
   assert.deepEqual(iterator.next(),{value:undefined,done:true});
 });
 
+test('generator and function overloads share a name only when value arity differs',async()=>{
+  const source=[
+    'pub gen* values(): Iterator<int> {yield 7;return;}',
+    'pub fnc values(int n): int {return n+1;}'
+  ].join('\n');
+  const ns=await load(source);
+
+  const iterator=ns.values();
+  assert.deepEqual(iterator.next(),{value:7n,done:false});
+  assert.deepEqual(iterator.next(),{value:undefined,done:true});
+  assert.equal(ns.values(41n),42n);
+  assert.throws(()=>ns.values(1n,2n),/Oreslang overload arity mismatch/);
+
+  const ir=compileToProgramIRV2(source);
+  assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir))),compileProgramV2(source));
+
+  assert.throws(
+    ()=>compileProgramV2(
+      'pub gen* values(): Iterator<int> {yield 1;return;} pub fnc values(): int {return 0;}'),
+    /duplicate caller-visible arity/);
+});
+
 test('module generator exports are frozen and private generators do not leak',async()=>{
   const ns=await load([
     'define module source as',
