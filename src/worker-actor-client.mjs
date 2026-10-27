@@ -82,9 +82,12 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
     if (!frame || typeof frame !== 'object' || frame.protocol !== PROTOCOL) {
       failProtocol('invalid actor frame');return;
     }
+    // Protocol getters in injected transports may synchronously revoke us.
+    if (closed) return;
     // Accessor-backed test transports can mutate control properties between
     // reads. Snapshot each protocol discriminator once before branching.
     const kind=frame.kind;
+    if (closed) return;
     if (!['ready','fatal','result'].includes(kind)) {
       failProtocol('invalid actor frame');return;
     }
@@ -92,16 +95,20 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
       if (ready) {shutdown(new Error('duplicate actor ready'));void terminateWorker();return;}
       ready = true; readyResolve();
     } else if (kind === 'fatal') {
-      shutdown(new Error('actor startup/protocol failure: ' + errorText(frame.error)));
+      const reason=errorText(frame.error);
+      if (closed) return;
+      shutdown(new Error('actor startup/protocol failure: ' + reason));
       void terminateWorker();
     } else if (kind === 'result') {
       if (!ready) {failProtocol('actor result before ready');return;}
       // Control properties may be accessors in custom Worker transports.
       // Match and release the very same receipt, even if an id getter changes.
       const id=frame.id;
+      if (closed) return;
       const entry = pending.get(id);
       if (!entry) {shutdown(new Error('unexpected actor response id'));void terminateWorker();return;}
       const ok=frame.ok;
+      if (closed) return;
       if (ok === true) {
         // A Worker response is a new ownership boundary. Even trusted adapter
         // code can regress and return a SharedArrayBuffer, or a test Worker
@@ -112,6 +119,8 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
           failProtocol('invalid actor response payload');
           return;
         }
+        // Cloning may synchronously dispatch a terminal host event.
+        if (closed) return;
         release(id);
         entry.resolve(snapshot);
       } else if (ok === false) {
@@ -120,6 +129,7 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
         // outstanding promise, including this one. Releasing first would
         // orphan the promise because shutdown no longer finds its entry.
         const reason=errorText(frame.error);
+        if (closed) return;
         release(id);
         entry.reject(new Error('actor delivery failed: '+reason));
       } else {
