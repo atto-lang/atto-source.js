@@ -59,3 +59,84 @@ for(const [host,Factory] of [['node',NodeStub],['browser',BrowserStub]]) {
     });
   }
 }
+
+test('patched Map iteration cannot orphan outstanding receipts on worker failure',async()=>{
+  const worker=new NodeStub(),actor=client(worker);
+  worker.frame({protocol:PROTOCOL,kind:'ready'});await actor.ready;
+  const requests=[actor.request({payload:1n}),actor.tell({payload:2n})];
+  const outcomes=requests.map(p=>p.then(()=> 'resolved',error=>error.message));
+  assert.equal(actor.pending,2);
+  const values=Map.prototype.values,clear=Map.prototype.clear;
+  const iteratorProto=Object.getPrototypeOf(values.call(new Map()));
+  const next=iteratorProto.next;
+  try{
+    Map.prototype.values=function*(){};
+    Map.prototype.clear=function(){return undefined;};
+    iteratorProto.next=function(){return {done:true};};
+    worker.fail();
+  }finally{
+    Map.prototype.values=values;
+    Map.prototype.clear=clear;
+    iteratorProto.next=next;
+  }
+  let timer;
+  try{
+    const settled=await Promise.race([
+      Promise.all(outcomes),
+      new Promise(resolve=>{timer=setTimeout(()=>resolve(null),500);})
+    ]);
+    assert.deepEqual(settled,[
+      'worker message decoding failure','worker message decoding failure'
+    ],'every receipt must settle even when host Map iterators are replaced');
+  }finally{clearTimeout(timer);}
+  assert.equal(actor.pending,0);
+  assert.equal(actor.pendingBytes,0);
+  assert.equal(worker.terminations,1);
+  await actor.close();
+});
+
+test('patched Map.set and size cannot bypass client mailbox admission',async()=>{
+  const worker=new NodeStub();
+  const actor=createWorkerActorClient({worker,moduleUrl:'file:///trusted/generated.mjs',
+    maxPending:1,maxPendingBytes:1024});
+  worker.frame({protocol:PROTOCOL,kind:'ready'});await actor.ready;
+  const set=Map.prototype.set;
+  let first;
+  try{
+    Map.prototype.set=function(){return this;};
+    first=actor.request({payload:7n});
+    assert.equal(actor.pending,1,'native set must retain the first receipt');
+  }finally{Map.prototype.set=set;}
+  const size=Object.getOwnPropertyDescriptor(Map.prototype,'size');
+  let overflow;
+  try{
+    Object.defineProperty(Map.prototype,'size',{...size,get(){return 0;}});
+    assert.equal(actor.pending,1,'pending count must ignore patched getter');
+    overflow=actor.tell({payload:8n});
+  }finally{Object.defineProperty(Map.prototype,'size',size);}
+  await assert.rejects(overflow,/mailbox capacity exceeded/);
+  worker.frame({protocol:PROTOCOL,kind:'result',id:1,ok:true,value:42n});
+  assert.equal(await first,42n);
+  assert.equal(actor.pending,0);
+  assert.equal(actor.pendingBytes,0);
+  await actor.close();
+});
+
+test('patched Map.get/delete cannot forge unexpected response or retain credit',async()=>{
+  const worker=new NodeStub(),actor=client(worker);
+  worker.frame({protocol:PROTOCOL,kind:'ready'});await actor.ready;
+  const result=actor.request({payload:9n});
+  const get=Map.prototype.get,del=Map.prototype.delete;
+  try{
+    Map.prototype.get=function(){return undefined;};
+    Map.prototype.delete=function(){return false;};
+    worker.frame({protocol:PROTOCOL,kind:'result',id:1,ok:true,value:42n});
+  }finally{
+    Map.prototype.get=get;
+    Map.prototype.delete=del;
+  }
+  assert.equal(await result,42n);
+  assert.equal(actor.pending,0);
+  assert.equal(actor.pendingBytes,0);
+  await actor.close();
+});
