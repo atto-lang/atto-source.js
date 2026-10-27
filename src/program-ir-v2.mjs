@@ -21,6 +21,17 @@ const METHOD_CALLABLE_KEYWORDS=new Set([
   'mtd','method','stop','do','done','loop','block','select','readch','writech',
   'nb','true','false'
 ]);
+const GENERATOR_RESERVED=new Set([
+  'import','from','as','extends','implements','try','catch','throw','raise','panic',
+  'recover','finally','end','fi','if','do','else','then','new','spawn','stop','done',
+  'await','rt','async','suspend','suspends','critical','gen','generator','nlex','trap',
+  'actor','isoactor','def','fnc','routine','while','for','of','loop','block','break',
+  'continue','yield','super','elseif','elif','switch','match','matches','is','default',
+  'eq','neq','nb','select','readch','writech','cb','shared','untrusted','type','types',
+  'typeof','interface','trait','struct','impl','abstract','void','static','pub','private',
+  'return','defer','val','const','let','mut','borrow','self','true','false','null','obj',
+  'arr','Iterator','AsyncIterator','int'
+]);
 export class ProgramIRError extends Error {
   constructor(detail) {super('error: program IR: '+detail);this.name='ProgramIRError';}
 }
@@ -58,6 +69,11 @@ function classIdent(s,where){
   ident(s,where);
   if((CLASS_RESERVED.has(s)&&s!=='mtd'&&s!=='method')||
      s==='Option'||s==='Result')fail(where+': reserved identifier');
+  return s;
+}
+function generatorIdent(s,where){
+  ident(s,where);
+  if(GENERATOR_RESERVED.has(s))fail(where+': reserved generator identifier');
   return s;
 }
 function callableIdent(s,where){
@@ -197,9 +213,9 @@ export function validateProgramIRV2(input) {
     record(gen,['module','name','pub','params','paramTypes','elementType','yields'],'generator');
     const module=gen.module===null?null:ident(gen.module,'generator owner module');
     if(module!==null&&!seenModules.has(module))fail('missing generator owner module '+module);
-    const name=ident(gen.name,'generator name');
+    const name=generatorIdent(gen.name,'generator name');
     if(typeof gen.pub!=='boolean')fail('invalid generator visibility');
-    const params=sequence(gen.params,128,'generator parameters').map(p=>ident(p,'generator parameter'));
+    const params=sequence(gen.params,128,'generator parameters').map(p=>generatorIdent(p,'generator parameter'));
     if(new Set(params).size!==params.length)fail('duplicate generator parameters');
     const paramTypes=sequence(gen.paramTypes,128,'generator paramTypes');
     if(paramTypes.length!==params.length||paramTypes.some(t=>t!=='int'))
