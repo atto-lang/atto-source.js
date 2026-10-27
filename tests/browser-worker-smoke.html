@@ -80,7 +80,8 @@ try {
   });
   actors.push(cancellation);
   await cancellation.ready;
-  const running=cancellation.request({type:'sleep',ms:250,n:7n});
+  const running=cancellation.request({type:'sleep',ms:250,n:7n})
+    .then(()=>({ok:true}),error=>({ok:false,reason:String(error)}));
   let rejectedFull=false;
   try {await cancellation.request({type:'add',x:20n,y:22n});}
   catch(error) {rejectedFull=/mailbox capacity exceeded/.test(String(error));}
@@ -88,10 +89,9 @@ try {
   await Promise.resolve(); // allow the admitted postMessage microtask to run
   await cancellation.close();
   actors.splice(actors.indexOf(cancellation),1);
-  let revoked=false;
-  try {await running;}
-  catch(error) {revoked=/actor closed/.test(String(error));}
-  assert(revoked,'close failed to revoke an in-flight browser Worker request');
+  const settled=await running;
+  assert(!settled.ok&&/actor closed/.test(settled.reason),
+    'close failed to revoke an in-flight browser Worker request');
   assert(cancellation.pending===0&&cancellation.pendingBytes===0,
     'browser Worker termination leaked mailbox credit');
   let noResurrection=false;
