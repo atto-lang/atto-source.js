@@ -222,8 +222,8 @@ export function validateProgramIRV2(input) {
       fail('file export conflicts with runtime module '+header.name);
   for(const cls of classHeaders){
     if(cls.pub&&seenModules.has(cls.name))fail('class export conflicts with runtime module '+cls.name);
-    if(cls.pub&&headers.some(h=>h.module===null&&h.pub&&h.name===cls.name))
-      fail('class export conflicts with root function '+cls.name);
+    if(cls.pub&&[...headers,...generatorHeaders].some(h=>h.module===null&&h.pub&&h.name===cls.name))
+      fail('class export conflicts with root callable '+cls.name);
   }
   const owners=[...headers,...generatorHeaders];
   const graph=owners.map(()=>new Set());
