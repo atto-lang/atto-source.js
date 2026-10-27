@@ -101,6 +101,23 @@ test('generator IR is explicit, JSON-safe and independently revalidated',()=>{
   assert.throws(()=>compileProgramIRV2(reservedParam),/reserved generator identifier/);
 });
 
+test('generator names reject the full native reserved-name parity set',()=>{
+  const reserved=[
+    'define','class','enum','pattern','module','contract','conforms','namespace',
+    'gpu','cpu','quantum','over','structural','bool','pure','Some','None','Ok','Err',
+    'using','requires','serial'
+  ];
+  for(const name of reserved) {
+    assert.throws(
+      ()=>compileProgramV2(`gen* ${name}(): Iterator<int> {yield 1;return;}`),
+      /reserved generator identifier/,
+      name);
+    const ir=compileToProgramIRV2('gen* values(): Iterator<int> {yield 1;return;}');
+    ir.generators[0].name=name;
+    assert.throws(()=>compileProgramIRV2(ir),/reserved generator identifier/,name+' IR');
+  }
+});
+
 test('unsupported generator semantics fail closed instead of parser-only parity',()=>{
   for(const source of [
     'async gen* values(): AsyncIterator<int> {yield 1;return;}',
