@@ -78,6 +78,31 @@ test('trusted manifest bytes must still be valid UTF-8',async()=>{
    }),/invalid package JSON or UTF-8/);
  });
 });
+test('independently pinned manifest rejects duplicate JSON members and escaped aliases',async()=>{
+ await fixture(async({dest,expect})=>{
+   const manifestFile=join(dest,'manifest.json');
+   const original=await readFile(manifestFile,'utf8');
+   const expected=JSON.parse(original);
+   for(const duplicate of [
+     '"target":"browser",',
+     String.raw`"t\u0061rget":"browser",`,
+     '"moduleSha256":"'+ '0'.repeat(64) +'",',
+     '"publicEntrypoints":[],'
+   ]){
+     // JSON.parse alone accepts these bytes with last-wins semantics and
+     // materializes the original valid manifest despite conflicting claims.
+     const ambiguous=original.replace(/^\s*\{/,match=>match+duplicate);
+     assert.deepEqual(JSON.parse(ambiguous),expected);
+     await writeFile(manifestFile,ambiguous);
+     await assert.rejects(
+       readVerifiedPackage({...expect,expectedManifestSha256:hash(ambiguous)}),
+       /invalid package JSON or UTF-8/,
+       'duplicate package member must be rejected before module admission'
+     );
+   }
+ });
+});
+
 test('two package builders cannot both publish the same directory',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'ores-pkg-race-'));
  try{
