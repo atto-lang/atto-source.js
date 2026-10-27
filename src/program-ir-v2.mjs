@@ -139,6 +139,11 @@ export function validateProgramIRV2(input) {
   const sourceFunctions=sequence(input.functions,512,'functions');
   const sourceGenerators=hasGenerators?sequence(input.generators,512,'generators'):[];
   const sourceClasses=hasClasses?sequence(input.classes,512,'classes'):[];
+  // Source parsing admits at most 512 caller-visible function/generator
+  // declarations in aggregate. Forged JSON IR must not double that budget by
+  // filling both independently bounded arrays.
+  if(sourceFunctions.length+sourceGenerators.length>512)
+    fail('caller-visible function/generator declaration budget exceeded');
   if(hasGenerators&&!sourceGenerators.length)fail('redundant empty generators field');
   if(hasClasses&&!sourceClasses.length)fail('redundant empty classes field');
   if(!moduleNames.length&&!sourceFunctions.length&&!sourceGenerators.length&&!sourceClasses.length)
