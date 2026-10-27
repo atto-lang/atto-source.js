@@ -216,11 +216,23 @@ class CheckedParser {
       return;
     }
     const field=this.selector(name,true);
+    // The source owns a single checked primitive read/modify/write operation:
+    // do not desugar += into a guest read followed by guest write.
+    const compound=this.take("+");
     this.expect("=");
     const val=this.literal();
-    if(val.type!==field.type)reject("indexed assignment type mismatch",this.peek());
-    this.expect(";");
-    this.statements.push(field.writeNode({type:val.type,value:val.value}));
+    if(compound) {
+      if(field.type!=="i64" || val.type!=="i64")
+        reject("checked += currently requires i64 field and delta",this.peek());
+      this.expect(";");
+      this.statements.push({kind:"add_i64",owner:field.expr.owner,
+        index:field.expr.index,field:field.expr.field,
+        delta:{type:"i64",value:val.value}});
+    } else {
+      if(val.type!==field.type)reject("indexed assignment type mismatch",this.peek());
+      this.expect(";");
+      this.statements.push(field.writeNode({type:val.type,value:val.value}));
+    }
   }
   atom(){
     const t=this.peek();
@@ -293,6 +305,10 @@ export function compileInvertedIRV1(input,{runtimeSpecifier="./worker-inverted-a
       case "write":
         out.push("_v"+stmt.owner+"."+(stmt.index.kind==="position"?"writeAt(":"write(")+
           rowIndex(stmt.index)+",_field"+stmt.field+","+scalar(stmt.value)+");");
+        break;
+      case "add_i64":
+        out.push("_v"+stmt.owner+"."+(stmt.index.kind==="position"?"addI64At(":"addI64(")+
+          rowIndex(stmt.index)+",_field"+stmt.field+","+scalar(stmt.delta)+");");
         break;
       case "erase":
         out.push("_v"+stmt.owner+".eraseSwap(_v"+stmt.handle+");");
