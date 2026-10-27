@@ -117,9 +117,15 @@ export function installWorkerActorEndpoint({subscribe,post}) {
       })();
       return;
     }
-    const id=frame.id,wantsReply=frame.reply;
-    if(!initialized||!Number.isSafeInteger(id)||id<=lastId||
-       typeof wantsReply!=='boolean'){
+    // Preserve premature/invalid-id short-circuiting: a malformed frame
+    // must not evaluate unrelated accessor-backed control properties.
+    if(!initialized){fail('invalid or premature delivery');return;}
+    const id=frame.id;
+    if(!Number.isSafeInteger(id)||id<=lastId){
+      fail('invalid or premature delivery');return;
+    }
+    const wantsReply=frame.reply;
+    if(typeof wantsReply!=='boolean'){
       fail('invalid or premature delivery');return;
     }
     // Includes the one currently executing turn, not only the queued frames.

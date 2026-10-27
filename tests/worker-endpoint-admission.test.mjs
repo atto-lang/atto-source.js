@@ -162,3 +162,28 @@ test('accessor-backed init pins validated module, export, mode and budgets',asyn
   assert.equal(h.frames.at(-1).value,42n);
   assert.equal(h.frames.filter(f=>f.kind==='fatal').length,0);
 });
+
+test('premature delivery does not inspect id/reply accessors',()=>{
+  const h=harness();
+  let idReads=0,replyReads=0;
+  h.raw({protocol:PROTOCOL,kind:'deliver',
+    get id(){idReads++;throw Error('id getter must not run');},
+    get reply(){replyReads++;throw Error('reply getter must not run');}
+  });
+  assert.equal(idReads,0);
+  assert.equal(replyReads,0);
+  assert.deepEqual(h.frames.map(f=>f.kind),['fatal']);
+  assert.match(h.frames[0].error,/invalid or premature delivery/);
+});
+
+test('invalid delivery id does not inspect reply accessor',async()=>{
+  const h=harness();h.init();
+  await h.until(()=>h.frames.some(f=>f.kind==='ready'));
+  let replyReads=0;
+  h.raw({protocol:PROTOCOL,kind:'deliver',id:0,
+    get reply(){replyReads++;throw Error('reply getter must not run');}
+  });
+  assert.equal(replyReads,0);
+  assert.deepEqual(h.frames.map(f=>f.kind),['ready','fatal']);
+  assert.match(h.frames.at(-1).error,/invalid or premature delivery/);
+});
