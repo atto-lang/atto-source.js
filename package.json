@@ -28,7 +28,8 @@
     "./worker-actor-client": "./src/worker-actor-client.mjs",
     "./freestanding-core": "./src/freestanding-core.mjs",
     "./freestanding-core-link": "./src/freestanding-core-link.mjs",
-    "./select-runtime": "./src/select-runtime.mjs"
+    "./select-runtime": "./src/select-runtime.mjs",
+    "./selectable-i64-channel": "./src/selectable-i64-channel.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
