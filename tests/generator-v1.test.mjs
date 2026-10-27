@@ -44,12 +44,15 @@ test('program-v2 sync gen* is lazy and yields typed signed-i64 values',async()=>
     return /Oreslang signed i64 BigInt required/.test(error?.message??'');
   });
   assert.throws(()=>invalid.next(),error=>error===firstFailure);
-  assert.throws(()=>invalid.close(),error=>error===firstFailure);
+  invalid.close();
+  assert.deepEqual(invalid.next(),{value:undefined,done:true});
 });
 
 test('close is idempotent, terminal is sticky, and host generator controls are sealed',async()=>{
   const ns=await load('pub gen* values(): Iterator<int> {yield 1;yield 2;return;}');
   const iterator=ns.values();
+  assert.throws(()=>iterator.next(1n),/Iterator\.next takes no arguments/);
+  assert.throws(()=>iterator.close(1n),/Iterator\.close takes no arguments/);
   assert.deepEqual(iterator.next(),{value:1n,done:false});
   assert.equal(typeof iterator.return,'undefined');
   assert.equal(typeof iterator.throw,'undefined');
