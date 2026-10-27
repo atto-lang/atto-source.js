@@ -22,15 +22,26 @@ test('program-v2 sync gen* is lazy and yields typed signed-i64 values',async()=>
   ].join('\n'));
 
   const iterator=ns.values(41n);
-  assert.deepEqual(iterator.next(),{value:41n,done:false});
-  assert.deepEqual(iterator.next(),{value:42n,done:false});
-  assert.equal(iterator.next().done,true);
+  const first=iterator.next();
+  assert.deepEqual(first,{value:41n,done:false});
+  assert.equal(Object.isFrozen(first),true);
+  const second=iterator.next();
+  assert.deepEqual(second,{value:42n,done:false});
+  assert.equal(Object.isFrozen(second),true);
+  const done=iterator.next();
+  assert.equal(done.done,true);
+  assert.equal(Object.isFrozen(done),true);
   assert.equal(iterator.next().done,true);
 
   // Native generator function bodies do not run at construction. The Oreslang
   // parameter boundary is therefore checked on the first pull, not creation.
+  // Once it fails, later pulls must preserve the same terminal failure instead
+  // of laundering it into successful DONE.
   const invalid=ns.values(41);
-  assert.throws(()=>invalid.next(),/Oreslang signed i64 BigInt required/);
+  const firstFailure=assert.throws(()=>invalid.next(),/Oreslang signed i64 BigInt required/);
+  const repeatedFailure=assert.throws(()=>invalid.next(),/Oreslang signed i64 BigInt required/);
+  assert.equal(repeatedFailure,firstFailure);
+  assert.throws(()=>invalid.close(),/Oreslang signed i64 BigInt required/);
 });
 
 test('close is idempotent, terminal is sticky, and host generator controls are sealed',async()=>{
