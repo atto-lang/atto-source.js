@@ -20,7 +20,10 @@ const guestReachable = [
 ];
 
 const forbidden = [
-  [/(?:from\s+|import\s*\()(['"])node:fs\1/, 'node:fs (guest host adapters must use node:fs/promises)'],
+  [/(?:from\s+|import\s*\()(['"])node:fs(?:\/promises)?\1/, 'Node filesystem APIs (including fs/promises; filesystem worker-pool offload is not strict nonblocking I/O)'],
+  [/\bprocess\.getBuiltinModule\s*\(/, 'dynamic Node builtin acquisition'],
+  [/\bcreateRequire\s*\(/, 'dynamic CommonJS builtin acquisition'],
+  [/\bprocess\.binding\s*\(/, 'internal Node binding acquisition'],
   [/\b(?:readFile|writeFile|appendFile|open|close|stat|lstat|readdir|mkdir|rm|unlink|rename|copyFile)Sync\b/, 'synchronous filesystem API'],
   [/\b(?:exec|execFile|spawn)Sync\b/, 'synchronous child-process API'],
   [/\bAtomics\.wait\s*\(/, 'Atomics.wait'],
@@ -96,7 +99,10 @@ test('policy gate catches representative blocking adapters', () => {
     'const {spawnSync: run} = child; run(cmd);',
     'Atomics.wait(view, 0, 0);',
     'Deno.readTextFileSync(path);',
-    'worker.wait();'
+    'worker.wait();',
+    "import {readFile} from 'node:fs/promises';",
+    "const fs = process.getBuiltinModule('fs');",
+    "const req = createRequire(import.meta.url);"
   ]) {
     assert.throws(() => assertAsyncOnly('synthetic', source), assert.AssertionError);
   }
