@@ -85,14 +85,24 @@ slot identities and exact declared type. Function-body `if` branches retain
 independent scopes, and all permitted local types
 (`int`, `bool`, `Symbol`, `Option<int>`, `Result<int,int>`) are checked.
 
-This first vertical slice does **not** add mutable `let`, first-class closures,
-class-method local declarations, asynchronous captured frames, borrowed
-references, or actor-suspension semantics. It does not implement `eq/neq`
+The stacked class integration additionally supports **typed `const` inside
+fieldless class methods**. An implicit `helper(...)` resolves to the same-class
+method, whereas `self.helper(...)` is explicit and also works when a lexical
+parameter/local has the name `helper`. An ambiguous implicit call whose name
+is shadowed by a local/parameter is rejected. Named arguments retain their
+source evaluation order, and class-private methods stay inaccessible outside
+the class. Method-call cycles are rejected until execution fuel exists.
+
+Generated lexical `const` and named-call IIFEs are non-escaping arrow closures
+that preserve `this` and immutable binding scope. This is **not** general
+first-class lexical closures or escaped bound-method references. Mutable
+`let`, constructors with fields, asynchronous captured frames, borrowed
+references, and actor-suspension semantics remain unsupported. It does not implement `eq/neq`
 from separate pending PR #93 until that PR is merged/rebased.
 `src/lexical-const-v0.mjs` remains a standalone compiler-only scope
 prototype as tracked by parent draft PR #95.
 
-Run `node --test tests/program-v2-lexical-const.test.mjs`, `npm test` and
+Run `node --test tests/program-v2-lexical-const.test.mjs tests/program-v2-class-local-self.test.mjs`, `npm test` and
 `npm run check` on an authorized Node 22 source-local runner before merge.
 See `docs/JS_COMPILER_EXACT_HEAD_ACCEPTANCE.md` for exact PR and privacy gates.
 
