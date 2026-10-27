@@ -397,6 +397,11 @@ class Parser {
         const body=this.expression();
         this.expect(';');
         statements.push({kind:'return',body});
+      } else if(this.eat('const')) {
+        const type=this.valueType(),name=this.classIdentifier();
+        this.expect('=');
+        const value=this.expression();this.expect(';');
+        statements.push({kind:'localDecl',name,type,value});
       } else if(this.eat('if')) {
         const condition=this.expression();
         // Canonical statement-only `if`; retain old ; do syntax.
@@ -425,7 +430,10 @@ class Parser {
           (this.returnsOnAllPaths(stmt.yes||[])&&this.returnsOnAllPaths(stmt.no||[]))))
         fail('unreachable statement after terminating return/if');
       if(stmt.kind==='return')result=stmt.body;
-      else {
+      else if(stmt.kind==='localDecl'){
+        if(!result)fail('const local requires returning continuation');
+        result={kind:'localDecl',name:stmt.name,type:stmt.type,value:stmt.value,body:result};
+      }else {
         const yes=this.lowerStatements(stmt.yes,result);
         const no=this.lowerStatements(stmt.no,result);
         if(!yes||!no)fail('int function requires return on every if branch');
@@ -451,6 +459,7 @@ class Parser {
       }
       switch(expr.kind){
         case 'int':case 'bool':case 'symbol':case 'variable':break;
+        case 'localDecl':add(expr.value);add(expr.body);break;
         case 'neg':case 'not':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
@@ -713,6 +722,8 @@ function resolveProgram(parsed) {
       case 'bool':case 'not':case 'compare':case 'symbolCompare':return 'bool';
       case 'symbol':return 'symbol';
       case 'param':return owner.paramTypes?.[expr.index]??'int';
+      case 'localRead':return expr.type;
+      case 'letLocal':return resolvedType(expr.body,owner);
       case 'newClass':return 'class:'+expr.classIndex;
       case 'methodCall':case 'namedMethodCall':
         return classes[expr.classIndex].methods[expr.methodIndex].returnType;
@@ -755,6 +766,19 @@ function resolveProgram(parsed) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
       case 'int':case 'bool':case 'symbol':return expr;
+      case 'localDecl': {
+        if(owner.ownerKind==='method')fail('const locals in methods not yet supported');
+        if(owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))
+          fail('lexical const shadows parameter or visible binding '+expr.name);
+        const value=resolve(expr.value,owner,depth+1,bindings);
+        if(resolvedType(value,owner)!==expr.type)
+          fail('lexical const initializer type mismatch '+expr.name);
+        if(nextCaptureSlot>=MAX_TOKENS)fail('lexical const slot budget exceeded');
+        const slot=nextCaptureSlot++;
+        return {kind:'letLocal',slot,type:expr.type,value,
+          body:resolve(expr.body,owner,depth+1,
+            [...bindings,{name:expr.name,slot,type:expr.type,isLocal:true}])};
+      }
       case 'newClass': {
         if(owner.ownerKind==='method')
           fail('class construction inside method body unsupported in convergence slice');
@@ -787,7 +811,9 @@ function resolveProgram(parsed) {
       }
       case 'variable': {
         const captured=bindings.findLast(b=>b.name===expr.name);
-        if(captured)return {kind:'capture',slot:captured.slot};
+        if(captured)return captured.isLocal
+          ? {kind:'localRead',slot:captured.slot,type:captured.type}
+          : {kind:'capture',slot:captured.slot};
         const index=owner.params.indexOf(expr.name);
         if(index<0) fail('unresolved identifier '+expr.name);
         return {kind:'param',index};
@@ -885,6 +911,8 @@ function resolveProgram(parsed) {
       graph[owner].add(expr.target);expr.args.forEach(a=>inspect(a,owner));
     } else if(expr.kind==='methodCall'||expr.kind==='namedMethodCall') {
       inspect(expr.receiver,owner);expr.args.forEach(a=>inspect(a,owner));
+    } else if(expr.kind==='letLocal') {
+      inspect(expr.value,owner);inspect(expr.body,owner);
     } else if(expr.kind==='newClass') {
       // fieldless construction has no call-graph edge in this slice
     } else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
@@ -928,6 +956,9 @@ function emitProgram(program) {
       case 'bool': return expr.value?'true':'false';
       case 'param':return '_p'+expr.index;
       case 'capture':return '_v'+expr.slot;
+      case 'localRead':return '_local'+expr.slot;
+      case 'letLocal':return '(()=>{const _local'+expr.slot+'='+
+        emitExpr(expr.value,depth+1)+';return '+emitExpr(expr.body,depth+1)+';})()';
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
@@ -1013,6 +1044,7 @@ function emitProgram(program) {
     switch(expr.kind) {
       case 'symbol':return true;
       case 'newClass':return false;
+      case 'letLocal':return usesSymbol(expr.value)||usesSymbol(expr.body);
       case 'methodCall':case 'namedMethodCall':
         return usesSymbol(expr.receiver)||expr.args.some(usesSymbol);
       case 'call':case 'namedCall':case 'intrinsic':return expr.args.some(usesSymbol);
@@ -1049,6 +1081,7 @@ function emitProgram(program) {
     switch(expr.kind) {
       case 'intrinsic':return true;
       case 'newClass':return false;
+      case 'letLocal':return usesPortableRuntime(expr.value)||usesPortableRuntime(expr.body);
       case 'methodCall':case 'namedMethodCall':
         return usesPortableRuntime(expr.receiver)||expr.args.some(usesPortableRuntime);
       case 'call':case 'namedCall':return expr.args.some(usesPortableRuntime);
