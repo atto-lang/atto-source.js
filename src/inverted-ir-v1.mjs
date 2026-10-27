@@ -78,12 +78,15 @@ function scalar(value,type,context) {
 }
 function index(value,owner,defined,context){
   if(value===null || typeof value!=="object")fail(context+": index missing");
-  if(value.kind==="position"){
+  const tag=Object.getOwnPropertyDescriptor(value,"kind");
+  if(!tag || !Object.hasOwn(tag,"value"))
+    fail(context+": kind must be own-data");
+  if(tag.value==="position"){
     ownRecord(value,["kind","value"],context);
     const checked=scalar({type:"i64",value:value.value},"i64",context);
     return {kind:"position",value:checked.value};
   }
-  if(value.kind==="handle"){
+  if(tag.value==="handle"){
     ownRecord(value,["kind","slot"],context);
     const slot=nat(value.slot,defined.length-1,context);
     if(!defined[slot] || defined[slot].kind!=="handle" || defined[slot].owner!==owner)
@@ -128,17 +131,20 @@ export function validateInvertedIRV1(input) {
   function expr(v,depth=0){
     if(++totalNodes>8192 || depth>128)fail("expression complexity exceeded");
     if(!v || typeof v!=="object")fail("invalid expression");
-    if(v.kind==="literal"){
+    const tag=Object.getOwnPropertyDescriptor(v,"kind");
+    if(!tag || !Object.hasOwn(tag,"value"))
+      fail("expression kind must be own-data");
+    if(tag.value==="literal"){
       ownRecord(v,["kind","value"],"integer literal");
       return {kind:"literal",value:scalar({type:"i64",value:v.value},"i64","literal").value};
     }
-    if(v.kind==="read"){
+    if(tag.value==="read"){
       ownRecord(v,["kind","owner","index","field"],"field read");
       const owner=getOwner(v.owner,"read owner"),field=getField(v.field,"read field");
       if(fields[field].type!=="i64")fail("return expression reads non-i64 field");
       return {kind:"read",owner,index:index(v.index,owner,defined,"read index"),field};
     }
-    if(v.kind==="add"){
+    if(tag.value==="add"){
       ownRecord(v,["kind","left","right"],"checked add");
       return {kind:"add",left:expr(v.left,depth+1),right:expr(v.right,depth+1)};
     }
@@ -147,7 +153,10 @@ export function validateInvertedIRV1(input) {
   const statements=operations.map((step,i)=>{
     if(returned)fail("statement after return");
     if(!step || typeof step!=="object")fail("invalid statement");
-    switch(step.kind){
+    const tag=Object.getOwnPropertyDescriptor(step,"kind");
+    if(!tag || !Object.hasOwn(tag,"value"))
+      fail("statement kind must be own-data");
+    switch(tag.value){
       case "alloc":{
         ownRecord(step,["kind","slot","capacity"],"allocate");
         const slot=nat(step.slot,255,"allocation slot");
