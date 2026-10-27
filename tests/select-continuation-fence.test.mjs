@@ -69,3 +69,65 @@ test('delivery rechecks generation after queueing',()=>{
   if(fence.tryConsume(current))delivered++;
   assert.equal(delivered,1);
 });
+
+test('capacity rejection preserves tickets and closing restores one slot',()=>{
+  const fence=new SelectContinuationFence({maxTickets:2});
+  const first=fence.register();
+  const second=fence.register();
+  assert.throws(()=>fence.register(),/capacity exhausted/);
+  assert.equal(fence.pendingTickets,2);
+  assert.equal(first.active,true);
+  assert.equal(second.active,true);
+  assert.equal(first.close(),true);
+  const replacement=fence.register();
+  assert.equal(first.close(),false);
+  assert.equal(fence.pendingTickets,2);
+  assert.equal(fence.tryConsume(second),true);
+  assert.equal(fence.tryConsume(replacement),true);
+  assert.equal(fence.pendingTickets,0);
+});
+
+test('advance invalidates every occupied slot and restores full capacity',()=>{
+  const fence=new SelectContinuationFence({maxTickets:2});
+  const old=[fence.register(),fence.register()];
+  assert.equal(fence.advance(1),true);
+  assert.equal(fence.pendingTickets,0);
+  const current=[fence.register(2),fence.register(2)];
+  for(const ticket of old){
+    assert.equal(ticket.active,false);
+    assert.equal(ticket.close(),false);
+    assert.equal(fence.tryConsume(ticket),false);
+  }
+  assert.equal(fence.pendingTickets,2);
+  for(const ticket of current)assert.equal(fence.tryConsume(ticket),true);
+});
+
+test('generation overflow leaves outstanding tickets and generation unchanged',()=>{
+  const generation=Number.MAX_SAFE_INTEGER;
+  const fence=new SelectContinuationFence({generation,maxTickets:1});
+  const ticket=fence.register(generation);
+  assert.equal(fence.advance(generation-1),false);
+  assert.throws(()=>fence.advance(generation),/generation exhausted/);
+  assert.equal(fence.generation,generation);
+  assert.equal(fence.pendingTickets,1);
+  assert.equal(ticket.active,true);
+  assert.equal(fence.tryConsume(ticket),true);
+});
+
+test('invalid configuration rejects before any ticket allocation',()=>{
+  for(const generation of [0,-1,1.5,NaN,Infinity,Number.MAX_SAFE_INTEGER+1])
+    assert.throws(()=>new SelectContinuationFence({generation}),RangeError);
+  for(const maxTickets of [0,-1,1.5,NaN,Infinity,4097])
+    assert.throws(()=>new SelectContinuationFence({maxTickets}),RangeError);
+  const fence=new SelectContinuationFence({maxTickets:4096});
+  assert.equal(fence.pendingTickets,0);
+});
+
+test('missing tickets are rejected without consuming a live reservation',()=>{
+  const fence=new SelectContinuationFence({maxTickets:1});
+  const ticket=fence.register();
+  assert.equal(fence.tryConsume(null),false);
+  assert.equal(fence.tryConsume(undefined),false);
+  assert.equal(fence.pendingTickets,1);
+  assert.equal(fence.tryConsume(ticket),true);
+});
