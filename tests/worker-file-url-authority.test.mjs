@@ -46,6 +46,10 @@ test('Node actor denies remote file authorities and UNC-equivalent paths before 
     'file:///tmp/%GG',
     'file:///tmp/%0',
     'file:///tmp/actor.mjs%',
+    'file:///tmp/%FF.mjs',
+    'file:///tmp/%C3%28.mjs',
+    'file:///tmp/%E0%80%AF.mjs',
+    'file:///tmp/%ED%A0%80.mjs',
   ]) {
     assert.throws(
       () => spawnNodeActor({moduleUrl}),

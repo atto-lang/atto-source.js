@@ -23,6 +23,11 @@ function trustedLocalWorkerModuleUrl(moduleUrl) {
       url.pathname.includes('//') || /%(?:00|2f|5c)/i.test(url.pathname) ||
       /%(?![0-9a-f]{2})/i.test(url.pathname))
     throw new TypeError('Node actor module must be a trusted file: URL without remote authority or UNC path');
+  // Valid-looking hex escapes can still encode invalid UTF-8 (e.g. %FF,
+  // overlong encodings and surrogate sequences). Node's file URL decoder
+  // rejects those values, so fail here before Worker allocation.
+  try { decodeURIComponent(url.pathname); }
+  catch { throw new TypeError('Node actor module must be a trusted file: URL without remote authority or UNC path'); }
   return url;
 }
 
