@@ -39,7 +39,9 @@ export class LexicalConstScope {
     // Never accept caller-controlled slot allocators or nesting depth. They
     // could reset slot identity, create negative slots or bypass scope budgets.
     if (arguments.length > 1) fail('scope allocator/depth override forbidden');
-    if (parent !== null && !(parent instanceof LexicalConstScope)) fail('invalid scope parent');
+    if (parent !== null &&
+        (typeof parent !== 'object' || !(#depth in parent)))
+      fail('invalid scope parent');
     const depth = parent === null ? 0 : parent.#depth + 1;
     if (depth > MAX_DEPTH) fail('scope depth budget exceeded');
     this.#parent = parent;
@@ -61,9 +63,13 @@ export class LexicalConstScope {
   child() {
     return new LexicalConstScope(this);
   }
+  #lookup(name) {
+    return this.#bindings.get(name) ?? this.#parent?.#lookup(name) ?? null;
+  }
   declare_const(name,type) {
     validName(name);validType(type);
-    if (this.resolve(name)!==null) fail('binding shadows an existing name ' + name);
+    // Never delegate invariant checks to overridable public resolve().
+    if (this.#lookup(name)!==null) fail('binding shadows an existing name ' + name);
     if (this.#slots.next >= MAX_BINDINGS) fail('binding slot budget exceeded');
     const binding=Object.freeze({kind:'local',name,type,slot:this.#slots.next++});
     this.#bindings.set(name,binding);
@@ -71,7 +77,7 @@ export class LexicalConstScope {
   }
   resolve(name) {
     validName(name);
-    return this.#bindings.get(name) ?? this.#parent?.resolve(name) ?? null;
+    return this.#lookup(name);
   }
 }
 
