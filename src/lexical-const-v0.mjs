@@ -54,7 +54,13 @@ export class LexicalConstScope {
       fail('invalid parameters');
     const scope = new LexicalConstScope();
     for (let i=0; i<parameters.length; i++) {
-      const name=validName(parameters[i]), type=validType(paramTypes[i]);
+      // Do not invoke getters in host-provided compiler parameter metadata.
+      const parameter = Object.getOwnPropertyDescriptor(parameters,String(i));
+      const declaredType = Object.getOwnPropertyDescriptor(paramTypes,String(i));
+      if (!Object.hasOwn(parameter??{},'value') ||
+          !Object.hasOwn(declaredType??{},'value'))
+        fail('invalid parameter descriptors');
+      const name=validName(parameter.value), type=validType(declaredType.value);
       if (scope.#bindings.has(name)) fail('duplicate parameter ' + name);
       scope.#bindings.set(name,Object.freeze({kind:'param',index:i,name,type}));
     }
@@ -92,7 +98,11 @@ export function lower_const_sequence(statements, fallback = null) {
   let result=fallback;
   let declarationDepth=0;
   for (let i=statements.length-1; i>=0; i--) {
-    const item=statements[i];
+    // Array indexing must not execute a caller-supplied getter during IR
+    // construction. Validate an own data slot before inspecting its value.
+    const descriptor=Object.getOwnPropertyDescriptor(statements,String(i));
+    if (!Object.hasOwn(descriptor??{},'value')) fail('invalid lexical statement slot');
+    const item=descriptor.value;
     if (!item || typeof item!=='object' || Array.isArray(item) ||
         Object.getPrototypeOf(item)!==Object.prototype)
       fail('invalid lexical statement');
