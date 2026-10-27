@@ -19,10 +19,15 @@ test('scalar-v1 keeps all generator-v1 syntax fail-closed', () => {
     assert.throws(() => compile(source), /error:/, source);
 });
 
-test('program-v2 admits only its implemented canonical sync generator slice', () => {
+test('program-v2 admits canonical sync gen* and the generator* migration alias only', () => {
   assert.doesNotThrow(() =>
     compileProgramV2('pub gen* values(): Iterator<int> { yield 1; return; }'));
+  assert.doesNotThrow(() =>
+    compileProgramV2('pub generator* values(): Iterator<int> { yield 1; return; }'));
 
   for (const source of allGeneratorSpellings.slice(1))
     assert.throws(() => compileProgramV2(source), /error:/, source);
+  assert.throws(() =>
+    compileProgramV2('pub generator values(): Iterator<int> { yield 1; return; }'),
+    /error:/);
 });
