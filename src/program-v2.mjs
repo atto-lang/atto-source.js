@@ -20,6 +20,17 @@ const CLASS_METHOD_CALLABLE_KEYWORDS=new Set([
   'mtd','method','stop','do','done','loop','block','select','readch','writech',
   'nb','true','false'
 ]);
+const GENERATOR_RESERVED=new Set([
+  'import','from','as','extends','implements','try','catch','throw','raise','panic',
+  'recover','finally','end','fi','if','do','else','then','new','spawn','stop','done',
+  'await','rt','async','suspend','suspends','critical','gen','generator','nlex','trap',
+  'actor','isoactor','def','fnc','routine','while','for','of','loop','block','break',
+  'continue','yield','super','elseif','elif','switch','match','matches','is','default',
+  'eq','neq','nb','select','readch','writech','cb','shared','untrusted','type','types',
+  'typeof','interface','trait','struct','impl','abstract','void','static','pub','private',
+  'return','defer','val','const','let','mut','borrow','self','true','false','null','obj',
+  'arr','Iterator','AsyncIterator','int'
+]);
 export class ProgramCompileError extends Error {
   constructor(message, loc) {
     super('error: program v2: ' + message + (loc ? ' at ' + loc.line + ':' + loc.col : ''));
@@ -240,6 +251,12 @@ class Parser {
     if (t.kind !== 'id' || !TOKEN_NAME.test(t.value)) fail('identifier expected',t);
     this.i++; return t.value;
   }
+  generatorIdentifier() {
+    const t=this.peek(),value=t.value;
+    if(t.kind!=='id'||!TOKEN_NAME.test(value)||GENERATOR_RESERVED.has(value))
+      fail('invalid or reserved generator identifier '+value,t);
+    this.i++;return value;
+  }
   classIdentifier() {
     const t=this.peek(),value=t.value;
     if(t.kind!=='id'||!TOKEN_NAME.test(value)||CLASS_METHOD_RESERVED.has(value)||
@@ -365,7 +382,7 @@ class Parser {
     else fail('generator marker expected',start);
     if(mode!=='sync')
       fail(mode+' gen* requires the JS async continuation/cleanup ABI and is not implemented yet',start);
-    const name=this.name();
+    const name=this.generatorIdentifier();
     this.expect('(');
     const params=[],paramTypes=[];
     if(!this.eat(')')){
@@ -373,7 +390,7 @@ class Parser {
         if(params.length>=128)fail('generator parameter limit',this.peek());
         const type=this.valueType();
         if(type!=='int')fail('sync generator v1 currently supports int parameters only',this.peek());
-        const param=this.name();
+        const param=this.generatorIdentifier();
         if(params.includes(param))fail('duplicate generator parameter '+param);
         params.push(param);paramTypes.push(type);
       }while(this.eat(','));
