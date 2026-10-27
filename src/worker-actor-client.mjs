@@ -182,7 +182,16 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
     let snapshot,bytes;
     try {
       ({value:snapshot,bytes}=copyOwnedValueWithBytes(value));
-    } catch (error) {return Promise.reject(error);}
+    } catch (error) {
+      // Validation can execute proxy traps in a custom host. If one closes
+      // the Worker, report terminal revocation instead of the clone error.
+      if (closed) return Promise.reject(new Error('actor closed'));
+      return Promise.reject(error);
+    }
+    // Copy-only admission is synchronous but not callback-free: a Proxy trap
+    // may dispatch a Worker error and revoke the session while copying.
+    // Never register a new pending receipt after that terminal transition.
+    if (closed) return Promise.reject(new Error('actor closed'));
     if(bytes>maxPendingBytes-pendingBytes)
       return Promise.reject(new Error('actor mailbox byte capacity exceeded'));
     const id = nextId++;

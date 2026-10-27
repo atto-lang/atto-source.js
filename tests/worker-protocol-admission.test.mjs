@@ -320,3 +320,44 @@ test('startup kind is read once and cannot switch after admission validation',as
   assert.equal(worker.terminated,0);
   await actor.close();
 });
+
+test('Worker error during outbound copy cannot create an orphaned receipt',async()=>{
+  const worker=new StubNodeWorker(),actor=client(worker);
+  worker.frame('ready');await actor.ready;
+  const prior=assert.rejects(actor.request({args:[1n,2n]}),/worker execution failure/);
+  let copyHooks=0;
+  const payload=new Proxy({args:[40n,2n]},{
+    getPrototypeOf(target){
+      copyHooks++;
+      worker.emit('error',new Error('error during outbound copy'));
+      return Reflect.getPrototypeOf(target);
+    }
+  });
+  await assert.rejects(actor.request(payload),/actor closed/);
+  await prior;
+  assert.equal(copyHooks,1);
+  assert.equal(actor.pending,0,'copy-time shutdown must refund older pending credit');
+  assert.equal(actor.pendingBytes,0,'copy-time shutdown must not book new credit');
+  assert.equal(worker.posted.filter(f=>f.kind==='deliver').length,0);
+  assert.equal(worker.terminated,1);
+  await actor.close();
+});
+
+test('Browser decoding failure during throwing outbound copy cannot leak credit',async()=>{
+  const worker=new StubBrowserWorker(),actor=client(worker);
+  worker.emit('message',{protocol:PROTOCOL,kind:'ready'});await actor.ready;
+  let copyHooks=0;
+  const payload=new Proxy({args:[1n,2n]},{
+    getPrototypeOf(){
+      copyHooks++;
+      worker.emit('messageerror');
+      throw new Error('copy preflight was interrupted');
+    }
+  });
+  await assert.rejects(actor.tell(payload),/actor closed/);
+  assert.equal(copyHooks,1);
+  assert.equal(actor.pending,0);
+  assert.equal(actor.pendingBytes,0);
+  assert.equal(worker.terminated,1);
+  await actor.close();
+});
