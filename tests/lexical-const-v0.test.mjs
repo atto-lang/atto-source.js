@@ -56,3 +56,32 @@ test('fail closed for unsupported and malformed statement sequences',()=>{
     [{kind:'const',name:'__proto__',type:'int',value:1},{kind:'return',value:2}]
   ]) assert.throws(()=>lower_const_sequence(seq),LexicalConstError);
 });
+
+
+test('constructor cannot reset slot allocator, inject negative slots, or bypass depth',()=>{
+  const root=LexicalConstScope.root(['argument'],['int']);
+  for(const args of [
+    [null,{next:-1},0],
+    [root,{next:0},0],
+    [root,{next:999999},-100],
+    [root,null,0]
+  ]) assert.throws(()=>new LexicalConstScope(...args),/allocator\/depth override forbidden/);
+  assert.throws(()=>new LexicalConstScope({}),/invalid scope parent/);
+  const first=root.child().declare_const('first','int');
+  const second=new LexicalConstScope(root).declare_const('second','int');
+  assert.equal(first.slot,0);
+  assert.equal(second.slot,1);
+  let nested=root;
+  for(let i=0;i<192;i++)nested=new LexicalConstScope(nested);
+  assert.throws(()=>new LexicalConstScope(nested),/depth budget exceeded/);
+});
+
+test('root scopes isolate slot allocators and preserve binding inheritance',()=>{
+  const left=LexicalConstScope.root([],[]);
+  const right=LexicalConstScope.root([],[]);
+  assert.equal(left.declare_const('a','int').slot,0);
+  assert.equal(right.declare_const('b','int').slot,0);
+  assert.equal(left.child().declare_const('c','bool').slot,1);
+  assert.equal(right.resolve('a'),null);
+  assert.equal(left.resolve('b'),null);
+});
