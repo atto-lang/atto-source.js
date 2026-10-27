@@ -164,6 +164,8 @@ test("Proxy field validation cannot reenter mutation or retire the owning array"
       assert.throws(() => rows.push({id: 99n, x: 0, ready: false}), /reentrant/);
       assert.throws(() => rows.eraseSwap(first), /reentrant/);
       assert.throws(() => rows.close(), /reentrant/);
+      assert.throws(() => rows.writeAt(0, id, 99n), /reentrant/);
+      assert.throws(() => rows.borrowRead(id), /reentrant/);
       return Reflect.ownKeys(target);
     }
   });
