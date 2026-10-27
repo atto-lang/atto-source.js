@@ -9,7 +9,23 @@ export class CompileError extends Error {
   }
 }
 function lex(src) {
-  if (typeof src !== 'string' || new TextEncoder().encode(src).byteLength > MAX_BYTES) throw new CompileError('invalid or oversized source');
+  if (typeof src !== 'string') throw new CompileError('invalid or oversized source');
+  // TextEncoder replaces lone UTF-16 surrogates with U+FFFD, which can
+  // collapse distinct source identities into the same encoded byte stream.
+  // Reject invalid input in comments as well as executable tokens.
+  for (let i = 0; i < src.length; i++) {
+    const unit = src.charCodeAt(i);
+    if (unit === 0) throw new CompileError('NUL in source');
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = src.charCodeAt(++i);
+      if (!(next >= 0xdc00 && next <= 0xdfff))
+        throw new CompileError('invalid UTF-16 in source');
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      throw new CompileError('invalid UTF-16 in source');
+    }
+  }
+  if (new TextEncoder().encode(src).byteLength > MAX_BYTES)
+    throw new CompileError('invalid or oversized source');
   const out = [];
   let i=0, line=1, col=1;
   function advance() { if(src[i]==='\n'){line++;col=1;}else col++;i++; }
