@@ -199,6 +199,8 @@ export function validateProgramIRV2(input) {
   const graph=headers.map(()=>new Set());
   let nodes=0;
   const captureSlots=headers.map(()=>new Set());
+  const lexicalSlots=headers.map(()=>new Set());
+  const lexicalTypes=['int','bool','symbol','option<int>','result<int,int>'];
   function node(expr,owner,depth=0,expected='int',active=[]){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('expression complexity exceeded');
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid expression');
@@ -273,6 +275,28 @@ export function validateProgramIRV2(input) {
           receiver,args:args.map((arg,i)=>node(arg,owner,depth+1,method.paramTypes[order[i]],active)),
           ...(named?{paramOrder:order}:{})
         };
+      }
+      case 'localRead': {
+        record(expr,['kind','slot','type'],'local read');
+        if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
+           expr.slot>=LIMIT_NODES||!lexicalTypes.includes(expr.type))
+          fail('invalid local read');
+        const binding=active.findLast(a=>typeof a==='object'&&a!==null&&a.slot===expr.slot);
+        if(!binding||binding.type!==expr.type||expr.type!==expected)
+          fail('local read outside typed lexical scope');
+        return {kind:'localRead',slot:expr.slot,type:expr.type};
+      }
+      case 'letLocal': {
+        record(expr,['kind','slot','type','value','body'],'lexical const');
+        if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
+           expr.slot>=LIMIT_NODES||!lexicalTypes.includes(expr.type)||
+           lexicalSlots[owner].has(expr.slot)||captureSlots[owner].has(expr.slot))
+          fail('invalid or duplicate lexical const slot');
+        lexicalSlots[owner].add(expr.slot);
+        const value=node(expr.value,owner,depth+1,expr.type,active);
+        const body=node(expr.body,owner,depth+1,expected,
+          [...active,{slot:expr.slot,type:expr.type}]);
+        return {kind:'letLocal',slot:expr.slot,type:expr.type,value,body};
       }
       case 'capture':
         record(expr,['kind','slot'],'capture');
@@ -398,7 +422,8 @@ export function validateProgramIRV2(input) {
           const payload=arm.tag!=='None';
           if(payload) {
             if(!Number.isSafeInteger(arm.slot)||Object.is(arm.slot,-0)||arm.slot<0||
-               arm.slot>=LIMIT_NODES||captureSlots[owner].has(arm.slot)||active.includes(arm.slot))
+               arm.slot>=LIMIT_NODES||captureSlots[owner].has(arm.slot)||
+               lexicalSlots[owner].has(arm.slot)||active.includes(arm.slot))
               fail('invalid or repeated ADT payload slot');
             captureSlots[owner].add(arm.slot);
           } else if(arm.slot!==null)fail('None arm cannot bind a payload');
