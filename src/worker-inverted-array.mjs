@@ -278,11 +278,18 @@ export class WorkerInvertedArray {
         this.#write(this.#index.resolve(handle), ordinal, value, loan);
       };
     }
-    const facade = Object.freeze(result);
-    // No fallible operations between publishing rights and returning facade.
-    if (kind === "read") state.readers++;
-    else state.writer = true;
-    return facade;
+    // Object.freeze is replaceable by host JS. Even hostile instrumentation
+    // must not reenter close/write/push/another loan during capability mint.
+    this.#transaction = true;
+    try {
+      const facade = Object.freeze(result);
+      // No fallible operation between publishing rights and returning facade.
+      if (kind === "read") state.readers++;
+      else state.writer = true;
+      return facade;
+    } finally {
+      this.#transaction = false;
+    }
   }
 
   snapshot(binding) {
