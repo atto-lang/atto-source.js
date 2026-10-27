@@ -101,6 +101,8 @@ select remains rejected until the missing channel/Future/actor layers exist.
 
 This is a code generator, **not a sandbox**. An ES module, Node worker thread or Node vm context is not a secure boundary for malicious guests. Only bundle the generated JS as a trusted artifact. This backend still has **no compiler-lowered Oreslang actor runtime** or enforced actor capability/ownership model. The experimental Worker reference is only for trusted host handlers and synchronous transpiled function calls. General native pointers, Oreslang async/await, channels, objects, collections, exceptions, and host I/O remain unsupported in the language compiler. Do not promote it to an untrusted host.
 
+Static `select` fails closed with a dedicated capability diagnostic in both scalar-v1 and `program-v2` (and therefore in freestanding/class-method source paths that delegate through `program-v2`). Both `{ ... }` and `over ... end` forms remain disabled until checked Channel/Future arbitration, actor-lane continuation scheduling, ownership transfer, and cancellation lowering exist. Rejected select source must not produce a JavaScript artifact.
+
 ## iso-lattes integration
 
 Use a pinned Oreslang source revision, compile before deployment, inspect/build a trusted ESM bundle, and load exported public entrypoints inside the explicitly trusted iso-lattes host. Do not eval arbitrary guest source. A separate security-reviewed host adapter is required before claiming arbitrary Oreslang guest support.
