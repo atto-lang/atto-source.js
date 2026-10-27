@@ -185,3 +185,50 @@ test('successful Worker responses exceeding complexity budget revoke pending rec
   assert.equal(worker.terminated,1);
   await actor.close();
 });
+
+test('reentrant response error getter cannot replace a failed receipt with success',async()=>{
+  const worker=new StubNodeWorker(),actor=client(worker);
+  worker.frame('ready');await actor.ready;
+  const pending=assert.rejects(actor.request({args:[1n,2n]}),/reentrant actor event/);
+  await nextTurn();
+  worker.frame('result',{id:1,ok:false,get error(){
+    worker.frame('result',{id:1,ok:true,value:42n});
+    return 'failed request';
+  }});
+  await pending;
+  assert.equal(actor.pending,0);
+  assert.equal(actor.pendingBytes,0);
+  assert.equal(worker.terminated,1);
+  await assert.rejects(actor.request({args:[3n,4n]}),/actor closed/);
+  await actor.close();
+});
+
+test('reentrant worker error message getter cannot commit a late success',async()=>{
+  const worker=new StubNodeWorker(),actor=client(worker);
+  worker.frame('ready');await actor.ready;
+  const pending=assert.rejects(actor.request({args:[1n,2n]}),/reentrant actor event/);
+  await nextTurn();
+  worker.emit('error',{get message(){
+    worker.frame('result',{id:1,ok:true,value:42n});
+    return 'injected worker failure';
+  }});
+  await pending;
+  assert.equal(actor.pending,0);
+  assert.equal(worker.terminated,1);
+  await actor.close();
+});
+
+test('reentrant browser message data getter fails closed before nested success',async()=>{
+  const worker=new StubBrowserWorker(),actor=client(worker);
+  worker.emit('message',{protocol:PROTOCOL,kind:'ready'});await actor.ready;
+  const pending=assert.rejects(actor.request({args:[1n,2n]}),/reentrant actor event/);
+  await nextTurn();
+  worker.callbacks.get('message')({get data(){
+    worker.emit('message',{protocol:PROTOCOL,kind:'result',id:1,ok:true,value:42n});
+    return {protocol:PROTOCOL,kind:'result',id:1,ok:false,error:'failure'};
+  }});
+  await pending;
+  assert.equal(actor.pending,0);
+  assert.equal(worker.terminated,1);
+  await actor.close();
+});
