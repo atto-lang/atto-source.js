@@ -272,3 +272,20 @@ test("checked i64 negative overflow leaves original cell unchanged", () => {
   assert.equal(rows.addI64(h, id, 1n), -(1n << 63n) + 1n);
   rows.close();
 });
+
+test("f64 negative zero survives SoA push, typed writes and swap-delete", () => {
+  const schema=spec(), x=schema.bindField("x");
+  const rows=make(schema);
+  const a=rows.push({id: 40n,x: 1,ready: false});
+  const b=rows.push({id: 42n,x: -0,ready: true});
+  assert.equal(Object.is(rows.read(b,x),-0),true);
+  assert.equal(Object.is(rows.readAt(1,x),-0),true);
+  rows.eraseSwap(a);
+  assert.equal(Object.is(rows.read(b,x),-0),true);
+  assert.equal(Object.is(rows.readAt(0,x),-0),true);
+  rows.write(b,x,+0);
+  assert.equal(Object.is(rows.read(b,x),+0),true);
+  rows.writeAt(0,x,-0);
+  assert.equal(Object.is(rows.read(b,x),-0),true);
+  rows.close();
+});
