@@ -280,3 +280,45 @@ test("f64 -0.0 preserves IEEE signed zero through typed IR and emitted ESM", () 
   malformed.statements[1].values[1].value="-0e0";
   assert.throws(()=>compileInvertedIRV1(malformed),InvertedIRError);
 });
+
+
+test("compiler option admission never invokes inherited Object.prototype getters", () => {
+  const ir=compileToInvertedIRV1(source);
+  const plain="pub fnc main(): int {return 42;}";
+  const descriptors=new Map();
+  let calls=0;
+  for(const key of ["experimentalInvertedV1","runtimeSpecifier"]){
+    descriptors.set(key,Object.getOwnPropertyDescriptor(Object.prototype,key));
+    Object.defineProperty(Object.prototype,key,{
+      configurable:true,
+      get(){calls++;throw Error("inherited option getter executed: "+key);}
+    });
+  }
+  try {
+    assert.match(compileProgramV2(plain,{}),/42n/);
+    assert.match(compileProgramV2(source,{experimentalInvertedV1:true}),/WorkerInvertedArray/);
+    assert.match(compileInvertedIRV1(ir,{}),/WorkerInvertedArray/);
+    assert.match(compileInvertedIRV1(ir),/WorkerInvertedArray/);
+    assert.equal(calls,0);
+  } finally {
+    for(const [key,original] of descriptors){
+      if(original)Object.defineProperty(Object.prototype,key,original);
+      else delete Object.prototype[key];
+    }
+  }
+});
+
+test("direct inverted compiler option objects reject accessors and unexpected keys", () => {
+  const ir=compileToInvertedIRV1(source);
+  let calls=0;
+  for(const options of [
+    null,
+    {runtimeSpecifier:undefined},
+    {runtimeSpecifier:"https://untrusted.example/runtime.mjs"},
+    {runtimeSpecifier:"./worker-inverted-array.mjs",extra:true},
+    Object.defineProperty({},"runtimeSpecifier",{
+      get(){calls++;throw Error("getter called");}
+    })
+  ])assert.throws(()=>compileInvertedIRV1(ir,options));
+  assert.equal(calls,0);
+});
