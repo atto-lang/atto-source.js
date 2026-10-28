@@ -100,3 +100,17 @@ test('bounded reader accepts exactly 1 MiB and empty files, rejects 1 MiB plus o
     assert.equal(head.body,undefined);
   });
 });
+
+test('fixture path depth is bounded independently of request bytes',async()=>{
+  await withSandbox(async root=>{
+    const names=Array.from({length:63},(_,i)=>`d${i}`);
+    const directory=join(root,'src',...names);
+    await mkdir(directory,{recursive:true});
+    await writeFile(join(directory,'deep.mjs'),'export const deep=1;');
+    const within='/src/'+names.slice(0,62).join('/')+'/ok.mjs';
+    await writeFile(join(root,'src',...names.slice(0,62),'ok.mjs'),'export const ok=1;');
+    const accepted=await readBrowserWorkerFixture(root,within);
+    assert.match(accepted.body.toString(),/ok=1/);
+    await denied(root,'/src/'+names.join('/')+'/deep.mjs');
+  });
+});

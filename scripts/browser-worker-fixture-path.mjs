@@ -13,6 +13,7 @@ const MIME=Object.freeze({
 });
 const JSON_FIXTURE='/tests/fixtures/conformance-option-result-match-i64-v0.json';
 const MAX_FIXTURE_BYTES=1048576;
+const MAX_PATH_COMPONENTS=64;
 export class BrowserWorkerFixtureAccessError extends Error {
   constructor() {
     super('browser worker fixture path denied');
@@ -43,6 +44,8 @@ export async function resolveBrowserWorkerFixture(root,requestUrl) {
   // Reject every path symlink, not just escapes: even an allowed internal
   // symlink can be retargeted between canonicalization and file opening.
   const parts=file.slice(directory.length+1).split(sep);
+  // Bound lstat work independently of the 4096-character request limit.
+  if(parts.length>MAX_PATH_COMPONENTS)deny();
   let parent=directory;
   for(let i=0;i<parts.length;i++){
     parent=resolve(parent,parts[i]);
