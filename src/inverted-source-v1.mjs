@@ -284,9 +284,25 @@ export function compileInvertedIRV1(input,options=undefined){
       runtimeSpecifier=value.value;
     }
   }
-  // This is a trusted host build option, never a user/source expression.
+  // Trusted host-only import authority. Browser Blob ESM cannot resolve
+  // relative imports, so admit exactly our runtime module at the browser's
+  // own HTTP(S) origin; never accept a guest-provided remote URL.
+  let sameOriginBrowserRuntime=false;
+  if(typeof runtimeSpecifier==="string" && /^https?:\/\//.test(runtimeSpecifier) &&
+     typeof location!=="undefined" && typeof location.origin==="string" &&
+     location.origin!=="null"){
+    try {
+      const imported=new URL(runtimeSpecifier);
+      sameOriginBrowserRuntime=imported.href===runtimeSpecifier &&
+        imported.origin===location.origin &&
+        imported.pathname==="/src/worker-inverted-array.mjs" &&
+        imported.username==="" && imported.password==="" &&
+        imported.search==="" && imported.hash==="";
+    }catch { /* malformed URL fails closed */ }
+  }
   if(typeof runtimeSpecifier!=="string" || runtimeSpecifier.length>1024 ||
-     !(runtimeSpecifier.startsWith("./") || runtimeSpecifier.startsWith("file:")))
+     !(runtimeSpecifier.startsWith("./") || runtimeSpecifier.startsWith("file:") ||
+       sameOriginBrowserRuntime))
     reject("unsupported trusted runtime import specifier");
   const ir=validateInvertedIRV1(input);
   const descriptors=ir.schema.fields;
