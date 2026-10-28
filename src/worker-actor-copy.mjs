@@ -7,6 +7,9 @@ const ownKeys=Reflect.ownKeys, descriptor=Object.getOwnPropertyDescriptor;
 // Trusted guest ESM shares this Worker realm. Capture copy/validation intrinsics
 // before guest code can replace them and forge an ownership or byte receipt.
 const nativeClone=globalThis.structuredClone, nativeFreeze=Object.freeze;
+// Guest ESM can monkey-patch Function.prototype.call to rewrite native slot
+// readers and iterator steps. Capture a non-iterating native call primitive.
+const nativeApply=Reflect.apply;
 const nativeHasOwn=Object.hasOwn;
 // Guest ESM shares this realm. Dynamic arithmetic helpers can be replaced to
 // erase resizable-buffer capacity or BigInt byte charges during admission.
@@ -42,8 +45,8 @@ const mapSize=descriptor(Map.prototype,'size').get, setSize=descriptor(Set.proto
 const mapEntries=Map.prototype.entries, setValues=Set.prototype.values;
 // for...of calls the *current* iterator prototype next. Guest code can patch
 // it to hide arbitrarily large Map/Set entries from both validation passes.
-const mapNext=getPrototype(mapEntries.call(new Map())).next;
-const setNext=getPrototype(setValues.call(new Set())).next;
+const mapNext=getPrototype(nativeApply(mapEntries,new Map(),[])).next;
+const setNext=getPrototype(nativeApply(setValues,new Set(),[])).next;
 const regexpSource=descriptor(RegExp.prototype,'source').get;
 const dateTime=Date.prototype.getTime;
 const stringValue=String.prototype.valueOf;
@@ -54,10 +57,10 @@ const fileName=typeof File==='function'?
   descriptor(File.prototype,'name')?.get:null;
 function slot(reader,node){
   if(!reader)return MISSING;
-  try{return reader.call(node);}catch(e){if(e instanceof NativeTypeError)return MISSING;throw e;}
+  try{return nativeApply(reader,node,[]);}catch(e){if(e instanceof NativeTypeError)return MISSING;throw e;}
 }
 function bigintSize(value){
-  const hex=bigintHex.call(value,16);
+  const hex=nativeApply(bigintHex,value,[16]);
   return nativeCeil((hex.length-(hex[0]==='-'?1:0))/2);
 }
 function validate(value){
@@ -91,8 +94,8 @@ function validate(value){
     if(node===null||typeof node==='undefined'||typeof node==='boolean'||typeof node==='number')return;
     if(typeof node!=='object')throw new TypeError('unsupported actor wire value');
     if(depth>MAX_DEPTH)throw new RangeError('actor message complexity exceeded');
-    if(nativeWeakSetHas.call(visited,node))return;
-    nativeWeakSetAdd.call(visited,node);
+    if(nativeApply(nativeWeakSetHas,visited,[node]))return;
+    nativeApply(nativeWeakSetAdd,visited,[node]);
     if(++nodes>MAX_NODES)throw new RangeError('actor message complexity exceeded');
     if(slot(sharedBytes,node)!==MISSING)
       throw new TypeError('shared-memory actor message forbidden in copy-only profile');
@@ -124,15 +127,15 @@ function validate(value){
     if(time!==MISSING){charge(8);own(node,depth);return;}
     const str=slot(stringValue,node);
     if(str!==MISSING){charge(str.length*2);own(node,depth);return;}
-    const bn=slot(function(){return bigintHex.call(this,16);},node);
+    const bn=slot(function(){return nativeApply(bigintHex,this,[16]);},node);
     if(bn!==MISSING){charge(nativeCeil((bn.length-(bn[0]==='-'?1:0))/2));own(node,depth);return;}
     const num=slot(numberValue,node);
     if(num!==MISSING){charge(8);own(node,depth);return;}
     const bool=slot(booleanValue,node);
     if(bool!==MISSING){charge(1);own(node,depth);return;}
     if(slot(mapSize,node)!==MISSING){
-      const iterator=mapEntries.call(node);
-      for(let step=mapNext.call(iterator);!step.done;step=mapNext.call(iterator)){
+      const iterator=nativeApply(mapEntries,node,[]);
+      for(let step=nativeApply(mapNext,iterator,[]);!step.done;step=nativeApply(mapNext,iterator,[])){
         if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
         // Native Map iterator yields an ordinary two-element entry Array.
         // Avoid a guest-patched Array iterator in destructuring as well.
@@ -141,8 +144,8 @@ function validate(value){
       return;
     }
     if(slot(setSize,node)!==MISSING){
-      const iterator=setValues.call(node);
-      for(let step=setNext.call(iterator);!step.done;step=setNext.call(iterator)){
+      const iterator=nativeApply(setValues,node,[]);
+      for(let step=nativeApply(setNext,iterator,[]);!step.done;step=nativeApply(setNext,iterator,[])){
         if(++entries>MAX_NODES)throw new RangeError('actor message complexity exceeded');
         walk(step.value,depth+1);
       }
@@ -170,7 +173,7 @@ function validate(value){
        descriptor(nativeObjectPrototype,nativeToStringTag))
       throw new TypeError('unsupported actor wire inherited symbol tag');
     if((proto!==null&&proto!==nativeObjectPrototype)||
-       nativeTag.call(node)!=='[object Object]')
+       nativeApply(nativeTag,node,[])!=='[object Object]')
       throw new TypeError('unsupported actor wire object type');
     own(node,depth);
   }

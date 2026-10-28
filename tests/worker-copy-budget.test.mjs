@@ -434,3 +434,55 @@ test('guest Symbol rebinding cannot invoke an accessor-backed toStringTag',()=>{
   assert.match(String(thrown),/unsupported actor wire symbol key/);
   assert.equal(tagGetterCalls,0,'validator must reject tag descriptor without evaluating getter');
 });
+
+test('guest Function.prototype.call cannot forge a zero-byte ArrayBuffer receipt',()=>{
+  const nativeCall=Function.prototype.call;
+  const apply=Reflect.apply;
+  const byteLength=Object.getOwnPropertyDescriptor(ArrayBuffer.prototype,'byteLength').get;
+  const capacity=Object.getOwnPropertyDescriptor(ArrayBuffer.prototype,'maxByteLength')?.get;
+  let intercepted=0;
+  try {
+    Function.prototype.call=function(receiver,...args){
+      if(this===byteLength||this===capacity){intercepted++;return 0;}
+      return apply(nativeCall,this,[receiver,...args]);
+    };
+    assert.throws(()=>copyOwnedValueWithBytes(new ArrayBuffer(9*MiB)),
+      /byte budget exceeded/,'native slot readers must not use guest .call');
+    assert.equal(intercepted,0);
+  } finally {Function.prototype.call=nativeCall;}
+});
+
+test('guest Function.prototype.call cannot mask WeakSet visited bookkeeping',()=>{
+  const nativeCall=Function.prototype.call;
+  const apply=Reflect.apply;
+  const has=WeakSet.prototype.has;
+  let intercepted=0;
+  try {
+    Function.prototype.call=function(receiver,...args){
+      if(this===has){intercepted++;return true;}
+      return apply(nativeCall,this,[receiver,...args]);
+    };
+    assert.throws(()=>copyOwnedValueWithBytes({payload:new ArrayBuffer(9*MiB)}),
+      /byte budget exceeded/,'guest cannot forge a visited root');
+    assert.equal(intercepted,0);
+  } finally {Function.prototype.call=nativeCall;}
+});
+
+test('guest Function.prototype.call cannot skip native Map/Set iteration',()=>{
+  const nativeCall=Function.prototype.call;
+  const apply=Reflect.apply;
+  const mapNext=Object.getPrototypeOf(new Map().entries()).next;
+  const setNext=Object.getPrototypeOf(new Set().values()).next;
+  let intercepted=0;
+  try {
+    Function.prototype.call=function(receiver,...args){
+      if(this===mapNext||this===setNext){intercepted++;return {done:true};}
+      return apply(nativeCall,this,[receiver,...args]);
+    };
+    assert.throws(()=>copyOwnedValueWithBytes(new Map([['payload',new ArrayBuffer(9*MiB)]])),
+      /byte budget exceeded/);
+    assert.throws(()=>copyOwnedValueWithBytes(new Set([new ArrayBuffer(9*MiB)])),
+      /byte budget exceeded/);
+    assert.equal(intercepted,0);
+  } finally {Function.prototype.call=nativeCall;}
+});
