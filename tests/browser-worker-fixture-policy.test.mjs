@@ -81,3 +81,22 @@ test('bounded and malformed file or path requests fail closed',async()=>{
       error=>error instanceof BrowserWorkerFixtureAccessError);
   });
 });
+
+test('bounded reader accepts exactly 1 MiB and empty files, rejects 1 MiB plus one',async()=>{
+  await withSandbox(async root=>{
+    const file=join(root,'src','boundary.mjs');
+    await writeFile(file,Buffer.alloc(1048576,0x41));
+    const full=await readBrowserWorkerFixture(root,'/src/boundary.mjs');
+    assert.equal(full.body.byteLength,1048576);
+    assert.equal(full.body[0],0x41);
+    assert.equal(full.body.at(-1),0x41);
+    await writeFile(file,Buffer.alloc(1048577,0x41));
+    await assert.rejects(readBrowserWorkerFixture(root,'/src/boundary.mjs'),
+      error=>error instanceof BrowserWorkerFixtureAccessError);
+    await writeFile(file,Buffer.alloc(0));
+    const empty=await readBrowserWorkerFixture(root,'/src/boundary.mjs');
+    assert.equal(empty.body.byteLength,0);
+    const head=await readBrowserWorkerFixture(root,'/src/boundary.mjs',{head:true});
+    assert.equal(head.body,undefined);
+  });
+});
