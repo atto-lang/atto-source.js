@@ -3,6 +3,7 @@ import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {extname,resolve,sep} from 'node:path';
+import {readBrowserWorkerFixture} from './browser-worker-fixture-path.mjs';
 
 const root=resolve(fileURLToPath(new URL('../',import.meta.url)));
 const port=Number(process.env.ORES_BROWSER_FIXTURE_PORT??'8000');
@@ -27,7 +28,11 @@ const server=createServer(async(request,response)=>{
        (ext==='.json'&&path!=='/tests/fixtures/conformance-option-result-match-i64-v0.json')) {
       response.writeHead(403);response.end();return;
     }
-    const content=await readFile(file);
+    // Re-run admission through the symlink-safe bounded fixture reader before
+    // consuming bytes. The lexical checks above remain a cheap first filter.
+    const admitted=await readBrowserWorkerFixture(
+      root,request.url,{head:request.method==='HEAD'});
+    const content=admitted.body;
     response.writeHead(200,{'Content-Type':types[ext],
       'Cache-Control':'no-store',
       'X-Content-Type-Options':'nosniff',

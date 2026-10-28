@@ -8,9 +8,12 @@ import {resolve,extname,sep} from 'node:path';
 const MIME=Object.freeze({
   '.html':'text/html; charset=utf-8',
   '.mjs':'text/javascript; charset=utf-8',
-  '.ores':'text/plain; charset=utf-8'
+  '.ores':'text/plain; charset=utf-8',
+  '.json':'application/json; charset=utf-8'
 });
+const JSON_FIXTURE='/tests/fixtures/conformance-option-result-match-i64-v0.json';
 const MAX_FIXTURE_BYTES=1048576;
+const MAX_PATH_COMPONENTS=64;
 export class BrowserWorkerFixtureAccessError extends Error {
   constructor() {
     super('browser worker fixture path denied');
@@ -36,10 +39,13 @@ export async function resolveBrowserWorkerFixture(root,requestUrl) {
   const file=resolve(directory,pathname.slice(1));
   if(!allow.some(prefix=>file.startsWith(prefix)))deny();
   const extension=extname(file);
-  if(!Object.hasOwn(MIME,extension))deny();
+  if(!Object.hasOwn(MIME,extension)||
+     (extension==='.json'&&pathname!==JSON_FIXTURE))deny();
   // Reject every path symlink, not just escapes: even an allowed internal
   // symlink can be retargeted between canonicalization and file opening.
   const parts=file.slice(directory.length+1).split(sep);
+  // Bound lstat work independently of the 4096-character request limit.
+  if(parts.length>MAX_PATH_COMPONENTS)deny();
   let parent=directory;
   for(let i=0;i<parts.length;i++){
     parent=resolve(parent,parts[i]);
@@ -67,8 +73,23 @@ export async function readBrowserWorkerFixture(root,requestUrl,{head=false}={}) 
     const current=await lstat(fixture.path);
     if(currentPath!==fixture.path || current.isSymbolicLink() ||
        !current.isFile() ||current.ino!==stat.ino||current.dev!==stat.dev)deny();
-    const body=head?undefined:await descriptor.readFile();
-    if(body&&body.byteLength>MAX_FIXTURE_BYTES)deny();
+    let body;
+    if(!head){
+      // A file may grow after stat(): never let readFile() allocate unbounded
+      // memory before the post-read size check. Read at most limit + 1 bytes.
+      const bounded=Buffer.allocUnsafe(MAX_FIXTURE_BYTES+1);
+      let count=0;
+      while(count<bounded.length){
+        const {bytesRead}=await descriptor.read(bounded,count,bounded.length-count,null);
+        if(bytesRead===0)break;
+        count+=bytesRead;
+      }
+      if(count>MAX_FIXTURE_BYTES)deny();
+      body=bounded.subarray(0,count);
+      const finalStat=await descriptor.stat();
+      if(!finalStat.isFile()||finalStat.dev!==stat.dev||
+         finalStat.ino!==stat.ino||finalStat.size!==count)deny();
+    }
     return Object.freeze({contentType:fixture.contentType,body});
   }finally {await descriptor.close();}
 }
