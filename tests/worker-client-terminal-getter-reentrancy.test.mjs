@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
-import {createWorkerActorClient} from '../src/worker-actor-client.mjs';
+import {createWorkerActorClient,rejectUnsupportedWorkerPlacement} from '../src/worker-actor-client.mjs';
 
 const PROTOCOL='ores.js.worker.v1';
 class NodeStub extends EventEmitter {
@@ -139,4 +139,90 @@ test('patched Map.get/delete cannot forge unexpected response or retain credit',
   assert.equal(actor.pending,0);
   assert.equal(actor.pendingBytes,0);
   await actor.close();
+});
+
+
+test('poisoned Function.prototype.call cannot strand pending receipts on fatal',async()=>{
+  const worker=new NodeStub(),actor=client(worker);
+  worker.frame({protocol:PROTOCOL,kind:'ready'});await actor.ready;
+  const outcomes=[actor.request({payload:1n}),actor.tell({payload:2n})]
+    .map(p=>p.then(()=>'resolved',e=>e.message));
+  const original=Function.prototype.call,apply=Reflect.apply;
+  const values=Map.prototype.values;
+  const iteratorNext=Object.getPrototypeOf(values.call(new Map())).next;
+  let intercepted=0;
+  try{
+    Function.prototype.call=function(receiver,...args){
+      if(this===values||this===iteratorNext){
+        intercepted++;
+        return this===values?{next(){return {done:true};}}:{done:true};
+      }
+      return apply(original,this,[receiver,...args]);
+    };
+    worker.fail();
+  }finally{Function.prototype.call=original;}
+  assert.equal(intercepted,0,'pending iteration must not invoke a guest-patched call');
+  let timer;
+  try{
+    const outcome=await Promise.race([
+      Promise.all(outcomes),
+      new Promise(resolve=>{timer=setTimeout(()=>resolve(null),500);})
+    ]);
+    assert.deepEqual(outcome,[
+      'worker message decoding failure','worker message decoding failure'
+    ]);
+  }finally{clearTimeout(timer);}
+  assert.equal(actor.pending,0);
+  assert.equal(actor.pendingBytes,0);
+  assert.equal(worker.terminations,1);
+  await actor.close();
+});
+
+test('poisoned Function.prototype.call cannot spoof Map receipt lookup',async()=>{
+  const worker=new NodeStub(),actor=client(worker);
+  worker.frame({protocol:PROTOCOL,kind:'ready'});await actor.ready;
+  const pending=actor.request({payload:9n});
+  const original=Function.prototype.call,apply=Reflect.apply;
+  const get=Map.prototype.get,del=Map.prototype.delete;
+  let intercepted=0;
+  try{
+    Function.prototype.call=function(receiver,...args){
+      if(this===get||this===del){intercepted++;return undefined;}
+      return apply(original,this,[receiver,...args]);
+    };
+    worker.frame({protocol:PROTOCOL,kind:'result',id:1,ok:true,value:42n});
+  }finally{Function.prototype.call=original;}
+  assert.equal(intercepted,0);
+  assert.equal(await pending,42n);
+  assert.equal(actor.pending,0);
+  assert.equal(actor.pendingBytes,0);
+  await actor.close();
+});
+
+test('guest Array iterator cannot conceal unsupported Worker placement',()=>{
+  const original=Array.prototype[Symbol.iterator];
+  let intercepted=0,error;
+  try{
+    Array.prototype[Symbol.iterator]=function*(){intercepted++;};
+    try{rejectUnsupportedWorkerPlacement({placement:'cpu'});}
+    catch(e){error=e;}
+  }finally{Array.prototype[Symbol.iterator]=original;}
+  assert.match(String(error),/cannot guarantee CPU\/GPU placement/);
+  assert.equal(intercepted,0);
+});
+
+test('guest Function.prototype.call cannot conceal unsupported Worker placement',()=>{
+  const original=Function.prototype.call,apply=Reflect.apply;
+  const hasOwn=Object.prototype.hasOwnProperty;
+  let intercepted=0,error;
+  try{
+    Function.prototype.call=function(receiver,...args){
+      if(this===hasOwn){intercepted++;return false;}
+      return apply(original,this,[receiver,...args]);
+    };
+    try{rejectUnsupportedWorkerPlacement({gpuDeviceId:1});}
+    catch(e){error=e;}
+  }finally{Function.prototype.call=original;}
+  assert.match(String(error),/cannot guarantee CPU\/GPU placement/);
+  assert.equal(intercepted,0);
 });

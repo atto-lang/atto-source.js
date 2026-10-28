@@ -3,6 +3,12 @@ const PROTOCOL = 'ores.js.worker.v1';
 // Host applications can replace Map methods after this module loads. Keep
 // receipt admission, lookup, revocation and iteration on captured intrinsics;
 // otherwise a patched values()/clear() can orphan outstanding Futures.
+// Guest JS in the host realm can replace Function.prototype.call and numeric
+// predicates after client initialization. Bind ledger operations to native apply.
+const nativeApply = Reflect.apply;
+const nativeSafeInteger = Number.isSafeInteger;
+const nativeFreeze = Object.freeze;
+const nativeHasOwn = Object.prototype.hasOwnProperty;
 const NativeMap = Map;
 const nativeMapGet = NativeMap.prototype.get;
 const nativeMapSet = NativeMap.prototype.set;
@@ -11,7 +17,7 @@ const nativeMapDelete = NativeMap.prototype.delete;
 const nativeMapClear = NativeMap.prototype.clear;
 const nativeMapValues = NativeMap.prototype.values;
 const nativeMapSize = Object.getOwnPropertyDescriptor(NativeMap.prototype,'size').get;
-const nativeMapNext = Object.getPrototypeOf(nativeMapValues.call(new NativeMap())).next;
+const nativeMapNext = Object.getPrototypeOf(nativeApply(nativeMapValues,new NativeMap(),[])).next;
 // An Error message is not necessarily stringifiable (e.g. null-prototype
 // structured-clone records). Never allow logging to interrupt settlement.
 const errorText = error => {
@@ -28,8 +34,9 @@ const UNSUPPORTED_PLACEMENT_KEYS = Object.freeze([
 export function rejectUnsupportedWorkerPlacement(options) {
   if (!options || typeof options !== 'object')
     throw new TypeError('worker actor options must be an object');
-  for (const key of UNSUPPORTED_PLACEMENT_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(options,key)) {
+  for (let index=0;index<UNSUPPORTED_PLACEMENT_KEYS.length;index++) {
+    const key=UNSUPPORTED_PLACEMENT_KEYS[index];
+    if (nativeApply(nativeHasOwn,options,[key])) {
       throw new TypeError(
         'JavaScript Worker backend cannot guarantee CPU/GPU placement: ' + key);
     }
@@ -42,9 +49,9 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
   if (typeof moduleUrl !== 'string' || !moduleUrl || typeof exportName !== 'string' ||
       !/^[A-Za-z_][A-Za-z0-9_]*$/.test(exportName) || !['handler','call'].includes(mode))
     throw new TypeError('invalid entrypoint');
-  if (!Number.isSafeInteger(maxPending) || maxPending < 1 || maxPending > 65536)
+  if (!nativeSafeInteger(maxPending) || maxPending < 1 || maxPending > 65536)
     throw new RangeError('invalid mailbox limit');
-  if(!Number.isSafeInteger(maxPendingBytes)||maxPendingBytes<1||
+  if(!nativeSafeInteger(maxPendingBytes)||maxPendingBytes<1||
      maxPendingBytes>MAX_CONFIGURED_PENDING_BYTES)
     throw new RangeError('invalid actor mailbox byte limit');
   const pending = new NativeMap();
@@ -73,16 +80,16 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
     if (closed) return;
     closed = true;
     if (!ready) readyReject(error);
-    const iterator=nativeMapValues.call(pending);
-    for(let step=nativeMapNext.call(iterator);!step.done;step=nativeMapNext.call(iterator))
+    const iterator=nativeApply(nativeMapValues,pending,[]);
+    for(let step=nativeApply(nativeMapNext,iterator,[]);!step.done;step=nativeApply(nativeMapNext,iterator,[]))
       step.value.reject(error);
-    nativeMapClear.call(pending);
+    nativeApply(nativeMapClear,pending,[]);
     pendingBytes=0;
   }
   function release(id){
-    const entry=nativeMapGet.call(pending,id);
+    const entry=nativeApply(nativeMapGet,pending,[id]);
     if(!entry)return;
-    nativeMapDelete.call(pending,id);
+    nativeApply(nativeMapDelete,pending,[id]);
     pendingBytes-=entry.bytes;
   }
   // Worker frames are from the trusted adapter, but malformed/unexpected
@@ -119,7 +126,7 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
       // Match and release the very same receipt, even if an id getter changes.
       const id=frame.id;
       if (closed) return;
-      const entry = nativeMapGet.call(pending,id);
+      const entry = nativeApply(nativeMapGet,pending,[id]);
       if (!entry) {shutdown(new Error('unexpected actor response id'));void terminateWorker();return;}
       const ok=frame.ok;
       if (closed) return;
@@ -194,8 +201,8 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
   catch (error) {shutdown(error);void terminateWorker();}
   function send(value, reply) {
     if (closed) return Promise.reject(new Error('actor closed'));
-    if (nativeMapSize.call(pending) >= maxPending) return Promise.reject(new Error('actor mailbox capacity exceeded'));
-    if (!Number.isSafeInteger(nextId)) return Promise.reject(new Error('actor message id exhausted'));
+    if (nativeApply(nativeMapSize,pending,[]) >= maxPending) return Promise.reject(new Error('actor mailbox capacity exceeded'));
+    if (!nativeSafeInteger(nextId)) return Promise.reject(new Error('actor message id exhausted'));
     // Take ownership at admission, not after the Worker startup handshake.
     // This prevents callers from mutating an outstanding queued delivery.
     let snapshot,bytes;
@@ -212,17 +219,17 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
     const id = nextId++;
     pendingBytes+=bytes;
     return new Promise((resolve,reject) => {
-      nativeMapSet.call(pending,id,{resolve,reject,reply,bytes});
+      nativeApply(nativeMapSet,pending,[id,{resolve,reject,reply,bytes}]);
       void readyPromise.then(() => {
-        if (!nativeMapHas.call(pending,id) || closed) return;
+        if (!nativeApply(nativeMapHas,pending,[id]) || closed) return;
         try {worker.postMessage({protocol:PROTOCOL,kind:'deliver',id,reply,value:snapshot});}
         catch (error) {release(id);reject(error);}
       },reject);
     });
   }
-  return Object.freeze({
+  return nativeFreeze({
     get ready() {return readyPromise;},
-    get pending() {return nativeMapSize.call(pending);},
+    get pending() {return nativeApply(nativeMapSize,pending,[]);},
     get pendingBytes() {return pendingBytes;},
     request(value) {return send(value,true);},
     tell(value) {return send(value,false);},
