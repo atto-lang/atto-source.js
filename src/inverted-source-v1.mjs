@@ -265,7 +265,25 @@ export function compileToInvertedIRV1(source) {
   });
 }
 
-export function compileInvertedIRV1(input,{runtimeSpecifier="./worker-inverted-array.mjs"}={}){
+export function compileInvertedIRV1(input,options=undefined){
+  // Trusted host options must be own-data, never inherited getters.
+  // Plain destructuring would evaluate Object.prototype.runtimeSpecifier.
+  let runtimeSpecifier="./worker-inverted-array.mjs";
+  if(options!==undefined){
+    if(!options || typeof options!=="object" ||
+       (Object.getPrototypeOf(options)!==Object.prototype &&
+        Object.getPrototypeOf(options)!==null))
+      reject("invalid inverted runtime compiler options");
+    const keys=Reflect.ownKeys(options);
+    if(keys.some(key=>key!=="runtimeSpecifier"))
+      reject("unsupported inverted runtime compiler option");
+    const value=Object.getOwnPropertyDescriptor(options,"runtimeSpecifier");
+    if(value){
+      if(!Object.hasOwn(value,"value"))
+        reject("accessor inverted runtime compiler option");
+      runtimeSpecifier=value.value;
+    }
+  }
   // This is a trusted host build option, never a user/source expression.
   if(typeof runtimeSpecifier!=="string" || runtimeSpecifier.length>1024 ||
      !(runtimeSpecifier.startsWith("./") || runtimeSpecifier.startsWith("file:")))
