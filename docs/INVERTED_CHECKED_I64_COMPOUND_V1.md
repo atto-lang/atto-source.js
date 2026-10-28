@@ -65,3 +65,33 @@ independently proves negative zero survives packed SoA push, indexed writes,
 and swap-delete via `Object.is(value,-0)`. Isolated V8 evidence against exact
 current test/runtime blobs: **11/11** authored runtime cases passed. This is
 not an exact-head Node/browser job.
+
+## Audit hardening: option-record prototype access
+
+The opt-in program-v2 dispatcher and the direct inverted-IR ESM compiler
+previously read compiler option fields through ordinary property access or
+destructuring. Even when a caller supplied an empty, plain own-property
+record, hostile `Object.prototype` getters could execute. Host options now
+require data-only own property descriptors, and missing option names are
+never resolved through the prototype. The direct inverted compiler also
+rejects unexpected option fields and accessor entries.
+
+The added regression tests deliberately poison inherited
+`experimentalInvertedV1` and `runtimeSpecifier` getters, prove zero getter
+execution, and check invalid options fail closed. This does not claim safety
+against arbitrary Proxy traps provided by the trusted host, or authorize
+untrusted plugins to supply compiler configuration.
+
+Isolated V8 exact-source checks passed: 11/11 runtime cases, 6/6 shared
+source fixtures (2 positive results + 4 negative compile rejections),
+two compound/signed-zero semantics checks, three inherited-getter
+dispatch checks with zero getter calls, and five invalid compiler
+options rejected. These checks do **not** count as GitHub Actions,
+`node --test`, or browser module Worker evidence.
+
+The private source-tree CI mirror remains **blocked** under
+[JS approval issue #103](https://github.com/ores-truffle-oreslang/oreslang-source.js/issues/103)
+and [private-source incident #22](https://github.com/ores-truffle-oreslang/oreslang-platform-conformance/issues/22).
+A previously verified source-free private carrier has available Node 22
+and Chrome Workers, but no private source may be exported without
+reviewed permission and effective source transfer controls.
