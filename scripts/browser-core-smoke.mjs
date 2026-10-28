@@ -3,7 +3,7 @@ import {createServer} from 'node:http';
 import {spawn} from 'node:child_process';
 import {readFile,mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join,resolve,sep,extname} from 'node:path';
+import {join,resolve,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {readBrowserWorkerFixture} from './browser-worker-fixture-path.mjs';
 
@@ -12,17 +12,21 @@ const profile=await mkdtemp(join(tmpdir(),'ores-core-browser-'));
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const server=createServer(async(request,response)=>{
   try {
+    if(request.method!=='GET'&&request.method!=='HEAD'){
+      response.writeHead(405,{Allow:'GET, HEAD'});response.end();return;
+    }
     const url=new URL(request.url,'http://localhost');
     const pathname=decodeURIComponent(url.pathname);
     const file=resolve(root,pathname.startsWith('/')?pathname.slice(1):pathname);
     if(!file.startsWith(resolve(root)+sep)) {response.writeHead(403);response.end();return;}
     // A lexical root-prefix check does not stop an in-tree symlink from
     // resolving outside the checkout. Reuse the symlink-safe bounded reader.
-    const {body:contents}=await readBrowserWorkerFixture(root,request.url);
+    const admitted=await readBrowserWorkerFixture(
+      root,request.url,{head:request.method==='HEAD'});
     response.setHeader('Cache-Control','no-store');
-    response.setHeader('Content-Type',extname(file)==='.html'?'text/html; charset=utf-8':
-      extname(file)==='.ores'?'text/plain; charset=utf-8':'text/javascript; charset=utf-8');
-    response.end(contents);
+    response.setHeader('X-Content-Type-Options','nosniff');
+    response.setHeader('Content-Type',admitted.contentType);
+    response.end(request.method==='HEAD'?undefined:admitted.body);
   }catch{response.writeHead(404);response.end();}
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
