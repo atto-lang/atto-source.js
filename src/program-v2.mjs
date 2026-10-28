@@ -443,12 +443,19 @@ function normalizeProgramOptions(options) {
     const desc=Object.getOwnPropertyDescriptor(options,key);
     if(!desc || !Object.hasOwn(desc,'value'))fail('accessor compile option');
   }
-  const enabled=options.experimentalInvertedV1;
+  // Read only previously admitted own-data descriptors. Plain-record
+  // property access can execute poisoned Object.prototype getters.
+  const enabled=keys.includes('experimentalInvertedV1')
+    ? Object.getOwnPropertyDescriptor(options,'experimentalInvertedV1').value
+    : undefined;
   if(enabled!==undefined && typeof enabled!=='boolean')
     fail('experimental inverted compiler gate must be boolean');
   if(!enabled && keys.includes('runtimeSpecifier'))
     fail('runtime import option requires explicit experimental compiler gate');
-  return {experimentalInvertedV1:enabled===true,runtimeSpecifier:options.runtimeSpecifier};
+  const runtimeSpecifier=keys.includes('runtimeSpecifier')
+    ? Object.getOwnPropertyDescriptor(options,'runtimeSpecifier').value
+    : undefined;
+  return {experimentalInvertedV1:enabled===true,runtimeSpecifier};
 }
 export function compileProgramV2(source, options=undefined) {
   const checked=normalizeProgramOptions(options);
