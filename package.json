@@ -25,6 +25,7 @@
     "./static-facts-v0.node": "./src/static-facts-v0.node.mjs",
     "./actor-host.browser": "./src/actor-host.browser.mjs",
     "./actor-host.node": "./src/actor-host.node.mjs",
+    "./tenant-isolation-policy": "./src/tenant-isolation-policy.mjs",
     "./worker-actor-client": "./src/worker-actor-client.mjs",
     "./freestanding-core": "./src/freestanding-core.mjs",
     "./freestanding-core-link": "./src/freestanding-core-link.mjs",
