@@ -21,6 +21,9 @@ async function withSandbox(callback){
     await writeFile(join(root,'secret.mjs'),'secret content');
     await writeFile(join(root,'.github','workflows','secrets.mjs'),'secret content');
     await writeFile(join(root,'tests','fixtures','wrong.json'),'{}');
+    await writeFile(
+      join(root,'tests','fixtures','conformance-option-result-match-i64-v0.json'),
+      '{"testVectors":[]}');
     await writeFile(join(root,'tests','fixtures','oversized.mjs'),'x'.repeat(1048577));
     await mkdir(join(root,'src','directory.mjs'));
     await symlink(join(root,'secret.mjs'),join(root,'src','escaped.mjs'));
@@ -46,6 +49,10 @@ test('allow regular fixture files with MIME, byte reads and HEAD',async()=>{
     const c=await readBrowserWorkerFixture(root,'/tests/worker.html',{head:true});
     assert.equal(c.contentType,'text/html; charset=utf-8');
     assert.equal(c.body,undefined);
+    const d=await readBrowserWorkerFixture(
+      root,'/tests/fixtures/conformance-option-result-match-i64-v0.json');
+    assert.equal(d.contentType,'application/json; charset=utf-8');
+    assert.deepEqual(JSON.parse(d.body.toString('utf8')), {testVectors:[]});
   });
 });
 
@@ -72,5 +79,38 @@ test('bounded and malformed file or path requests fail closed',async()=>{
       error=>error instanceof BrowserWorkerFixtureAccessError);
     await assert.rejects(readBrowserWorkerFixture(root,'/src/escaped.mjs'),
       error=>error instanceof BrowserWorkerFixtureAccessError);
+  });
+});
+
+test('bounded reader accepts exactly 1 MiB and empty files, rejects 1 MiB plus one',async()=>{
+  await withSandbox(async root=>{
+    const file=join(root,'src','boundary.mjs');
+    await writeFile(file,Buffer.alloc(1048576,0x41));
+    const full=await readBrowserWorkerFixture(root,'/src/boundary.mjs');
+    assert.equal(full.body.byteLength,1048576);
+    assert.equal(full.body[0],0x41);
+    assert.equal(full.body.at(-1),0x41);
+    await writeFile(file,Buffer.alloc(1048577,0x41));
+    await assert.rejects(readBrowserWorkerFixture(root,'/src/boundary.mjs'),
+      error=>error instanceof BrowserWorkerFixtureAccessError);
+    await writeFile(file,Buffer.alloc(0));
+    const empty=await readBrowserWorkerFixture(root,'/src/boundary.mjs');
+    assert.equal(empty.body.byteLength,0);
+    const head=await readBrowserWorkerFixture(root,'/src/boundary.mjs',{head:true});
+    assert.equal(head.body,undefined);
+  });
+});
+
+test('fixture path depth is bounded independently of request bytes',async()=>{
+  await withSandbox(async root=>{
+    const names=Array.from({length:63},(_,i)=>`d${i}`);
+    const directory=join(root,'src',...names);
+    await mkdir(directory,{recursive:true});
+    await writeFile(join(directory,'deep.mjs'),'export const deep=1;');
+    const within='/src/'+names.slice(0,62).join('/')+'/ok.mjs';
+    await writeFile(join(root,'src',...names.slice(0,62),'ok.mjs'),'export const ok=1;');
+    const accepted=await readBrowserWorkerFixture(root,within);
+    assert.match(accepted.body.toString(),/ok=1/);
+    await denied(root,'/src/'+names.join('/')+'/deep.mjs');
   });
 });
