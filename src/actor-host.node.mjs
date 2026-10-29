@@ -1,7 +1,10 @@
 import {terminateFailedWorkerSpawn} from './worker-actor-spawn-cleanup.mjs';
+import {requireSupportedTenantWorkerIsolation} from './tenant-isolation-policy.mjs';
 import {Worker} from 'node:worker_threads';
 import {createWorkerActorClient,rejectUnsupportedWorkerPlacement} from './worker-actor-client.mjs';
 export function spawnNodeActor(options) {
+  // Reject unsupported physical-security requirements BEFORE constructing a Worker.
+  requireSupportedTenantWorkerIsolation(options);
   rejectUnsupportedWorkerPlacement(options);
   const {moduleUrl, exportName = 'receive', mode = 'handler', maxPending = 64, maxPendingBytes = 32*1024*1024} = options;
   const url = new URL(moduleUrl);
