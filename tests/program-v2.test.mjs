@@ -230,3 +230,17 @@ test('empty named module still emits an empty runtime namespace object',async()=
   assert.equal(Object.getPrototypeOf(ns.empty),null);
   assert.equal(Object.isFrozen(ns.empty),true);
 });
+
+test('namespace/lifecycle parity rejects unverified linking and init emission',()=>{
+  assert.throws(()=>compileProgramV2(
+    'import namespace billing as payments from "checkout"; define module app as pub fnc main(): int {return 1;} end'
+  ),/import namespace requires verified manifest package index/);
+  assert.throws(()=>compileProgramV2(
+    'namespace billing; define module app as pub fnc init(): int {return 1;} pub fnc main(): int {return 0;} end'
+  ),/init lifecycle requires once-only reachable initialization lowering/);
+  // A normal source unit has no directory scanning, ambient namespace
+  // discovery, or unexpected init side effects.
+  assert.doesNotThrow(()=>compileProgramV2(
+    'namespace billing; define module app as pub fnc main(): int {return 42;} end'
+  ));
+});

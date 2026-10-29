@@ -62,6 +62,10 @@ function validateManifest(m){
      typeof m.provenanceNote!=='string'||m.provenanceNote.length>1024||
      !Array.isArray(m.publicEntrypoints)||m.publicEntrypoints.length>128||
      m.publicEntrypoints.some(v=>typeof v!=='string'||!NAME.test(v))||
+     // No once-only initialization contract is encoded by this signed
+     // artifact schema. Treating init as an ordinary entrypoint would
+     // bypass lifecycle isolation on the trusted Node loader.
+     m.publicEntrypoints.includes('init')||
      new Set(m.publicEntrypoints).size!==m.publicEntrypoints.length)
     throw new PackageAdmissionError('invalid or unsupported package manifest');
 }
