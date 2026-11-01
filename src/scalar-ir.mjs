@@ -43,14 +43,16 @@ function name(value, context) {
   return value;
 }
 function array(value, maximum, context) {
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > maximum)
+  const length = Object.getOwnPropertyDescriptor(value, 'length')?.value;
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype ||
+      !Number.isSafeInteger(length) || length > maximum)
     fail(context + ': invalid array size');
   const keys = Reflect.ownKeys(value);
-  if (keys.length !== value.length + 1 ||
-      keys.some(k => k !== 'length' && (!/^(?:0|[1-9][0-9]*)$/.test(k) || Number(k) >= value.length)))
+  if (keys.length !== length + 1 ||
+      keys.some(k => k !== 'length' && (!/^(?:0|[1-9][0-9]*)$/.test(k) || Number(k) >= length)))
     fail(context + ': unexpected array properties');
-  const snapshot = new Array(value.length);
-  for (let i = 0; i < value.length; i++) {
+  const snapshot = new Array(length);
+  for (let i = 0; i < length; i++) {
     const desc = Object.getOwnPropertyDescriptor(value, i);
     if (!desc || !Object.hasOwn(desc, 'value')) fail(context + ': sparse or accessor array');
     snapshot[i] = desc.value;
@@ -135,8 +137,7 @@ export function validateScalarIR(ir) {
     if (seen.has(fnName)) fail('duplicate function ' + fnName);
     seen.add(fnName);
     if (typeof fn.pub !== 'boolean' || fn.resultType !== 'int') fail('invalid function signature');
-    array(fn.params, MAX_PARAMS, 'parameters');
-    const params = fn.params.map(p => name(p, 'parameter'));
+    const params = array(fn.params, MAX_PARAMS, 'parameters').map(p => name(p, 'parameter'));
     if (new Set(params).size !== params.length) fail('duplicate parameter');
     return {name: fnName, pub: fn.pub, params, resultType: 'int'};
   });
@@ -168,10 +169,10 @@ export function validateScalarIR(ir) {
       case 'call': {
         expr = record(expr, ['kind', 'target', 'args'], 'call');
         const target = index(expr.target, headers.length, 'function target');
-        array(expr.args, MAX_PARAMS, 'call arguments');
-        if (expr.args.length !== headers[target].params.length) fail('call arity mismatch');
+        const args = array(expr.args, MAX_PARAMS, 'call arguments');
+        if (args.length !== headers[target].params.length) fail('call arity mismatch');
         dependencies[owner].add(target);
-        return {kind: 'call', target, args: expr.args.map(e => checkExpr(e, owner, depth + 1))};
+        return {kind: 'call', target, args: args.map(e => checkExpr(e, owner, depth + 1))};
       }
       default: fail('unsupported expression kind');
     }
