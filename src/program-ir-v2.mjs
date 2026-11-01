@@ -42,9 +42,10 @@ function record(v,keys,context) {
   return snapshot;
 }
 function sequence(v,max,context){
+  if(!Array.isArray(v)||Object.getPrototypeOf(v)!==Array.prototype)
+    fail(context+': invalid array');
   const length=Object.getOwnPropertyDescriptor(v,'length')?.value;
-  if(!Array.isArray(v)||Object.getPrototypeOf(v)!==Array.prototype||
-     !Number.isSafeInteger(length)||length>max)
+  if(!Number.isSafeInteger(length)||length>max)
     fail(context+': invalid array');
   const own=Reflect.ownKeys(v);
   if(own.length!==length+1 || own.some(k=>k!=='length'&&(!/^(?:0|[1-9][0-9]*)$/.test(k)||Number(k)>=length)))
