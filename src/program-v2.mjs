@@ -352,6 +352,9 @@ class Parser {
     const pub = declaredPub || this.eat('pub'), start=this.peek();
     if (!this.eat('fnc') && !this.eat('routine')) fail('unsupported declaration',start);
     const kind = this.tokens[this.i-1].value, name = this.name();
+    // The program-v2 ESM slice has no once-only, reachability-scoped
+    // startup state machine. Never emit init as a normal callable/export.
+    if(name==='init')fail('init lifecycle requires once-only reachable initialization lowering',start);
     this.expect('(');
     const params = [], paramTypes = [];
     if (!this.eat(')')) {
@@ -479,6 +482,12 @@ class Parser {
     }
     const modules=[],functions=[],classes=[],usedModules=new Set(),usedClasses=new Set();
     while(this.peek().kind!=='eof'){
+      if(this.peek().value==='import'){
+        const next=this.tokens[this.i+1]?.value;
+        fail(next==='namespace'
+          ? 'import namespace requires verified manifest package index and per-provider linker'
+          : 'cross-file import requires verified source graph lowering',this.peek());
+      }
       let prefixPub=false;
       if(this.peek().value==='pub'&&this.tokens[this.i+1]?.value==='define'){
         this.i++;prefixPub=true;
