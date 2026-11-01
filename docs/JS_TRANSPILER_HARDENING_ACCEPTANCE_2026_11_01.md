@@ -18,6 +18,7 @@ checked-i64 source header. It is an authored corpus, not a cross-backend receipt
     git status --porcelain=v1
     git rev-parse HEAD
     git rev-parse HEAD^{tree}
+    npm run parity:transpiler-receipt > /tmp/oreslang-js-parity-receipt.json
     npm run check
     npm run test:transpiler-hardening
     npm run test:core
@@ -30,6 +31,14 @@ checked-i64 source header. It is an authored corpus, not a cross-backend receipt
     npm run test:workers
     npm run parity:numeric-js
     npm test
+
+The receipt command rejects a dirty checkout and checks the physical byte blobs
+of the JS compiler, validation module, manifest and regression inputs against
+committed Git blobs. Redirect its output outside the repository (e.g. /tmp) so
+the output file cannot make the checkout dirty before execution. Its 50 per-case
+observations are Node generated-ESM evidence only; no Java/LLVM/Cranelift/Wasm
+or .NET guest ran. Do not substitute a host-only oracle or this receipt for
+cross-backend evidence.
 
 Before claiming success, record the exact PR head SHA, Git tree SHA, tested
 compiler source blob SHA(s), test source blob SHA(s), Node version, workflow run
