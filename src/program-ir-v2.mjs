@@ -42,13 +42,15 @@ function record(v,keys,context) {
   return snapshot;
 }
 function sequence(v,max,context){
-  if(!Array.isArray(v)||Object.getPrototypeOf(v)!==Array.prototype||v.length>max)
+  const length=Object.getOwnPropertyDescriptor(v,'length')?.value;
+  if(!Array.isArray(v)||Object.getPrototypeOf(v)!==Array.prototype||
+     !Number.isSafeInteger(length)||length>max)
     fail(context+': invalid array');
   const own=Reflect.ownKeys(v);
-  if(own.length!==v.length+1 || own.some(k=>k!=='length'&&(!/^(?:0|[1-9][0-9]*)$/.test(k)||Number(k)>=v.length)))
+  if(own.length!==length+1 || own.some(k=>k!=='length'&&(!/^(?:0|[1-9][0-9]*)$/.test(k)||Number(k)>=length)))
     fail(context+': unexpected array properties');
-  const snapshot=new Array(v.length);
-  for(let i=0;i<v.length;i++) {
+  const snapshot=new Array(length);
+  for(let i=0;i<length;i++) {
     const desc=Object.getOwnPropertyDescriptor(v,i);
     if(!desc||!Object.hasOwn(desc,'value'))fail(context+': accessor/sparse array');
     snapshot[i]=desc.value;
