@@ -40,11 +40,13 @@ test('scalar generated ESM never embeds source comments', () => {
 
 test('scalar IR rejects an accessor replacing an existing field', () => {
   const ir=compileToIR(valid);
+  let getterCalls=0;
   Object.defineProperty(ir,'functions',{enumerable:true,configurable:true,get(){
+    getterCalls++;
     throw new Error('untrusted getter executed');
   }});
-  assert.throws(() => compileIR(ir), error =>
-    error?.message !== 'untrusted getter executed');
+  assert.throws(() => compileIR(ir), /error: scalar IR:.*accessor/);
+  assert.equal(getterCalls,0,'IR getter must not be evaluated');
 });
 
 test('unverified cross-file imports are rejected by program-v2', () => {
