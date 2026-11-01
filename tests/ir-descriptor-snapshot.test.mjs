@@ -106,3 +106,19 @@ test('real accessors and unsupported fields remain rejected', () => {
     ...program, functions: [{...program.functions[0], body: invalid}]
   }), /program IR: .*missing\/extra fields/);
 });
+
+test('malformed IR arrays fail with stable compiler errors rather than host exceptions', () => {
+  const scalar = compileToIR('pub fnc main():int{return 42;}');
+  assert.throws(() => compileIR({...scalar, functions: null}), /error: scalar IR: functions: invalid array size/);
+  const program = compileToProgramIRV2('pub fnc main():int{return 42;}');
+  assert.throws(() => compileProgramIRV2({...program, functions: null}),
+    /error: program IR: functions: invalid array/);
+  const scalarSymbols = [scalar.functions[0]];
+  scalarSymbols[Symbol('unexpected')] = true;
+  assert.throws(() => compileIR({...scalar, functions: scalarSymbols}),
+    /error: scalar IR: functions: unexpected array properties/);
+  const programSymbols = [program.functions[0]];
+  programSymbols[Symbol('unexpected')] = true;
+  assert.throws(() => compileProgramIRV2({...program, functions: programSymbols}),
+    /error: program IR: functions: unexpected array properties/);
+});
