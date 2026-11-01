@@ -43,9 +43,10 @@ function name(value, context) {
   return value;
 }
 function array(value, maximum, context) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype)
+    fail(context + ': invalid array size');
   const length = Object.getOwnPropertyDescriptor(value, 'length')?.value;
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype ||
-      !Number.isSafeInteger(length) || length > maximum)
+  if (!Number.isSafeInteger(length) || length > maximum)
     fail(context + ': invalid array size');
   const keys = Reflect.ownKeys(value);
   if (keys.length !== length + 1 ||
