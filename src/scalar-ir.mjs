@@ -46,11 +46,11 @@ function array(value, maximum, context) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype)
     fail(context + ': invalid array size');
   const length = Object.getOwnPropertyDescriptor(value, 'length')?.value;
-  if (!Number.isSafeInteger(length) || length > maximum)
+  if (!Number.isSafeInteger(length) || length < 0 || length > maximum)
     fail(context + ': invalid array size');
   const keys = Reflect.ownKeys(value);
   if (keys.length !== length + 1 ||
-      keys.some(k => k !== 'length' && (!/^(?:0|[1-9][0-9]*)$/.test(k) || Number(k) >= length)))
+      keys.some(k => k !== 'length' && (typeof k !== 'string' || !/^(?:0|[1-9][0-9]*)$/.test(k) || Number(k) >= length)))
     fail(context + ': unexpected array properties');
   const snapshot = new Array(length);
   for (let i = 0; i < length; i++) {
