@@ -1,0 +1,77 @@
+# JS transpiler hardening: exact-head acceptance (2026-11-01)
+
+## Scope and non-claims
+
+This draft hardens source/IR admission tests, adds checked signed-i64 generated-ESM
+tests, and contributes 50 source-level parity candidates. It does **not**
+implement unsupported Oreslang language features or prove cross-backend
+semantic parity. Legacy scalar-v1 wrapping and program-v2 checked-i64
+semantics remain deliberately distinct.
+
+The candidate inventory at contracts/v1/transpiler-parity-candidates.json
+includes 37 value and 13 checked-overflow expectations, each with an exact
+checked-i64 source header. It is an authored corpus, not a cross-backend receipt.
+
+## Run on an authorized Node 22 runner, in the source repository
+
+    node --version
+    git status --porcelain=v1
+    git rev-parse HEAD
+    git rev-parse HEAD^{tree}
+    npm run check
+    npm run test:transpiler-hardening
+    npm run test:core
+    npm run test:core-bool
+    npm run test:core-option-result
+    npm run test:core-adt-conformance
+    npm run test:named-args
+    npm run test:program-classes
+    npm run test:symbols
+    npm run test:workers
+    npm run parity:numeric-js
+    npm test
+
+Before claiming success, record the exact PR head SHA, Git tree SHA, tested
+compiler source blob SHA(s), test source blob SHA(s), Node version, workflow run
+and attempt IDs, runner identity, required executed job steps, commands,
+exit statuses, and guest output. No step = no execution = no test evidence.
+A source-integrity canary or isolated host oracle is not compiler-backed guest
+validation.
+
+## Cross-backend differential contract (pending)
+
+For each of the 50 unchanged source byte strings, perform real source-level
+compile/check and guest execution independently through Java/GraalVM, LLVM,
+Cranelift, Wasm, .NET NativeAOT, and JS program-v2 ESM, plus browser ESM when
+supported.
+
+Record compiler version/commit, source SHA-256, exit code, result/trap
+classification, and traceable runtime output. Compare signed-i64 integers
+exactly, without coercing to floating-point JS Number. Unsupported source
+must be recorded as UNSUPPORTED, not PASS. The host BigInt oracle is only
+supplementary expected-value checking.
+
+For checked overflow, the JS guest uses the provisional ORES_I64_OVERFLOW
+classification. Cross-toolchain comparison must normalize specified semantic
+failure classes without falsely equating unrelated host exception messages.
+Keep compilation error, execution trap, timeout, runner admission failure,
+and guest output mismatch distinct.
+
+## Deferred language decisions
+
+Do not silently remove or reinterpret the legacy percent operator or signed-i64
+wrapping in scalar-v1 as part of this test-only patch. The canonical Oreslang
+grammar currently removes %, ^, and ^^; plan a separate compatibility
+migration with all affected tests/toolchains. Never adopt JS truthiness,
+JS Number coercions or JS Worker security in place of actor isolation.
+
+Option/Result, classes, actor source lowering, suspends, non-suspending critical
+bodies, ownership and closed-world module imports require separately reviewed
+conformance work. Rebase dependent feature PRs bottom-of-stack first.
+
+## Governance
+
+Keep the PR draft until exact-head stepful CI and independent review exist.
+Do not mirror private source to another org or carrier while private-source
+export approvals and incident holds remain unresolved. Failed zero-step
+GitHub Actions jobs are not failing compiler tests.
