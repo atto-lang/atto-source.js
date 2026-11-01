@@ -233,7 +233,7 @@ test('empty named module still emits an empty runtime namespace object',async()=
 
 test('namespace/lifecycle parity rejects unverified linking and init emission',()=>{
   assert.throws(()=>compileProgramV2(
-    'import namespace billing as payments from "checkout"; define module app as pub fnc main(): int {return 1;} end'
+    'import namespace billing as payments from checkout; define module app as pub fnc main(): int {return 1;} end'
   ),/import namespace requires verified manifest package index/);
   assert.throws(()=>compileProgramV2(
     'namespace billing; define module app as pub fnc init(): int {return 1;} pub fnc main(): int {return 0;} end'
@@ -257,11 +257,19 @@ test('init is not callable through either public or private source declarations'
 
 test('unverified import forms cannot fall back to implicit ESM linking',()=>{
   for (const source of [
-    'import module billing from "checkout"; pub fnc main(): int {return 42;}',
+    'import module billing from checkout; pub fnc main(): int {return 42;}',
     'import billing; pub fnc main(): int {return 42;}',
-    'namespace app; import other from "./lib"; pub fnc main(): int {return 42;}'
+    'namespace app; import other from lib; pub fnc main(): int {return 42;}'
   ]) assert.throws(()=>compileProgramV2(source),
     /cross-file import requires verified source graph lowering/,source);
+});
+
+test('quoted import paths fail closed lexically until package-graph linking exists',()=>{
+  for(const source of [
+    'import namespace billing as payments from "checkout"; pub fnc main(): int {return 42;}',
+    'import module billing from "checkout"; pub fnc main(): int {return 42;}',
+    'namespace app; import other from "./lib"; pub fnc main(): int {return 42;}'
+  ]) assert.throws(()=>compileProgramV2(source),/error: program v2:/,source);
 });
 
 test('comment text naming import namespace and init does not activate loader effects',async()=>{
