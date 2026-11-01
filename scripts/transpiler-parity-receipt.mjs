@@ -52,6 +52,26 @@ async function main(){
     throw Error('missing exact Git commit/tree');
   if(git('status','--porcelain=v1','--untracked-files=all')!=='')
     throw Error('dirty checkout; exact-head evidence not admissible');
+  if(Number(process.versions.node.split('.')[0])<22)
+    throw Error('Node 22 or newer required for JS execution receipt');
+  const physicalBlobs=Object.create(null);
+  // Git status may miss skip-worktree changes or normalized working-tree
+  // bytes. Pin the actual physical bytes of every executable input.
+  for(const file of [
+    'src/program-v2.mjs','src/program-ir-v2.mjs',
+    'scripts/transpiler-parity-receipt.mjs',
+    'contracts/v1/transpiler-parity-candidates.json',
+    'tests/transpiler-admission-audit.test.mjs',
+    'tests/transpiler-strict-ir-matrix.test.mjs',
+    'tests/transpiler-program-v2-matrix.test.mjs',
+    'tests/transpiler-parity-candidates.test.mjs'
+  ]){
+    const committed=git('rev-parse','HEAD:'+file);
+    const physical=git('hash-object','--no-filters',file);
+    if(!/^[a-f0-9]{40}$/.test(committed)||physical!==committed)
+      throw Error('physical Git blob mismatch: '+file);
+    physicalBlobs[file]=committed;
+  }
 
   const bytes=await readFile(new URL(
     '../contracts/v1/transpiler-parity-candidates.json',import.meta.url));
@@ -103,6 +123,7 @@ async function main(){
     wasm_execution_verified:false,
     dotnet_execution_verified:false,
     git_head:head,git_tree:tree,
+    physically_verified_git_blobs:physicalBlobs,
     node_version:process.version,
     manifest_sha256:sha256(bytes),
     integer_model:manifest.integerModel,
