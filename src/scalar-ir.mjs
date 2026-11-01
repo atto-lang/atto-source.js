@@ -28,10 +28,15 @@ function record(value, fields, context) {
   if (keys.length !== fields.length || keys.some(k => typeof k !== 'string' || !fields.includes(k))) {
     fail(context + ': unexpected or missing field');
   }
+  // Consume descriptor data, not later property reads. A Proxy can report a
+  // valid descriptor while its get trap returns a different (unsafe) value.
+  const snapshot = Object.create(null);
   for (const key of fields) {
     const desc = Object.getOwnPropertyDescriptor(value, key);
     if (!desc || !Object.hasOwn(desc, 'value')) fail(context + ': accessor or missing field ' + key);
+    snapshot[key] = desc.value;
   }
+  return snapshot;
 }
 function name(value, context) {
   if (typeof value !== 'string' || value.length > 128 || !identifier.test(value)) fail(context + ': invalid identifier');
@@ -44,11 +49,13 @@ function array(value, maximum, context) {
   if (keys.length !== value.length + 1 ||
       keys.some(k => k !== 'length' && (!/^(?:0|[1-9][0-9]*)$/.test(k) || Number(k) >= value.length)))
     fail(context + ': unexpected array properties');
+  const snapshot = new Array(value.length);
   for (let i = 0; i < value.length; i++) {
     const desc = Object.getOwnPropertyDescriptor(value, i);
     if (!desc || !Object.hasOwn(desc, 'value')) fail(context + ': sparse or accessor array');
+    snapshot[i] = desc.value;
   }
-  return value;
+  return snapshot;
 }
 function index(value, maximum, context) {
   if (!Number.isSafeInteger(value) || Object.is(value, -0) || value < 0 || value >= maximum)
@@ -116,14 +123,14 @@ export function createScalarIR(parsedFunctions) {
 // Validate and canonicalize all externally supplied IR before code generation.
 // This is a format/type gate, NOT a sandbox for adversarial JS objects.
 export function validateScalarIR(ir) {
-  record(ir, ['schemaVersion', 'dialect', 'integerModel', 'functions'], 'module');
+  ir = record(ir, ['schemaVersion', 'dialect', 'integerModel', 'functions'], 'module');
   if (ir.schemaVersion !== SCALAR_IR_VERSION || ir.dialect !== SCALAR_IR_DIALECT ||
       ir.integerModel !== SCALAR_IR_INT_MODEL) fail('unsupported IR version/dialect/integer model');
-  array(ir.functions, MAX_FN, 'functions');
-  if (!ir.functions.length) fail('no functions');
+  const inputFunctions = array(ir.functions, MAX_FN, 'functions');
+  if (!inputFunctions.length) fail('no functions');
   const seen = new Set();
-  const headers = ir.functions.map(fn => {
-    record(fn, ['name', 'pub', 'params', 'resultType', 'body'], 'function');
+  const headers = inputFunctions.map(fn => {
+    fn = record(fn, ['name', 'pub', 'params', 'resultType', 'body'], 'function');
     const fnName = name(fn.name, 'function');
     if (seen.has(fnName)) fail('duplicate function ' + fnName);
     seen.add(fnName);
@@ -144,22 +151,22 @@ export function validateScalarIR(ir) {
     if (!kind || !Object.hasOwn(kind, 'value')) fail('expression: missing or accessor kind');
     switch (kind.value) {
       case 'int':
-        record(expr, ['kind', 'value'], 'int');
+        expr = record(expr, ['kind', 'value'], 'int');
         return {kind: 'int', value: integer(expr.value)};
       case 'param':
-        record(expr, ['kind', 'index'], 'parameter reference');
+        expr = record(expr, ['kind', 'index'], 'parameter reference');
         return {kind: 'param', index: index(expr.index, headers[owner].params.length, 'parameter')};
       case 'neg':
-        record(expr, ['kind', 'inner'], 'negation');
+        expr = record(expr, ['kind', 'inner'], 'negation');
         return {kind: 'neg', inner: checkExpr(expr.inner, owner, depth + 1)};
       case 'binary':
-        record(expr, ['kind', 'op', 'left', 'right'], 'binary');
+        expr = record(expr, ['kind', 'op', 'left', 'right'], 'binary');
         if (!['+', '-', '*', '%'].includes(expr.op)) fail('unsupported binary operator');
         return {kind: 'binary', op: expr.op,
           left: checkExpr(expr.left, owner, depth + 1),
           right: checkExpr(expr.right, owner, depth + 1)};
       case 'call': {
-        record(expr, ['kind', 'target', 'args'], 'call');
+        expr = record(expr, ['kind', 'target', 'args'], 'call');
         const target = index(expr.target, headers.length, 'function target');
         array(expr.args, MAX_PARAMS, 'call arguments');
         if (expr.args.length !== headers[target].params.length) fail('call arity mismatch');
@@ -170,7 +177,7 @@ export function validateScalarIR(ir) {
     }
   }
   const functions = headers.map((fn, i) => ({
-    ...fn, body: checkExpr(ir.functions[i].body, i)
+    ...fn, body: checkExpr(inputFunctions[i].body, i)
   }));
   // This subset has only eager return expressions, so any reachable call cycle
   // is unconditionally nonterminating. General Oreslang recursion is not banned.
