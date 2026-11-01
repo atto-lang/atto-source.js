@@ -31,11 +31,15 @@ function record(v,keys,context) {
   const own=Reflect.ownKeys(v);
   if(own.length!==keys.length || own.some(k=>typeof k!=='string'||!keys.includes(k)))
     fail(context+': missing/extra fields');
+  // Snapshot own data descriptors. Subsequent Proxy get traps must never
+  // replace a validated opcode, target index or literal before ESM emission.
+  const snapshot=Object.create(null);
   for(const key of keys){
     const desc=Object.getOwnPropertyDescriptor(v,key);
     if(!desc || !Object.hasOwn(desc,'value'))fail(context+': accessor/missing '+key);
+    snapshot[key]=desc.value;
   }
-  return v;
+  return snapshot;
 }
 function sequence(v,max,context){
   if(!Array.isArray(v)||Object.getPrototypeOf(v)!==Array.prototype||v.length>max)
@@ -43,11 +47,13 @@ function sequence(v,max,context){
   const own=Reflect.ownKeys(v);
   if(own.length!==v.length+1 || own.some(k=>k!=='length'&&(!/^(?:0|[1-9][0-9]*)$/.test(k)||Number(k)>=v.length)))
     fail(context+': unexpected array properties');
+  const snapshot=new Array(v.length);
   for(let i=0;i<v.length;i++) {
     const desc=Object.getOwnPropertyDescriptor(v,i);
     if(!desc||!Object.hasOwn(desc,'value'))fail(context+': accessor/sparse array');
+    snapshot[i]=desc.value;
   }
-  return v;
+  return snapshot;
 }
 function ident(s,where) {
   if(typeof s!=='string'||!ID.test(s))fail(where+': invalid identifier');
@@ -103,7 +109,7 @@ export function validateProgramIRV2(input) {
     fail('program: expected object');
   const rawKeys=Reflect.ownKeys(input);
   const hasClasses=rawKeys.includes('classes');
-  record(input,hasClasses?
+  input=record(input,hasClasses?
     ['schemaVersion','dialect','integerModel','sourceNamespace','modules','functions','classes']:
     ['schemaVersion','dialect','integerModel','sourceNamespace','modules','functions'],'program');
   if(input.schemaVersion!==PROGRAM_IR_VERSION||input.dialect!==PROGRAM_IR_DIALECT||
@@ -120,13 +126,13 @@ export function validateProgramIRV2(input) {
   if(hasClasses&&!sourceClasses.length)fail('redundant empty classes field');
   if(!moduleNames.length&&!sourceFunctions.length&&!sourceClasses.length)fail('empty program');
   const classNames=new Set(),classHeaders=sourceClasses.map(cls=>{
-    record(cls,['name','pub','methods'],'class');
+    cls=record(cls,['name','pub','methods'],'class');
     const name=classIdent(cls.name,'class name');
     if(classNames.has(name)||seenModules.has(name))fail('duplicate class/module '+name);
     classNames.add(name);
     if(typeof cls.pub!=='boolean')fail('invalid class visibility');
     const slots=new Set(),methods=sequence(cls.methods,256,'class methods').map(method=>{
-      record(method,['name','pub','params','paramTypes','returnType','body'],'class method');
+      method=record(method,['name','pub','params','paramTypes','returnType','body'],'class method');
       const methodName=callableIdent(method.name,'method name');
       if(typeof method.pub!=='boolean')fail('invalid method visibility');
       const params=sequence(method.params,32,'method parameters').map(p=>classIdent(p,'method parameter'));
@@ -158,7 +164,7 @@ export function validateProgramIRV2(input) {
       fail('function: expected plain data object');
     const keys=Reflect.ownKeys(f);
     const typed=keys.includes('paramTypes')||keys.includes('returnType');
-    record(f,typed?['module','name','kind','pub','params','body','paramTypes','returnType']:
+    f=record(f,typed?['module','name','kind','pub','params','body','paramTypes','returnType']:
       ['module','name','kind','pub','params','body'],'function');
     const module=f.module===null?null:ident(f.module,'owner module');
     if(module!==null && !seenModules.has(module))fail('missing owner module '+module);
@@ -215,19 +221,19 @@ export function validateProgramIRV2(input) {
       fail('Symbol value cannot be used as non-Symbol');
     switch(desc.value) {
       case 'int':
-        record(expr,['kind','value'],'int');
+        expr=record(expr,['kind','value'],'int');
         if(expected!=='int')fail('boolean expected, got int');
         return {kind:'int',value:int(expr.value)};
       case 'bool':
-        record(expr,['kind','value'],'bool');
+        expr=record(expr,['kind','value'],'bool');
         if(expected!=='bool'||typeof expr.value!=='boolean')fail('invalid bool literal/type');
         return {kind:'bool',value:expr.value};
       case 'symbol':
-        record(expr,['kind','value'],'symbol');
+        expr=record(expr,['kind','value'],'symbol');
         if(expected!=='symbol')fail('Symbol literal type mismatch');
         return {kind:'symbol',value:symbolName(expr.value)};
       case 'newClass': {
-        record(expr,['kind','classIndex'],'class construction');
+        expr=record(expr,['kind','classIndex'],'class construction');
         if(!Number.isSafeInteger(expr.classIndex)||Object.is(expr.classIndex,-0)||
            expr.classIndex<0||expr.classIndex>=classHeaders.length)
           fail('invalid class construction target');
@@ -237,7 +243,7 @@ export function validateProgramIRV2(input) {
       case 'methodCall':
       case 'namedMethodCall': {
         const named=desc.value==='namedMethodCall';
-        record(expr,named?
+        expr=record(expr,named?
           ['kind','classIndex','methodIndex','receiver','args','paramOrder']:
           ['kind','classIndex','methodIndex','receiver','args'],
           named?'named method call':'method call');
@@ -275,53 +281,53 @@ export function validateProgramIRV2(input) {
         };
       }
       case 'capture':
-        record(expr,['kind','slot'],'capture');
+        expr=record(expr,['kind','slot'],'capture');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            !active.includes(expr.slot))
           fail('ADT capture outside its typed payload scope');
         if(expected!=='int')fail('ADT int payload capture type mismatch');
         return {kind:'capture',slot:expr.slot};
       case 'param':
-        record(expr,['kind','index'],'param');
+        expr=record(expr,['kind','index'],'param');
         if(!Number.isSafeInteger(expr.index)||Object.is(expr.index,-0)||expr.index<0||expr.index>=headers[owner].params.length)
           fail('out-of-bounds parameter');
         if((headers[owner].paramTypes?.[expr.index]??'int')!==expected)
           fail('parameter type mismatch');
         return {kind:'param',index:expr.index};
       case 'neg':
-        record(expr,['kind','inner'],'neg');
+        expr=record(expr,['kind','inner'],'neg');
         if(expected!=='int')fail('int negation in boolean context');
         return {kind:'neg',inner:node(expr.inner,owner,depth+1,'int',active)};
       case 'not':
-        record(expr,['kind','inner'],'not');
+        expr=record(expr,['kind','inner'],'not');
         if(expected!=='bool')fail('boolean negation in integer context');
         return {kind:'not',inner:node(expr.inner,owner,depth+1,'bool',active)};
       case 'binary':
-        record(expr,['kind','op','left','right'],'binary');
+        expr=record(expr,['kind','op','left','right'],'binary');
         if(expected!=='int')fail('arithmetic in boolean context');
         if(!['+','-','*','%'].includes(expr.op))fail('unsupported binary operator');
         return {kind:'binary',op:expr.op,
           left:node(expr.left,owner,depth+1,'int',active),right:node(expr.right,owner,depth+1,'int',active)};
       case 'compare':
-        record(expr,['kind','op','left','right'],'compare');
+        expr=record(expr,['kind','op','left','right'],'compare');
         if(expected!=='bool')fail('comparison in integer context');
         if(!['<','>','<=','>=','==','!='].includes(expr.op))fail('unsupported comparator');
         return {kind:'compare',op:expr.op,left:node(expr.left,owner,depth+1,'int',active),
           right:node(expr.right,owner,depth+1,'int',active)};
       case 'symbolCompare':
-        record(expr,['kind','op','left','right'],'Symbol compare');
+        expr=record(expr,['kind','op','left','right'],'Symbol compare');
         if(expected!=='bool')fail('Symbol comparison outside bool context');
         if(expr.op!=='=='&&expr.op!=='!=')fail('unsupported Symbol comparator');
         return {kind:'symbolCompare',op:expr.op,
           left:node(expr.left,owner,depth+1,'symbol',active),
           right:node(expr.right,owner,depth+1,'symbol',active)};
       case 'if':
-        record(expr,['kind','condition','yes','no'],'if');
+        expr=record(expr,['kind','condition','yes','no'],'if');
         return {kind:'if',condition:node(expr.condition,owner,depth+1,'bool',active),
           yes:node(expr.yes,owner,depth+1,expected,active),
           no:node(expr.no,owner,depth+1,expected,active)};
       case 'call': {
-        record(expr,['kind','target','args'],'call');
+        expr=record(expr,['kind','target','args'],'call');
         if(!Number.isSafeInteger(expr.target)||Object.is(expr.target,-0)||expr.target<0||expr.target>=headers.length)
           fail('invalid call target');
         const target=headers[expr.target];
@@ -334,7 +340,7 @@ export function validateProgramIRV2(input) {
           node(a,owner,depth+1,target.paramTypes?.[i]??'int',active))};
       }
       case 'namedCall': {
-        record(expr,['kind','target','args','paramOrder'],'named call');
+        expr=record(expr,['kind','target','args','paramOrder'],'named call');
         if(!Number.isSafeInteger(expr.target)||Object.is(expr.target,-0)||
            expr.target<0||expr.target>=headers.length)fail('invalid named call target');
         const target=headers[expr.target];
@@ -360,7 +366,7 @@ export function validateProgramIRV2(input) {
           paramOrder:normalizedOrder};
       }
       case 'intrinsic': {
-        record(expr,['kind','name','args'],'intrinsic');
+        expr=record(expr,['kind','name','args'],'intrinsic');
         const signatures={
           'Option.some':[['int'],'option<int>'],
           'Option.none':[[],'option<int>'],
@@ -382,7 +388,7 @@ export function validateProgramIRV2(input) {
           args:args.map((argument,i)=>node(argument,owner,depth+1,types[i],active))};
       }
       case 'adtMatch': {
-        record(expr,['kind','adt','subject','arms'],'ADT match');
+        expr=record(expr,['kind','adt','subject','arms'],'ADT match');
         if(expr.adt!=='option<int>'&&expr.adt!=='result<int,int>')
           fail('unknown ADT match type');
         const subject=node(expr.subject,owner,depth+1,expr.adt,active);
@@ -390,8 +396,8 @@ export function validateProgramIRV2(input) {
         const arms=sequence(expr.arms,2,'ADT match arms');
         if(arms.length!==2)fail('non-exhaustive ADT match');
         const seen=new Set(),checked=[];
-        for(const arm of arms){
-          record(arm,['tag','slot','body'],'ADT match arm');
+        for(let arm of arms){
+          arm=record(arm,['tag','slot','body'],'ADT match arm');
           if(!variants.includes(arm.tag)||seen.has(arm.tag))
             fail('ADT match has duplicate or inappropriate variant');
           seen.add(arm.tag);
@@ -410,14 +416,14 @@ export function validateProgramIRV2(input) {
         return {kind:'adtMatch',adt:expr.adt,subject,arms:checked};
       }
       case 'match': {
-        record(expr,['kind','subject','arms'],'match');
+        expr=record(expr,['kind','subject','arms'],'match');
         const subject=node(expr.subject,owner,depth+1,'int',active);
         const arms=sequence(expr.arms,256,'match arms');
         if(!arms.length)fail('empty match');
         let wildcard=false;
         const literals=new Set();
         const checked=arms.map(arm=>{
-          record(arm,['value','body'],'match arm');
+          arm=record(arm,['value','body'],'match arm');
           let value;
           if(arm.value===null) {
             if(wildcard)fail('duplicate wildcard');
@@ -443,60 +449,60 @@ export function validateProgramIRV2(input) {
     if(!desc||!Object.hasOwn(desc,'value'))fail('invalid method expression kind');
     switch(desc.value){
       case 'int':
-        record(expr,['kind','value'],'method int');
+        expr=record(expr,['kind','value'],'method int');
         if(expected!=='int')fail('method int type mismatch');
         return {kind:'int',value:int(expr.value)};
       case 'bool':
-        record(expr,['kind','value'],'method bool');
+        expr=record(expr,['kind','value'],'method bool');
         if(expected!=='bool'||typeof expr.value!=='boolean')fail('method bool type mismatch');
         return {kind:'bool',value:expr.value};
       case 'symbol':
-        record(expr,['kind','value'],'method Symbol');
+        expr=record(expr,['kind','value'],'method Symbol');
         if(expected!=='symbol')fail('method Symbol type mismatch');
         return {kind:'symbol',value:symbolName(expr.value)};
       case 'param':
-        record(expr,['kind','index'],'method param');
+        expr=record(expr,['kind','index'],'method param');
         if(!Number.isSafeInteger(expr.index)||Object.is(expr.index,-0)||expr.index<0||
            expr.index>=method.params.length)fail('out-of-bounds method parameter');
         if(method.paramTypes[expr.index]!==expected)fail('method parameter type mismatch');
         return {kind:'param',index:expr.index};
       case 'neg':
-        record(expr,['kind','inner'],'method neg');
+        expr=record(expr,['kind','inner'],'method neg');
         if(expected!=='int')fail('method negation type mismatch');
         return {kind:'neg',inner:methodNode(expr.inner,method,depth+1,'int')};
       case 'not':
-        record(expr,['kind','inner'],'method not');
+        expr=record(expr,['kind','inner'],'method not');
         if(expected!=='bool')fail('method boolean negation type mismatch');
         return {kind:'not',inner:methodNode(expr.inner,method,depth+1,'bool')};
       case 'binary':
-        record(expr,['kind','op','left','right'],'method binary');
+        expr=record(expr,['kind','op','left','right'],'method binary');
         if(expected!=='int'||!['+','-','*','%'].includes(expr.op))
           fail('unsupported method arithmetic');
         return {kind:'binary',op:expr.op,
           left:methodNode(expr.left,method,depth+1,'int'),
           right:methodNode(expr.right,method,depth+1,'int')};
       case 'compare':
-        record(expr,['kind','op','left','right'],'method compare');
+        expr=record(expr,['kind','op','left','right'],'method compare');
         if(expected!=='bool'||!['<','>','<=','>=','==','!='].includes(expr.op))
           fail('unsupported method comparison');
         return {kind:'compare',op:expr.op,
           left:methodNode(expr.left,method,depth+1,'int'),
           right:methodNode(expr.right,method,depth+1,'int')};
       case 'symbolCompare':
-        record(expr,['kind','op','left','right'],'method Symbol compare');
+        expr=record(expr,['kind','op','left','right'],'method Symbol compare');
         if(expected!=='bool'||(expr.op!=='=='&&expr.op!=='!='))
           fail('unsupported method Symbol comparison');
         return {kind:'symbolCompare',op:expr.op,
           left:methodNode(expr.left,method,depth+1,'symbol'),
           right:methodNode(expr.right,method,depth+1,'symbol')};
       case 'if':
-        record(expr,['kind','condition','yes','no'],'method if');
+        expr=record(expr,['kind','condition','yes','no'],'method if');
         return {kind:'if',
           condition:methodNode(expr.condition,method,depth+1,'bool'),
           yes:methodNode(expr.yes,method,depth+1,expected),
           no:methodNode(expr.no,method,depth+1,expected)};
       case 'intrinsic': {
-        record(expr,['kind','name','args'],'method intrinsic');
+        expr=record(expr,['kind','name','args'],'method intrinsic');
         const signatures={
           'Option.some':[['int'],'option<int>'],'Option.none':[[],'option<int>'],
           'Option.is_some':[['option<int>'],'bool'],'Option.unwrap_or':[['option<int>','int'],'int'],
