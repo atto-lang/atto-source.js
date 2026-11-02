@@ -122,3 +122,21 @@ test('malformed IR arrays fail with stable compiler errors rather than host exce
   assert.throws(() => compileProgramIRV2({...program, functions: programSymbols}),
     /error: program IR: functions: unexpected array properties/);
 });
+
+test('scalar function descriptor body remains stable after admission', async () => {
+  const good = compileToIR('pub fnc main():int{return 42;}');
+  const fn = poison(good.functions[0], {body:{kind:'int',value:'0'}});
+  const emitted = compileIR({...good,functions:[fn.proxy]});
+  assert.equal(emitted,compileIR(good));
+  assert.equal((await execute(emitted)).main(),42n);
+  assert.equal(fn.reads(),0);
+});
+
+test('program function descriptor body remains stable after admission', async () => {
+  const good = compileToProgramIRV2('pub fnc main():int{return 42;}');
+  const fn = poison(good.functions[0], {body:{kind:'int',value:'0'}});
+  const emitted = compileProgramIRV2({...good,functions:[fn.proxy]});
+  assert.equal(emitted,compileProgramIRV2(good));
+  assert.equal((await execute(emitted)).main(),42n);
+  assert.equal(fn.reads(),0);
+});
