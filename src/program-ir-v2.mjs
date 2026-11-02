@@ -194,7 +194,7 @@ export function validateProgramIRV2(input) {
     slots.add(slot);
     if(module===null&&f.pub)exportNames.add(name);
     return {module,name,kind:f.kind,pub:f.pub,params,
-      ...(typed?{paramTypes:[...paramTypes],returnType}: {})};
+      ...(typed?{paramTypes:[...paramTypes],returnType}: {}),body:f.body};
   });
   // Export-name collisions are legal only for overloads of the same root
   // function, and NEVER between a runtime module object and a root function.
@@ -526,7 +526,7 @@ export function validateProgramIRV2(input) {
       default:fail('unsupported method expression kind '+desc.value);
     }
   }
-  const functions=headers.map((f,i)=>({...f,body:node(sourceFunctions[i].body,i,0,f.returnType??'int')}));
+  const functions=headers.map((f,i)=>({...f,body:node(f.body,i,0,f.returnType??'int')}));
   const classes=classHeaders.map(cls=>({
     name:cls.name,pub:cls.pub,
     methods:cls.methods.map(method=>({
