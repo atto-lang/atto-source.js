@@ -140,7 +140,7 @@ export function validateScalarIR(ir) {
     if (typeof fn.pub !== 'boolean' || fn.resultType !== 'int') fail('invalid function signature');
     const params = array(fn.params, MAX_PARAMS, 'parameters').map(p => name(p, 'parameter'));
     if (new Set(params).size !== params.length) fail('duplicate parameter');
-    return {name: fnName, pub: fn.pub, params, resultType: 'int'};
+    return {name: fnName, pub: fn.pub, params, resultType: 'int', body: fn.body};
   });
   let nodes = 0;
   const dependencies = headers.map(() => new Set());
@@ -179,7 +179,7 @@ export function validateScalarIR(ir) {
     }
   }
   const functions = headers.map((fn, i) => ({
-    ...fn, body: checkExpr(inputFunctions[i].body, i)
+    ...fn, body: checkExpr(fn.body, i)
   }));
   // This subset has only eager return expressions, so any reachable call cycle
   // is unconditionally nonterminating. General Oreslang recursion is not banned.
