@@ -20,7 +20,8 @@ const INPUTS=Object.freeze([
   'tests/transpiler-admission-audit.test.mjs',
   'tests/transpiler-strict-ir-matrix.test.mjs',
   'tests/transpiler-program-v2-matrix.test.mjs',
-  'tests/transpiler-parity-candidates.test.mjs'
+  'tests/transpiler-parity-candidates.test.mjs',
+  'tests/transpiler-receipt-security.test.mjs'
 ]);
 const sha256 = input=>createHash('sha256').update(input).digest('hex');
 // Do not trust PATH-provided Git binaries, inherited Git directories,
