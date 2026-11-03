@@ -199,6 +199,9 @@ async function main(){
     if(again.sha!==physicalBlobs[file])
       throw Error('receipt input changed after execution: '+file);
   }
+  if(git('rev-parse','--verify','HEAD')!==head ||
+     git('rev-parse','HEAD^{tree}')!==tree)
+    throw Error('Git HEAD or tree changed during guest execution');
   if(git('status','--porcelain=v1','--untracked-files=all')!=='')
     throw Error('checkout changed during guest execution');
   const passed=results.filter(r=>r.pass).length;
