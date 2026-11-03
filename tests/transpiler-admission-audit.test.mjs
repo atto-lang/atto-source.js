@@ -2,6 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {compile, compileToIR, compileIR} from '../src/compiler.mjs';
 import {compileProgramV2} from '../src/program-v2.mjs';
+import {mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 
 // These are fail-closed admission regressions, not cross-backend guest parity.
 const valid = 'pub fnc main(): int {return 42;}';
@@ -61,4 +66,23 @@ test('unsupported actor declarations do not emit misleading ESM', () => {
     () => compileProgramV2('define isolated actor Worker as end'),
     /error: program v2:/
   );
+});
+
+test('AttoLang .atto source compiles through the legacy-name JS CLI',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'atto-js-cli-'));
+  try {
+    const input=join(dir,'main.atto');
+    await writeFile(input,'pub fnc main(): int {return 40+2;}\n');
+    const cli=fileURLToPath(new URL('../bin/oreslang-jsc.mjs',import.meta.url));
+    const checked=spawnSync(process.execPath,[cli,'--program-v2','--check',input],
+      {encoding:'utf8'});
+    assert.equal(checked.status,0,checked.stderr);
+    assert.equal(checked.stdout,'OK\n');
+    const emitted=spawnSync(process.execPath,[cli,'--program-v2',input],
+      {encoding:'utf8'});
+    assert.equal(emitted.status,0,emitted.stderr);
+    const ns=await import('data:text/javascript;charset=utf-8,'+
+      encodeURIComponent(emitted.stdout));
+    assert.equal(ns.main(),42n);
+  } finally {await rm(dir,{recursive:true,force:true});}
 });
