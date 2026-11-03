@@ -157,3 +157,24 @@ Python is prohibited in this repository for source code, tests, build tooling, c
 ## Concrete Option/Result and exhaustive ADT matching (integration draft)
 
 The opt-in program-v2 source compiler admits only portable `Option<int>` and `Result<int,int>` values, strict frozen null-prototype tagged-data checks, and exhaustive `Some/None` and `Ok/Err` expression matching with arm-local typed payload bindings. This is not general generics, capabilities, actor-source lowering or general exception support. Run `npm run test:core-option-result`, `npm run test:core-adt-match` and `npm run test:core-adt-conformance`. Exact-head Node/browser tests and independent review remain required.
+
+## Shared six-backend scalar50 source execution (experimental JS evidence)
+
+`npm run test:shared-scalar50` compiles and executes the **exact 50 source programs**
+from the Java/LLVM/Wasm/Cranelift/.NET scalar50 conformance proposal, using
+program-v2 and the actual Node ESM loader. The checked-in
+`tests/fixtures/shared-scalar50-v1.tsv` is byte-identical to Java PR #2386's
+`contracts/parity/scalar50/v1.tsv` at commit
+`9371ba965e6d05ce2e4e934eb0cbf906a813dd9f`, Git blob
+`a948dbaf594916a6ee07f65d49a0cf5ae398ca7b`. The test rejects any
+physical-byte change and verifies 50 typed BigInt results plus source-to-IR
+codegen identity. The default `npm test` also includes this test file.
+
+This is a small shared scalar source floor, **not** compiler or actor parity.
+The suite does not execute Java/Graal, LLVM, Cranelift, Wasm, or .NET; their
+respective real compiler/guest tests need separate exact-head receipts. The
+shipping JS scalar-v1 compiler still wraps provisionally while program-v2
+checks signed-i64 overflow. The additional negative test ensures this suite
+does not accidentally promote wrapping to checked arithmetic. Node's ESM
+runtime is not an untrusted guest sandbox. A passing source-free or in-memory
+V8 test is not an executed Node `npm test` or CI admission receipt.
