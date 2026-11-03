@@ -45,6 +45,24 @@ jobs:
       - name: Execute legacy class-method compatibility adapter checks
         run: npm run test:class-methods
       - run: npm test
+      - name: Execute JS transpiler admission and source-local receipt regressions
+        run: npm run test:transpiler-hardening
+      - name: Execute exact-head Node ESM parity receipt
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          node scripts/transpiler-parity-receipt.mjs | tee "$RUNNER_TEMP/atto-js-parity-receipt.json"
+          node --input-type=module -e '
+            import {readFileSync} from "node:fs";
+            const r=JSON.parse(readFileSync(process.argv[1],"utf8"));
+            if(r.git_head!==process.env.EXPECTED_SOURCE_SHA ||
+               r.expected_cases!==50 || r.passed_cases!==50 ||
+               r.failed_cases!==0 ||
+               r.cross_backend_parity_verified!==false)
+              throw Error("transpiler receipt does not match exact head or outcomes");
+            console.log("Exact-source Node ESM receipt verified:",r.git_head);
+          ' "$RUNNER_TEMP/atto-js-parity-receipt.json"
       - run: npm run check
       - run: npm run parity:js
       - run: npm run parity:numeric-js
