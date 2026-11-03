@@ -55,6 +55,14 @@
       "items": {
         "$ref": "#/$defs/class"
       }
+    },
+    "generators": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 512,
+      "items": {
+        "$ref": "#/$defs/generator"
+      }
     }
   },
   "$defs": {
@@ -778,6 +786,62 @@
               "type": "null"
             }
           ]
+        }
+      }
+    },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "module",
+        "name",
+        "pub",
+        "params",
+        "paramTypes",
+        "elementType",
+        "yields"
+      ],
+      "properties": {
+        "module": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ident"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "$ref": "#/$defs/ident"
+        },
+        "pub": {
+          "type": "boolean"
+        },
+        "params": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/ident"
+          }
+        },
+        "paramTypes": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "const": "int"
+          }
+        },
+        "elementType": {
+          "const": "int"
+        },
+        "yields": {
+          "type": "array",
+          "maxItems": 30000,
+          "items": {
+            "$ref": "#/$defs/expr"
+          }
         }
       }
     }
