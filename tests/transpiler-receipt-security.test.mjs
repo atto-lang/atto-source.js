@@ -129,8 +129,8 @@ test('committed unreviewed compiler import is rejected before guest execution',
     const input=join(dir,'src/program-v2.mjs');
     const initial=await readFile(input,'utf8');
     await writeFile(input,initial+
-      "\\nimport {writeFileSync} from 'node:fs';\\n"+
-      "writeFileSync('UNREVIEWED_IMPORT_EXECUTED','bad');\\n");
+      "\nimport {writeFileSync} from 'node:fs';\n"+
+      "writeFileSync('UNREVIEWED_IMPORT_EXECUTED','bad');\n");
     git(dir,'add','--','src/program-v2.mjs');
     git(dir,'-c','user.name=JS Receipt Test','-c','user.email=receipt@example.invalid',
         'commit','-qm','unreviewed-import negative fixture');
