@@ -37,7 +37,7 @@ regular-file types, non-symlink path components, and the exact physical Git
 SHA-1 blob bytes of the JS compiler, strict-JSON parser, manifest and
 regression inputs against committed Git blobs. It verifies these inputs
 **before dynamically importing the repository-owned compiler and JSON parser**,
-then rechecks them after execution. The dedicated test suite exercises a
+then imports the verified parser/compiler/IR bytes as sealed in-memory ESM\nmodules rather than reopening the files through Node's module resolver. The\ncompiler-to-IR static import is explicitly checked against the reviewed\ndependency shape. It fences HEAD/tree and rechecks physical inputs after\nexecution. This avoids the post-verification disk import window; it is not\na substitute for a protected checkout, review, or an OS sandbox. The dedicated test suite exercises a
 source-local temporary Git fixture, a skip-worktree compiler mutation with a
 pre-import side-effect canary, ambiguous duplicate JSON members, and dirty
 candidate-source rejection. These tests run entirely inside the authorized
@@ -104,3 +104,19 @@ exact-head receipt from the real PR checkout or independent source review.
 New AttoLang sources should use the .atto extension; these legacy compatibility
 fixtures retain their existing Oreslang syntax and exact checked-i64 directive
 until the frontend accepts an agreed migration profile.
+
+## Isolated audit evidence (2026-11-03)
+
+GitHub-fetched program-v2 and program-IR source blobs were exercised in an
+isolated V8 test adapter: 50/50 reviewed numeric source candidates matched,
+and 1,000/1,000 seeded signed-i64 addition pairs matched the BigInt oracle,
+including 246 expected overflow traps. This is a *hosted isolated V8 run*,
+not a Node 22 module-loader test, source-org CI receipt, or cross-backend
+AttoLang guest parity. A local Node 22 smoke verified sealed data-URL ESM
+loading using synthetic compiler/IR code, and a local Git fixture proved the
+independent physical-blob preflight rejects skip-worktree modifications.
+
+Until the source-org runner allocates and executes the exact PR head's test
+steps, do not promote any of these independent checks to compiler release
+acceptance. Keep the old .ores numeric fixture syntax solely for explicit
+compatibility; use .atto for new AttoLang programs as the migration lands.
