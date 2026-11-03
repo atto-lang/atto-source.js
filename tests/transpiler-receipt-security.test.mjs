@@ -121,3 +121,23 @@ test('skip-worktree symlinked compiler file is rejected even with identical byte
     assert.match(r.stderr,/symlink or nonregular receipt input path/);
   }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('committed unreviewed compiler import is rejected before guest execution',
+  {skip:!supported},async()=>{
+  const dir=await fixture();
+  try {
+    const input=join(dir,'src/program-v2.mjs');
+    const initial=await readFile(input,'utf8');
+    await writeFile(input,initial+
+      "\\nimport {writeFileSync} from 'node:fs';\\n"+
+      "writeFileSync('UNREVIEWED_IMPORT_EXECUTED','bad');\\n");
+    git(dir,'add','--','src/program-v2.mjs');
+    git(dir,'-c','user.name=JS Receipt Test','-c','user.email=receipt@example.invalid',
+        'commit','-qm','unreviewed-import negative fixture');
+    const r=receipt(dir);
+    assert.notEqual(r.status,0);
+    assert.match(r.stderr,/approved dependency graph/);
+    await assert.rejects(access(join(dir,'UNREVIEWED_IMPORT_EXECUTED')),
+      'unexpected compiler import side effect must never execute');
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
