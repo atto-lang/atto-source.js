@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,copyFile,readFile,writeFile,rm,access} from 'node:fs/promises';
+import {mkdtemp,mkdir,copyFile,readFile,writeFile,rm,access,symlink,unlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {dirname,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -102,5 +102,22 @@ test('uncommitted candidate mutation cannot claim an exact-head receipt',
     const r=receipt(dir);
     assert.notEqual(r.status,0);
     assert.match(r.stderr,/dirty checkout|physical Git blob mismatch/);
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('skip-worktree symlinked compiler file is rejected even with identical bytes',
+  {skip:!supported},async()=>{
+  const dir=await fixture();
+  try {
+    const input=join(dir,'src/program-v2.mjs');
+    const mirror=join(dir,'src/compiler-mirror.mjs');
+    await copyFile(input,mirror);
+    await writeFile(join(dir,'.git/info/exclude'),'src/compiler-mirror.mjs\n');
+    await unlink(input);
+    await symlink('compiler-mirror.mjs',input);
+    git(dir,'update-index','--skip-worktree','src/program-v2.mjs');
+    const r=receipt(dir);
+    assert.notEqual(r.status,0);
+    assert.match(r.stderr,/symlink or nonregular receipt input path/);
   }finally{await rm(dir,{recursive:true,force:true});}
 });
