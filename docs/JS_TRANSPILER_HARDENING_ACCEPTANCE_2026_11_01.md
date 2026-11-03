@@ -32,9 +32,16 @@ checked-i64 source header. It is an authored corpus, not a cross-backend receipt
     npm run parity:numeric-js
     npm test
 
-The receipt command rejects a dirty checkout and checks the physical byte blobs
-of the JS compiler, validation module, manifest and regression inputs against
-committed Git blobs. Redirect its output outside the repository (e.g. /tmp) so
+The receipt command rejects a dirty checkout and checks Git tree/index modes,
+regular-file types, non-symlink path components, and the exact physical Git
+SHA-1 blob bytes of the JS compiler, strict-JSON parser, manifest and
+regression inputs against committed Git blobs. It verifies these inputs
+**before dynamically importing the repository-owned compiler and JSON parser**,
+then rechecks them after execution. The dedicated test suite exercises a
+source-local temporary Git fixture, a skip-worktree compiler mutation with a
+pre-import side-effect canary, ambiguous duplicate JSON members, and dirty
+candidate-source rejection. These tests run entirely inside the authorized
+source runner, without any cross-organization mirror. Redirect its output outside the repository (e.g. /tmp) so
 the output file cannot make the checkout dirty before execution. Its 50 per-case
 observations are Node generated-ESM evidence only; no Java/LLVM/Cranelift/Wasm
 or .NET guest ran. Do not substitute a host-only oracle or this receipt for
@@ -84,3 +91,16 @@ Keep the PR draft until exact-head stepful CI and independent review exist.
 Do not mirror private source to another org or carrier while private-source
 export approvals and incident holds remain unresolved. Failed zero-step
 GitHub Actions jobs are not failing compiler tests.
+
+## 2026-11-03 audit finding
+
+Earlier receipt code statically imported program-v2 before verifying physical
+Git blobs. That ordering allowed top-level module evaluation prior to the
+receipt's own admission checks. The updated source no longer does this.
+The source-repository CI workflow now has explicit hardening-suite and
+exact-head receipt steps; they are pending actual runner assignment.
+A source-local temporary-repo test passing does **not** substitute for an
+exact-head receipt from the real PR checkout or independent source review.
+New AttoLang sources should use the .atto extension; these legacy compatibility
+fixtures retain their existing Oreslang syntax and exact checked-i64 directive
+until the frontend accepts an agreed migration profile.
