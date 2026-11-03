@@ -24,6 +24,21 @@ const INPUTS=Object.freeze([
   'tests/transpiler-receipt-security.test.mjs'
 ]);
 const sha256 = input=>createHash('sha256').update(input).digest('hex');
+// Load the exact verified in-memory bytes rather than reopening source files
+// after integrity admission. Node's module loader must never have the chance
+// to run modified on-disk compiler code between verification and import.
+const verifiedModuleUrl = bytes =>
+  'data:text/javascript;base64,'+bytes.toString('base64');
+function sealedCompilerSource(programBytes,irBytes) {
+  const source=new TextDecoder('utf-8',{fatal:true}).decode(programBytes);
+  const dependency="from './program-ir-v2.mjs';";
+  if(source.split(dependency).length!==2 ||
+     source.split('\n').filter(line=>/^\s*import\s/.test(line)).length!==1 ||
+     !/^\s*import \{validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL\} from '\.\/program-ir-v2\.mjs';/m.test(source))
+    throw Error('program-v2 verified module imports differ from approved dependency graph');
+  return source.replace(dependency,'from '+JSON.stringify(verifiedModuleUrl(irBytes))+';');
+}
+
 // Do not trust PATH-provided Git binaries, inherited Git directories,
 // unreviewed global/system config, or an executable fsmonitor hook.
 const git = (...args)=>execFileSync('/usr/bin/git',
@@ -118,22 +133,30 @@ async function main(){
   if(Number(process.versions.node.split('.')[0])<22)
     throw Error('Node 22 or newer required for JS execution receipt');
   const physicalBlobs=Object.create(null);
+  const verifiedModules=Object.create(null);
   let manifestBytes;
-  // Verify before importing ANY repository-owned module.
+  // Verify all source inputs before importing any repository-owned module.
   for(const file of INPUTS){
     const {sha,bytes}=await verifyPhysicalBlob(file);
     physicalBlobs[file]=sha;
     if(file==='contracts/v1/transpiler-parity-candidates.json')
       manifestBytes=bytes;
+    if(file==='src/program-v2.mjs'||file==='src/program-ir-v2.mjs'||
+       file==='src/parity-json-strict.mjs')
+      verifiedModules[file]=bytes;
   }
   if(manifestBytes[0]===0xef&&manifestBytes[1]===0xbb&&manifestBytes[2]===0xbf)
     throw Error('BOM-bearing candidate JSON is forbidden');
   const json=new TextDecoder('utf-8',{fatal:true}).decode(manifestBytes);
-  const {parseStrictJsonReport}=await import('../src/parity-json-strict.mjs');
+  const {parseStrictJsonReport}=await import(
+    verifiedModuleUrl(verifiedModules['src/parity-json-strict.mjs']));
   const manifest=parseStrictJsonReport(json,65536,'JS transpiler candidates');
   requireCorpus(manifest);
+  const compilerSource=sealedCompilerSource(
+    verifiedModules['src/program-v2.mjs'],
+    verifiedModules['src/program-ir-v2.mjs']);
   const {compileToProgramIRV2,compileProgramIRV2}
-    =await import('../src/program-v2.mjs');
+    =await import(verifiedModuleUrl(Buffer.from(compilerSource,'utf8')));
   const results=[];
   for(const item of manifest.cases){
     let observed_kind='compile-error',observed_value=null,emitted_sha256=null;
