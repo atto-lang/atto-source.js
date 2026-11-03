@@ -23,6 +23,162 @@ jobs:
           git diff --quiet HEAD --
           test -z "$(git ls-files --others --exclude-standard)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
+          # Independently gate the receipt script and its compiler inputs
+          # before executing any checked-out Node source. git diff alone does
+          # not discover modifications hidden by skip-worktree bits.
+          receipt_inputs=(
+            src/program-v2.mjs
+            src/program-ir-v2.mjs
+            src/parity-json-strict.mjs
+            scripts/transpiler-parity-receipt.mjs
+            contracts/v1/transpiler-parity-candidates.json
+            tests/transpiler-admission-audit.test.mjs
+            tests/transpiler-strict-ir-matrix.test.mjs
+            tests/transpiler-program-v2-matrix.test.mjs
+            tests/transpiler-parity-candidates.test.mjs
+            tests/transpiler-receipt-security.test.mjs
+          )
+          for file in "${receipt_inputs[@]}"; do
+            [[ -f "$file" && ! -L "$file" ]] || exit 1
+            path=""
+            IFS='/' read -r -a segments <<< "$file"
+            for component in "${segments[@]}"; do
+              path="${path:+$path/}$component"
+              [[ ! -L "$path" ]] || exit 1
+            done
+            committed="$(/usr/bin/git rev-parse "HEAD:$file")"
+            [[ "$committed" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$(/usr/bin/git ls-tree HEAD -- "$file")" ==       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Execute checked-i64 guest differential suite
+        run: node --test tests/checked-i64-arithmetic-differential.test.mjs tests/checked-i64-remainder-parity.test.mjs
+      - name: Execute canonical conditional semantics and negative IR cases
+        run: npm run test:conditionals
+      - name: Execute composed conditional and ADT source-to-ESM checks
+        run: npm run test:conditional-adt
+      - name: Execute named-call binding and evaluation-order checks
+        run: npm run test:named-args
+      - name: Execute nominal Symbol literal and ABI checks
+        run: npm run test:symbols
+      - name: Execute Symbol equality and cross-artifact wire checks
+        run: npm run test:symbol-wire
+      - name: Execute unified program-v2 class and method checks
+        run: npm run test:program-classes
+      - name: Execute legacy class-method compatibility adapter checks
+        run: npm run test:class-methods
+      - run: npm test
+      - name: Execute JS transpiler admission and source-local receipt regressions
+        run: npm run test:transpiler-hardening
+      - name: Execute exact-head Node ESM parity receipt
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          node scripts/transpiler-parity-receipt.mjs | tee "$RUNNER_TEMP/atto-js-parity-receipt.json"
+          node --input-type=module -e '
+            import {readFileSync} from "node:fs";
+            const r=JSON.parse(readFileSync(process.argv[1],"utf8"));
+            if(r.git_head!==process.env.EXPECTED_SOURCE_SHA ||
+               r.expected_cases!==50 || r.passed_cases!==50 ||
+               r.failed_cases!==0 ||
+               r.cross_backend_parity_verified!==false)
+              throw Error("transpiler receipt does not match exact head or outcomes");
+            console.log("Exact-source Node ESM receipt verified:",r.git_head);
+          ' "$RUNNER_TEMP/atto-js-parity-receipt.json"
+      - run: npm run check
+      - run: npm run parity:js
+      - run: npm run parity:numeric-js
+100644 blob '"$committed"      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Execute checked-i64 guest differential suite
+        run: node --test tests/checked-i64-arithmetic-differential.test.mjs tests/checked-i64-remainder-parity.test.mjs
+      - name: Execute canonical conditional semantics and negative IR cases
+        run: npm run test:conditionals
+      - name: Execute composed conditional and ADT source-to-ESM checks
+        run: npm run test:conditional-adt
+      - name: Execute named-call binding and evaluation-order checks
+        run: npm run test:named-args
+      - name: Execute nominal Symbol literal and ABI checks
+        run: npm run test:symbols
+      - name: Execute Symbol equality and cross-artifact wire checks
+        run: npm run test:symbol-wire
+      - name: Execute unified program-v2 class and method checks
+        run: npm run test:program-classes
+      - name: Execute legacy class-method compatibility adapter checks
+        run: npm run test:class-methods
+      - run: npm test
+      - name: Execute JS transpiler admission and source-local receipt regressions
+        run: npm run test:transpiler-hardening
+      - name: Execute exact-head Node ESM parity receipt
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          node scripts/transpiler-parity-receipt.mjs | tee "$RUNNER_TEMP/atto-js-parity-receipt.json"
+          node --input-type=module -e '
+            import {readFileSync} from "node:fs";
+            const r=JSON.parse(readFileSync(process.argv[1],"utf8"));
+            if(r.git_head!==process.env.EXPECTED_SOURCE_SHA ||
+               r.expected_cases!==50 || r.passed_cases!==50 ||
+               r.failed_cases!==0 ||
+               r.cross_backend_parity_verified!==false)
+              throw Error("transpiler receipt does not match exact head or outcomes");
+            console.log("Exact-source Node ESM receipt verified:",r.git_head);
+          ' "$RUNNER_TEMP/atto-js-parity-receipt.json"
+      - run: npm run check
+      - run: npm run parity:js
+      - run: npm run parity:numeric-js
+\\t'"$file" ]]
+            [[ "$(/usr/bin/git ls-files --stage -- "$file")" == "100644 $committed 0"      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Execute checked-i64 guest differential suite
+        run: node --test tests/checked-i64-arithmetic-differential.test.mjs tests/checked-i64-remainder-parity.test.mjs
+      - name: Execute canonical conditional semantics and negative IR cases
+        run: npm run test:conditionals
+      - name: Execute composed conditional and ADT source-to-ESM checks
+        run: npm run test:conditional-adt
+      - name: Execute named-call binding and evaluation-order checks
+        run: npm run test:named-args
+      - name: Execute nominal Symbol literal and ABI checks
+        run: npm run test:symbols
+      - name: Execute Symbol equality and cross-artifact wire checks
+        run: npm run test:symbol-wire
+      - name: Execute unified program-v2 class and method checks
+        run: npm run test:program-classes
+      - name: Execute legacy class-method compatibility adapter checks
+        run: npm run test:class-methods
+      - run: npm test
+      - name: Execute JS transpiler admission and source-local receipt regressions
+        run: npm run test:transpiler-hardening
+      - name: Execute exact-head Node ESM parity receipt
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          node scripts/transpiler-parity-receipt.mjs | tee "$RUNNER_TEMP/atto-js-parity-receipt.json"
+          node --input-type=module -e '
+            import {readFileSync} from "node:fs";
+            const r=JSON.parse(readFileSync(process.argv[1],"utf8"));
+            if(r.git_head!==process.env.EXPECTED_SOURCE_SHA ||
+               r.expected_cases!==50 || r.passed_cases!==50 ||
+               r.failed_cases!==0 ||
+               r.cross_backend_parity_verified!==false)
+              throw Error("transpiler receipt does not match exact head or outcomes");
+            console.log("Exact-source Node ESM receipt verified:",r.git_head);
+          ' "$RUNNER_TEMP/atto-js-parity-receipt.json"
+      - run: npm run check
+      - run: npm run parity:js
+      - run: npm run parity:numeric-js
+\\t'"$file" ]]
+            actual="$(/usr/bin/git hash-object --no-filters "$file")"
+            [[ "$actual" == "$committed" ]] || {
+              echo "::error::physical blob identity mismatch: $file" >&2
+              exit 1
+            }
+          done
           echo "Verified JS source commit: $EXPECTED_SOURCE_SHA"
           echo "Verified JS source tree: $(git rev-parse 'HEAD^{tree}')"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
