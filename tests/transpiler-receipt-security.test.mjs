@@ -141,3 +141,23 @@ test('committed unreviewed compiler import is rejected before guest execution',
       'unexpected compiler import side effect must never execute');
   }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('committed oversized compiler is rejected before any module evaluation',
+  {skip:!supported},async()=>{
+  const dir=await fixture();
+  try {
+    const input=join(dir,'src/program-v2.mjs');
+    const payload="import {writeFileSync} from 'node:fs';\n"+
+      "writeFileSync('OVERSIZED_COMPILER_EXECUTED','bad');\n"+
+      "//"+'x'.repeat(262144);
+    await writeFile(input,payload);
+    git(dir,'add','--','src/program-v2.mjs');
+    git(dir,'-c','user.name=JS Receipt Test','-c','user.email=receipt@example.invalid',
+        'commit','-qm','oversized compiler boundary fixture');
+    const r=receipt(dir);
+    assert.notEqual(r.status,0);
+    assert.match(r.stderr,/unbounded or nonregular receipt input/);
+    await assert.rejects(access(join(dir,'OVERSIZED_COMPILER_EXECUTED')),
+      'oversized compiler must never execute');
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
