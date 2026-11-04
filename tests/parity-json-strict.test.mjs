@@ -197,8 +197,8 @@ test('unsafe object keys never reach full JSON graph materialization',()=>{
     };
     for(const source of [
       '{"__proto__":{"unsafe":true}}',
-      '{"results":[{"constr\u0075ctor":1}]}',
-      '{"nested":{"proto\u0074ype":"forged"}}'
+      '{"results":[{"constr\\u0075ctor":1}]}',
+      '{"nested":{"proto\\u0074ype":"forged"}}'
     ])assert.throws(()=>parse(source),/unsafe JSON member/,source);
     assert.equal(objectsParsed,0,'unsafe reports must be rejected before object-graph parsing');
     assert.deepEqual(parse('{"label":"__proto__","backend":"llvm"}'),
