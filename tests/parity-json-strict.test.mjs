@@ -119,3 +119,10 @@ test('reject nonzero positive subnormal underflow before JSON report materializa
   for(const source of ['0e-999','0.00e-999','5e-324','{"weight":0}'])
     assert.deepEqual(parse(source),JSON.parse(source),source);
 });
+
+test('signed subnormal underflow and representable values remain distinct',()=>{
+  for(const source of ['-1e-324','-0.01e-999','{"values":[-1e-324]}','[0,1e-324]'])
+    assert.throws(()=>parse(source),/(?:noncanonical negative-zero|underflow JSON number)/,source);
+  for(const source of ['-5e-324','5e-324','0.000e-999','{"numbers":[-5e-324,5e-324,0]}'])
+    assert.deepEqual(parse(source),JSON.parse(source),source);
+});
