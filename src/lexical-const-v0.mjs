@@ -107,19 +107,26 @@ export function lower_const_sequence(statements, fallback = null) {
         Object.getPrototypeOf(item)!==Object.prototype)
       fail('invalid lexical statement');
     const keys=Reflect.ownKeys(item);
-    if(keys.some(k=>typeof k!=='string'||!Object.hasOwn(Object.getOwnPropertyDescriptor(item,k),'value')))
-      fail('accessor or symbol-keyed statement');
-    if (item.kind==='return') {
+    // Snapshot exactly the admitted own data descriptors. Never reread the
+    // original object through a Proxy get trap after checking its descriptors.
+    const fields=Object.create(null);
+    for(const key of keys){
+      const desc=Object.getOwnPropertyDescriptor(item,key);
+      if(typeof key!=='string'||!Object.hasOwn(desc??{},'value'))
+        fail('accessor or symbol-keyed statement');
+      fields[key]=desc.value;
+    }
+    if (fields.kind==='return') {
       if (keys.length!==2 || !keys.includes('kind') || !keys.includes('value') ||
           result!==null) fail('unreachable or malformed return');
-      result=item.value;
-    } else if (item.kind==='const') {
+      result=fields.value;
+    } else if (fields.kind==='const') {
       if (++declarationDepth > MAX_DEPTH) fail('nested const depth budget exceeded');
       if (keys.length!==4 || !['kind','name','type','value'].every(k=>keys.includes(k)))
         fail('malformed const declaration');
-      validName(item.name);validType(item.type);
+      validName(fields.name);validType(fields.type);
       if (result===null) fail('const declaration requires returning continuation');
-      result={kind:'localDecl',name:item.name,type:item.type,value:item.value,body:result};
+      result={kind:'localDecl',name:fields.name,type:fields.type,value:fields.value,body:result};
     } else fail('unsupported lexical statement');
   }
   if (result===null) fail('missing return');
