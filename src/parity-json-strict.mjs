@@ -34,8 +34,21 @@ export function parseStrictJsonReport(text,maximum,where) {
     while(at<text.length) {
       const ch=text[at++];
       if(ch==='"') {
-        try {return JSON.parse(text.slice(start,at));}
+        let decoded;
+        try {decoded=JSON.parse(text.slice(start,at));}
         catch {invalid();}
+        // JSON.parse permits escaped lone UTF-16 surrogates. Reject them
+        // before materializing a receipt whose UTF-8 identity can vary.
+        for(let j=0;j<decoded.length;j++){
+          const unit=decoded.charCodeAt(j);
+          if(unit>=0xd800&&unit<=0xdbff){
+            const low=decoded.charCodeAt(++j);
+            if(!(low>=0xdc00&&low<=0xdfff))
+              fail('invalid JSON Unicode surrogate');
+          }else if(unit>=0xdc00&&unit<=0xdfff)
+            fail('invalid JSON Unicode surrogate');
+        }
+        return decoded;
       }
       if(ch==='\\')at++;
     }
