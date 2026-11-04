@@ -112,3 +112,10 @@ test('negative-zero and signed-underflow report numbers fail before materializat
     assert.deepEqual(parse(source),JSON.parse(source));
   }
 });
+
+test('reject nonzero positive subnormal underflow before JSON report materialization',()=>{
+  for(const source of ['1e-324','0.1e-999','{"cases":[{"weight":1e-324}]}'])
+    assert.throws(()=>parse(source),/underflow JSON number/,source);
+  for(const source of ['0e-999','0.00e-999','5e-324','{"weight":0}'])
+    assert.deepEqual(parse(source),JSON.parse(source),source);
+});

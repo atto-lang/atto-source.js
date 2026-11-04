@@ -72,6 +72,9 @@ export function parseStrictJsonReport(text,maximum,where) {
     // receipt IDs/counts must not silently change during materialization.
     if(Number.isInteger(number)&&!Number.isSafeInteger(number))
       fail('unsafe JSON integer precision');
+    // A nonzero significand rounding to zero must not become a trusted zero.
+    if(number===0 && /[1-9]/.test(token.split(/[eE]/,1)[0]))
+      fail('underflow JSON number');
   }
   value(0);spaces();
   if(at!==text.length)invalid();
