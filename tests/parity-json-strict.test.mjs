@@ -186,3 +186,23 @@ test('fractional JSON tokens cannot round into trusted safe integer metadata',()
     '1.25','0.125','-2.5e-10','9007199254740991.0'
   ])assert.deepEqual(parse(source),JSON.parse(source),source);
 });
+
+test('unsafe object keys never reach full JSON graph materialization',()=>{
+  const original=JSON.parse;
+  let objectsParsed=0;
+  try {
+    JSON.parse=function(source,...args){
+      if(source.trimStart().startsWith('{'))objectsParsed++;
+      return original(source,...args);
+    };
+    for(const source of [
+      '{"__proto__":{"unsafe":true}}',
+      '{"results":[{"constr\u0075ctor":1}]}',
+      '{"nested":{"proto\u0074ype":"forged"}}'
+    ])assert.throws(()=>parse(source),/unsafe JSON member/,source);
+    assert.equal(objectsParsed,0,'unsafe reports must be rejected before object-graph parsing');
+    assert.deepEqual(parse('{"label":"__proto__","backend":"llvm"}'),
+      {label:'__proto__',backend:'llvm'});
+    assert.equal(objectsParsed,1,'safe report must still be materialized');
+  } finally {JSON.parse=original;}
+});
