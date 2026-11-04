@@ -65,15 +65,33 @@ async function verifyPhysicalBlob(file) {
     if(st.isSymbolicLink()||(i===segments.length-1?!st.isFile():!st.isDirectory()))
       throw Error('symlink or nonregular receipt input path '+file);
   }
-  if(!constants.O_NOFOLLOW)throw Error('O_NOFOLLOW is required for receipts');
-  const handle=await open(current,constants.O_RDONLY|constants.O_NOFOLLOW);
+  // O_NONBLOCK prevents a concurrently substituted FIFO from hanging open().
+  if(!Number.isInteger(constants.O_NOFOLLOW)||!Number.isInteger(constants.O_NONBLOCK))
+    throw Error('O_NOFOLLOW and O_NONBLOCK are required for receipts');
+  const handle=await open(current,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
   let bytes;
   try {
     const stat=await handle.stat();
-    if(!stat.isFile()||stat.size>262144)
+    if(!stat.isFile()||!Number.isSafeInteger(stat.size)||
+       stat.size<0||stat.size>262144)
       throw Error('unbounded or nonregular receipt input '+file);
-    bytes=await handle.readFile();
-    if(bytes.length!==stat.size)throw Error('changing receipt input '+file);
+    // Read only the approved size, rather than using readFile() on a growing
+    // file. Verify EOF and inode metadata before accepting the snapshot.
+    bytes=Buffer.alloc(stat.size);
+    let at=0;
+    while(at<bytes.length){
+      const {bytesRead}=await handle.read(bytes,at,bytes.length-at,at);
+      if(bytesRead===0)throw Error('changing receipt input '+file);
+      at+=bytesRead;
+    }
+    const extra=Buffer.alloc(1);
+    if((await handle.read(extra,0,1,bytes.length)).bytesRead!==0)
+      throw Error('changing receipt input '+file);
+    const after=await handle.stat();
+    if(!after.isFile()||after.size!==stat.size||
+       after.dev!==stat.dev||after.ino!==stat.ino||
+       after.mtimeMs!==stat.mtimeMs||after.ctimeMs!==stat.ctimeMs)
+      throw Error('changing receipt input '+file);
   } finally {await handle.close();}
   // Git SHA-1 object identity hashes exact bytes; unlike hash-object --path,
   // this is not normalized by clean filters and cannot follow final symlinks.
