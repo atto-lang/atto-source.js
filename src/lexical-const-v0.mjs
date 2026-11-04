@@ -49,11 +49,17 @@ export class LexicalConstScope {
     this.#depth = depth;
   }
   static root(parameters = [], paramTypes = []) {
-    if (!Array.isArray(parameters) || !Array.isArray(paramTypes) ||
-        parameters.length !== paramTypes.length || parameters.length > 128)
+    if (!Array.isArray(parameters) || !Array.isArray(paramTypes))
+      fail('invalid parameters');
+    // Snapshot native array length descriptors once: a Proxy get trap must
+    // never alter the parameter budget or control the binding loop.
+    const count = Object.getOwnPropertyDescriptor(parameters,'length')?.value;
+    const typeCount = Object.getOwnPropertyDescriptor(paramTypes,'length')?.value;
+    if (!Number.isSafeInteger(count) || count < 0 || count > 128 ||
+        typeCount !== count)
       fail('invalid parameters');
     const scope = new LexicalConstScope();
-    for (let i=0; i<parameters.length; i++) {
+    for (let i=0; i<count; i++) {
       // Do not invoke getters in host-provided compiler parameter metadata.
       const parameter = Object.getOwnPropertyDescriptor(parameters,String(i));
       const declaredType = Object.getOwnPropertyDescriptor(paramTypes,String(i));
@@ -93,11 +99,15 @@ export class LexicalConstScope {
  * resolve/type-check expressions before admitting this tree to program IR.
  */
 export function lower_const_sequence(statements, fallback = null) {
-  if (!Array.isArray(statements) || statements.length > MAX_BINDINGS)
+  if (!Array.isArray(statements))
+    fail('invalid statement sequence');
+  // Avoid invoking a caller Proxy's length getter before or during lowering.
+  const count=Object.getOwnPropertyDescriptor(statements,'length')?.value;
+  if (!Number.isSafeInteger(count) || count < 0 || count > MAX_BINDINGS)
     fail('invalid statement sequence');
   let result=fallback;
   let declarationDepth=0;
-  for (let i=statements.length-1; i>=0; i--) {
+  for (let i=count-1; i>=0; i--) {
     // Array indexing must not execute a caller-supplied getter during IR
     // construction. Validate an own data slot before inspecting its value.
     const descriptor=Object.getOwnPropertyDescriptor(statements,String(i));
