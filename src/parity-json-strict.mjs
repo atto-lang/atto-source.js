@@ -64,6 +64,10 @@ export function parseStrictJsonReport(text,maximum,where) {
     if(!/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/.test(token))invalid();
     const number=Number(token);
     if(!Number.isFinite(number))fail('non-finite JSON number');
+    // Signed zero (including negative underflow) is lossy in JSON receipts.
+    // Reject it before JSON.parse can materialize ambiguous numeric metadata.
+    if(token.startsWith('-') && number===0)
+      fail('noncanonical negative-zero JSON number');
     // JSON.parse rounds integers outside the IEEE-754 safe range. Parity
     // receipt IDs/counts must not silently change during materialization.
     if(Number.isInteger(number)&&!Number.isSafeInteger(number))

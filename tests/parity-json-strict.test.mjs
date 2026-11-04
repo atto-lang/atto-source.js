@@ -59,7 +59,7 @@ test('rejects nonfinite numeric materialization and non-JSON lexical shortcuts',
     assert.throws(()=>parse(source),/non-finite JSON number/);
   for(const source of ['01','+1','.5','1.','[truefalse]','[1\u00a0]','[null:]'])
     assert.throws(()=>parse(source),/invalid JSON report/);
-  for(const source of ['0','-0','1.25','-2.5e-10','true','false','null'])
+  for(const source of ['0','1.25','-2.5e-10','true','false','null'])
     assert.deepEqual(parse(source),JSON.parse(source));
   for(const maximum of [NaN,Infinity,-1,1.5])
     assert.throws(()=>parseStrictJsonReport('{}',maximum,'JS'),/missing or oversized/);
@@ -102,4 +102,13 @@ test('reject lossy numeric parity JSON integers before JSON.parse materializatio
   for(const source of ['9007199254740991','-9007199254740991',
     '1.5','-2.5e-10'])
     assert.deepEqual(parse(source),JSON.parse(source));
+});
+
+test('negative-zero and signed-underflow report numbers fail before materialization',()=>{
+  for(const source of ['-0','-0.0','-0e6','-1e-999','{"observed":-0}']){
+    assert.throws(()=>parse(source),/noncanonical negative-zero JSON number/,source);
+  }
+  for(const source of ['0','0.0','0e6','1.5','-2.5e-10']){
+    assert.deepEqual(parse(source),JSON.parse(source));
+  }
 });
