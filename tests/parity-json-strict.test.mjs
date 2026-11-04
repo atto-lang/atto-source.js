@@ -140,3 +140,19 @@ test('quoted numeric labels remain text while unsafe numeric tokens are rejected
     '{"n":+1}', '{"n":00}', '[0,1e-324]'
   ])assert.throws(()=>parse(source),undefined,source);
 });
+
+test('fractional JSON tokens cannot round into trusted safe integer metadata',()=>{
+  for(const source of [
+    '1.0000000000000001',
+    '0.99999999999999999',
+    '9007199254740991.4',
+    '-9007199254740991.4',
+    '{"run_id":1.0000000000000001}',
+    '[0.99999999999999999,1]',
+    '1.0000000000000000000001e0'
+  ])assert.throws(()=>parse(source),/lossy fractional JSON integer/,source);
+  for(const source of [
+    '1.0','15e0','1.5e1','1.000e2','0.00e-999',
+    '1.25','0.125','-2.5e-10','9007199254740991.0'
+  ])assert.deepEqual(parse(source),JSON.parse(source),source);
+});
