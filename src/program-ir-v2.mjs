@@ -199,6 +199,8 @@ export function validateProgramIRV2(input) {
   const graph=headers.map(()=>new Set());
   let nodes=0;
   const captureSlots=headers.map(()=>new Set());
+  const lexicalSlots=headers.map(()=>new Set());
+  const lexicalTypes=['int','bool','symbol','option<int>','result<int,int>'];
   function node(expr,owner,depth=0,expected='int',active=[]){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('expression complexity exceeded');
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid expression');
@@ -273,6 +275,28 @@ export function validateProgramIRV2(input) {
           receiver,args:args.map((arg,i)=>node(arg,owner,depth+1,method.paramTypes[order[i]],active)),
           ...(named?{paramOrder:order}:{})
         };
+      }
+      case 'localRead': {
+        record(expr,['kind','slot','type'],'local read');
+        if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
+           expr.slot>=LIMIT_NODES||!lexicalTypes.includes(expr.type))
+          fail('invalid local read');
+        const binding=active.findLast(a=>typeof a==='object'&&a!==null&&a.slot===expr.slot);
+        if(!binding||binding.type!==expr.type||expr.type!==expected)
+          fail('local read outside typed lexical scope');
+        return {kind:'localRead',slot:expr.slot,type:expr.type};
+      }
+      case 'letLocal': {
+        record(expr,['kind','slot','type','value','body'],'lexical const');
+        if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
+           expr.slot>=LIMIT_NODES||!lexicalTypes.includes(expr.type)||
+           lexicalSlots[owner].has(expr.slot)||captureSlots[owner].has(expr.slot))
+          fail('invalid or duplicate lexical const slot');
+        lexicalSlots[owner].add(expr.slot);
+        const value=node(expr.value,owner,depth+1,expr.type,active);
+        const body=node(expr.body,owner,depth+1,expected,
+          [...active,{slot:expr.slot,type:expr.type}]);
+        return {kind:'letLocal',slot:expr.slot,type:expr.type,value,body};
       }
       case 'capture':
         record(expr,['kind','slot'],'capture');
@@ -398,7 +422,8 @@ export function validateProgramIRV2(input) {
           const payload=arm.tag!=='None';
           if(payload) {
             if(!Number.isSafeInteger(arm.slot)||Object.is(arm.slot,-0)||arm.slot<0||
-               arm.slot>=LIMIT_NODES||captureSlots[owner].has(arm.slot)||active.includes(arm.slot))
+               arm.slot>=LIMIT_NODES||captureSlots[owner].has(arm.slot)||
+               lexicalSlots[owner].has(arm.slot)||active.includes(arm.slot))
               fail('invalid or repeated ADT payload slot');
             captureSlots[owner].add(arm.slot);
           } else if(arm.slot!==null)fail('None arm cannot bind a payload');
@@ -436,7 +461,9 @@ export function validateProgramIRV2(input) {
       default:fail('unsupported expression kind');
     }
   }
-  function methodNode(expr,method,depth=0,expected=method.returnType){
+  const methodEdges=classHeaders.map(cls=>cls.methods.map(()=>new Set()));
+  let activeClassIndex=-1,activeMethodIndex=-1,methodUsedSlots=new Set();
+  function methodNode(expr,method,depth=0,expected=method.returnType,active=[]){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('method expression complexity exceeded');
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid method expression');
     const desc=Object.getOwnPropertyDescriptor(expr,'kind');
@@ -454,6 +481,30 @@ export function validateProgramIRV2(input) {
         record(expr,['kind','value'],'method Symbol');
         if(expected!=='symbol')fail('method Symbol type mismatch');
         return {kind:'symbol',value:symbolName(expr.value)};
+      case 'localRead': {
+        record(expr,['kind','slot','type'],'method local read');
+        if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||
+           expr.slot<0||expr.slot>=LIMIT_NODES||
+           !['int','bool','symbol','option<int>','result<int,int>'].includes(expr.type))
+          fail('invalid method local read');
+        const scoped=active.findLast(b=>b.slot===expr.slot);
+        if(!scoped||scoped.type!==expr.type||expected!==expr.type)
+          fail('method local read outside typed lexical scope');
+        return {kind:'localRead',slot:expr.slot,type:expr.type};
+      }
+      case 'letLocal': {
+        record(expr,['kind','slot','type','value','body'],'method lexical const');
+        if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||
+           expr.slot<0||expr.slot>=LIMIT_NODES||
+           !['int','bool','symbol','option<int>','result<int,int>'].includes(expr.type)||
+           methodUsedSlots.has(expr.slot))
+          fail('invalid or reused method local slot');
+        methodUsedSlots.add(expr.slot);
+        const value=methodNode(expr.value,method,depth+1,expr.type,active);
+        const body=methodNode(expr.body,method,depth+1,expected,
+          [...active,{slot:expr.slot,type:expr.type}]);
+        return {kind:'letLocal',slot:expr.slot,type:expr.type,value,body};
+      }
       case 'param':
         record(expr,['kind','index'],'method param');
         if(!Number.isSafeInteger(expr.index)||Object.is(expr.index,-0)||expr.index<0||
@@ -463,38 +514,73 @@ export function validateProgramIRV2(input) {
       case 'neg':
         record(expr,['kind','inner'],'method neg');
         if(expected!=='int')fail('method negation type mismatch');
-        return {kind:'neg',inner:methodNode(expr.inner,method,depth+1,'int')};
+        return {kind:'neg',inner:methodNode(expr.inner,method,depth+1,'int',active)};
       case 'not':
         record(expr,['kind','inner'],'method not');
         if(expected!=='bool')fail('method boolean negation type mismatch');
-        return {kind:'not',inner:methodNode(expr.inner,method,depth+1,'bool')};
+        return {kind:'not',inner:methodNode(expr.inner,method,depth+1,'bool',active)};
       case 'binary':
         record(expr,['kind','op','left','right'],'method binary');
         if(expected!=='int'||!['+','-','*','%'].includes(expr.op))
           fail('unsupported method arithmetic');
         return {kind:'binary',op:expr.op,
-          left:methodNode(expr.left,method,depth+1,'int'),
-          right:methodNode(expr.right,method,depth+1,'int')};
+          left:methodNode(expr.left,method,depth+1,'int',active),
+          right:methodNode(expr.right,method,depth+1,'int',active)};
       case 'compare':
         record(expr,['kind','op','left','right'],'method compare');
         if(expected!=='bool'||!['<','>','<=','>=','==','!='].includes(expr.op))
           fail('unsupported method comparison');
         return {kind:'compare',op:expr.op,
-          left:methodNode(expr.left,method,depth+1,'int'),
-          right:methodNode(expr.right,method,depth+1,'int')};
+          left:methodNode(expr.left,method,depth+1,'int',active),
+          right:methodNode(expr.right,method,depth+1,'int',active)};
       case 'symbolCompare':
         record(expr,['kind','op','left','right'],'method Symbol compare');
         if(expected!=='bool'||(expr.op!=='=='&&expr.op!=='!='))
           fail('unsupported method Symbol comparison');
         return {kind:'symbolCompare',op:expr.op,
-          left:methodNode(expr.left,method,depth+1,'symbol'),
-          right:methodNode(expr.right,method,depth+1,'symbol')};
+          left:methodNode(expr.left,method,depth+1,'symbol',active),
+          right:methodNode(expr.right,method,depth+1,'symbol',active)};
       case 'if':
         record(expr,['kind','condition','yes','no'],'method if');
         return {kind:'if',
-          condition:methodNode(expr.condition,method,depth+1,'bool'),
-          yes:methodNode(expr.yes,method,depth+1,expected),
-          no:methodNode(expr.no,method,depth+1,expected)};
+          condition:methodNode(expr.condition,method,depth+1,'bool',active),
+          yes:methodNode(expr.yes,method,depth+1,expected,active),
+          no:methodNode(expr.no,method,depth+1,expected,active)};
+      case 'selfCall':
+      case 'namedSelfCall': {
+        const named=desc.value==='namedSelfCall';
+        record(expr,named?
+          ['kind','methodIndex','args','paramOrder']:
+          ['kind','methodIndex','args'],named?'named self call':'self call');
+        const methods=classHeaders[activeClassIndex]?.methods;
+        if(!methods||!Number.isSafeInteger(expr.methodIndex)||
+           Object.is(expr.methodIndex,-0)||expr.methodIndex<0||
+           expr.methodIndex>=methods.length)
+          fail('invalid self method target');
+        const target=methods[expr.methodIndex];
+        if(target.returnType==='void'||target.returnType!==expected)
+          fail('self method return type mismatch');
+        const args=sequence(expr.args,32,'self call args');
+        if(args.length!==target.params.length)fail('self method arity mismatch');
+        let order=target.params.map((_,i)=>i);
+        if(named){
+          const requested=sequence(expr.paramOrder,32,'self call parameter order');
+          if(requested.length!==args.length)fail('named self call arity mismatch');
+          const seen=new Set();
+          order=requested.map(i=>{
+            if(!Number.isSafeInteger(i)||Object.is(i,-0)||i<0||
+               i>=target.params.length||seen.has(i))
+              fail('invalid self call parameter order');
+            seen.add(i);return i;
+          });
+          if(seen.size!==target.params.length)fail('incomplete self call parameter order');
+        }
+        methodEdges[activeClassIndex][activeMethodIndex].add(expr.methodIndex);
+        return {kind:desc.value,methodIndex:expr.methodIndex,
+          args:args.map((arg,i)=>methodNode(arg,method,depth+1,
+            target.paramTypes[order[i]],active)),
+          ...(named?{paramOrder:order}:{})};
+      }
       case 'intrinsic': {
         record(expr,['kind','name','args'],'method intrinsic');
         const signatures={
@@ -512,19 +598,30 @@ export function validateProgramIRV2(input) {
         const args=sequence(expr.args,2,'method intrinsic args');
         if(args.length!==types.length)fail('method intrinsic arity mismatch');
         return {kind:'intrinsic',name:expr.name,
-          args:args.map((arg,i)=>methodNode(arg,method,depth+1,types[i]))};
+          args:args.map((arg,i)=>methodNode(arg,method,depth+1,types[i],active))};
       }
       default:fail('unsupported method expression kind '+desc.value);
     }
   }
   const functions=headers.map((f,i)=>({...f,body:node(sourceFunctions[i].body,i,0,f.returnType??'int')}));
-  const classes=classHeaders.map(cls=>({
+  const classes=classHeaders.map((cls,classIndex)=>({
     name:cls.name,pub:cls.pub,
-    methods:cls.methods.map(method=>({
-      ...method,
-      body:method.returnType==='void'?null:methodNode(method.body,method,0,method.returnType)
-    }))
+    methods:cls.methods.map((method,methodIndex)=>{
+      activeClassIndex=classIndex;activeMethodIndex=methodIndex;
+      methodUsedSlots=new Set();
+      return {...method,
+        body:method.returnType==='void'?null:methodNode(method.body,method,0,method.returnType)};
+    })
   }));
+  methodEdges.forEach(edges=>{
+    const color=new Uint8Array(edges.length);
+    function visitMethod(i) {
+      if(color[i]===1)fail('recursive class method graph unsupported pending fuel');
+      if(color[i]===2)return;
+      color[i]=1;for(const j of edges[i])visitMethod(j);color[i]=2;
+    }
+    edges.forEach((_,i)=>visitMethod(i));
+  });
   const color=new Uint8Array(headers.length);
   function visit(i) {
     if(color[i]===1)fail('recursive call graph unsupported pending fuel');

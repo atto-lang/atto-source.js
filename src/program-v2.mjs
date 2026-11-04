@@ -397,6 +397,11 @@ class Parser {
         const body=this.expression();
         this.expect(';');
         statements.push({kind:'return',body});
+      } else if(this.eat('const')) {
+        const type=this.valueType(),name=this.classIdentifier();
+        this.expect('=');
+        const value=this.expression();this.expect(';');
+        statements.push({kind:'localDecl',name,type,value});
       } else if(this.eat('if')) {
         const condition=this.expression();
         // Canonical statement-only `if`; retain old ; do syntax.
@@ -425,7 +430,10 @@ class Parser {
           (this.returnsOnAllPaths(stmt.yes||[])&&this.returnsOnAllPaths(stmt.no||[]))))
         fail('unreachable statement after terminating return/if');
       if(stmt.kind==='return')result=stmt.body;
-      else {
+      else if(stmt.kind==='localDecl'){
+        if(!result)fail('const local requires returning continuation');
+        result={kind:'localDecl',name:stmt.name,type:stmt.type,value:stmt.value,body:result};
+      }else {
         const yes=this.lowerStatements(stmt.yes,result);
         const no=this.lowerStatements(stmt.no,result);
         if(!yes||!no)fail('int function requires return on every if branch');
@@ -451,6 +459,8 @@ class Parser {
       }
       switch(expr.kind){
         case 'int':case 'bool':case 'symbol':case 'variable':break;
+        case 'localDecl':add(expr.value);add(expr.body);break;
+        case 'selfCall':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'neg':case 'not':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
@@ -545,17 +555,36 @@ class Parser {
           continue;
         }
         if (op === '/') fail('division unsupported in provisional int profile',this.peek());
-        const compare=['<','>','<=','>=','==','!='].includes(op);
-        const prec=op==='*'||op==='%'?20:op==='+'||op==='-'?10:compare?5:-1;
+        // Canonical source words compile to already-validated comparison
+        // and lazy conditional nodes: no new IR grammar or JS truthiness.
+        const compare=['<','>','<=','>=','==','!=','eq','neq'].includes(op);
+        const logical=op==='and'||op==='or';
+        const prec=op==='*'||op==='%'?20:op==='+'||op==='-'?10:
+          compare?5:op==='and'?4:op==='or'?3:-1;
         if (prec < min) break;
         this.i++;
-        left={kind:compare?'compare':'binary',op,left,right:this.expression(prec+1)};
+        const right=this.expression(prec+1);
+        if(logical){
+          left=op==='and'
+            ? {kind:'if',condition:left,yes:right,no:{kind:'bool',value:false}}
+            : {kind:'if',condition:left,yes:{kind:'bool',value:true},no:right};
+        }else{
+          left={kind:compare?'compare':'binary',
+            op:op==='eq'?'==':op==='neq'?'!=':op,left,right};
+        }
       }
       return left;
     } finally {this.depth--;}
   }
   primary() {
-    if(this.eat('!'))return {kind:'not',inner:this.expression(30)};
+    // Receiver-method values are not first-class in this bounded profile.
+    if(this.eat('self')){
+      this.expect('.');
+      const name=this.callableName();
+      this.expect('(');
+      return {kind:'selfCall',name,args:this.argumentsAfterOpen()};
+    }
+    if(this.eat('!')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
     if(this.eat('new')){
       const className=this.name();
       this.expect('(');
@@ -713,9 +742,13 @@ function resolveProgram(parsed) {
       case 'bool':case 'not':case 'compare':case 'symbolCompare':return 'bool';
       case 'symbol':return 'symbol';
       case 'param':return owner.paramTypes?.[expr.index]??'int';
+      case 'localRead':return expr.type;
+      case 'letLocal':return resolvedType(expr.body,owner);
       case 'newClass':return 'class:'+expr.classIndex;
       case 'methodCall':case 'namedMethodCall':
         return classes[expr.classIndex].methods[expr.methodIndex].returnType;
+      case 'selfCall':case 'namedSelfCall':
+        return classes[owner.classIndex].methods[expr.methodIndex].returnType;
       case 'call':case 'namedCall':return functions[expr.target].returnType??'int';
       case 'intrinsic': {
         const results={
@@ -755,6 +788,36 @@ function resolveProgram(parsed) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
       case 'int':case 'bool':case 'symbol':return expr;
+      case 'localDecl': {
+        if(owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))
+          fail('lexical const shadows parameter or visible binding '+expr.name);
+        const value=resolve(expr.value,owner,depth+1,bindings);
+        if(resolvedType(value,owner)!==expr.type)
+          fail('lexical const initializer type mismatch '+expr.name);
+        if(nextCaptureSlot>=MAX_TOKENS)fail('lexical const slot budget exceeded');
+        const slot=nextCaptureSlot++;
+        return {kind:'letLocal',slot,type:expr.type,value,
+          body:resolve(expr.body,owner,depth+1,
+            [...bindings,{name:expr.name,slot,type:expr.type,isLocal:true}])};
+      }
+      case 'selfCall': {
+        if(owner.ownerKind!=='method')fail('self call outside class method');
+        const cls=classes[owner.classIndex],table=classTables[owner.classIndex];
+        const methodIndex=table.methodSlots.get(expr.name+'/'+expr.args.length);
+        if(methodIndex===undefined){
+          if(table.methodFamilies.has(expr.name))
+            fail('method arity mismatch '+cls.name+'.'+expr.name);
+          fail('unknown self method '+cls.name+'.'+expr.name);
+        }
+        const method=cls.methods[methodIndex];
+        if(method.returnType==='void')
+          fail('void self method cannot be used as expression');
+        const bound=bindArguments(method.params,expr.args,cls.name+'.'+expr.name,
+          owner,depth,bindings);
+        return bound.hasNamed?
+          {kind:'namedSelfCall',methodIndex,args:bound.args,paramOrder:bound.paramOrder}:
+          {kind:'selfCall',methodIndex,args:bound.args};
+      }
       case 'newClass': {
         if(owner.ownerKind==='method')
           fail('class construction inside method body unsupported in convergence slice');
@@ -787,7 +850,9 @@ function resolveProgram(parsed) {
       }
       case 'variable': {
         const captured=bindings.findLast(b=>b.name===expr.name);
-        if(captured)return {kind:'capture',slot:captured.slot};
+        if(captured)return captured.isLocal
+          ? {kind:'localRead',slot:captured.slot,type:captured.type}
+          : {kind:'capture',slot:captured.slot};
         const index=owner.params.indexOf(expr.name);
         if(index<0) fail('unresolved identifier '+expr.name);
         return {kind:'param',index};
@@ -828,8 +893,18 @@ function resolveProgram(parsed) {
           if(expr.args.length!==sig[0])fail('intrinsic arity mismatch '+key);
           return {kind:'intrinsic',name:key,args:expr.args.map(a=>resolve(a.expr,owner,depth+1,bindings))};
         }
-        if(owner.ownerKind==='method')
-          fail('function calls inside method body unsupported in convergence slice');
+        // Method syntax resolves against this class before any root callable.
+        if(owner.ownerKind==='method'){
+          if(expr.qualifier!==null)
+            fail('qualified function calls inside method body unsupported');
+          // A parameter or local with the same name makes a bare call
+          // ambiguous. Require self.foo() rather than silently reinterpreting
+          // a lexical value as a class method.
+          if(owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))
+            fail('lexical name shadows implicit method call; use self.'+expr.name+'(...)');
+          return resolve({kind:'selfCall',name:expr.name,args:expr.args},
+            owner,depth+1,bindings);
+        }
         const mod=expr.qualifier===null?owner.module:expr.qualifier;
         if(mod!==null && !modules.includes(mod)) fail('unknown module '+mod);
         const key=(mod===null?'@file/':'@module/'+mod+'/')+expr.name;
@@ -885,6 +960,8 @@ function resolveProgram(parsed) {
       graph[owner].add(expr.target);expr.args.forEach(a=>inspect(a,owner));
     } else if(expr.kind==='methodCall'||expr.kind==='namedMethodCall') {
       inspect(expr.receiver,owner);expr.args.forEach(a=>inspect(a,owner));
+    } else if(expr.kind==='letLocal') {
+      inspect(expr.value,owner);inspect(expr.body,owner);
     } else if(expr.kind==='newClass') {
       // fieldless construction has no call-graph edge in this slice
     } else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
@@ -928,6 +1005,9 @@ function emitProgram(program) {
       case 'bool': return expr.value?'true':'false';
       case 'param':return '_p'+expr.index;
       case 'capture':return '_v'+expr.slot;
+      case 'localRead':return '_local'+expr.slot;
+      case 'letLocal':return '(()=>{const _local'+expr.slot+'='+
+        emitExpr(expr.value,depth+1)+';return '+emitExpr(expr.body,depth+1)+';})()';
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
@@ -944,6 +1024,17 @@ function emitProgram(program) {
       case 'if':return '(('+emitExpr(expr.condition,depth+1)+')?('+
         emitExpr(expr.yes,depth+1)+'):('+emitExpr(expr.no,depth+1)+'))';
       case 'newClass':return 'new _class'+expr.classIndex+'()';
+      case 'selfCall':return 'this.#ores_method'+expr.methodIndex+'('+
+        expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
+      case 'namedSelfCall': {
+        // Arrow IIFE deliberately captures the receiver and lexical locals.
+        const definitions=expr.args.map((arg,i)=>
+          'const _selfArg'+i+'='+emitExpr(arg,depth+1)+';');
+        const order=new Array(expr.args.length);
+        expr.paramOrder.forEach((slot,i)=>{order[slot]='_selfArg'+i;});
+        return '(()=>{'+definitions.join('')+'return this.#ores_method'+expr.methodIndex+
+          '('+order.join(',')+');})()';
+      }
       case 'methodCall': {
         const method=program.classes[expr.classIndex].methods[expr.methodIndex];
         return '('+emitExpr(expr.receiver,depth+1)+')['+JSON.stringify(method.name)+']('+
@@ -1013,8 +1104,10 @@ function emitProgram(program) {
     switch(expr.kind) {
       case 'symbol':return true;
       case 'newClass':return false;
+      case 'letLocal':return usesSymbol(expr.value)||usesSymbol(expr.body);
       case 'methodCall':case 'namedMethodCall':
         return usesSymbol(expr.receiver)||expr.args.some(usesSymbol);
+      case 'selfCall':case 'namedSelfCall':return expr.args.some(usesSymbol);
       case 'call':case 'namedCall':case 'intrinsic':return expr.args.some(usesSymbol);
       case 'binary':case 'compare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
@@ -1049,8 +1142,10 @@ function emitProgram(program) {
     switch(expr.kind) {
       case 'intrinsic':return true;
       case 'newClass':return false;
+      case 'letLocal':return usesPortableRuntime(expr.value)||usesPortableRuntime(expr.body);
       case 'methodCall':case 'namedMethodCall':
         return usesPortableRuntime(expr.receiver)||expr.args.some(usesPortableRuntime);
+      case 'selfCall':case 'namedSelfCall':return expr.args.some(usesPortableRuntime);
       case 'call':case 'namedCall':return expr.args.some(usesPortableRuntime);
       case 'binary':case 'compare':case 'symbolCompare':
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
@@ -1089,6 +1184,20 @@ function emitProgram(program) {
     const local='_class'+classIndex;
     out.push('class '+local+' {','#oresBrand=1;',
       'constructor(..._args){if(new.target!=='+local+')throw new TypeError("unsupported class derivation");if(_args.length!==0)throw new TypeError("constructor arity mismatch");Object.preventExtensions(this);}');
+    // All methods receive private, receiver-bound entrypoints. Public
+    // dispatchers do not need to expose private methods to guest JavaScript.
+    cls.methods.forEach((method,methodIndex)=>{
+      out.push('#ores_method'+methodIndex+'(..._args){',
+        'if(_args.length!=='+method.params.length+')throw new TypeError("method arity mismatch");');
+      method.params.forEach((_,i)=>{
+        const type=method.paramTypes[i];
+        const check={int:'_check',bool:'_checkbool',symbol:'_checksymbol',
+          'option<int>':'_checkoption','result<int,int>':'_checkresult'}[type];
+        if(!check)fail('unsupported method parameter type');
+        out.push('const _p'+i+'=_args['+i+'];'+check+'(_p'+i+');');
+      });
+      out.push(method.returnType==='void'?'return;':'return '+emitExpr(method.body)+';','}');
+    });
     const families=new Map();
     cls.methods.forEach((method,methodIndex)=>{
       if(!method.pub)return;
@@ -1101,15 +1210,7 @@ function emitProgram(program) {
         'switch(_args.length){');
       for(const methodIndex of indices){
         const method=cls.methods[methodIndex];
-        out.push('case '+method.params.length+':{');
-        method.params.forEach((_,i)=>{
-          const type=method.paramTypes[i];
-          const check={int:'_check',bool:'_checkbool',symbol:'_checksymbol',
-            'option<int>':'_checkoption','result<int,int>':'_checkresult'}[type];
-          if(!check)fail('unsupported method parameter type');
-          out.push('const _p'+i+'=_args['+i+'];'+check+'(_p'+i+');');
-        });
-        out.push(method.returnType==='void'?'return;':'return '+emitExpr(method.body)+';','}');
+        out.push('case '+method.params.length+':return this.#ores_method'+methodIndex+'(..._args);');
       }
       out.push('default:throw new TypeError("method arity mismatch");','}','}');
     }
