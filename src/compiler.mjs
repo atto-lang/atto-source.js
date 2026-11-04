@@ -33,21 +33,28 @@ function lex(src) {
   validateSourceText(src);
   const out = [];
   let i=0, line=1, col=1;
-  function advance() { if(src[i]==='\n'){line++;col=1;}else col++;i++; }
+  const lineEnd=c=>c==='\n'||c==='\r'||c==='\u0085'||c==='\u2028'||c==='\u2029';
+  function advance() {
+    const ch=src[i];
+    if(lineEnd(ch)){if(ch!=='\n'||src[i-1]!=='\r')line++;col=1;}
+    else col++;
+    i++;
+  }
   function add(kind, value, loc) { if(out.length>=30000) throw new CompileError('token limit exceeded'); out.push({kind,value,...loc}); }
   while(i<src.length){
-    if(/\s/.test(src[i])) {advance();continue;}
+    if(/\s/.test(src[i])||src[i]==='\u0085') {advance();continue;}
     if(src.startsWith('//',i)){
       // Checked signed-i64 source cannot be silently compiled by the legacy
       // scalar-v1 profile: this emitter currently wraps instead of trapping.
       // Only an actual line-comment directive counts; block comments and
       // other prose must not turn on or mask a numeric profile.
       const loc={line,col};
-      const eol=src.indexOf('\n',i+2);
-      const tail=src.slice(i+2,eol<0?src.length:eol).trimStart();
+      let eol=i+2;
+      while(eol<src.length&&!lineEnd(src[eol]))eol++;
+      const tail=src.slice(i+2,eol).trimStart();
       if(tail.startsWith('oreslang:checked-i64'))
         throw new CompileError('checked-i64 source requires program-v2; scalar-v1 uses provisional wrapping arithmetic',loc);
-      while(i<src.length&&src[i]!=='\n')advance();
+      while(i<eol)advance();
       continue;
     }
     if(src.startsWith('/*',i)){
