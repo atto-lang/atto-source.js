@@ -140,3 +140,24 @@ test('lexical statement sequence refuses accessor and sparse array slots without
   assert.throws(()=>lower_const_sequence(new Array(1)),/invalid lexical statement slot/);
   assert.deepEqual(lower_const_sequence([{kind:'return',value:42}]),42);
 });
+
+test('statement proxies cannot replace validated descriptor values via get traps',()=>{
+  let reads=0;
+  const item=new Proxy({kind:'return',value:42},{
+    get(){reads++;throw Error('unsafe caller get trap');},
+    getPrototypeOf(){return Object.prototype;},
+    ownKeys(target){return Reflect.ownKeys(target);},
+    getOwnPropertyDescriptor(target,key){return Object.getOwnPropertyDescriptor(target,key);}
+  });
+  assert.equal(lower_const_sequence([item]),42);
+  assert.equal(reads,0,'validated fields must not be reread');
+  const mutating=new Proxy({kind:'const',name:'safe',type:'int',value:7},{
+    get(){reads++;return 'forged';},
+    getPrototypeOf(){return Object.prototype;},
+    ownKeys(target){return Reflect.ownKeys(target);},
+    getOwnPropertyDescriptor(target,key){return Object.getOwnPropertyDescriptor(target,key);}
+  });
+  assert.deepEqual(lower_const_sequence([mutating,{kind:'return',value:42}]),
+    {kind:'localDecl',name:'safe',type:'int',value:7,body:42});
+  assert.equal(reads,0);
+});
