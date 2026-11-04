@@ -161,3 +161,18 @@ test('statement proxies cannot replace validated descriptor values via get traps
     {kind:'localDecl',name:'safe',type:'int',value:7,body:42});
   assert.equal(reads,0);
 });
+
+test('array proxies cannot change parameter or statement count through length get traps',()=>{
+  let reads=0;
+  const noLengthGet=values=>new Proxy(values,{
+    get(target,key,receiver){
+      if(key==='length'){reads++;throw Error('hostile length getter');}
+      return Reflect.get(target,key,receiver);
+    }
+  });
+  const root=LexicalConstScope.root(noLengthGet(['arg']),noLengthGet(['int']));
+  assert.deepEqual(root.resolve('arg'),{kind:'param',index:0,name:'arg',type:'int'});
+  assert.equal(lower_const_sequence(noLengthGet([{kind:'return',value:42}])),42);
+  assert.equal(reads,0,'array lengths must come from admitted own descriptors');
+  assert.throws(()=>LexicalConstScope.root(noLengthGet(['arg']),noLengthGet([])),/invalid parameters/);
+});
