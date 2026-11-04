@@ -25,6 +25,7 @@
     "./static-facts-v0.node": "./src/static-facts-v0.node.mjs",
     "./actor-host.browser": "./src/actor-host.browser.mjs",
     "./actor-host.node": "./src/actor-host.node.mjs",
+    "./tenant-isolation-policy": "./src/tenant-isolation-policy.mjs",
     "./worker-actor-client": "./src/worker-actor-client.mjs",
     "./freestanding-core": "./src/freestanding-core.mjs",
     "./freestanding-core-link": "./src/freestanding-core-link.mjs",
@@ -59,6 +60,7 @@
     "test:symbol-wire": "node --test tests/symbol-equality-wire-v1.test.mjs tests/symbol-wire-v1.test.mjs",
     "test:program-classes": "node --test tests/program-classes-v2.test.mjs",
     "test:class-methods": "node --test tests/class-methods-compat-v1.test.mjs",
+    "test:shared-scalar50": "node --test tests/shared-scalar50-js-esm.test.mjs",
     "test:transpiler-hardening": "node --test tests/transpiler-admission-audit.test.mjs tests/transpiler-strict-ir-matrix.test.mjs tests/transpiler-program-v2-matrix.test.mjs tests/transpiler-parity-candidates.test.mjs tests/transpiler-receipt-security.test.mjs",
     "parity:transpiler-receipt": "node scripts/transpiler-parity-receipt.mjs"
   }

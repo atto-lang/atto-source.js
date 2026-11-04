@@ -14,11 +14,25 @@ const CLASS_RESERVED=new Set([
   'extends','static','constructor','prototype','__proto__','define','pub','as',
   'end','self','int','void','return','mut','private','actor','fnc','routine',
   'bool','Symbol','let','val','const','if','fi','then','else','await','task',
-  'spawn','module','trait','interface','type','rt'
+  'spawn','module','trait','interface','type','rt','gen','generator','async',
+  'suspend','suspends','yield','Iterator','AsyncIterator'
 ]);
 const METHOD_CALLABLE_KEYWORDS=new Set([
   'mtd','method','stop','do','done','loop','block','select','readch','writech',
   'nb','true','false'
+]);
+const GENERATOR_RESERVED=new Set([
+  'import','from','as','extends','implements','try','catch','throw','raise','panic',
+  'recover','finally','end','fi','if','do','else','then','new','spawn','stop','done',
+  'await','rt','async','suspend','suspends','critical','gen','generator','nlex','trap',
+  'actor','isoactor','def','fnc','routine','while','for','of','loop','block','break',
+  'continue','yield','super','elseif','elif','switch','match','matches','is','default',
+  'eq','neq','nb','select','readch','writech','cb','shared','untrusted','type','types',
+  'typeof','interface','trait','struct','impl','abstract','void','static','pub','private',
+  'return','defer','val','const','let','mut','borrow','self','true','false','null','obj',
+  'arr','Iterator','AsyncIterator','int','define','class','enum','pattern','module',
+  'contract','conforms','namespace','gpu','cpu','quantum','over','structural','bool','pure',
+  'Some','None','Ok','Err','using','requires','serial','critical-read','critical-write','nb-select'
 ]);
 export class ProgramIRError extends Error {
   constructor(detail) {super('error: program IR: '+detail);this.name='ProgramIRError';}
@@ -57,6 +71,11 @@ function classIdent(s,where){
   ident(s,where);
   if((CLASS_RESERVED.has(s)&&s!=='mtd'&&s!=='method')||
      s==='Option'||s==='Result')fail(where+': reserved identifier');
+  return s;
+}
+function generatorIdent(s,where){
+  ident(s,where);
+  if(GENERATOR_RESERVED.has(s))fail(where+': reserved generator identifier');
   return s;
 }
 function callableIdent(s,where){
@@ -103,9 +122,11 @@ export function validateProgramIRV2(input) {
     fail('program: expected object');
   const rawKeys=Reflect.ownKeys(input);
   const hasClasses=rawKeys.includes('classes');
-  record(input,hasClasses?
-    ['schemaVersion','dialect','integerModel','sourceNamespace','modules','functions','classes']:
-    ['schemaVersion','dialect','integerModel','sourceNamespace','modules','functions'],'program');
+  const hasGenerators=rawKeys.includes('generators');
+  const programKeys=['schemaVersion','dialect','integerModel','sourceNamespace','modules','functions'];
+  if(hasGenerators)programKeys.push('generators');
+  if(hasClasses)programKeys.push('classes');
+  record(input,programKeys,'program');
   if(input.schemaVersion!==PROGRAM_IR_VERSION||input.dialect!==PROGRAM_IR_DIALECT||
      input.integerModel!==PROGRAM_IR_INT_MODEL)fail('unsupported IR version/dialect/model');
   const namespace=input.sourceNamespace===null?null:ident(input.sourceNamespace,'file namespace');
@@ -116,9 +137,17 @@ export function validateProgramIRV2(input) {
     return name;
   });
   const sourceFunctions=sequence(input.functions,512,'functions');
+  const sourceGenerators=hasGenerators?sequence(input.generators,512,'generators'):[];
   const sourceClasses=hasClasses?sequence(input.classes,512,'classes'):[];
+  // Source parsing admits at most 512 caller-visible function/generator
+  // declarations in aggregate. Forged JSON IR must not double that budget by
+  // filling both independently bounded arrays.
+  if(sourceFunctions.length+sourceGenerators.length>512)
+    fail('caller-visible function/generator declaration budget exceeded');
+  if(hasGenerators&&!sourceGenerators.length)fail('redundant empty generators field');
   if(hasClasses&&!sourceClasses.length)fail('redundant empty classes field');
-  if(!moduleNames.length&&!sourceFunctions.length&&!sourceClasses.length)fail('empty program');
+  if(!moduleNames.length&&!sourceFunctions.length&&!sourceGenerators.length&&!sourceClasses.length)
+    fail('empty program');
   const classNames=new Set(),classHeaders=sourceClasses.map(cls=>{
     record(cls,['name','pub','methods'],'class');
     const name=classIdent(cls.name,'class name');
@@ -187,18 +216,43 @@ export function validateProgramIRV2(input) {
     return {module,name,kind:f.kind,pub:f.pub,params,
       ...(typed?{paramTypes:[...paramTypes],returnType}: {})};
   });
+  const generatorHeaders=sourceGenerators.map(gen=>{
+    record(gen,['module','name','pub','params','paramTypes','elementType','yields'],'generator');
+    const module=gen.module===null?null:ident(gen.module,'generator owner module');
+    if(module!==null&&!seenModules.has(module))fail('missing generator owner module '+module);
+    const name=generatorIdent(gen.name,'generator name');
+    if(typeof gen.pub!=='boolean')fail('invalid generator visibility');
+    const params=sequence(gen.params,128,'generator parameters').map(p=>generatorIdent(p,'generator parameter'));
+    if(new Set(params).size!==params.length)fail('duplicate generator parameters');
+    const paramTypes=sequence(gen.paramTypes,128,'generator paramTypes');
+    if(paramTypes.length!==params.length||paramTypes.some(t=>t!=='int'))
+      fail('sync generator v1 supports int parameters only');
+    if(gen.elementType!=='int')fail('sync generator v1 supports Iterator<int> only');
+    const yields=sequence(gen.yields,LIMIT_NODES,'generator yields');
+    const slot=(module===null?'@file/':'@module/'+module+'/')+name+'/'+params.length;
+    if(slots.has(slot))fail('duplicate caller-visible generator/function arity '+slot);
+    const family=slot.slice(0,slot.lastIndexOf('/'));
+    // Callable identity is name + value arity; preserve the existing family
+    // marker when a differently-ary ordinary function already owns the name.
+    if(!symbolKinds.has(family))symbolKinds.set(family,'generator');
+    slots.add(slot);
+    if(module===null&&gen.pub)exportNames.add(name);
+    return {module,name,pub:gen.pub,params,paramTypes:[...paramTypes],elementType:'int',yields};
+  });
   // Export-name collisions are legal only for overloads of the same root
   // function, and NEVER between a runtime module object and a root function.
-  for(const header of headers)if(header.module===null&&header.pub&&seenModules.has(header.name))
-    fail('file export conflicts with runtime module '+header.name);
+  for(const header of [...headers,...generatorHeaders])
+    if(header.module===null&&header.pub&&seenModules.has(header.name))
+      fail('file export conflicts with runtime module '+header.name);
   for(const cls of classHeaders){
     if(cls.pub&&seenModules.has(cls.name))fail('class export conflicts with runtime module '+cls.name);
-    if(cls.pub&&headers.some(h=>h.module===null&&h.pub&&h.name===cls.name))
-      fail('class export conflicts with root function '+cls.name);
+    if(cls.pub&&[...headers,...generatorHeaders].some(h=>h.module===null&&h.pub&&h.name===cls.name))
+      fail('class export conflicts with root callable '+cls.name);
   }
-  const graph=headers.map(()=>new Set());
+  const owners=[...headers,...generatorHeaders];
+  const graph=owners.map(()=>new Set());
   let nodes=0;
-  const captureSlots=headers.map(()=>new Set());
+  const captureSlots=owners.map(()=>new Set());
   function node(expr,owner,depth=0,expected='int',active=[]){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('expression complexity exceeded');
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid expression');
@@ -283,9 +337,9 @@ export function validateProgramIRV2(input) {
         return {kind:'capture',slot:expr.slot};
       case 'param':
         record(expr,['kind','index'],'param');
-        if(!Number.isSafeInteger(expr.index)||Object.is(expr.index,-0)||expr.index<0||expr.index>=headers[owner].params.length)
+        if(!Number.isSafeInteger(expr.index)||Object.is(expr.index,-0)||expr.index<0||expr.index>=owners[owner].params.length)
           fail('out-of-bounds parameter');
-        if((headers[owner].paramTypes?.[expr.index]??'int')!==expected)
+        if((owners[owner].paramTypes?.[expr.index]??'int')!==expected)
           fail('parameter type mismatch');
         return {kind:'param',index:expr.index};
       case 'neg':
@@ -328,7 +382,7 @@ export function validateProgramIRV2(input) {
         if((target.returnType??'int')!==expected)fail('call return type mismatch');
         const args=sequence(expr.args,128,'call args');
         if(args.length!==target.params.length)fail('call arity mismatch');
-        if(target.module!==headers[owner].module && !target.pub)fail('cross-module private call');
+        if(target.module!==owners[owner].module && !target.pub)fail('cross-module private call');
         graph[owner].add(expr.target);
         return {kind:'call',target:expr.target,args:args.map((a,i)=>
           node(a,owner,depth+1,target.paramTypes?.[i]??'int',active))};
@@ -351,7 +405,7 @@ export function validateProgramIRV2(input) {
           seen.add(slot);return slot;
         });
         if(seen.size!==target.params.length)fail('incomplete named call parameter order');
-        if(target.module!==headers[owner].module&&!target.pub)
+        if(target.module!==owners[owner].module&&!target.pub)
           fail('cross-module private named call');
         graph[owner].add(expr.target);
         return {kind:'namedCall',target:expr.target,
@@ -518,6 +572,10 @@ export function validateProgramIRV2(input) {
     }
   }
   const functions=headers.map((f,i)=>({...f,body:node(sourceFunctions[i].body,i,0,f.returnType??'int')}));
+  const generators=generatorHeaders.map((gen,i)=>({
+    ...gen,
+    yields:gen.yields.map(expr=>node(expr,headers.length+i,0,gen.elementType))
+  }));
   const classes=classHeaders.map(cls=>({
     name:cls.name,pub:cls.pub,
     methods:cls.methods.map(method=>({
@@ -536,6 +594,7 @@ export function validateProgramIRV2(input) {
     schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,
     integerModel:PROGRAM_IR_INT_MODEL,sourceNamespace:namespace,
     modules:moduleNames,functions,
+    ...(hasGenerators?{generators}:{}),
     ...(hasClasses?{classes}:{})
   };
 }

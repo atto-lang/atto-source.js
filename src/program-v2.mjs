@@ -13,11 +13,25 @@ const CLASS_METHOD_RESERVED=new Set([
   'constructor','prototype','__proto__','define','pub','as','end','self','int',
   'void','return','mut','private','actor','fnc','routine','bool','Symbol','let',
   'val','const','if','fi','then','else','await','task','spawn','module','trait',
-  'interface','type','rt'
+  'interface','type','rt','gen','generator','async','suspend','suspends','yield',
+  'Iterator','AsyncIterator'
 ]);
 const CLASS_METHOD_CALLABLE_KEYWORDS=new Set([
   'mtd','method','stop','do','done','loop','block','select','readch','writech',
   'nb','true','false'
+]);
+const GENERATOR_RESERVED=new Set([
+  'import','from','as','extends','implements','try','catch','throw','raise','panic',
+  'recover','finally','end','fi','if','do','else','then','new','spawn','stop','done',
+  'await','rt','async','suspend','suspends','critical','gen','generator','nlex','trap',
+  'actor','isoactor','def','fnc','routine','while','for','of','loop','block','break',
+  'continue','yield','super','elseif','elif','switch','match','matches','is','default',
+  'eq','neq','nb','select','readch','writech','cb','shared','untrusted','type','types',
+  'typeof','interface','trait','struct','impl','abstract','void','static','pub','private',
+  'return','defer','val','const','let','mut','borrow','self','true','false','null','obj',
+  'arr','Iterator','AsyncIterator','int','define','class','enum','pattern','module',
+  'contract','conforms','namespace','gpu','cpu','quantum','over','structural','bool','pure',
+  'Some','None','Ok','Err','using','requires','serial','critical-read','critical-write','nb-select'
 ]);
 export class ProgramCompileError extends Error {
   constructor(message, loc) {
@@ -69,9 +83,8 @@ function requireWellFormedCheckedI64Header(source) {
   return enabled;
 }
 function validateSourceText(source) {
-  // A UTF-8 encoding is never shorter than the source's UTF-16 code-unit
-  // count. Enforce this cheap upper bound before walking the input or
-  // allocating a full UTF-8 buffer; exact multibyte limits are checked below.
+  // UTF-8 is never shorter than the source UTF-16 code-unit count. Reject
+  // obviously oversized input before walking it or allocating an encoding.
   if(typeof source!=='string'||source.length>MAX_BYTES)
     fail('oversized or invalid source');
   // TextEncoder replaces lone UTF-16 surrogates. Reject before encoding so
@@ -240,6 +253,12 @@ class Parser {
     if (t.kind !== 'id' || !TOKEN_NAME.test(t.value)) fail('identifier expected',t);
     this.i++; return t.value;
   }
+  generatorIdentifier() {
+    const t=this.peek(),value=t.value;
+    if(t.kind!=='id'||!TOKEN_NAME.test(value)||GENERATOR_RESERVED.has(value))
+      fail('invalid or reserved generator identifier '+value,t);
+    this.i++;return value;
+  }
   classIdentifier() {
     const t=this.peek(),value=t.value;
     if(t.kind!=='id'||!TOKEN_NAME.test(value)||CLASS_METHOD_RESERVED.has(value)||
@@ -348,6 +367,65 @@ class Parser {
     }
     return {name,pub,methods};
   }
+  generatorStart() {
+    let j=this.i;
+    if(this.tokens[j]?.value==='pub')j++;
+    if(['async','suspend','suspends'].includes(this.tokens[j]?.value))j++;
+    return (this.tokens[j]?.value==='gen'&&this.tokens[j+1]?.value==='*')||
+      this.tokens[j]?.value==='generator';
+  }
+  generator(moduleName) {
+    const pub=this.eat('pub'),start=this.peek();
+    let mode='sync';
+    if(this.eat('async'))mode='async';
+    else if(this.eat('suspend')||this.eat('suspends'))mode='suspend';
+    if(this.eat('gen'))this.expect('*');
+    else if(this.eat('generator'))this.expect('*');
+    else fail('generator marker expected',start);
+    if(mode!=='sync')
+      fail(mode+' gen* requires the JS async continuation/cleanup ABI and is not implemented yet',start);
+    const name=this.generatorIdentifier();
+    this.expect('(');
+    const params=[],paramTypes=[];
+    if(!this.eat(')')){
+      do{
+        if(params.length>=128)fail('generator parameter limit',this.peek());
+        const type=this.valueType();
+        if(type!=='int')fail('sync generator v1 currently supports int parameters only',this.peek());
+        const param=this.generatorIdentifier();
+        if(params.includes(param))fail('duplicate generator parameter '+param);
+        params.push(param);paramTypes.push(type);
+      }while(this.eat(','));
+      this.expect(')');
+    }
+    const arrow=this.eat('->');
+    if(!arrow)this.expect(':');
+    this.expect('Iterator');this.expect('<');
+    const elementType=this.valueType();
+    if(elementType!=='int')fail('sync generator v1 currently supports Iterator<int> only',this.peek());
+    this.expect('>');
+    const braced=this.eat('{');
+    if(!braced&&!arrow)fail('expected { for colon generator body',this.peek());
+    if(!braced){if(!this.eat('as'))this.eat('::');}
+    const terminator=braced?'}':'end',yields=[];
+    let returned=false;
+    while(this.peek().kind!=='eof'&&this.peek().value!==terminator){
+      if(returned)fail('unreachable statement after generator return',this.peek());
+      if(this.eat('yield')){
+        if(this.eat('*'))fail('yield* is not implemented in JS sync generator v1',this.peek());
+        if(yields.length>=MAX_TOKENS)fail('generator yield budget exceeded',this.peek());
+        yields.push(this.expression());this.expect(';');
+      }else if(this.eat('return')){
+        if(this.peek().value!==';')
+          fail('generator return cannot carry a value; use yield',this.peek());
+        this.expect(';');returned=true;
+      }else fail('sync generator v1 supports only yield expressions and bare return',this.peek());
+    }
+    if(this.peek().kind==='eof')fail('unterminated generator '+name,this.peek());
+    this.expect(terminator);
+    return {module:moduleName,name,pub,params,paramTypes,elementType,yields};
+  }
+
   functions(moduleName, declaredPub=false) {
     const pub = declaredPub || this.eat('pub'), start=this.peek();
     if (!this.eat('fnc') && !this.eat('routine')) fail('unsupported declaration',start);
@@ -480,7 +558,7 @@ class Parser {
       namespace = this.name();
       this.expect(';');
     }
-    const modules=[],functions=[],classes=[],usedModules=new Set(),usedClasses=new Set();
+    const modules=[],functions=[],generators=[],classes=[],usedModules=new Set(),usedClasses=new Set();
     while(this.peek().kind!=='eof'){
       if(this.peek().value==='import'){
         const next=this.tokens[this.i+1]?.value;
@@ -507,7 +585,7 @@ class Parser {
           continue;
         }
         if(this.peek().value==='fnc'||this.peek().value==='routine'){
-          if(functions.length>=512)fail('declaration budget exceeded',this.peek());
+          if(functions.length+generators.length>=512)fail('declaration budget exceeded',this.peek());
           functions.push(this.functions(null,declarationPub));
           continue;
         }
@@ -520,16 +598,19 @@ class Parser {
         let count=0;
         while(!this.eat('end')){
           if(this.peek().kind==='eof')fail('unterminated module '+name,this.peek());
-          if(++count>512||functions.length>=512)fail('declaration budget exceeded',this.peek());
-          functions.push(this.functions(name));
+          if(++count>512||functions.length+generators.length>=512)
+            fail('declaration budget exceeded',this.peek());
+          if(this.generatorStart())generators.push(this.generator(name));
+          else functions.push(this.functions(name));
         }
       }else{
-        if(functions.length>=512)fail('declaration budget exceeded',this.peek());
-        functions.push(this.functions(null));
+        if(functions.length+generators.length>=512)fail('declaration budget exceeded',this.peek());
+        if(this.generatorStart())generators.push(this.generator(null));
+        else functions.push(this.functions(null));
       }
     }
-    if(!functions.length&&!modules.length&&!classes.length)fail('empty program');
-    return {namespace,modules,functions,classes};
+    if(!functions.length&&!generators.length&&!modules.length&&!classes.length)fail('empty program');
+    return {namespace,modules,functions,generators,classes};
   }
   integer(negative = false) {
     const token=this.peek();
@@ -554,17 +635,29 @@ class Parser {
           continue;
         }
         if (op === '/') fail('division unsupported in provisional int profile',this.peek());
-        const compare=['<','>','<=','>=','==','!='].includes(op);
-        const prec=op==='*'||op==='%'?20:op==='+'||op==='-'?10:compare?5:-1;
+        // Word operators lower to already-validated typed comparisons and
+        // lazy conditionals, never JS truthiness or eager bitwise operators.
+        const compare=['<','>','<=','>=','==','!=','eq','neq'].includes(op);
+        const logical=op==='and'||op==='or';
+        const prec=op==='*'||op==='%'?20:op==='+'||op==='-'?10:
+          compare?5:op==='and'?4:op==='or'?3:-1;
         if (prec < min) break;
         this.i++;
-        left={kind:compare?'compare':'binary',op,left,right:this.expression(prec+1)};
+        const right=this.expression(prec+1);
+        if(logical){
+          left=op==='and'
+            ? {kind:'if',condition:left,yes:right,no:{kind:'bool',value:false}}
+            : {kind:'if',condition:left,yes:{kind:'bool',value:true},no:right};
+        }else{
+          left={kind:compare?'compare':'binary',
+            op:op==='eq'?'==':op==='neq'?'!=':op,left,right};
+        }
       }
       return left;
     } finally {this.depth--;}
   }
   primary() {
-    if(this.eat('!'))return {kind:'not',inner:this.expression(30)};
+    if(this.eat('!')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
     if(this.eat('new')){
       const className=this.name();
       this.expect('(');
@@ -684,7 +777,7 @@ class Parser {
   }
 }
 function resolveProgram(parsed) {
-  const {modules,functions,classes=[]}=parsed;
+  const {modules,functions,generators=[],classes=[]}=parsed;
   const slots=new Map(),exports=new Set(),symbolKinds=new Map(),classByName=new Map();
   const classTables=classes.map((cls,classIndex)=>{
     if(classByName.has(cls.name))fail('duplicate class '+cls.name);
@@ -706,6 +799,20 @@ function resolveProgram(parsed) {
     symbolKinds.set(qualified,fn.kind);
     slots.set(slot,i);
     if(fn.pub && fn.module===null) exports.add(fn.name);
+  });
+  generators.forEach((gen,i)=>{
+    const qualified=(gen.module===null?'@file/':'@module/'+gen.module+'/')+gen.name;
+    const slot=qualified+'/'+gen.params.length;
+    if(slots.has(slot))fail('duplicate caller-visible arity '+slot);
+    // Callable identity is name + value arity. A generator and ordinary
+    // function may therefore share a family when their arities differ.
+    // Preserve an existing function-family marker so wrong-arity diagnostics
+    // remain available to ordinary source calls.
+    if(!symbolKinds.has(qualified))symbolKinds.set(qualified,'generator');
+    // Generator targets are not source-callable in this bounded slice, so use
+    // a distinct non-function slot marker rather than a function target index.
+    slots.set(slot,'generator:'+i);
+    if(gen.pub&&gen.module===null)exports.add(gen.name);
   });
   modules.forEach(m=>{
     if(exports.has(m)) fail('module/function export conflict '+m);
@@ -847,6 +954,8 @@ function resolveProgram(parsed) {
           if(symbolKinds.has(key)) fail('call arity mismatch for '+key);
           fail('unresolved callable '+key);
         }
+        if(typeof target!=='number')
+          fail('generator values are not source-callable in JS sync generator v1; consume them through the iterator ABI');
         if(expr.qualifier!==null && mod!==owner.module && !functions[target].pub) fail('private module member '+key);
         const bound=bindArguments(functions[target].params,expr.args,key,
           owner,depth,bindings);
@@ -879,6 +988,9 @@ function resolveProgram(parsed) {
     }
   }
   const resolved=functions.map(fn=>({...fn,body:resolve(fn.body,fn)}));
+  const resolvedGenerators=generators.map(gen=>({
+    ...gen,yields:gen.yields.map(expr=>resolve(expr,gen))
+  }));
   const resolvedClasses=classes.map((cls,classIndex)=>({
     ...cls,
     methods:cls.methods.map(method=>({
@@ -917,6 +1029,7 @@ function resolveProgram(parsed) {
   resolved.forEach((_,i)=>visit(i));
   return {
     sourceNamespace:parsed.namespace,modules,functions:resolved,
+    ...(resolvedGenerators.length?{generators:resolvedGenerators}:{}),
     ...(resolvedClasses.length?{classes:resolvedClasses}:{})
   };
 }
@@ -1124,6 +1237,23 @@ function emitProgram(program) {
     }
     out.push('}','Object.freeze('+local+'.prototype);','Object.freeze('+local+');');
   });
+  (program.generators??[]).forEach((gen,i)=>{
+    const params=gen.params.map((_,j)=>'_p'+j);
+    out.push('function* _gbody'+i+'('+params.join(',')+'){');
+    params.forEach(p=>out.push('_check('+p+');'));
+    for(const yielded of gen.yields)
+      out.push('yield _check('+emitExpr(yielded)+');');
+    out.push('}');
+    out.push('function _g'+i+'('+params.join(',')+'){');
+    out.push('const _inner=_gbody'+i+'('+params.join(',')+');');
+    out.push('let _closed=false,_failure=null;');
+    out.push('const _iter=Object.create(null);');
+    out.push('Object.defineProperty(_iter,"next",{value:function(..._args){if(_args.length!==0)throw new TypeError("Oreslang Iterator.next takes no arguments");if(_failure!==null)throw _failure;if(_closed)return Object.freeze({value:undefined,done:true});try{const _step=_inner.next();if(_step.done)_closed=true;return Object.freeze({value:_step.value,done:_step.done});}catch(_error){_closed=true;_failure=_error;throw _error;}},enumerable:true});');
+    out.push('Object.defineProperty(_iter,"close",{value:function(..._args){if(_args.length!==0)throw new TypeError("Oreslang Iterator.close takes no arguments");if(_closed&&_failure===null)return;_closed=true;_failure=null;try{_inner.return();}catch(_error){_failure=_error;throw _error;}},enumerable:true});');
+    out.push('Object.defineProperty(_iter,Symbol.iterator,{value:function(){return this;}});');
+    out.push('return Object.freeze(_iter);');
+    out.push('}');
+  });
   program.functions.forEach((fn,i)=>{
     const params=fn.params.map((_,j)=>'_p'+j);
     out.push('function _f'+i+'('+params.join(',')+'){');
@@ -1137,37 +1267,43 @@ function emitProgram(program) {
     out.push('return '+emitExpr(fn.body)+';','}');
   });
   let dispatcherNumber=0;
-  function exportCallable(indices) {
-    // Always use the public arity dispatcher, even for one overload.
-    const name='_dispatch'+(dispatcherNumber++);
-    out.push('function '+name+'(..._args){switch(_args.length){');
-    for(const i of indices) {
-      out.push('case '+program.functions[i].params.length+':return _f'+i+'(..._args);');
-    }
-    out.push('default:throw new TypeError("Oreslang overload arity mismatch");}}');
-    return name;
-  }
-  function publicGroups(module) {
+  function publicCallableGroups(module) {
     const result=new Map();
+    const group=name=>{
+      if(!result.has(name))result.set(name,{functions:[],generators:[]});
+      return result.get(name);
+    };
     program.functions.forEach((fn,i)=>{
-      if(fn.module===module && fn.pub) {
-        if(!result.has(fn.name))result.set(fn.name,[]);
-        result.get(fn.name).push(i);
-      }
+      if(fn.module===module&&fn.pub)group(fn.name).functions.push(i);
+    });
+    (program.generators??[]).forEach((gen,i)=>{
+      if(gen.module===module&&gen.pub)group(gen.name).generators.push(i);
     });
     return result;
   }
+  function exportCallableGroup(group) {
+    // One dispatcher owns the exported name across ordinary functions and
+    // generators. Same-arity collisions were rejected during resolution.
+    const name='_dispatch'+(dispatcherNumber++);
+    out.push('function '+name+'(..._args){switch(_args.length){');
+    for(const i of group.functions)
+      out.push('case '+program.functions[i].params.length+':return _f'+i+'(..._args);');
+    for(const i of group.generators)
+      out.push('case '+program.generators[i].params.length+':return _g'+i+'(..._args);');
+    out.push('default:throw new TypeError("Oreslang overload arity mismatch");}}');
+    return name;
+  }
   program.modules.forEach((module,i)=>{
     out.push('const _module'+i+'=Object.create(null);');
-    for(const [name,indices] of publicGroups(module)) {
-      const callable=exportCallable(indices);
+    for(const [name,group] of publicCallableGroups(module)) {
+      const callable=exportCallableGroup(group);
       out.push('Object.defineProperty(_module'+i+','+JSON.stringify(name)+',{value:'+callable+',enumerable:true,configurable:false,writable:false});');
     }
     out.push('Object.freeze(_module'+i+');');
     out.push('export { _module'+i+' as '+JSON.stringify(module)+' };');
   });
-  for(const [name,indices] of publicGroups(null)) {
-    out.push('export { '+exportCallable(indices)+' as '+JSON.stringify(name)+' };');
+  for(const [name,group] of publicCallableGroups(null)) {
+    out.push('export { '+exportCallableGroup(group)+' as '+JSON.stringify(name)+' };');
   }
   (program.classes??[]).forEach((cls,i)=>{
     if(cls.pub)out.push('export { _class'+i+' as '+JSON.stringify(cls.name)+' };');

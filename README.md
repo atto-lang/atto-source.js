@@ -53,6 +53,12 @@ The experimental program-v2 and `--freestanding-core` backend now also support f
 
 Run `npm run test:core-bool`; the browser ESM smoke also covers pure boolean compilation. The source is still an **experimental narrow subset**: `Option`/`Result`, records, full comparison/equality generics, and actor declarations are not yet supported.
 
+## Typed word operators (experimental program-v2)
+
+Program-v2 supports `eq` and `neq` as source aliases for typed `==` and `!=` (including nominal `Symbol` equality), plus `not`, `and` and `or` for strict `bool` values. Precedence is unary `not`, arithmetic, comparison, `and`, `or`, then the conditional `? :`; parentheses override precedence. `and` and `or` short-circuit their right operand, including checked-i64 overflow and remainder traps, by lowering into the existing validated lazy conditional IR. No JavaScript truthiness, host-side coercions, effectful calls, or new IR operators are admitted. The scalar-v1 profile is intentionally unchanged.
+
+Run `node --test tests/boolean-word-operators.test.mjs` to exercise the source, canonical IR, generated ESM, freestanding core and class-method paths. These are experimental syntax extensions, not full Java/LLVM semantic parity.
+
 ## Symbol literals (experimental program-v2)
 
 The typed program-v2 subset now accepts nominal `Symbol` parameters/results and strict PROCESS Symbol literals such as `#ready` and `#"http.ok"`. Names use Java-aligned pre-normalization/UTF-8 budgets and NFC/control/bidi validation. Generated values are fresh/non-interned and artifact-branded; forged host objects do not satisfy the Symbol ABI. Typed `==`/`!=` use logical `(kind,name)` equality rather than JavaScript object identity.
@@ -151,3 +157,24 @@ Python is prohibited in this repository for source code, tests, build tooling, c
 ## Concrete Option/Result and exhaustive ADT matching (integration draft)
 
 The opt-in program-v2 source compiler admits only portable `Option<int>` and `Result<int,int>` values, strict frozen null-prototype tagged-data checks, and exhaustive `Some/None` and `Ok/Err` expression matching with arm-local typed payload bindings. This is not general generics, capabilities, actor-source lowering or general exception support. Run `npm run test:core-option-result`, `npm run test:core-adt-match` and `npm run test:core-adt-conformance`. Exact-head Node/browser tests and independent review remain required.
+
+## Shared six-backend scalar50 source execution (experimental JS evidence)
+
+`npm run test:shared-scalar50` compiles and executes the **exact 50 source programs**
+from the Java/LLVM/Wasm/Cranelift/.NET scalar50 conformance proposal, using
+program-v2 and the actual Node ESM loader. The checked-in
+`tests/fixtures/shared-scalar50-v1.tsv` is byte-identical to Java PR #2386's
+`contracts/parity/scalar50/v1.tsv` at commit
+`9371ba965e6d05ce2e4e934eb0cbf906a813dd9f`, Git blob
+`a948dbaf594916a6ee07f65d49a0cf5ae398ca7b`. The test rejects any
+physical-byte change and verifies 50 typed BigInt results plus source-to-IR
+codegen identity. The default `npm test` also includes this test file.
+
+This is a small shared scalar source floor, **not** compiler or actor parity.
+The suite does not execute Java/Graal, LLVM, Cranelift, Wasm, or .NET; their
+respective real compiler/guest tests need separate exact-head receipts. The
+shipping JS scalar-v1 compiler still wraps provisionally while program-v2
+checks signed-i64 overflow. The additional negative test ensures this suite
+does not accidentally promote wrapping to checked arithmetic. Node's ESM
+runtime is not an untrusted guest sandbox. A passing source-free or in-memory
+V8 test is not an executed Node `npm test` or CI admission receipt.
