@@ -62,7 +62,12 @@ export function parseStrictJsonReport(text,maximum,where) {
     const token=text.slice(start,at);
     if(token==='true'||token==='false'||token==='null')return;
     if(!/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/.test(token))invalid();
-    if(!Number.isFinite(Number(token)))fail('non-finite JSON number');
+    const number=Number(token);
+    if(!Number.isFinite(number))fail('non-finite JSON number');
+    // JSON.parse rounds integers outside the IEEE-754 safe range. Parity
+    // receipt IDs/counts must not silently change during materialization.
+    if(Number.isInteger(number)&&!Number.isSafeInteger(number))
+      fail('unsafe JSON integer precision');
   }
   value(0);spaces();
   if(at!==text.length)invalid();
