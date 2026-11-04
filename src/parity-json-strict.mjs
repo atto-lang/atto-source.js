@@ -11,7 +11,7 @@ export function parseStrictJsonReport(text,maximum,where) {
   // schemas cannot tell it apart from an actual integer. Inspect the original
   // decimal's exponent and trailing digits before trusting that coercion.
   const exactDecimalInteger=token=>{
-    const match=/^-?([0-9]+)(?:\\.([0-9]+))?(?:[eE]([+-]?[0-9]+))?$/.exec(token);
+    const match=/^-?([0-9]+)(?:[.]([0-9]+))?(?:[eE]([+-]?[0-9]+))?$/.exec(token);
     if(!match)return false;
     const fractional=match[2]??'';
     const significant=(match[1]+fractional).replace(/^0+/,'');
