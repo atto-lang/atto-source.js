@@ -7,6 +7,23 @@ export function parseStrictJsonReport(text,maximum,where) {
   if(typeof text!=='string'||!Number.isSafeInteger(maximum)||maximum<0||
      Buffer.byteLength(text,'utf8')>maximum)
     throw Error(where+': missing or oversized JSON report');
+  // If a fractional decimal rounds to a safe integer, downstream integer
+  // schemas cannot tell it apart from an actual integer. Inspect the original
+  // decimal's exponent and trailing digits before trusting that coercion.
+  const exactDecimalInteger=token=>{
+    const match=/^-?([0-9]+)(?:\\.([0-9]+))?(?:[eE]([+-]?[0-9]+))?$/.exec(token);
+    if(!match)return false;
+    const fractional=match[2]??'';
+    const significant=(match[1]+fractional).replace(/^0+/,'');
+    if(!significant)return true;
+    const places=Number(match[3]??'0')-fractional.length;
+    if(places>=0)return true;
+    const missing=-places;
+    if(!Number.isFinite(missing)||missing>significant.length)return false;
+    for(let i=significant.length-missing;i<significant.length;i++)
+      if(significant[i]!=='0')return false;
+    return true;
+  };
   let at=0,values=0;
   const fail=reason=>{throw Error(where+': '+reason);};
   const invalid=()=>fail('invalid JSON report');
@@ -68,13 +85,17 @@ export function parseStrictJsonReport(text,maximum,where) {
     // Reject it before JSON.parse can materialize ambiguous numeric metadata.
     if(token.startsWith('-') && number===0)
       fail('noncanonical negative-zero JSON number');
-    // JSON.parse rounds integers outside the IEEE-754 safe range. Parity
-    // receipt IDs/counts must not silently change during materialization.
-    if(Number.isInteger(number)&&!Number.isSafeInteger(number))
-      fail('unsafe JSON integer precision');
     // A nonzero significand rounding to zero must not become a trusted zero.
     if(number===0 && /[1-9]/.test(token.split(/[eE]/,1)[0]))
       fail('underflow JSON number');
+    // A rounded fractional input can also look like a safe integer (e.g.
+    // 1.0000000000000001 -> 1). Preserve the integer admission boundary.
+    if(Number.isInteger(number)){
+      if(!Number.isSafeInteger(number))
+        fail('unsafe JSON integer precision');
+      if(!exactDecimalInteger(token))
+        fail('lossy fractional JSON integer');
+    }
   }
   value(0);spaces();
   if(at!==text.length)invalid();
