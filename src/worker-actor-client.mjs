@@ -79,24 +79,30 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
   }
   function onFrame(frame) {
     if (closed) return;
-    if (!frame || typeof frame !== 'object' || frame.protocol !== PROTOCOL ||
-        !['ready','fatal','result'].includes(frame.kind)) {
+    if (!frame || typeof frame !== 'object' || frame.protocol !== PROTOCOL) {
       failProtocol('invalid actor frame');return;
     }
-    if (frame.kind === 'ready') {
+    // Accessor-backed test transports can mutate control properties between
+    // reads. Snapshot each protocol discriminator once before branching.
+    const kind=frame.kind;
+    if (!['ready','fatal','result'].includes(kind)) {
+      failProtocol('invalid actor frame');return;
+    }
+    if (kind === 'ready') {
       if (ready) {shutdown(new Error('duplicate actor ready'));void terminateWorker();return;}
       ready = true; readyResolve();
-    } else if (frame.kind === 'fatal') {
+    } else if (kind === 'fatal') {
       shutdown(new Error('actor startup/protocol failure: ' + errorText(frame.error)));
       void terminateWorker();
-    } else if (frame.kind === 'result') {
+    } else if (kind === 'result') {
       if (!ready) {failProtocol('actor result before ready');return;}
       // Control properties may be accessors in custom Worker transports.
       // Match and release the very same receipt, even if an id getter changes.
       const id=frame.id;
       const entry = pending.get(id);
       if (!entry) {shutdown(new Error('unexpected actor response id'));void terminateWorker();return;}
-      if (frame.ok === true) {
+      const ok=frame.ok;
+      if (ok === true) {
         // A Worker response is a new ownership boundary. Even trusted adapter
         // code can regress and return a SharedArrayBuffer, or a test Worker
         // can forge a success frame. Never expose such aliases to callers.
@@ -108,7 +114,7 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
         }
         release(id);
         entry.resolve(snapshot);
-      } else if (frame.ok === false) {
+      } else if (ok === false) {
         // Parse the negative result before revoking its receipt. An accessor-
         // throwing frame.error must fail the whole protocol and reject every
         // outstanding promise, including this one. Releasing first would

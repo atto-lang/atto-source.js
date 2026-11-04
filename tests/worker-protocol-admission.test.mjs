@@ -186,6 +186,37 @@ test('successful Worker responses exceeding complexity budget revoke pending rec
   await actor.close();
 });
 
+test('mutable result kind/ok accessors are sampled once without orphaning sibling receipts',async()=>{
+  for(const field of ['kind','ok']){
+    const worker=new StubNodeWorker(),actor=client(worker);
+    worker.frame('ready');await actor.ready;
+    const first=actor.request({args:[40n,2n]});
+    const second=actor.request({args:[21n,21n]});
+    const frame={protocol:PROTOCOL,kind:'result',id:1,ok:true,value:42n,error:'denied'};
+    let reads=0;
+    if(field==='kind')Object.defineProperty(frame,'kind',{
+      get(){return ++reads===1?'result':'unrecognized';}
+    });
+    else Object.defineProperty(frame,'ok',{
+      get(){return ++reads===1?false:true;}
+    });
+    worker.emit('message',frame);
+    try{
+      assert.equal(reads,1,field+' must be read only once');
+      assert.equal(actor.pending,1,'only the matched receipt is released');
+      if(field==='kind')assert.equal(await first,42n);
+      else await assert.rejects(first,/actor delivery failed: denied/);
+      worker.frame('result',{id:2,ok:true,value:42n});
+      assert.equal(await second,42n);
+      assert.equal(actor.pendingBytes,0);
+      assert.equal(worker.terminated,0);
+    }finally{
+      await actor.close();
+      await Promise.allSettled([first,second]);
+    }
+  }
+});
+
 test('reentrant response error getter cannot replace a failed receipt with success',async()=>{
   const worker=new StubNodeWorker(),actor=client(worker);
   worker.frame('ready');await actor.ready;
@@ -230,5 +261,29 @@ test('reentrant browser message data getter fails closed before nested success',
   await pending;
   assert.equal(actor.pending,0);
   assert.equal(worker.terminated,1);
+  await actor.close();
+});
+
+test('snapshotted kind getter cannot reenter and settle another receipt',async()=>{
+  const worker=new StubNodeWorker(),actor=client(worker);
+  worker.frame('ready');await actor.ready;
+  const first=assert.rejects(actor.request({args:[40n,2n]}),/reentrant actor event/);
+  const second=assert.rejects(actor.request({args:[21n,21n]}),/reentrant actor event/);
+  await nextTurn();
+  let reads=0;
+  worker.emit('message',{
+    protocol:PROTOCOL,id:1,ok:false,error:'original failure',
+    get kind(){
+      reads++;
+      worker.frame('result',{id:1,ok:true,value:42n});
+      return 'result';
+    }
+  });
+  await Promise.all([first,second]);
+  assert.equal(reads,1,'kind discriminator must be sampled once');
+  assert.equal(actor.pending,0);
+  assert.equal(actor.pendingBytes,0);
+  assert.equal(worker.terminated,1);
+  await assert.rejects(actor.request({args:[3n,4n]}),/actor closed/);
   await actor.close();
 });

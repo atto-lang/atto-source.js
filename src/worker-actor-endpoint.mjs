@@ -14,6 +14,8 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     throw new TypeError('invalid actor endpoint transport');
   let initializing=false,initialized=false,terminal=false,receive=null;
   let processing=false,inFlight=0,inFlightBytes=0,lastId=0,maxPending=0,maxPendingBytes=0;
+  // Guard synchronous custom-transport recursion before it can dispatch guest work.
+  let handlingInbound=false;
   const queue=[];
   const reply=frame=>post({protocol:PROTOCOL,...frame});
   function fail(reason){
@@ -66,35 +68,47 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     }finally{processing=false;}
   }
   subscribe(frame=>{
+    if(terminal)return;
+    if(handlingInbound){fail('reentrant actor frame');return;}
+    handlingInbound=true;
     try {
     if(terminal)return;
-    if(!frame||typeof frame!=='object'||frame.protocol!==PROTOCOL||
-       !['init','deliver'].includes(frame.kind)){
+    if(!frame||typeof frame!=='object'||frame.protocol!==PROTOCOL){
       fail('invalid actor frame');return;
     }
-    if(frame.kind==='init'){
+    // A custom transport may pass accessor-backed frames instead of a
+    // structured clone. Never re-read mutable control fields after admission.
+    const kind=frame.kind;
+    if(kind!=='init'&&kind!=='deliver'){
+      fail('invalid actor frame');return;
+    }
+    if(kind==='init'){
       if(initializing||initialized){fail('duplicate initialization');return;}
       initializing=true;
-      if(typeof frame.moduleUrl!=='string'||!frame.moduleUrl||
-         typeof frame.exportName!=='string'||
-         !/^[A-Za-z_][A-Za-z0-9_]*$/.test(frame.exportName)||
-         !['handler','call'].includes(frame.mode)||
-         !Number.isSafeInteger(frame.maxPending)||
-         frame.maxPending<1||frame.maxPending>65536||
-         !Number.isSafeInteger(frame.maxPendingBytes)||
-         frame.maxPendingBytes<1||
-         frame.maxPendingBytes>MAX_CONFIGURED_PENDING_BYTES){
+      const moduleUrl=frame.moduleUrl,exportName=frame.exportName,mode=frame.mode;
+      const requestedMaxPending=frame.maxPending,requestedMaxPendingBytes=frame.maxPendingBytes;
+      if(typeof moduleUrl!=='string'||!moduleUrl||
+         typeof exportName!=='string'||
+         !/^[A-Za-z_][A-Za-z0-9_]*$/.test(exportName)||
+         !['handler','call'].includes(mode)||
+         !Number.isSafeInteger(requestedMaxPending)||
+         requestedMaxPending<1||requestedMaxPending>65536||
+         !Number.isSafeInteger(requestedMaxPendingBytes)||
+         requestedMaxPendingBytes<1||
+         requestedMaxPendingBytes>MAX_CONFIGURED_PENDING_BYTES){
         fail('invalid actor module descriptor');return;
       }
-      maxPending=frame.maxPending;
-      maxPendingBytes=frame.maxPendingBytes;
+      // An accessor may synchronously reenter and terminally revoke this session.
+      if(terminal)return;
+      maxPending=requestedMaxPending;
+      maxPendingBytes=requestedMaxPendingBytes;
       void (async()=>{
         try{
-          const module=await import(frame.moduleUrl);
+          const module=await import(moduleUrl);
           if(terminal)return;
-          const fn=Object.getOwnPropertyDescriptor(module,frame.exportName)?.value;
+          const fn=Object.getOwnPropertyDescriptor(module,exportName)?.value;
           if(typeof fn!=='function')throw new Error('actor entrypoint not found');
-          receive=frame.mode==='handler'?fn:(mail,self)=>{
+          receive=mode==='handler'?fn:(mail,self)=>{
             if(!mail||!Array.isArray(mail.args)||mail.args.length>128)
               throw new Error('invalid call arguments');
             const result=fn(...mail.args);
@@ -110,8 +124,15 @@ export function installWorkerActorEndpoint({subscribe,post}) {
       })();
       return;
     }
-    if(!initialized||!Number.isSafeInteger(frame.id)||frame.id<=lastId||
-       typeof frame.reply!=='boolean'){
+    // Preserve premature/invalid-id short-circuiting: a malformed frame
+    // must not evaluate unrelated accessor-backed control properties.
+    if(!initialized){fail('invalid or premature delivery');return;}
+    const id=frame.id;
+    if(!Number.isSafeInteger(id)||id<=lastId){
+      fail('invalid or premature delivery');return;
+    }
+    const wantsReply=frame.reply;
+    if(typeof wantsReply!=='boolean'){
       fail('invalid or premature delivery');return;
     }
     // Includes the one currently executing turn, not only the queued frames.
@@ -122,11 +143,14 @@ export function installWorkerActorEndpoint({subscribe,post}) {
     if(bytes>maxPendingBytes-inFlightBytes){
       fail('actor mailbox byte capacity exceeded');return;
     }
-    lastId=frame.id;
+    // Reentrancy during value snapshot must not commit abandoned reservations.
+    if(terminal)return;
+    lastId=id;
     inFlight++;
     inFlightBytes+=bytes;
-    queue.push({id:frame.id,reply:frame.reply,value:snapshot,bytes});
+    queue.push({id,reply:wantsReply,value:snapshot,bytes});
     void drain();
     } catch {fail('invalid actor frame');}
+    finally {handlingInbound=false;}
   });
 }
