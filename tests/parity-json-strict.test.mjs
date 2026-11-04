@@ -141,6 +141,36 @@ test('quoted numeric labels remain text while unsafe numeric tokens are rejected
   ])assert.throws(()=>parse(source),undefined,source);
 });
 
+test('prototype-magic JSON report members are denied at every depth',()=>{
+  for(const key of ['__proto__','constructor','prototype']){
+    for(const source of [
+      '{"'+key+'":1}',
+      '{"results":[{"'+key+'":true}]}',
+      '{"\\u005f\\u005fproto\\u005f\\u005f":1}'
+    ].filter((_,i)=>i!==2||key==='__proto__'))
+      assert.throws(()=>parse(source),/unsafe JSON member/,source);
+  }
+  assert.deepEqual(parse('{"backend":"llvm","results":[{"case":"ok"}]}'),
+    {backend:'llvm',results:[{case:'ok'}]});
+});
+
+test('prototype-sensitive JSON keys fail closed after decoding',()=>{
+  for(const [key,escaped] of [
+    ['__proto__','\\u005f\\u005fproto\\u005f\\u005f'],
+    ['constructor','constr\\u0075ctor'],
+    ['prototype','proto\\u0074ype']
+  ]){
+    for(const source of [
+      '{"'+key+'":1}',
+      '{"results":[{"'+key+'":true}]}',
+      '{"'+escaped+'":1}',
+      '{"results":[{"'+escaped+'":true}]}'
+    ])assert.throws(()=>parse(source),/unsafe JSON member/,source);
+  }
+  assert.deepEqual(parse('{"backend":"llvm","results":[{"case":"ok"}]}'),
+    {backend:'llvm',results:[{case:'ok'}]});
+});
+
 test('fractional JSON tokens cannot round into trusted safe integer metadata',()=>{
   for(const source of [
     '1.0000000000000001',

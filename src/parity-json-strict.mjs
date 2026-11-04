@@ -51,6 +51,9 @@ export function parseStrictJsonReport(text,maximum,where) {
       for(;;) {
         spaces();
         const key=quoted();
+        // Do not admit prototype-magic names into downstream receipt merges.
+        if(key==='__proto__'||key==='constructor'||key==='prototype')
+          fail('unsafe JSON member');
         if(seen.has(key))fail('duplicate JSON member');
         seen.add(key);
         spaces();
