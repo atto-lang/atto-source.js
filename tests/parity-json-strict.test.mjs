@@ -140,3 +140,20 @@ test('quoted numeric labels remain text while unsafe numeric tokens are rejected
     '{"n":+1}', '{"n":00}', '[0,1e-324]'
   ])assert.throws(()=>parse(source),undefined,source);
 });
+
+test('prototype-sensitive JSON keys fail closed after decoding',()=>{
+  for(const [key,escaped] of [
+    ['__proto__','\\u005f\\u005fproto\\u005f\\u005f'],
+    ['constructor','constr\\u0075ctor'],
+    ['prototype','proto\\u0074ype']
+  ]){
+    for(const source of [
+      '{"'+key+'":1}',
+      '{"results":[{"'+key+'":true}]}',
+      '{"'+escaped+'":1}',
+      '{"results":[{"'+escaped+'":true}]}'
+    ])assert.throws(()=>parse(source),/unsafe JSON member/,source);
+  }
+  assert.deepEqual(parse('{"backend":"llvm","results":[{"case":"ok"}]}'),
+    {backend:'llvm',results:[{case:'ok'}]});
+});
