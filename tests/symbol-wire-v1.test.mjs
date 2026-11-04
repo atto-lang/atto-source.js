@@ -97,3 +97,23 @@ test('stringify/parse text roundtrip is deterministic and canonical',()=>{
   const stable={'$symbol':'stable',name:'550e8400-e29b-41d4-a716-446655440000'};
   assert.deepEqual({...parseSymbolWireJsonV1(stringifySymbolWireV1(stable))},stable);
 });
+
+test('validated Symbol descriptors cannot be swapped by Proxy property reads',()=>{
+  let reads=0;
+  const forged=new Proxy({'$symbol':'process',name:'ready'},{
+    get(_target,key){
+      if(key==='$symbol'||key==='name') {
+        reads++;
+        throw Error('untrusted get trap executed');
+      }
+      return Reflect.get(_target,key);
+    }
+  });
+  const result=validateSymbolWireV1(forged,{policy:'untrusted-core'});
+  assert.equal(result.$symbol,'process');
+  assert.equal(result.name,'ready');
+  assert.equal(reads,0,'no caller property get follows descriptor validation');
+  assert.equal(stringifySymbolWireV1(forged),
+    '{"$symbol":"process","name":"ready"}');
+  assert.equal(reads,0);
+});
