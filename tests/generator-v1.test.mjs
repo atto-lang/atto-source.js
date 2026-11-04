@@ -143,7 +143,10 @@ test('generator names reject the full native reserved-name parity set',()=>{
   for(const name of reserved) {
     assert.throws(
       ()=>compileProgramV2(`gen* ${name}(): Iterator<int> {yield 1;return;}`),
-      /reserved generator identifier/,
+      // Execution-domain words fail earlier, at source admission.
+      ['gpu','cpu','quantum'].includes(name)
+        ? /execution domain '/
+        : /reserved generator identifier/,
       name);
     const ir=compileToProgramIRV2('gen* values(): Iterator<int> {yield 1;return;}');
     ir.generators[0].name=name;
