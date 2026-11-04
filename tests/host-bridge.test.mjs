@@ -100,3 +100,13 @@ test('host bridge uses own array descriptors instead of caller proxy methods',as
   }),i('42'));
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('forged module namespace cannot execute @@toStringTag getter before rejection',()=>{
+ let getCalls=0;
+ const forged=Object.create(null);
+ Object.defineProperty(forged,Symbol.toStringTag,{get(){getCalls++;throw Error('untrusted namespace tag getter');}});
+ Object.freeze(forged);
+ assert.throws(()=>invokeTrustedModule(forged,{entry:'add',allowlist:['add'],args:[]}),
+   /expected a trusted ESM module namespace/);
+ assert.equal(getCalls,0,'untrusted tag getter must not execute');
+});
