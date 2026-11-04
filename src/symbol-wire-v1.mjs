@@ -54,12 +54,16 @@ function exactWireRecord(input){
   if(keys.length!==2||!keys.includes('$symbol')||!keys.includes('name')||
      keys.some(key=>typeof key!=='string'))
     fail('expected exact $symbol/name fields');
+  // Descriptors are the validated authority. Reading the original Proxy
+  // afterward would invoke a different get trap and reintroduce TOCTOU.
+  const snapshot=Object.create(null);
   for(const key of ['$symbol','name']){
     const desc=Object.getOwnPropertyDescriptor(input,key);
     if(!desc||!Object.hasOwn(desc,'value')||!desc.enumerable)
       fail('non-enumerable, accessor, or missing '+key);
+    snapshot[key]=desc.value;
   }
-  return input;
+  return snapshot;
 }
 function copied(kind,name){
   const out=Object.create(null);
