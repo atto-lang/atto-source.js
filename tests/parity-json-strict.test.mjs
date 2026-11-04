@@ -126,3 +126,16 @@ test('signed subnormal underflow and representable values remain distinct',()=>{
   for(const source of ['-5e-324','5e-324','0.000e-999','{"numbers":[-5e-324,5e-324,0]}'])
     assert.deepEqual(parse(source),JSON.parse(source),source);
 });
+
+test('prototype-magic JSON report members are denied at every depth',()=>{
+  for(const key of ['__proto__','constructor','prototype']){
+    for(const source of [
+      '{"'+key+'":1}',
+      '{"results":[{"'+key+'":true}]}',
+      '{"\\u005f\\u005fproto\\u005f\\u005f":1}'
+    ].filter((_,i)=>i!==2||key==='__proto__'))
+      assert.throws(()=>parse(source),/unsafe JSON member/,source);
+  }
+  assert.deepEqual(parse('{"backend":"llvm","results":[{"case":"ok"}]}'),
+    {backend:'llvm',results:[{case:'ok'}]});
+});
