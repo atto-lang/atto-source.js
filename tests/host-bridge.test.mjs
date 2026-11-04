@@ -110,3 +110,18 @@ test('forged module namespace cannot execute @@toStringTag getter before rejecti
    /expected a trusted ESM module namespace/);
  assert.equal(getCalls,0,'untrusted tag getter must not execute');
 });
+
+test('buildPackage creates nested output parents before exclusive publication',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'atto-js-nested-package-'));
+ try{
+  const source=join(dir,'app.atto');
+  const output=join(dir,'not-yet-created','deep','published');
+  await writeFile(source,'pub fnc main(): int { return 42; }\n');
+  const result=await buildPackage({sourceFile:source,outputDir:output,
+    target:'edge-js',declaredCompilerSha:SHA});
+  assert.deepEqual(result.publicEntrypoints,['main']);
+  assert.equal(digest(await readFile(join(output,'module.mjs'))),result.moduleSha256);
+  await assert.rejects(buildPackage({sourceFile:source,outputDir:output,
+    target:'edge-js',declaredCompilerSha:SHA}),/overwrite/);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
