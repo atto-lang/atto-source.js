@@ -116,7 +116,7 @@ test('buildPackage creates nested output parents before exclusive publication',a
  try{
   const source=join(dir,'app.atto');
   const output=join(dir,'not-yet-created','deep','published');
-  await writeFile(source,'pub fnc main(): int { return 42; }\\n');
+  await writeFile(source,'pub fnc main(): int { return 42; }\n');
   const result=await buildPackage({sourceFile:source,outputDir:output,
     target:'edge-js',declaredCompilerSha:SHA});
   assert.deepEqual(result.publicEntrypoints,['main']);
