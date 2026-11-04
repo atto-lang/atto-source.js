@@ -62,10 +62,14 @@ function wireArray(value, maximum, label) {
  * This adapter cannot execute untrusted code safely or establish isolation.
  */
 export function invokeTrustedModule(namespace, {entry, allowlist, args} = {}) {
+  // A forged @@toStringTag getter can execute before an impostor is denied.
+  // Native module namespaces expose an own, inert "Module" data descriptor.
+  const tag=namespace && typeof namespace==='object' ?
+    Object.getOwnPropertyDescriptor(namespace,Symbol.toStringTag) : null;
   if (!namespace || typeof namespace !== 'object' ||
-      Object.prototype.toString.call(namespace) !== '[object Module]' ||
       Object.getPrototypeOf(namespace) !== null ||
-      Object.isExtensible(namespace)) {
+      Object.isExtensible(namespace) ||
+      !Object.hasOwn(tag??{},'value') || tag.value !== 'Module') {
     throw new HostBridgeError('expected a trusted ESM module namespace');
   }
   const approvedNames=wireArray(allowlist,128,'entrypoint allowlist');
