@@ -82,3 +82,21 @@ test('enforces bounded integer literals and compiler lowering depth',()=>{
  assert.throws(()=>compile('pub fnc main(): int {return '+ '0'.repeat(65) +';}'),/integer literal length limit/);
  assert.throws(()=>compile('pub fnc main(): int {return '+ ('1+'.repeat(1000)) +'1;}'),/expression limit exceeded|expression depth limit during lowering/);
 });
+
+test('host bridge uses own array descriptors instead of caller proxy methods',async()=>{
+ const {dir,namespace}=await fixtureModule();
+ try {
+  let reads=0;
+  const proxy=values=>new Proxy(values,{get(){reads++;throw Error('unexpected array get')}});
+  assert.deepEqual(invokeTrustedModule(namespace,{
+    entry:'add',allowlist:proxy(['add']),args:proxy([i('20'),i('22')])
+  }),i('42'));
+  assert.equal(reads,0);
+  const spoofed=new Proxy([i('20'),i('22')],{
+    get(target,key,receiver){return key==='length'?0:Reflect.get(target,key,receiver)}
+  });
+  assert.deepEqual(invokeTrustedModule(namespace,{
+    entry:'add',allowlist:['add'],args:spoofed
+  }),i('42'));
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
