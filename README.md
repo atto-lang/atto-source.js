@@ -73,6 +73,28 @@ This convergence slice still has **no fields, inheritance, constructors with sou
 
 Legacy class-free program-v2 IR and generated ESM remain byte-stable: the optional `classes` IR field is emitted only when a class is actually present. The historical `--class-methods-v1` CLI and `@oreslang/source-js/class-methods-v1` API are retained as narrow compatibility adapters over this unified path; they intentionally reject richer program-v2 class features.
 
+## Typed word operators with local and class expressions (experimental program-v2)
+
+The merged-in **draft integration** now accepts `eq`, `neq`, `not`,
+`and`, and `or` in program-v2 free-function bodies and class methods.
+`eq/neq` canonicalize to typed `==/!=` IR; `and/or` canonicalize to
+short-circuit conditional IR (not eager host operators or JavaScript truthiness).
+The obsolete `ne` spelling is rejected. Precedence is unary `not`,
+arithmetic, comparisons, `and`, `or`, then `? :`.
+
+These expressions work in typed `const` initializers, lexical returns, and
+receiver-bound `self.method(...)` arguments. Unselected arms must not run
+checked-i64 overflow or remainder-by-zero operations. Exact receiver/lifetime
+checks remain inherited from the stacked #94/#96/#98 implementation.
+The class-local IIFEs are non-escaping implementation details, not a
+general closure/actor ownership model.
+
+Focused acceptance:
+`node --test tests/boolean-word-operators.test.mjs tests/program-v2-word-class-local-integration.test.mjs tests/program-v2-class-local-self.test.mjs tests/class-receiver-calls.test.mjs tests/program-v2-lexical-const.test.mjs`.
+The five test suites must then run with `npm test`, browser checks,
+and an immutable source-tree receipt on an **authorized** Node 22 runner.
+Passing tests in an in-memory harness are provisional and not CI certification.
+
 ## Typed lexical const declarations (experimental program-v2)
 
 The function-body transpiler now supports immutable typed local bindings, e.g.

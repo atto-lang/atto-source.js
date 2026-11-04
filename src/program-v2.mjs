@@ -555,11 +555,23 @@ class Parser {
           continue;
         }
         if (op === '/') fail('division unsupported in provisional int profile',this.peek());
-        const compare=['<','>','<=','>=','==','!='].includes(op);
-        const prec=op==='*'||op==='%'?20:op==='+'||op==='-'?10:compare?5:-1;
+        // Canonical source words compile to already-validated comparison
+        // and lazy conditional nodes: no new IR grammar or JS truthiness.
+        const compare=['<','>','<=','>=','==','!=','eq','neq'].includes(op);
+        const logical=op==='and'||op==='or';
+        const prec=op==='*'||op==='%'?20:op==='+'||op==='-'?10:
+          compare?5:op==='and'?4:op==='or'?3:-1;
         if (prec < min) break;
         this.i++;
-        left={kind:compare?'compare':'binary',op,left,right:this.expression(prec+1)};
+        const right=this.expression(prec+1);
+        if(logical){
+          left=op==='and'
+            ? {kind:'if',condition:left,yes:right,no:{kind:'bool',value:false}}
+            : {kind:'if',condition:left,yes:{kind:'bool',value:true},no:right};
+        }else{
+          left={kind:compare?'compare':'binary',
+            op:op==='eq'?'==':op==='neq'?'!=':op,left,right};
+        }
       }
       return left;
     } finally {this.depth--;}
@@ -572,7 +584,7 @@ class Parser {
       this.expect('(');
       return {kind:'selfCall',name,args:this.argumentsAfterOpen()};
     }
-    if(this.eat('!'))return {kind:'not',inner:this.expression(30)};
+    if(this.eat('!')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
     if(this.eat('new')){
       const className=this.name();
       this.expect('(');
