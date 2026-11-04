@@ -103,3 +103,12 @@ test('reject lossy numeric parity JSON integers before JSON.parse materializatio
     '1.5','-2.5e-10'])
     assert.deepEqual(parse(source),JSON.parse(source));
 });
+
+test('negative-zero and signed-underflow report numbers fail before materialization',()=>{
+  for(const source of ['-0','-0.0','-0e6','-1e-999','{"observed":-0}']){
+    assert.throws(()=>parse(source),/noncanonical negative-zero JSON number/,source);
+  }
+  for(const source of ['0','0.0','0e6','1.5','-2.5e-10']){
+    assert.deepEqual(parse(source),JSON.parse(source));
+  }
+});
