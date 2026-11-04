@@ -127,6 +127,20 @@ test('signed subnormal underflow and representable values remain distinct',()=>{
     assert.deepEqual(parse(source),JSON.parse(source),source);
 });
 
+test('quoted numeric labels remain text while unsafe numeric tokens are rejected',()=>{
+  for(const source of [
+    '{"note":"-0","detail":"1e-324"}',
+    '["-0","1e-324"]',
+    '{"note":"\\u0031e-324","numeric":0}',
+    '{"count":1E+3}',
+    '{"count":1e-3}'
+  ])assert.deepEqual(parse(source),JSON.parse(source),source);
+  for(const source of [
+    '{"n":-0}', '{"n":1e-324}', '{"n":1e}',
+    '{"n":+1}', '{"n":00}', '[0,1e-324]'
+  ])assert.throws(()=>parse(source),undefined,source);
+});
+
 test('prototype-magic JSON report members are denied at every depth',()=>{
   for(const key of ['__proto__','constructor','prototype']){
     for(const source of [
