@@ -94,3 +94,12 @@ test('bounded seeded JSON round trips agree with the platform parser',()=>{
     assert.deepEqual(parse(source),JSON.parse(source));
   }
 });
+
+test('reject lossy numeric parity JSON integers before JSON.parse materialization',()=>{
+  for(const source of ['9007199254740992','9007199254740993',
+    '-9007199254740993','1e20','-9.007199254740993e15'])
+    assert.throws(()=>parse(source),/unsafe JSON integer precision/,source);
+  for(const source of ['9007199254740991','-9007199254740991',
+    '1.5','-2.5e-10'])
+    assert.deepEqual(parse(source),JSON.parse(source));
+});
