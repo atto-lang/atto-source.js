@@ -206,3 +206,14 @@ test('unsafe object keys never reach full JSON graph materialization',()=>{
     assert.equal(objectsParsed,1,'safe report must still be materialized');
   } finally {JSON.parse=original;}
 });
+
+
+test('reject lone JSON UTF-16 surrogates before report materialization',()=>{
+ for(const source of [
+  '"\\ud800"','"\\udc00"','{"value":"\\ud800"}',
+  '{"\\udc00":1}','{"id":"\\ud83d\\u0041"}',
+  '{"value":"\ud800"}','{"value":"\udc00"}'
+ ])assert.throws(()=>parse(source),/invalid JSON Unicode surrogate/,source);
+ for(const source of ['"\\ud83d\\ude80"','{"rocket":"🚀"}','{"\\ud83d\\ude00":42}'])
+  assert.deepEqual(parse(source),JSON.parse(source),source);
+});
