@@ -322,3 +322,29 @@ test("direct inverted compiler option objects reject accessors and unexpected ke
   ])assert.throws(()=>compileInvertedIRV1(ir,options));
   assert.equal(calls,0);
 });
+
+
+test("browser Blob ESM admits only trusted same-origin inverted runtime URL", () => {
+  const ir=compileToInvertedIRV1(source);
+  const previous=Object.getOwnPropertyDescriptor(globalThis,"location");
+  Object.defineProperty(globalThis,"location",{
+    configurable:true,
+    value:{origin:"http://127.0.0.1:8877"}
+  });
+  try {
+    const trusted="http://127.0.0.1:8877/src/worker-inverted-array.mjs";
+    const emitted=compileInvertedIRV1(ir,{runtimeSpecifier:trusted});
+    assert.match(emitted,/import \{InvertedSchema,WorkerInvertedArray\} from "http:\/\/127\.0\.0\.1:8877\/src\/worker-inverted-array\.mjs"/);
+    for(const invalid of [
+      "https://another-origin.example/src/worker-inverted-array.mjs",
+      "http://127.0.0.1:8877/wrong.mjs",
+      "http://127.0.0.1:8877/src/worker-inverted-array.mjs?cache=1",
+      "http://127.0.0.1:8877/src/worker-inverted-array.mjs#fragment",
+      "http://u:p@127.0.0.1:8877/src/worker-inverted-array.mjs",
+      "//127.0.0.1:8877/src/worker-inverted-array.mjs"
+    ])assert.throws(()=>compileInvertedIRV1(ir,{runtimeSpecifier:invalid}));
+  } finally {
+    if(previous)Object.defineProperty(globalThis,"location",previous);
+    else delete globalThis.location;
+  }
+});
