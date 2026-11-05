@@ -222,8 +222,42 @@ export class WorkerInvertedArray {
     this.#write(this.#index.resolve(handle), ordinal, value);
   }
 
+  // Checked signed-i64 read/modify/write primitive. Resolve the index once,
+  // forbid writes under all column loans, and prove overflow before publishing
+  // the new cell. No user callbacks or intermediate row object escape.
+  #addI64(row, ordinal, delta) {
+    this.#live();
+    if (this.#transaction) throw new Error("reentrant inverted field mutation");
+    if (this.#schema.fields[ordinal].type !== "i64")
+      throw new TypeError("addI64 requires an i64 field");
+    if (typeof delta !== "bigint" || delta < MIN_I64 || delta > MAX_I64)
+      throw new RangeError("addI64 requires a signed 64-bit bigint delta");
+    const rights = this.#loans[ordinal];
+    if (rights.writer || rights.readers)
+      throw new Error("inverted field loan prevents external write");
+    const name = this.#schema.fields[ordinal].name;
+    const current = this.#store.read(row, name);
+    const result = current + delta;
+    if (result < MIN_I64 || result > MAX_I64)
+      throw new RangeError("ORES_I64_OVERFLOW: checked signed 64-bit column update");
+    this.#store.write(row, name, result);
+    return result;
+  }
+
+  addI64At(position, binding, delta) {
+    const ordinal = this.#ordinal(binding);
+    const row = this.#index.position(position);
+    return this.#addI64(row, ordinal, delta);
+  }
+
+  addI64(handle, binding, delta) {
+    const ordinal = this.#ordinal(binding);
+    const row = this.#index.resolve(handle);
+    return this.#addI64(row, ordinal, delta);
+  }
+
   // Narrow closed primitive transaction; no user callback, await, or
-  // intermediate row object. Source += must still be checker-admitted.
+  // intermediate row object. Source f64 += must still be checker-admitted.
   addF64At(position, binding, delta) {
     const ordinal = this.#ordinal(binding);
     if (this.#schema.fields[ordinal].type !== "f64" || typeof delta !== "number")

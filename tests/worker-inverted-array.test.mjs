@@ -233,3 +233,59 @@ test("host-patched Object.freeze cannot reenter loan mint to mutate or retire ow
   assert.equal(rows.read(h, x), 3);
   rows.close();
 });
+
+test("checked i64 += is single-cell, overflow-atomic, and loan-fenced", () => {
+  const schema = spec(), id = schema.bindField("id"), x = schema.bindField("x");
+  const rows = make(schema);
+  const a = rows.push({id: 37n, x: 1, ready: true});
+  const b = rows.push({id: (1n << 63n) - 1n, x: 2, ready: false});
+  assert.equal(rows.addI64(a, id, 5n), 42n);
+  assert.equal(rows.read(a, id), 42n);
+  assert.equal(rows.addI64At(0n, id, -2n), 40n);
+  assert.equal(rows.read(a, id), 40n);
+  assert.throws(() => rows.addI64(b, id, 1n), /ORES_I64_OVERFLOW/);
+  assert.equal(rows.read(b, id), (1n << 63n) - 1n);
+  assert.throws(() => rows.addI64(a, id, 1n << 63n), /signed 64-bit/);
+  assert.equal(rows.read(a, id), 40n);
+  assert.throws(() => rows.addI64(a, x, 2n), /i64/);
+  assert.throws(() => rows.addI64(a, id, 2), /bigint/);
+  const readLoan = rows.borrowRead(id);
+  assert.throws(() => rows.addI64(a, id, 1n), /loan/);
+  readLoan.close();
+  const writeLoan = rows.borrowWrite(id);
+  assert.throws(() => rows.addI64At(0, id, 1n), /loan/);
+  writeLoan.close();
+  assert.equal(rows.addI64(a, id, 2n), 42n);
+  rows.eraseSwap(a);
+  assert.throws(() => rows.addI64(a, id, 1n), /stale/);
+  assert.equal(rows.addI64(b, id, -1n), (1n << 63n) - 2n);
+  rows.close();
+  assert.throws(() => rows.addI64(b, id, 1n), /closed/);
+});
+
+test("checked i64 negative overflow leaves original cell unchanged", () => {
+  const schema = spec(), id = schema.bindField("id");
+  const rows = make(schema);
+  const h = rows.push({id: -(1n << 63n), x: 0, ready: false});
+  assert.throws(() => rows.addI64(h, id, -1n), /ORES_I64_OVERFLOW/);
+  assert.equal(rows.read(h, id), -(1n << 63n));
+  assert.equal(rows.addI64(h, id, 1n), -(1n << 63n) + 1n);
+  rows.close();
+});
+
+test("f64 negative zero survives SoA push, typed writes and swap-delete", () => {
+  const schema=spec(), x=schema.bindField("x");
+  const rows=make(schema);
+  const a=rows.push({id: 40n,x: 1,ready: false});
+  const b=rows.push({id: 42n,x: -0,ready: true});
+  assert.equal(Object.is(rows.read(b,x),-0),true);
+  assert.equal(Object.is(rows.readAt(1,x),-0),true);
+  rows.eraseSwap(a);
+  assert.equal(Object.is(rows.read(b,x),-0),true);
+  assert.equal(Object.is(rows.readAt(0,x),-0),true);
+  rows.write(b,x,+0);
+  assert.equal(Object.is(rows.read(b,x),+0),true);
+  rows.writeAt(0,x,-0);
+  assert.equal(Object.is(rows.read(b,x),-0),true);
+  rows.close();
+});

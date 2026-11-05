@@ -70,7 +70,8 @@ function scalar(value,type,context) {
     // Preserve only canonical finite JS literals, with no NaN/Infinity,
     // exponent ambiguities or executable text passing to ESM generation.
     const number=Number(s);
-    if(!Number.isFinite(number) || String(number)!==s)
+    if(!Number.isFinite(number) ||
+       !(String(number)===s || (s==="-0" && Object.is(number,-0))))
       fail(context+": invalid canonical finite f64");
   } else if(type==="bool" && s!=="true" && s!=="false")
     fail(context+": invalid bool");
@@ -184,6 +185,14 @@ export function validateInvertedIRV1(input) {
         const owner=getOwner(step.owner,"write owner"),field=getField(step.field,"write field");
         const idx=index(step.index,owner,defined,"write index");
         return {kind:"write",owner,index:idx,field,value:scalar(step.value,fields[field].type,"write value")};
+      }
+      case "add_i64":{
+        ownRecord(step,["kind","owner","index","field","delta"],"checked column add");
+        const owner=getOwner(step.owner,"add owner"),field=getField(step.field,"add field");
+        if(fields[field].type!=="i64")fail("checked add requires i64 field");
+        const idx=index(step.index,owner,defined,"add index");
+        const delta=scalar(step.delta,"i64","add delta");
+        return {kind:"add_i64",owner,index:idx,field,delta};
       }
       case "erase":{
         ownRecord(step,["kind","owner","handle"],"erase");

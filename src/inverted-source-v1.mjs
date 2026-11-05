@@ -46,7 +46,9 @@ function literalType(token, signed = false) {
   if (/^[0-9]+\.[0-9]+$/.test(token.value)) {
     const n = Number(token.value) * (signed ? -1 : 1);
     if (!Number.isFinite(n)) reject("nonfinite f64 literal",token);
-    return {type:"f64",js:JSON.stringify(n),value:String(n)};
+    // String(-0) collapses the IEEE-754 sign bit. Preserve it explicitly.
+    const value=Object.is(n,-0) ? "-0" : String(n);
+    return {type:"f64",js:value,value};
   }
   if (!signed && (token.value === "true" || token.value === "false"))
     return {type:"bool",js:token.value,value:token.value};
@@ -216,11 +218,23 @@ class CheckedParser {
       return;
     }
     const field=this.selector(name,true);
+    // The source owns a single checked primitive read/modify/write operation:
+    // do not desugar += into a guest read followed by guest write.
+    const compound=this.take("+");
     this.expect("=");
     const val=this.literal();
-    if(val.type!==field.type)reject("indexed assignment type mismatch",this.peek());
-    this.expect(";");
-    this.statements.push(field.writeNode({type:val.type,value:val.value}));
+    if(compound) {
+      if(field.type!=="i64" || val.type!=="i64")
+        reject("checked += currently requires i64 field and delta",this.peek());
+      this.expect(";");
+      this.statements.push({kind:"add_i64",owner:field.expr.owner,
+        index:field.expr.index,field:field.expr.field,
+        delta:{type:"i64",value:val.value}});
+    } else {
+      if(val.type!==field.type)reject("indexed assignment type mismatch",this.peek());
+      this.expect(";");
+      this.statements.push(field.writeNode({type:val.type,value:val.value}));
+    }
   }
   atom(){
     const t=this.peek();
@@ -251,10 +265,44 @@ export function compileToInvertedIRV1(source) {
   });
 }
 
-export function compileInvertedIRV1(input,{runtimeSpecifier="./worker-inverted-array.mjs"}={}){
-  // This is a trusted host build option, never a user/source expression.
+export function compileInvertedIRV1(input,options=undefined){
+  // Trusted host options must be own-data, never inherited getters.
+  // Plain destructuring would evaluate Object.prototype.runtimeSpecifier.
+  let runtimeSpecifier="./worker-inverted-array.mjs";
+  if(options!==undefined){
+    if(!options || typeof options!=="object" ||
+       (Object.getPrototypeOf(options)!==Object.prototype &&
+        Object.getPrototypeOf(options)!==null))
+      reject("invalid inverted runtime compiler options");
+    const keys=Reflect.ownKeys(options);
+    if(keys.some(key=>key!=="runtimeSpecifier"))
+      reject("unsupported inverted runtime compiler option");
+    const value=Object.getOwnPropertyDescriptor(options,"runtimeSpecifier");
+    if(value){
+      if(!Object.hasOwn(value,"value"))
+        reject("accessor inverted runtime compiler option");
+      runtimeSpecifier=value.value;
+    }
+  }
+  // Trusted host-only import authority. Browser Blob ESM cannot resolve
+  // relative imports, so admit exactly our runtime module at the browser's
+  // own HTTP(S) origin; never accept a guest-provided remote URL.
+  let sameOriginBrowserRuntime=false;
+  if(typeof runtimeSpecifier==="string" && /^https?:\/\//.test(runtimeSpecifier) &&
+     typeof location!=="undefined" && typeof location.origin==="string" &&
+     location.origin!=="null"){
+    try {
+      const imported=new URL(runtimeSpecifier);
+      sameOriginBrowserRuntime=imported.href===runtimeSpecifier &&
+        imported.origin===location.origin &&
+        imported.pathname==="/src/worker-inverted-array.mjs" &&
+        imported.username==="" && imported.password==="" &&
+        imported.search==="" && imported.hash==="";
+    }catch { /* malformed URL fails closed */ }
+  }
   if(typeof runtimeSpecifier!=="string" || runtimeSpecifier.length>1024 ||
-     !(runtimeSpecifier.startsWith("./") || runtimeSpecifier.startsWith("file:")))
+     !(runtimeSpecifier.startsWith("./") || runtimeSpecifier.startsWith("file:") ||
+       sameOriginBrowserRuntime))
     reject("unsupported trusted runtime import specifier");
   const ir=validateInvertedIRV1(input);
   const descriptors=ir.schema.fields;
@@ -293,6 +341,10 @@ export function compileInvertedIRV1(input,{runtimeSpecifier="./worker-inverted-a
       case "write":
         out.push("_v"+stmt.owner+"."+(stmt.index.kind==="position"?"writeAt(":"write(")+
           rowIndex(stmt.index)+",_field"+stmt.field+","+scalar(stmt.value)+");");
+        break;
+      case "add_i64":
+        out.push("_v"+stmt.owner+"."+(stmt.index.kind==="position"?"addI64At(":"addI64(")+
+          rowIndex(stmt.index)+",_field"+stmt.field+","+scalar(stmt.delta)+");");
         break;
       case "erase":
         out.push("_v"+stmt.owner+".eraseSwap(_v"+stmt.handle+");");

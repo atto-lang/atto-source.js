@@ -35,7 +35,7 @@ This opt-in parser currently allows **one** nominal inverted declaration,
 one public, zero-argument, synchronous `main(): int`, no extra declarations,
 and bounded statements. Fields: `int`/`i64`, `float`/`f64`,
 `bool`. Statements: static `with_capacity(N)`, source-typed scalar
-`push`, `erase_swap(h)`, typed indexed field `=`, and an i64 return
+`push`, `erase_swap(h)`, typed indexed field `=` / checked `i64 +=`, and an i64 return
 expression of checked integer literals or indexed `i64` fields with `+`.
 
 The parser now produces **versioned, detached, strictly validated typed IR**
@@ -51,7 +51,7 @@ opaque generation-checked handle bound to the exact declared owner. No
 reflection, string macro, implicit AoS row storage, dynamic fallback,
 await, Task capture, source column loans, classes with nested resources,
 arbitrary methods or array growth are accepted. Multiple nominal class
-declarations, callbacks, source `+=`, and borrow escapes remain rejected.
+declarations, callbacks, non-i64 `+=`, and borrow escapes remain rejected.
 
 The generated `main` uses `try/finally` to close every array even when
 checked i64 math or positional access traps. The row expression used when
