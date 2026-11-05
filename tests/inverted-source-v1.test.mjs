@@ -94,7 +94,7 @@ test("invalid field, assignment kind, row-view escape and async source reject", 
     header+" rows[0].id = true; return rows[0].id; }",
     header+" return rows[0]; }",
     header+" await h; return rows[0].id; }",
-    header+" rows[0].id += 1; return rows[0].id; }",
+    header+" rows[0].x += 1; return rows[0].id; }",
     header+" return rows[0].ready; }",
     header+" let h2 = rows.push(Particle {id: 3, x: 0.0, ready: 7}); return rows[0].id; }"
   ];
