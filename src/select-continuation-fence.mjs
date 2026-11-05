@@ -34,7 +34,23 @@ export class SelectContinuationFence {
   #nextId=1;
   #closed=false;
 
-  constructor({generation=1,maxTickets=64}={}){
+  constructor(options={}){
+    if(options===null || typeof options!=='object' || Array.isArray(options))
+      throw new TypeError('continuation options must be a plain data object');
+    const proto=Object.getPrototypeOf(options);
+    if(proto!==Object.prototype&&proto!==null)
+      throw new TypeError('continuation options must be a plain data object');
+    const keys=Reflect.ownKeys(options);
+    if(keys.some(key=>key!=='generation'&&key!=='maxTickets'))
+      throw new TypeError('unknown continuation option');
+    const own=(key,fallback)=>{
+      const desc=Object.getOwnPropertyDescriptor(options,key);
+      if(!desc)return fallback;
+      if(!Object.hasOwn(desc,'value') || !desc.enumerable)
+        throw new TypeError('continuation options require own data fields');
+      return desc.value===undefined?fallback:desc.value;
+    };
+    const generation=own('generation',1),maxTickets=own('maxTickets',64);
     if(!Number.isSafeInteger(generation)||generation<1)
       throw new RangeError('continuation generation must be a positive integer');
     if(!Number.isSafeInteger(maxTickets)||maxTickets<1||maxTickets>4096)
