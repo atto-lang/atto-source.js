@@ -30,7 +30,19 @@ export class SelectableI64Future {
   #nextId=1;
   #notificationFailure=null;
 
-  constructor({maxWaiters=64}={}){
+  constructor(options={}){
+    if(options===null || typeof options!=='object' || Array.isArray(options))
+      throw new TypeError('future options must be a plain data record');
+    const proto=Object.getPrototypeOf(options);
+    if(proto!==Object.prototype && proto!==null)
+      throw new TypeError('future options must be a plain data record');
+    const keys=Reflect.ownKeys(options);
+    if(keys.some(key=>key!=='maxWaiters'))
+      throw new TypeError('unknown future option');
+    const descriptor=Object.getOwnPropertyDescriptor(options,'maxWaiters');
+    if(descriptor && (!Object.hasOwn(descriptor,'value') || !descriptor.enumerable))
+      throw new TypeError('future options require own data fields');
+    const maxWaiters=descriptor?.value===undefined?64:descriptor.value;
     if(!Number.isSafeInteger(maxWaiters)||maxWaiters<1||maxWaiters>4096)
       throw new RangeError('future maxWaiters must be in 1..4096');
     this.#waiters=Array.from({length:maxWaiters},
