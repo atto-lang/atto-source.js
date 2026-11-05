@@ -1,6 +1,18 @@
 // Fail-closed JS/Worker tenant admission: Node Worker and browser Worker
 // are in-process language execution domains, never OS sandboxes. This guard
 // does NOT implement per-tenant persistent IsolateVM or secure worker restart.
+// Worker hosts receive spawn options alongside isolation options. Copy only the
+// isolation descriptors, so accessors still fail closed and are never invoked.
+export function tenantIsolationOptionsOf(options) {
+  if(options===null || typeof options!=='object' || Array.isArray(options))return options;
+  const selected=Object.create(null);
+  for(const key of ['isolation','untrusted']){
+    const descriptor=Object.getOwnPropertyDescriptor(options,key);
+    if(descriptor)Object.defineProperty(selected,key,descriptor);
+  }
+  return selected;
+}
+
 export function requireSupportedTenantWorkerIsolation(options = {}) {
   if(options===null || typeof options!=='object' || Array.isArray(options))
     throw new TypeError('tenant isolation options must be a plain object');
