@@ -30,7 +30,7 @@ test('unrelated parents require explicit public override and cannot collide on f
 });
 
 test('method-only nominal brands cannot be forged or reused across independently built classes',()=>{
- const defs=[cls('Parent',[],[meth('ping',0,()=>7),meth('ping',1,(_,n)=>n)]),cls('Child',['Parent'])];
+ const defs=[cls('Parent',[],[meth('ping',0,()=>7),meth('ping',1,n=>n)]),cls('Child',['Parent'])];
  const a=materializeMethodOnlyClass(defs,'Child');
  const b=materializeMethodOnlyClass(defs,'Child');
  const instance=a.newInstance(),other=b.newInstance();
