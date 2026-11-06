@@ -159,7 +159,20 @@ export class SelectableI64Channel {
   #notificationFailure = null;
   #closed = false;
 
-  constructor(capacity, {maxWaiters=64}={}) {
+  constructor(capacity, options={}) {
+    // Never execute a caller getter while selecting an admission quota.
+    if (options===null || typeof options!=="object" || Array.isArray(options))
+      throw new TypeError("channel options must be a plain data record");
+    const proto=Object.getPrototypeOf(options);
+    if (proto!==Object.prototype && proto!==null)
+      throw new TypeError("channel options must be a plain data record");
+    const keys=Reflect.ownKeys(options);
+    if (keys.some(key=>key!=="maxWaiters"))
+      throw new TypeError("unknown channel option");
+    const limit=Object.getOwnPropertyDescriptor(options,"maxWaiters");
+    if (limit && (!limit.enumerable || !Object.hasOwn(limit,"value")))
+      throw new TypeError("channel options require own data fields");
+    const maxWaiters=limit?.value===undefined?64:limit.value;
     if (!Number.isSafeInteger(capacity) ||
         capacity < 1 || capacity > MAX_CHANNEL_CAPACITY)
       throw new RangeError(

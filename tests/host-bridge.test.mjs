@@ -82,3 +82,46 @@ test('enforces bounded integer literals and compiler lowering depth',()=>{
  assert.throws(()=>compile('pub fnc main(): int {return '+ '0'.repeat(65) +';}'),/integer literal length limit/);
  assert.throws(()=>compile('pub fnc main(): int {return '+ ('1+'.repeat(1000)) +'1;}'),/expression limit exceeded|expression depth limit during lowering/);
 });
+
+test('host bridge uses own array descriptors instead of caller proxy methods',async()=>{
+ const {dir,namespace}=await fixtureModule();
+ try {
+  let reads=0;
+  const proxy=values=>new Proxy(values,{get(){reads++;throw Error('unexpected array get')}});
+  assert.deepEqual(invokeTrustedModule(namespace,{
+    entry:'add',allowlist:proxy(['add']),args:proxy([i('20'),i('22')])
+  }),i('42'));
+  assert.equal(reads,0);
+  const spoofed=new Proxy([i('20'),i('22')],{
+    get(target,key,receiver){return key==='length'?0:Reflect.get(target,key,receiver)}
+  });
+  assert.deepEqual(invokeTrustedModule(namespace,{
+    entry:'add',allowlist:['add'],args:spoofed
+  }),i('42'));
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('forged module namespace cannot execute @@toStringTag getter before rejection',()=>{
+ let getCalls=0;
+ const forged=Object.create(null);
+ Object.defineProperty(forged,Symbol.toStringTag,{get(){getCalls++;throw Error('untrusted namespace tag getter');}});
+ Object.freeze(forged);
+ assert.throws(()=>invokeTrustedModule(forged,{entry:'add',allowlist:['add'],args:[]}),
+   /expected a trusted ESM module namespace/);
+ assert.equal(getCalls,0,'untrusted tag getter must not execute');
+});
+
+test('buildPackage creates nested output parents before exclusive publication',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'atto-js-nested-package-'));
+ try{
+  const source=join(dir,'app.atto');
+  const output=join(dir,'not-yet-created','deep','published');
+  await writeFile(source,'pub fnc main(): int { return 42; }\n');
+  const result=await buildPackage({sourceFile:source,outputDir:output,
+    target:'edge-js',declaredCompilerSha:SHA});
+  assert.deepEqual(result.publicEntrypoints,['main']);
+  assert.equal(digest(await readFile(join(output,'module.mjs'))),result.moduleSha256);
+  await assert.rejects(buildPackage({sourceFile:source,outputDir:output,
+    target:'edge-js',declaredCompilerSha:SHA}),/overwrite/);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
