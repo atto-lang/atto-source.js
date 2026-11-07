@@ -80,10 +80,33 @@ function oracle(probe,left,right){
   return {sourceExpr,expected};
 }
 
+// The manifest is a source-only input, never a claim to executed CI evidence.
+// Reject stray success/receipt fields rather than silently ignoring them.
+// Own data keys only: reject accessors and unexpected metadata at every level.
+function exactRecord(value,fields,label){
+  assert.ok(value&&typeof value==='object'&&!Array.isArray(value),
+    label+': expected plain object');
+  assert.equal(Object.getPrototypeOf(value),Object.prototype,
+    label+': invalid prototype');
+  const own=Reflect.ownKeys(value);
+  assert.deepEqual([...own].sort(),[...fields].sort(),
+    label+': unexpected/missing fields');
+  for(const key of own){
+    const descriptor=Object.getOwnPropertyDescriptor(value,key);
+    assert.ok(descriptor&&Object.hasOwn(descriptor,'value'),
+      label+': accessor forbidden');
+  }
+}
 export function verifyFinalEsmCorpus(manifest){
-  assert.ok(manifest&&typeof manifest==='object'&&!Array.isArray(manifest));
+  exactRecord(manifest,
+    ['schema_version','integer_model','reference','evidence','cases'],
+    'corpus');
   assert.equal(manifest.schema_version,'atto-js-final-esm-parity/v1');
   assert.equal(manifest.integer_model,'signed-i64-checked-provisional');
+  exactRecord(manifest.reference,
+    ['repository','head_sha','tree_sha','manifest_path'],'LLVM reference');
+  exactRecord(manifest.evidence,
+    ['js_node22','java_graal_guest','llvm_guest'],'evidence classification');
   assert.deepEqual(manifest.reference,{
     repository:LLVM_REPO,
     head_sha:PINNED_LLVM_HEAD,
@@ -100,12 +123,16 @@ export function verifyFinalEsmCorpus(manifest){
   const ids=new Set(),seenBlobs=new Set(),seenProbes=new Set();
   let native=0,generated=0,traps=0;
   for(const c of manifest.cases){
-    assert.ok(c&&typeof c==='object'&&!Array.isArray(c));
+    exactRecord(c,c.kind==='llvm-canonical-source'
+      ? ['id','kind','source','origin','expected']
+      : ['id','kind','source','oracle','expected'],'corpus case');
     assert.equal(typeof c.id,'string');
     assert.ok(!ids.has(c.id),'duplicate source case '+c.id);
     ids.add(c.id);
     assert.equal(typeof c.source,'string','case source missing '+c.id);
     if(c.kind==='llvm-canonical-source'){
+      exactRecord(c.origin,['repo','path','blob_sha1'],'LLVM source origin');
+      exactRecord(c.expected,['kind','value'],'LLVM expected scalar');
       native++;
       const name=c.id.slice('llvm.'.length);
       assert.equal(c.id,'llvm.'+name);
@@ -117,6 +144,9 @@ export function verifyFinalEsmCorpus(manifest){
       assert.deepEqual(c.expected,{kind:'value',value:'42'});
       seenBlobs.add(name);
     } else {
+      exactRecord(c.oracle,['operation','lhs','rhs'],'generated oracle');
+      exactRecord(c.expected,c.expected?.kind==='trap'
+        ? ['kind','code']:['kind','value'],'generated expected outcome');
       assert.equal(c.kind,'generated-checked-i64-source',
         'unrecognized corpus case kind '+c.id);
       generated++;
