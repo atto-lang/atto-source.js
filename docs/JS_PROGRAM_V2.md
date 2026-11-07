@@ -207,7 +207,7 @@ An emitter correctness defect was identified in `emitProgram()`: `hasSymbol` and
 
 The new `tests/final-esm-adversarial50-20261107.test.mjs` adds 50 distinct source programs: ten signed-i64 boundary/trap cases, ten precedence/associativity identities, ten named-call binding cases, ten lazy conditional/match cases, and ten generator-only Symbol/Option/Result runtime cases. Every test validates source-vs-typed-IR ESM byte identity, checks the emitted ESM syntax under Node 22 and **executes** its public export.
 
-The new `tests/final-esm-helper-mutations20-20261107.test.mjs` adds 20 final-ESM mutation executions using 15 distinct helper names. Each mutation keeps a syntactically valid module but changes exactly one helper declaration binding. The good artifact must produce `42n`; the broken artifact must fail with a specific `ReferenceError` on generator pull. The tests explicitly catch missing runtime declarations, not just string differences.
+The new `tests/final-esm-helper-mutations20-20261107.test.mjs` adds 20 final-ESM mutation executions using 16 distinct helper names. Each mutation keeps a syntactically valid module but changes exactly one helper declaration binding. The good artifact must produce `42n`; the broken artifact must fail with a specific `ReferenceError` on generator pull. The tests explicitly catch missing runtime declarations, not just string differences.
 
 ### Exact-head observation receipt
 
