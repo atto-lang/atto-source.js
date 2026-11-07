@@ -44,6 +44,14 @@ jobs:
         run: npm run test:program-classes
       - name: Execute final ESM syntax and runtime parity gate
         run: npm run test:final-esm
+      - name: Emit exact-head final ESM guest execution receipt
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          npm run --silent evidence:final-esm | tee "$RUNNER_TEMP/final-esm-guest-receipt.json"
+          sha256sum "$RUNNER_TEMP/final-esm-guest-receipt.json"
+          node -e 'const r=require(process.argv[1]); if(r.summary.emitted_esm_guest_invocations!==97 || r.source_commit!==process.env.EXPECTED_SOURCE_SHA || r.evidence_class!=="github-actions-node22-executed-emitted-esm") process.exit(1)' "$RUNNER_TEMP/final-esm-guest-receipt.json"
       - name: Execute legacy class-method compatibility adapter checks
         run: npm run test:class-methods
       - run: npm test
