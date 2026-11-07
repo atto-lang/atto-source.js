@@ -71,7 +71,25 @@ const bad=[
   {id:'corpus reference manifest moved',
     mutate:m=>{m.reference.manifest_path='different/manifest.json';}},
   {id:'unexpected JSON sibling is rejected by schema equality',
-    mutate:m=>{m.evidence.rogue_backend='green';}}
+    mutate:m=>{m.evidence.rogue_backend='green';}},
+  {id:'forged top-level validation claim',
+    mutate:m=>{m.status='PASS';}},
+  {id:'forged case execution claim',
+    mutate:m=>{m.cases[0].execution_status='verified';}},
+  {id:'forged LLVM origin workflow run',
+    mutate:m=>{m.cases[0].origin.run_id='123';}},
+  {id:'forged generated oracle attestation',
+    mutate:m=>{m.cases[17].oracle.attested=true;}},
+  {id:'forged generated expected status',
+    mutate:m=>{m.cases[17].expected.status='PASS';}},
+  {id:'forged LLVM expected execution flag',
+    mutate:m=>{m.cases[0].expected.executed=true;}},
+  {id:'untrusted case object prototype',
+    mutate:m=>{Object.setPrototypeOf(m.cases[0],null);}},
+  {id:'accessor-backed source case identifier',
+    mutate:m=>{Object.defineProperty(m.cases[0],'id',{
+      get(){return 'llvm.forged';},enumerable:true,configurable:true
+    });}}
 ];
 for(const c of bad)test('manifest tampering must be detected / '+c.id,()=>{
   const changed=clone();
@@ -79,7 +97,7 @@ for(const c of bad)test('manifest tampering must be detected / '+c.id,()=>{
   assert.notDeepEqual(changed,canonical,'mutation did not change input');
   assert.throws(()=>verifyFinalEsmCorpus(changed),{name:'AssertionError'});
 });
-test('23 deliberately invalid corpus variants have unique names',()=>{
-  assert.equal(bad.length,23);
+test('31 deliberately invalid corpus variants have unique names',()=>{
+  assert.equal(bad.length,31);
   assert.equal(new Set(bad.map(c=>c.id)).size,bad.length);
 });
