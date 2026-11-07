@@ -144,8 +144,8 @@ test('AttoLang scalar profile rejects removed operators instead of emitting wron
   // program-v2 intentionally still admits remainder pending migration.
   const removed=[
     ['9 % 2','45d5794870e93074d9b11b90833a849e96aaa4c1','pub fnc main(): int { return 9 % 2; }\n'],
-    ['9 ^ 2','6889c7e83c8d94b906fbfe78723caee9580da6aa','pub fnc main(): int { return 9 ^ 2; }\n'],
-    ['9 ^^ 2','7ee99948018e927cce74c9ad0edc1975e4251689','pub fnc main(): int { return 9 ^^ 2; }\n']
+    ['2 ^ 3','6889c7e83c8d94b906fbfe78723caee9580da6aa','pub fnc main(): int { return 2 ^ 3; }\n'],
+    ['2 ^^ 3','7ee99948018e927cce74c9ad0edc1975e4251689','pub fnc main(): int { return 2 ^^ 3; }\n']
   ];
   for(const [description,sha,source] of removed){
     const raw=Buffer.from(source,'utf8');
