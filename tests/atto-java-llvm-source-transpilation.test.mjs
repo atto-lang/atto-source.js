@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {mkdtemp,writeFile,rm,access} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+import {spawnSync} from 'node:child_process';
 import {
   compileToProgramIRV2, compileProgramIRV2, compileProgramV2,
   compileAttoScalarV1, checkAttoScalarV1
@@ -145,4 +150,31 @@ test('canonical scalar profile refuses JS-only language constructs rather than c
     'define module m as pub fnc f():int{return 42;} end',
     'pub define class Foo as pub mtd f(self):int{return 42;} end'
   ])assert.throws(()=>compileAttoScalarV1(source),/error: program v2:|error: program IR:/,source);
+});
+
+test('CLI --atto-scalar-v1 checks exact .atto source and emits executable ESM',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'atto-scalar-js-'));
+  try {
+    const valid=join(dir,'canonical.atto'),removed=join(dir,'removed.atto');
+    const output=join(dir,'canonical.mjs'),failedOutput=join(dir,'removed.mjs');
+    const cli=fileURLToPath(new URL('../bin/oreslang-jsc.mjs',import.meta.url));
+    await writeFile(valid,fixtures.find(f=>f.id==='pure-call').source);
+    await writeFile(removed,'pub fnc main(): int { return 9 % 2; }\\n');
+    const run=(...args)=>spawnSync(process.execPath,[cli,'--atto-scalar-v1',...args],{encoding:'utf8'});
+    const check=run('--check',valid);
+    assert.equal(check.status,0,check.stderr);
+    assert.equal(check.stdout,'OK\\n');
+    const build=run(valid,'--out='+output);
+    assert.equal(build.status,0,build.stderr);
+    const ns=await import(pathToFileURL(output).href);
+    assert.equal(ns.main(),42n);
+    const denied=run('--check',removed);
+    assert.notEqual(denied.status,0,'removed operator must reject at CLI admission');
+    assert.match(denied.stderr,/removed or unsupported operator %/);
+    const deniedBuild=run(removed,'--out='+failedOutput);
+    assert.notEqual(deniedBuild.status,0);
+    await assert.rejects(access(failedOutput),/ENOENT/);
+  } finally {
+    await rm(dir,{recursive:true,force:true});
+  }
 });
