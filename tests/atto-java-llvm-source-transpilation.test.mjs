@@ -159,11 +159,11 @@ test('CLI --atto-scalar-v1 checks exact .atto source and emits executable ESM',a
     const output=join(dir,'canonical.mjs'),failedOutput=join(dir,'removed.mjs');
     const cli=fileURLToPath(new URL('../bin/oreslang-jsc.mjs',import.meta.url));
     await writeFile(valid,fixtures.find(f=>f.id==='pure-call').source);
-    await writeFile(removed,'pub fnc main(): int { return 9 % 2; }\\n');
+    await writeFile(removed,'pub fnc main(): int { return 9 % 2; }\n');
     const run=(...args)=>spawnSync(process.execPath,[cli,'--atto-scalar-v1',...args],{encoding:'utf8'});
     const check=run('--check',valid);
     assert.equal(check.status,0,check.stderr);
-    assert.equal(check.stdout,'OK\\n');
+    assert.equal(check.stdout,'OK\n');
     const build=run(valid,'--out='+output);
     assert.equal(build.status,0,build.stderr);
     const ns=await import(pathToFileURL(output).href);
