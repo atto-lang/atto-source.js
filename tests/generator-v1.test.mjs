@@ -33,19 +33,16 @@ test('program-v2 sync gen* is lazy and yields typed signed-i64 values',async()=>
   assert.equal(Object.isFrozen(done),true);
   assert.equal(iterator.next().done,true);
 
-  // Native generator function bodies do not run at construction. The Oreslang
-  // parameter boundary is therefore checked on the first pull, not creation.
-  // Once it fails, later pulls must preserve the same terminal failure instead
-  // of laundering it into successful DONE.
-  const invalid=ns.values(41);
-  let firstFailure=null;
-  assert.throws(()=>invalid.next(),error=>{
-    firstFailure=error;
-    return /Oreslang signed i64 BigInt required/.test(error?.message??'');
-  });
-  assert.throws(()=>invalid.next(),error=>error===firstFailure);
-  invalid.close();
-  assert.deepEqual(invalid.next(),{value:undefined,done:true});
+  // Generator yields remain lazy, but the callable boundary is typed:
+  // wrong or out-of-range inputs must fail before an iterator exists.
+  for(const bad of [41,null,undefined,true,{},'41'])
+    assert.throws(()=>ns.values(bad),/Oreslang signed i64 BigInt required/);
+  for(const bad of [1n<<63n,-(1n<<63n)-1n])
+    assert.throws(()=>ns.values(bad),/ORES_I64_OVERFLOW/);
+  // Closing without ever pulling must not evaluate the body.
+  const unpulled=ns.values(41n);
+  unpulled.close();
+  assert.deepEqual(unpulled.next(),{value:undefined,done:true});
 });
 
 test('close is idempotent, terminal is sticky, and host generator controls are sealed',async()=>{
