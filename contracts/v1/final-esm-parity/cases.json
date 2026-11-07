@@ -1,0 +1,1375 @@
+{
+  "schema_version": "atto-js-final-esm-parity/v1",
+  "integer_model": "signed-i64-checked-provisional",
+  "reference": {
+    "repository": "ores-truffle-oreslang/oreslang-source.llvm",
+    "head_sha": "15bdd5cc48cf64387aee7e19f2926c253eb10e08",
+    "tree_sha": "3754a4d0da917a4862b5f3fee2fa9228e9427e44",
+    "manifest_path": "contracts/v1/semantics/cases.json"
+  },
+  "evidence": {
+    "js_node22": "not-executed-on-exact-head",
+    "java_graal_guest": "not-verified",
+    "llvm_guest": "not-verified"
+  },
+  "cases": [
+    {
+      "id": "llvm.oresllm-precedence",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 42 + ((2 + 3 * 4) - 14); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-precedence.ores",
+        "blob_sha1": "116c261c259f5d8753c3c827595243403f22045f"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-scalar-gradient",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 2 * ((5 * 3 + 1) - 9) * 3; }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-scalar-gradient.ores",
+        "blob_sha1": "fbd4877db8dc2edf8a02fb76ee738d24cb69f922"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-signed-product",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 42 + ((-7 * -6) - 42); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-signed-product.ores",
+        "blob_sha1": "901337ede5e2a7652837ed3f513073c63edb887e"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-grouped-negative",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 42 + ((-5 * (3 + 4)) + 35); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-grouped-negative.ores",
+        "blob_sha1": "22e8926b292cc53effe40fe506c0216b89677af9"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-nested-precedence",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 42 + ((1 + (2 * (3 + 4))) - 15); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-nested-precedence.ores",
+        "blob_sha1": "f3fda2718ea88e734b30df4d6c1012191cc3b77a"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-max-minus-one",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 43 + ((9223372036854775807 - 1) - 9223372036854775807); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-max-minus-one.ores",
+        "blob_sha1": "cc3d33b3f9c8643fe335001d1c6f6a777276d314"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-zero-product",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 42 + ((-7 * 0) - 0); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-zero-product.ores",
+        "blob_sha1": "233b6e5f21ad016ea1c2e206a753f48340217824"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-nested-arithmetic",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 42 + (((2 + 3) * (10 - 2)) - 40); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-nested-arithmetic.ores",
+        "blob_sha1": "cae0cd83d51f65d137aa500aa7b7040313e3de66"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-subtract-self",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 42 + ((9223372036854775807 - 9223372036854775807) - 0); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-subtract-self.ores",
+        "blob_sha1": "d1b46d5ea8bedf5af1954bdfdff84d30ffdd7d6b"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-zero-add",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 42 + (0 + 0); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-zero-add.ores",
+        "blob_sha1": "08b5752db0e4b40d81d0e3ba247ff11d0594be67"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-signed-subtract",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 42 + ((1 - 9) + 8); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-signed-subtract.ores",
+        "blob_sha1": "7797ff45062a684f0af0533beed3952d4899564b"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-left-associative",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 42 + (((17 - 2) * 3) - 45); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-left-associative.ores",
+        "blob_sha1": "0a65516453f36a8e26fd53a0ec7b179821717ceb"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-zero-times-max",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 42 + ((0 * 9223372036854775807) - 0); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-zero-times-max.ores",
+        "blob_sha1": "f0b1eafaefc2b58d64d2c70bc42accdf37e6c715"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-over-2pow53",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 42 + ((9007199254740993 + 1) - 9007199254740994); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-over-2pow53.ores",
+        "blob_sha1": "3fef943aa0adef685f888fcaa1506adbc03701f6"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-min-max-cancel",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 42 + ((-9223372036854775808 + 9223372036854775807) + 1); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-min-max-cancel.ores",
+        "blob_sha1": "452a4b56d1a13fe8be82b48f31a95cd564de1eab"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-near-square",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 42 + ((3037000499 * 3037000499) - 9223372030926249001); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-near-square.ores",
+        "blob_sha1": "f49e393c7b0d6e2b324f8315294964936de9f265"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "llvm.oresllm-over53-cancel",
+      "kind": "llvm-canonical-source",
+      "source": "pub fnc main(): int { return 42 + ((9007199254740993 - 9007199254740992) - 1); }\n",
+      "origin": {
+        "repo": "ores-truffle-oreslang/oreslang-source.llvm",
+        "path": "contracts/v1/semantics/fixtures/oresllm-over53-cancel.ores",
+        "blob_sha1": "919c6d0aee262ea506388c9ef636330334cb568c"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "generated.add.00",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (0 + 0);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "0",
+        "rhs": "0"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "0"
+      }
+    },
+    {
+      "id": "generated.add.01",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (1 + 2);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "1",
+        "rhs": "2"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "3"
+      }
+    },
+    {
+      "id": "generated.add.02",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (42 + 0);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "42",
+        "rhs": "0"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "generated.add.03",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-1 + 1);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "-1",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "0"
+      }
+    },
+    {
+      "id": "generated.add.04",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-7 + 3);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "-7",
+        "rhs": "3"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-4"
+      }
+    },
+    {
+      "id": "generated.add.05",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (7 + -3);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "7",
+        "rhs": "-3"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "4"
+      }
+    },
+    {
+      "id": "generated.add.06",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-7 + -3);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "-7",
+        "rhs": "-3"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-10"
+      }
+    },
+    {
+      "id": "generated.add.07",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 + -1);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "-9223372036854775808",
+        "rhs": "-1"
+      },
+      "expected": {
+        "kind": "trap",
+        "code": "ORES_I64_OVERFLOW"
+      }
+    },
+    {
+      "id": "generated.add.08",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (9223372036854775807 + 1);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "9223372036854775807",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "trap",
+        "code": "ORES_I64_OVERFLOW"
+      }
+    },
+    {
+      "id": "generated.add.09",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (9223372036854775807 + -1);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "9223372036854775807",
+        "rhs": "-1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "9223372036854775806"
+      }
+    },
+    {
+      "id": "generated.add.10",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 + 1);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "-9223372036854775808",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-9223372036854775807"
+      }
+    },
+    {
+      "id": "generated.add.11",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (3037000500 + 3037000499);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "3037000500",
+        "rhs": "3037000499"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "6074000999"
+      }
+    },
+    {
+      "id": "generated.add.12",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 + 9223372036854775807);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "-9223372036854775808",
+        "rhs": "9223372036854775807"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-1"
+      }
+    },
+    {
+      "id": "generated.add.13",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (9007199254740993 + 1);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "9007199254740993",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "9007199254740994"
+      }
+    },
+    {
+      "id": "generated.add.14",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 + 0);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "-9223372036854775808",
+        "rhs": "0"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-9223372036854775808"
+      }
+    },
+    {
+      "id": "generated.add.15",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (0 + 9223372036854775807);}",
+      "oracle": {
+        "operation": "add",
+        "lhs": "0",
+        "rhs": "9223372036854775807"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "9223372036854775807"
+      }
+    },
+    {
+      "id": "generated.subtract.00",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (0 - 0);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "0",
+        "rhs": "0"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "0"
+      }
+    },
+    {
+      "id": "generated.subtract.01",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (1 - 2);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "1",
+        "rhs": "2"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-1"
+      }
+    },
+    {
+      "id": "generated.subtract.02",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (42 - 0);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "42",
+        "rhs": "0"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "42"
+      }
+    },
+    {
+      "id": "generated.subtract.03",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-1 - 1);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "-1",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-2"
+      }
+    },
+    {
+      "id": "generated.subtract.04",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-7 - 3);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "-7",
+        "rhs": "3"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-10"
+      }
+    },
+    {
+      "id": "generated.subtract.05",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (7 - -3);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "7",
+        "rhs": "-3"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "10"
+      }
+    },
+    {
+      "id": "generated.subtract.06",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-7 - -3);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "-7",
+        "rhs": "-3"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-4"
+      }
+    },
+    {
+      "id": "generated.subtract.07",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 - -1);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "-9223372036854775808",
+        "rhs": "-1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-9223372036854775807"
+      }
+    },
+    {
+      "id": "generated.subtract.08",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (9223372036854775807 - 1);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "9223372036854775807",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "9223372036854775806"
+      }
+    },
+    {
+      "id": "generated.subtract.09",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (9223372036854775807 - -1);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "9223372036854775807",
+        "rhs": "-1"
+      },
+      "expected": {
+        "kind": "trap",
+        "code": "ORES_I64_OVERFLOW"
+      }
+    },
+    {
+      "id": "generated.subtract.10",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 - 1);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "-9223372036854775808",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "trap",
+        "code": "ORES_I64_OVERFLOW"
+      }
+    },
+    {
+      "id": "generated.subtract.11",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (3037000500 - 3037000499);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "3037000500",
+        "rhs": "3037000499"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "1"
+      }
+    },
+    {
+      "id": "generated.subtract.12",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 - 9223372036854775807);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "-9223372036854775808",
+        "rhs": "9223372036854775807"
+      },
+      "expected": {
+        "kind": "trap",
+        "code": "ORES_I64_OVERFLOW"
+      }
+    },
+    {
+      "id": "generated.subtract.13",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (9007199254740993 - 1);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "9007199254740993",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "9007199254740992"
+      }
+    },
+    {
+      "id": "generated.subtract.14",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 - 0);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "-9223372036854775808",
+        "rhs": "0"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-9223372036854775808"
+      }
+    },
+    {
+      "id": "generated.subtract.15",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (0 - 9223372036854775807);}",
+      "oracle": {
+        "operation": "subtract",
+        "lhs": "0",
+        "rhs": "9223372036854775807"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-9223372036854775807"
+      }
+    },
+    {
+      "id": "generated.multiply.00",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (0 * 0);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "0",
+        "rhs": "0"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "0"
+      }
+    },
+    {
+      "id": "generated.multiply.01",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (1 * 2);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "1",
+        "rhs": "2"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "2"
+      }
+    },
+    {
+      "id": "generated.multiply.02",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (42 * 0);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "42",
+        "rhs": "0"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "0"
+      }
+    },
+    {
+      "id": "generated.multiply.03",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-1 * 1);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "-1",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-1"
+      }
+    },
+    {
+      "id": "generated.multiply.04",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-7 * 3);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "-7",
+        "rhs": "3"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-21"
+      }
+    },
+    {
+      "id": "generated.multiply.05",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (7 * -3);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "7",
+        "rhs": "-3"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-21"
+      }
+    },
+    {
+      "id": "generated.multiply.06",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-7 * -3);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "-7",
+        "rhs": "-3"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "21"
+      }
+    },
+    {
+      "id": "generated.multiply.07",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 * -1);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "-9223372036854775808",
+        "rhs": "-1"
+      },
+      "expected": {
+        "kind": "trap",
+        "code": "ORES_I64_OVERFLOW"
+      }
+    },
+    {
+      "id": "generated.multiply.08",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (9223372036854775807 * 1);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "9223372036854775807",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "9223372036854775807"
+      }
+    },
+    {
+      "id": "generated.multiply.09",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (9223372036854775807 * -1);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "9223372036854775807",
+        "rhs": "-1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-9223372036854775807"
+      }
+    },
+    {
+      "id": "generated.multiply.10",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 * 1);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "-9223372036854775808",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-9223372036854775808"
+      }
+    },
+    {
+      "id": "generated.multiply.11",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (3037000500 * 3037000499);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "3037000500",
+        "rhs": "3037000499"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "9223372033963249500"
+      }
+    },
+    {
+      "id": "generated.multiply.12",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 * 9223372036854775807);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "-9223372036854775808",
+        "rhs": "9223372036854775807"
+      },
+      "expected": {
+        "kind": "trap",
+        "code": "ORES_I64_OVERFLOW"
+      }
+    },
+    {
+      "id": "generated.multiply.13",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (9007199254740993 * 1);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "9007199254740993",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "9007199254740993"
+      }
+    },
+    {
+      "id": "generated.multiply.14",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 * 0);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "-9223372036854775808",
+        "rhs": "0"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "0"
+      }
+    },
+    {
+      "id": "generated.multiply.15",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (0 * 9223372036854775807);}",
+      "oracle": {
+        "operation": "multiply",
+        "lhs": "0",
+        "rhs": "9223372036854775807"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "0"
+      }
+    },
+    {
+      "id": "generated.remainder.00",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (0 % 0);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "0",
+        "rhs": "0"
+      },
+      "expected": {
+        "kind": "trap",
+        "code": "ORES_I64_DIVISION_BY_ZERO"
+      }
+    },
+    {
+      "id": "generated.remainder.01",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (1 % 2);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "1",
+        "rhs": "2"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "1"
+      }
+    },
+    {
+      "id": "generated.remainder.02",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (42 % 0);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "42",
+        "rhs": "0"
+      },
+      "expected": {
+        "kind": "trap",
+        "code": "ORES_I64_DIVISION_BY_ZERO"
+      }
+    },
+    {
+      "id": "generated.remainder.03",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-1 % 1);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "-1",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "0"
+      }
+    },
+    {
+      "id": "generated.remainder.04",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-7 % 3);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "-7",
+        "rhs": "3"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-1"
+      }
+    },
+    {
+      "id": "generated.remainder.05",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (7 % -3);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "7",
+        "rhs": "-3"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "1"
+      }
+    },
+    {
+      "id": "generated.remainder.06",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-7 % -3);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "-7",
+        "rhs": "-3"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-1"
+      }
+    },
+    {
+      "id": "generated.remainder.07",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 % -1);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "-9223372036854775808",
+        "rhs": "-1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "0"
+      }
+    },
+    {
+      "id": "generated.remainder.08",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (9223372036854775807 % 1);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "9223372036854775807",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "0"
+      }
+    },
+    {
+      "id": "generated.remainder.09",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (9223372036854775807 % -1);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "9223372036854775807",
+        "rhs": "-1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "0"
+      }
+    },
+    {
+      "id": "generated.remainder.10",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 % 1);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "-9223372036854775808",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "0"
+      }
+    },
+    {
+      "id": "generated.remainder.11",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (3037000500 % 3037000499);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "3037000500",
+        "rhs": "3037000499"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "1"
+      }
+    },
+    {
+      "id": "generated.remainder.12",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 % 9223372036854775807);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "-9223372036854775808",
+        "rhs": "9223372036854775807"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-1"
+      }
+    },
+    {
+      "id": "generated.remainder.13",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (9007199254740993 % 1);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "9007199254740993",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "0"
+      }
+    },
+    {
+      "id": "generated.remainder.14",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (-9223372036854775808 % 0);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "-9223372036854775808",
+        "rhs": "0"
+      },
+      "expected": {
+        "kind": "trap",
+        "code": "ORES_I64_DIVISION_BY_ZERO"
+      }
+    },
+    {
+      "id": "generated.remainder.15",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return (0 % 9223372036854775807);}",
+      "oracle": {
+        "operation": "remainder",
+        "lhs": "0",
+        "rhs": "9223372036854775807"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "0"
+      }
+    },
+    {
+      "id": "generated.left-associative.00",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((0 - 0) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "0",
+        "rhs": "0"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-1"
+      }
+    },
+    {
+      "id": "generated.left-associative.01",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((1 - 2) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "1",
+        "rhs": "2"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-2"
+      }
+    },
+    {
+      "id": "generated.left-associative.02",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((42 - 0) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "42",
+        "rhs": "0"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "41"
+      }
+    },
+    {
+      "id": "generated.left-associative.03",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((-1 - 1) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "-1",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-3"
+      }
+    },
+    {
+      "id": "generated.left-associative.04",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((-7 - 3) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "-7",
+        "rhs": "3"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-11"
+      }
+    },
+    {
+      "id": "generated.left-associative.05",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((7 - -3) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "7",
+        "rhs": "-3"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "9"
+      }
+    },
+    {
+      "id": "generated.left-associative.06",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((-7 - -3) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "-7",
+        "rhs": "-3"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-5"
+      }
+    },
+    {
+      "id": "generated.left-associative.07",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((-9223372036854775808 - -1) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "-9223372036854775808",
+        "rhs": "-1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-9223372036854775808"
+      }
+    },
+    {
+      "id": "generated.left-associative.08",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((9223372036854775807 - 1) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "9223372036854775807",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "9223372036854775805"
+      }
+    },
+    {
+      "id": "generated.left-associative.09",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((9223372036854775807 - -1) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "9223372036854775807",
+        "rhs": "-1"
+      },
+      "expected": {
+        "kind": "trap",
+        "code": "ORES_I64_OVERFLOW"
+      }
+    },
+    {
+      "id": "generated.left-associative.10",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((-9223372036854775808 - 1) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "-9223372036854775808",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "trap",
+        "code": "ORES_I64_OVERFLOW"
+      }
+    },
+    {
+      "id": "generated.left-associative.11",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((3037000500 - 3037000499) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "3037000500",
+        "rhs": "3037000499"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "0"
+      }
+    },
+    {
+      "id": "generated.left-associative.12",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((-9223372036854775808 - 9223372036854775807) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "-9223372036854775808",
+        "rhs": "9223372036854775807"
+      },
+      "expected": {
+        "kind": "trap",
+        "code": "ORES_I64_OVERFLOW"
+      }
+    },
+    {
+      "id": "generated.left-associative.13",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((9007199254740993 - 1) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "9007199254740993",
+        "rhs": "1"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "9007199254740991"
+      }
+    },
+    {
+      "id": "generated.left-associative.14",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((-9223372036854775808 - 0) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "-9223372036854775808",
+        "rhs": "0"
+      },
+      "expected": {
+        "kind": "trap",
+        "code": "ORES_I64_OVERFLOW"
+      }
+    },
+    {
+      "id": "generated.left-associative.15",
+      "kind": "generated-checked-i64-source",
+      "source": "pub fnc main():int{return ((0 - 9223372036854775807) - 1);}",
+      "oracle": {
+        "operation": "left-associative",
+        "lhs": "0",
+        "rhs": "9223372036854775807"
+      },
+      "expected": {
+        "kind": "value",
+        "value": "-9223372036854775808"
+      }
+    }
+  ]
+}
