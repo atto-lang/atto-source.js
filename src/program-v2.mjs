@@ -1150,6 +1150,9 @@ function emitProgram(program) {
   }
   const hasSymbol=program.functions.some(fn=>fn.returnType==='symbol'||
     fn.paramTypes?.includes('symbol')||usesSymbol(fn.body))||
+    // A generator may be the only code path using Symbol comparisons in
+    // its int-yielding expressions; missing helpers produce invalid ESM.
+    (program.generators??[]).some(gen=>gen.yields.some(usesSymbol))||
     classMethods.some(method=>method.returnType==='symbol'||
       method.paramTypes.includes('symbol')||(method.body!==null&&usesSymbol(method.body)));
   if(hasSymbol) {
@@ -1189,6 +1192,9 @@ function emitProgram(program) {
   if(program.functions.some(fn=>['option<int>','result<int,int>'].includes(fn.returnType)||
       fn.paramTypes?.some(t=>['option<int>','result<int,int>'].includes(t))||
       usesPortableRuntime(fn.body))||
+     // A generator's yielded integer can use Option/Result intrinsics
+     // without any ordinary function requiring the portable runtime.
+     (program.generators??[]).some(gen=>gen.yields.some(usesPortableRuntime))||
      classMethods.some(method=>['option<int>','result<int,int>'].includes(method.returnType)||
       method.paramTypes.some(t=>['option<int>','result<int,int>'].includes(t))||
       (method.body!==null&&usesPortableRuntime(method.body)))) {
