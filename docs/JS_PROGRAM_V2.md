@@ -25,7 +25,7 @@ pub fnc main(): int { return math.add(40,2); }
 
 Conceptual ESM output:
 ```js
-function _f0(a,b) { return BigInt.asIntN(64,a+b); } // typed args checked
+function _f0(a,b) { _check(a); _check(b); return _check(a+b); } // checked i64 program-v2
 function _f1() { return 7n; }
 function _f2() { return _f0(40n,2n); }
 const math = Object.create(null);
@@ -33,6 +33,8 @@ Object.defineProperty(math,'add',{value:_f0,enumerable:true,writable:false,confi
 Object.freeze(math);
 export {math, _f2 as main};
 ```
+
+The conceptual `_check` above is the generated signed-i64 boundary helper: unlike the legacy scalar-v1 wrapping model, program-v2 rejects overflow. The two profiles are not interchangeable and arithmetic parity with Java/LLVM remains unproven without compiler-backed guest traces.
 
 The current emitted object is frozen and has no `Object.prototype`. That is **correct only for the currently supported function-only modules**; future `pub let` / mutable state and `pub val` / readonly fields need dedicated typed cells/field accessors, initialization ordering and ownership enforcement. Simply freezing all module state would be incorrect. No nested module, import resolution, module contract, actor, stateful class field or arbitrary init hook support is claimed yet. A public `routine` inside a module is rejected rather than incorrectly reified into a JS function property.
 
@@ -187,3 +189,12 @@ Generators are represented in a separate optional `generators` section of progra
 The initial slice is deliberately narrow: `Iterator<int>`, integer parameters, sequential `yield expr;`, and bare `return;`. Public root/module generators are callable through the host iterator bridge. Generator/function overload identity is the same name-plus-value-arity rule as ordinary callables: a generator and function may share a name only at different arities, and one exported dispatcher routes those arities without duplicate ESM/module properties. Private generators do not become ESM/module exports. Source-level calls/for-of over generator values, `yield*`, generator methods, non-int element types, `async gen*`, and `suspend gen*` remain fail-closed. In particular, parser acceptance is not used to claim async-iterator parity.
 
 The normative cross-backend contract is tracked in `oreslang-common-source#161`; shared six-compiler target fixtures are in `oreslang-platform-conformance#176`. JS async/suspend continuation work remains tracked by issue #76.
+
+
+## Executed final ESM gate (2026-11-07)
+
+Use `npm run test:final-esm` to exercise the emitted program-v2 artifact rather than only asserting IR shape. The suite compiles 22 source cases, revalidates a JSON round-tripped program IR, requires byte-identical ESM for both compilation entrypoints, feeds each final artifact to Node 22's ESM syntax checker, and dynamically imports and invokes the emitted code. It covers exact i64 values beyond JS Number precision, checked intermediate overflow, arithmetic precedence, lexical named-argument ordering, static overloads, module privacy, bool, conditional/match, Option/Result, Symbols, fieldless classes with `new`, generator iteration, and host-boundary rejection. A separate CLI test creates a real `.atto` source, checks and publishes an `.mjs` file, executes it, and confirms a rejected source cannot publish an output.
+
+Synchronous `gen*` is lazy in its **yield/body** evaluation, but the emitted callable now checks its signed-i64 parameters at the point of invocation. This prevents invalid host arguments from being accepted merely because the returned iterator is closed without any pull. The generator's internal checks remain defense in depth.
+
+These are executed-ESM **tests authored for Node 22**, not a current CI or Java/LLVM verification claim. Run them on the exact PR head with nonzero executed GitHub Actions steps and independently attested compiler/guest receipts before marking the corresponding cross-backend parity cells verified. Default scalar-v1 still wraps; use `--program-v2` to request the checked program-v2 lowering. Source syntax/type acceptance, actual emitted-JS syntax, and guest runtime observations must be tracked as separate gates.
