@@ -25,13 +25,20 @@ const expectedHead=process.env.EXPECTED_SOURCE_SHA;
 if(expectedHead)assert.equal(head,expectedHead,'unexpected checked-out source revision');
 if(process.env.CI==='true'){
   assert.match(expectedHead??'',/^[a-f0-9]{40}$/);
-  for(const field of ['GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_JOB'])
-    assert.ok(process.env[field],field+' missing from hosted evidence');
+  assert.equal(process.env.GITHUB_REPOSITORY,
+    'ores-truffle-oreslang/oreslang-source.js',
+    'receipt must come from the source repository, never a foreign carrier');
+  for(const field of ['GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT'])
+    assert.match(process.env[field]??'',/^[1-9][0-9]*$/,
+      field+' must be a positive decimal identifier');
+  assert.match(process.env.GITHUB_JOB??'',/^[A-Za-z0-9_-]+$/,
+    'hosted job identity missing or invalid');
 }
 assert.ok(Number(process.versions.node.split('.')[0])>=22,'Node >=22 required');
 
 const compilerStart=sha256(bytes('src/program-v2.mjs'));
 const irValidatorStart=sha256(bytes('src/program-ir-v2.mjs'));
+const executionDomainStart=sha256(bytes('src/execution-domain-admission.mjs'));
 const corpusData=bytes('contracts/v1/final-esm-parity/cases.json');
 const manifest=JSON.parse(corpusData.toString('utf8'));
 assert.equal(manifest.schema_version,'atto-js-final-esm-parity/v1');
@@ -86,6 +93,10 @@ assert.equal(sha256(bytes('src/program-v2.mjs')),compilerStart,
   'compiler changed while collecting evidence');
 assert.equal(sha256(bytes('src/program-ir-v2.mjs')),irValidatorStart,
   'typed IR validator changed while collecting evidence');
+assert.equal(sha256(bytes('src/execution-domain-admission.mjs')),executionDomainStart,
+  'execution-domain admission changed while collecting evidence');
+assert.equal(sha256(bytes('contracts/v1/final-esm-parity/cases.json')),
+  sha256(corpusData),'corpus changed while collecting evidence');
 assert.equal(git('rev-parse','HEAD'),head,'revision changed during test');
 assert.equal(git('rev-parse','HEAD^{tree}'),tree,'source tree changed');
 assert.equal(git('status','--porcelain','--untracked-files=all'),'',
@@ -101,6 +112,7 @@ const receipt={
   source_tree:tree,
   compiler_sha256:compilerStart,
   typed_ir_validator_sha256:irValidatorStart,
+  execution_domain_admission_sha256:executionDomainStart,
   corpus_sha256:sha256(corpusData),
   node_version:process.version,
   github:process.env.CI==='true'?{
