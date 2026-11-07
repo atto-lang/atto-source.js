@@ -39,11 +39,13 @@ for(let i=1;i<=20;i++){
 }
 
 test('mutation: dropping emitted signed-i64 function parameter validation is observable',async()=>{
-  const esm=compileProgramV2('pub fnc identity(int v):int{return v;}');
+  // A parameter deliberately unused by the body exposes the input guard
+  // independently of the newly hardened return-value guard.
+  const esm=compileProgramV2('pub fnc ignore(int v):int{return 42;}');
   const wrong=changeExactlyOnce(esm,'_check(_p0);','');
   const good=await load(esm,'arg-good'),bad=await load(wrong,'arg-bad');
-  assert.throws(()=>good.identity(42),/BigInt required/);
-  assert.equal(bad.identity(42),42);
+  assert.throws(()=>good.ignore(42),/BigInt required/);
+  assert.equal(bad.ignore(42),42n);
 });
 
 test('mutation: dropping emitted bool parameter validation is observable',async()=>{
