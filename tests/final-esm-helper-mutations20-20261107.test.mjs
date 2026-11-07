@@ -73,7 +73,7 @@ async function load(esm,tag) {
 test('20 helper mutations cover Symbol, Option, Result and common validation',()=>{
   assert.equal(mutationCases.length,20);
   assert.equal(new Set(mutationCases.map(c=>c.id)).size,20);
-  assert.equal(new Set(mutationCases.map(c=>c.helper)).size,15);
+  assert.equal(new Set(mutationCases.map(c=>c.helper)).size,16);
 });
 for(const c of mutationCases){
   test('detect missing generated runtime helper / '+c.id,async()=>{
