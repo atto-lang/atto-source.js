@@ -39,3 +39,19 @@ The emitted-ESM receipt MUST first execute `verifyFinalEsmCorpus()` from `script
 `npm run test:corpus-integrity` executes the source-only acceptance test and **31 negative manifest mutations**, including an attempted fraud where a changed LLVM source is paired with a freshly recomputed self-consistent Git blob SHA-1. The pinned external-source digest must still reject it. `npm run test:final-esm` includes these cases, and the source CI workflow names a separate early integrity gate before any 97-case guest execution receipt. The guard additionally admits only exact own-data keys for each corpus, case, source-origin, oracle and expected-result record; it rejects forged run/status siblings, accessor properties and nonplain prototypes. The receipt also hashes the guard's own source file before execution and verifies it has not changed before publication.
 
 These negative tests and the verifier are source-local artifacts **authored for execution**, not evidence of passing hosted CI. A healthy exact-head source-org GitHub Actions runner with nonempty executed steps is still mandatory to certify runtime behavior.
+
+
+### Exact-head receipt promotion remains external
+
+The JSON emitted by `npm run evidence:final-esm` contains an explicit
+`external_attestation.status = PENDING_EXTERNAL_VERIFICATION` and
+`github_job_steps_verified = false`, regardless of `CI` environment
+variables. This prevents a self-issued Node process receipt from representing
+independently authenticated GitHub Actions steps, reviewer approval, or native
+Java/LLVM guest execution. The source CI job checks these fields fail-closed.
+
+An independent reviewer must fetch the exact GitHub run/attempt and its
+nonempty executed job steps, confirm runner admission and PR head/tree, compare
+printed receipt hashes with the checked-out compiler source and output, and
+record independent approval before changing any release/parity status. A job
+with `steps=null`, `steps=[]`, or missing logs is `NOT_EXECUTED` evidence.
