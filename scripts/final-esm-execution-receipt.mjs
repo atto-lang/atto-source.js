@@ -7,6 +7,7 @@ import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {compileProgramV2,compileProgramIRV2,compileToProgramIRV2} from '../src/program-v2.mjs';
+import {verifyFinalEsmCorpus} from './final-esm-corpus-guard.mjs';
 
 const ROOT=new URL('../',import.meta.url);
 const sha256=data=>createHash('sha256').update(data).digest('hex');
@@ -39,12 +40,18 @@ assert.ok(Number(process.versions.node.split('.')[0])>=22,'Node >=22 required');
 const compilerStart=sha256(bytes('src/program-v2.mjs'));
 const irValidatorStart=sha256(bytes('src/program-ir-v2.mjs'));
 const executionDomainStart=sha256(bytes('src/execution-domain-admission.mjs'));
+const corpusGuardStart=sha256(bytes('scripts/final-esm-corpus-guard.mjs'));
 const corpusData=bytes('contracts/v1/final-esm-parity/cases.json');
 const manifest=JSON.parse(corpusData.toString('utf8'));
 assert.equal(manifest.schema_version,'atto-js-final-esm-parity/v1');
 assert.equal(manifest.cases.length,97);
 assert.equal(manifest.evidence.llvm_guest,'not-verified');
 assert.equal(manifest.evidence.java_graal_guest,'not-verified');
+// The manifest must not be able to certify itself: check the native Git
+// blobs against pinned reference identities, and derive generated numeric
+// expectations from independent checked-i64 arithmetic before any guest run.
+const corpusIdentity=verifyFinalEsmCorpus(manifest);
+assert.equal(corpusIdentity.total,97);
 
 const observations=[];
 for(const c of manifest.cases){
@@ -95,6 +102,8 @@ assert.equal(sha256(bytes('src/program-ir-v2.mjs')),irValidatorStart,
   'typed IR validator changed while collecting evidence');
 assert.equal(sha256(bytes('src/execution-domain-admission.mjs')),executionDomainStart,
   'execution-domain admission changed while collecting evidence');
+assert.equal(sha256(bytes('scripts/final-esm-corpus-guard.mjs')),corpusGuardStart,
+  'independent corpus oracle changed while collecting evidence');
 assert.equal(sha256(bytes('contracts/v1/final-esm-parity/cases.json')),
   sha256(corpusData),'corpus changed while collecting evidence');
 assert.equal(git('rev-parse','HEAD'),head,'revision changed during test');
@@ -113,6 +122,8 @@ const receipt={
   compiler_sha256:compilerStart,
   typed_ir_validator_sha256:irValidatorStart,
   execution_domain_admission_sha256:executionDomainStart,
+  corpus_guard_sha256:corpusGuardStart,
+  corpus_identity:corpusIdentity,
   corpus_sha256:sha256(corpusData),
   node_version:process.version,
   github:process.env.CI==='true'?{
