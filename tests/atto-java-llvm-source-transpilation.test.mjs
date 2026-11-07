@@ -101,6 +101,21 @@ test('fieldless method name-first parameter lowers to typed executable ESM',asyn
   assert.equal(new ns.Gate().pick(false,42n,7n),7n);
 });
 
+test('name-first synchronous generator parameter produces typed, executable iterator',async()=>{
+  const source='pub gen* values(seed: int): Iterator<int> {yield seed;yield seed+1;return;}';
+  const ir=compileToProgramIRV2(source);
+  assert.equal(ir.generators.length,1);
+  assert.deepEqual(ir.generators[0].params,['seed']);
+  assert.deepEqual(ir.generators[0].paramTypes,['int']);
+  assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir))),compileProgramV2(source));
+  const ns=await import('data:text/javascript,'+encodeURIComponent(compileProgramV2(source)));
+  const cursor=ns.values(41n);
+  assert.deepEqual(cursor.next(),{value:41n,done:false});
+  assert.deepEqual(cursor.next(),{value:42n,done:false});
+  assert.deepEqual(cursor.next(),{value:undefined,done:true});
+  assert.throws(()=>ns.values(41).next(),/BigInt required/);
+});
+
 test('name-first declarations fail closed on ambiguous types, duplicate bindings and malformed labels',()=>{
   for(const source of [
     'pub fnc bad(x: float):int{return 42;}',
