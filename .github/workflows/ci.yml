@@ -53,7 +53,7 @@ jobs:
           set -euo pipefail
           npm run --silent evidence:final-esm | tee "$RUNNER_TEMP/final-esm-guest-receipt.json"
           sha256sum "$RUNNER_TEMP/final-esm-guest-receipt.json"
-          node -e 'const r=require(process.argv[1]); if(r.summary.emitted_esm_guest_invocations!==97 || r.source_commit!==process.env.EXPECTED_SOURCE_SHA || r.evidence_class!=="github-actions-node22-executed-emitted-esm") process.exit(1)' "$RUNNER_TEMP/final-esm-guest-receipt.json"
+          node -e 'const r=require(process.argv[1]); if(r.summary.emitted_esm_guest_invocations!==97 || r.source_commit!==process.env.EXPECTED_SOURCE_SHA || r.evidence_class!=="github-actions-node22-executed-emitted-esm" || r.external_attestation?.status!=="PENDING_EXTERNAL_VERIFICATION" || r.external_attestation?.github_job_steps_verified!==false || r.external_attestation?.native_backend_guest_receipts_verified!==false) process.exit(1)' "$RUNNER_TEMP/final-esm-guest-receipt.json"
       - name: Execute legacy class-method compatibility adapter checks
         run: npm run test:class-methods
       - run: npm test
