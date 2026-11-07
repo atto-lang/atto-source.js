@@ -220,3 +220,13 @@ The new `tests/final-esm-helper-mutations20-20261107.test.mjs` adds 20 final-ESM
 - explicit `NOT_EXECUTED` entries for Java/GraalVM and LLVM guest evidence
 
 The GitHub Actions gate writes the JSON to `$RUNNER_TEMP`, prints the complete receipt in the source-repo workflow log, computes a SHA-256 of the saved receipt and rejects wrong-source heads. It **cannot** prove independent native parity or GitHub runner admission on its own; an exact-head hosted job with nonempty executed steps and independent review is still mandatory.
+
+## Typed result barriers and actual compiler-source mutations (2026-11-07)
+
+In addition to validated `program-ir-v2` static return types, the JS emitter now revalidates every ordinary function's and every non-void class method's **actual runtime result** through the appropriate signed-i64, bool, Symbol, Option, or Result guard. Method `void` returns retain `undefined`. Result expressions are evaluated **once**, then checked, with no host coercion or widening.
+
+`tests/final-esm-typed-return-boundaries-20261107.test.mjs` runs ten positive public ESM exports (five types × function/method) and 20 mutant ESM cases, demonstrating a foreign JavaScript result is rejected when the guard is present and can leak if the guard is deleted. A separate `tests/final-esm-compiler-mutations-20261107.test.mjs` deliberately modifies **twelve actual compiler codegen rules** on private runner-local copies of the compiler and its two imports. The suite checks real compile→ESM→Node guest divergence for omitted generator-helper analysis, named argument permutations, missing input/return checks, i64 overflow and zero-divisor classification, and class receiver branding. These copies are ephemeral test artifacts in the **source repository's runner environment**, not approved cross-organization transfers.
+
+Use `npm run test:compiler-mutants` for the focused source-mutant gate and `npm run test:final-esm` for the whole emitted ESM suite. The 97-case JSON receipt additionally hashes `execution-domain-admission.mjs`, checks source-org GitHub identity and run/attempt/job tokens, and rechecks compiler, IR validator, source-admission and corpus bytes afterward.
+
+**No executed-step CI receipt yet:** this change set is authored and committed, but the source-org GitHub Actions jobs have continued to fail before runner allocation. The test counts represent authored fixtures, not observed passing results or achieved Java/LLVM guest parity. Keep the PR draft and require source-org runner recovery, stepful CI, and independent review before merge.
