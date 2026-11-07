@@ -31,3 +31,11 @@ npm run parity:numeric-js
 ```
 
 **Evidence at authoring:** source and Node 22 tests committed for review; hosted exact-head Node execution pending. Existing GitHub Actions jobs show `steps=null` and therefore fail runner admission. This document and manifest contain no native verification claims.
+
+## Independent corpus acceptance gate (2026-11-07)
+
+The emitted-ESM receipt MUST first execute `verifyFinalEsmCorpus()` from `scripts/final-esm-corpus-guard.mjs`. Unlike a manifest self-check, this guard holds the 17 original LLVM Git blob SHA-1 values, exact LLVM reference commit/tree identity, generated input schedule, and arithmetic oracle **outside** `cases.json`. It recomputes the 80 generated checked-i64 expected values/traps, validates per-operation intermediate overflow, and rejects altered source text, noncanonical operand text, duplicate IDs, swapped sources, silently changed numeric modes, or spoofed backend evidence. Native reference cases must continue to expect the canonical exit code 42; this is **not** an assertion that LLVM guest execution actually happened.
+
+`npm run test:corpus-integrity` executes the source-only acceptance test and **23 negative manifest mutations**, including an attempted fraud where a changed LLVM source is paired with a freshly recomputed self-consistent Git blob SHA-1. The pinned external-source digest must still reject it. `npm run test:final-esm` includes these cases, and the source CI workflow names a separate early integrity gate before any 97-case guest execution receipt. The receipt also hashes the guard's own source file before execution and verifies it has not changed before publication.
+
+These negative tests and the verifier are source-local artifacts **authored for execution**, not evidence of passing hosted CI. A healthy exact-head source-org GitHub Actions runner with nonempty executed steps is still mandatory to certify runtime behavior.
