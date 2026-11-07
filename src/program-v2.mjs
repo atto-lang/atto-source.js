@@ -1246,6 +1246,9 @@ function emitProgram(program) {
       out.push('yield _check('+emitExpr(yielded)+');');
     out.push('}');
     out.push('function _g'+i+'('+params.join(',')+'){');
+    // A generator's body and yields stay lazy, but its typed callable
+    // boundary must reject invalid inputs at invocation, not on first pull.
+    params.forEach(p=>out.push('_check('+p+');'));
     out.push('const _inner=_gbody'+i+'('+params.join(',')+');');
     out.push('let _closed=false,_failure=null;');
     out.push('const _iter=Object.create(null);');
