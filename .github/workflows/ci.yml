@@ -42,6 +42,8 @@ jobs:
         run: npm run test:symbol-wire
       - name: Execute unified program-v2 class and method checks
         run: npm run test:program-classes
+      - name: Execute final ESM syntax and runtime parity gate
+        run: npm run test:final-esm
       - name: Execute legacy class-method compatibility adapter checks
         run: npm run test:class-methods
       - run: npm test
