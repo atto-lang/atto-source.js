@@ -1238,7 +1238,16 @@ function emitProgram(program) {
           if(!check)fail('unsupported method parameter type');
           out.push('const _p'+i+'=_args['+i+'];'+check+'(_p'+i+');');
         });
-        out.push(method.returnType==='void'?'return;':'return '+emitExpr(method.body)+';','}');
+        // Validate method results at the exported host ABI as well as at
+        // typed IR admission. Never trust JS-native truthiness/coercions.
+        if(method.returnType==='void')out.push('return;');
+        else {
+          const check={int:'_check',bool:'_checkbool',symbol:'_checksymbol',
+            'option<int>':'_checkoption','result<int,int>':'_checkresult'}[method.returnType];
+          if(!check)fail('unsupported method return type');
+          out.push('return '+check+'('+emitExpr(method.body)+');');
+        }
+        out.push('}');
       }
       out.push('default:throw new TypeError("method arity mismatch");','}','}');
     }
@@ -1274,7 +1283,13 @@ function emitProgram(program) {
       if(!check)fail('unsupported portable parameter type');
       out.push(check+'('+p+');');
     });
-    out.push('return '+emitExpr(fn.body)+';','}');
+    // Runtime return admission is a separate guard against emitter and
+    // callable-boundary regressions; the body is evaluated exactly once.
+    const returnType=fn.returnType??'int';
+    const check={int:'_check',bool:'_checkbool',symbol:'_checksymbol',
+      'option<int>':'_checkoption','result<int,int>':'_checkresult'}[returnType];
+    if(!check)fail('unsupported portable return type');
+    out.push('return '+check+'('+emitExpr(fn.body)+');','}');
   });
   let dispatcherNumber=0;
   function publicCallableGroups(module) {
