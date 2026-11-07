@@ -39,7 +39,7 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "test:final-esm": "node --test tests/final-esm-semantic-execution-20261107.test.mjs tests/generator-v1.test.mjs",
+    "test:final-esm": "node --test tests/final-esm-semantic-execution-20261107.test.mjs tests/final-esm-native-source-97-20261107.test.mjs tests/final-esm-negative-mutations-20261107.test.mjs tests/generator-v1.test.mjs",
     "check": "node bin/oreslang-jsc.mjs --check tests/fixtures/arithmetic.ores",
     "parity:js": "node bin/js-semantic-parity-report.mjs",
     "parity:numeric-js": "node bin/js-numeric-boundary-report.mjs",
