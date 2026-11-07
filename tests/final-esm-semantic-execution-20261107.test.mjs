@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
+import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join,resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {
   compileProgramV2, compileToProgramIRV2, compileProgramIRV2
 } from '../src/program-v2.mjs';
@@ -160,4 +164,41 @@ test('rejected source has no final JS artifact to execute',()=>{
     'pub fnc main():bool{return 1 and true;}',
     'pub fnc main():int{return missing();}'
   ]) assert.throws(()=>compileProgramV2(source),/error:/,source);
+});
+
+
+test('actual CLI --program-v2 publishes exactly the executed ESM bytes',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'atto-final-esm-'));
+  const input=join(dir,'program.atto'),output=join(dir,'compiled.mjs');
+  const refused=join(dir,'refused.mjs'),cli=resolve('bin/oreslang-jsc.mjs');
+  const good='pub fnc main():int{return 40+2;}';
+  try {
+    await writeFile(input,good);
+    const check=spawnSync(process.execPath,[cli,'--program-v2','--check',input],{
+      encoding:'utf8',timeout:10000
+    });
+    assert.equal(check.status,0,check.stderr);
+    assert.equal(check.stdout.trim(),'OK');
+    const build=spawnSync(process.execPath,[cli,'--program-v2',input,'--out='+output],{
+      encoding:'utf8',timeout:10000
+    });
+    assert.equal(build.status,0,build.stderr);
+    const bytes=await readFile(output,'utf8');
+    assert.equal(bytes,compileProgramV2(good));
+    const syntax=spawnSync(process.execPath,['--check',output],{
+      encoding:'utf8',timeout:10000
+    });
+    assert.equal(syntax.status,0,syntax.stderr);
+    assert.equal((await import(pathToFileURL(output).href)).main(),42n);
+
+    await writeFile(input,'pub fnc main():int{return unresolved();}');
+    const fail=spawnSync(process.execPath,[cli,'--program-v2',input,'--out='+refused],{
+      encoding:'utf8',timeout:10000
+    });
+    assert.notEqual(fail.status,0);
+    assert.match(fail.stderr,/error: program v2:/);
+    await assert.rejects(readFile(refused),{code:'ENOENT'});
+  }finally{
+    await rm(dir,{recursive:true,force:true});
+  }
 });
