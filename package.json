@@ -39,7 +39,8 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "test:final-esm": "node --test tests/final-esm-semantic-execution-20261107.test.mjs tests/final-esm-native-source-97-20261107.test.mjs tests/final-esm-negative-mutations-20261107.test.mjs tests/final-esm-adversarial50-20261107.test.mjs tests/final-esm-helper-mutations20-20261107.test.mjs tests/generator-v1.test.mjs tests/final-esm-typed-return-boundaries-20261107.test.mjs tests/final-esm-compiler-mutations-20261107.test.mjs",
+    "test:final-esm": "node --test tests/final-esm-semantic-execution-20261107.test.mjs tests/final-esm-native-source-97-20261107.test.mjs tests/final-esm-negative-mutations-20261107.test.mjs tests/final-esm-adversarial50-20261107.test.mjs tests/final-esm-helper-mutations20-20261107.test.mjs tests/generator-v1.test.mjs tests/final-esm-typed-return-boundaries-20261107.test.mjs tests/final-esm-compiler-mutations-20261107.test.mjs tests/final-esm-corpus-guard-20261107.test.mjs",
+    "test:corpus-integrity": "node --test tests/final-esm-corpus-guard-20261107.test.mjs",
     "evidence:final-esm": "node scripts/final-esm-execution-receipt.mjs",
     "test:compiler-mutants": "node --test tests/final-esm-compiler-mutations-20261107.test.mjs",
     "check": "node bin/oreslang-jsc.mjs --check tests/fixtures/arithmetic.ores",
