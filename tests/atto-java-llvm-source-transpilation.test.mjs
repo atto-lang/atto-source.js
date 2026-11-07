@@ -123,14 +123,13 @@ test('AttoLang scalar profile rejects removed operators instead of emitting wron
   // Canonical Java cases.json requires rejection, while legacy .ores
   // program-v2 intentionally still admits remainder pending migration.
   const removed=[
-    ['9 % 2','45d5794870e93074d9b11b90833a849e96aaa4c1','pub fnc main(): int { return 9 % 2; }\\n'],
-    ['9 ^ 2','6889c7e83c8d94b906fbfe78723caee9580da6aa','pub fnc main(): int { return 9 ^ 2; }\\n'],
-    ['9 ^^ 2','7ee99948018e927cce74c9ad0edc1975e4251689','pub fnc main(): int { return 9 ^^ 2; }\\n']
+    ['9 % 2','45d5794870e93074d9b11b90833a849e96aaa4c1','pub fnc main(): int { return 9 % 2; }\n'],
+    ['9 ^ 2','6889c7e83c8d94b906fbfe78723caee9580da6aa','pub fnc main(): int { return 9 ^ 2; }\n'],
+    ['9 ^^ 2','7ee99948018e927cce74c9ad0edc1975e4251689','pub fnc main(): int { return 9 ^^ 2; }\n']
   ];
-  for(const [description,sha,escaped] of removed){
-    const source=escaped.replaceAll('\\n','\\n');
+  for(const [description,sha,source] of removed){
     const raw=Buffer.from(source,'utf8');
-    const blob=createHash('sha1').update('blob '+raw.length+'\\0').update(raw).digest('hex');
+    const blob=createHash('sha1').update('blob '+raw.length+'\0').update(raw).digest('hex');
     assert.equal(blob,sha,'exact canonical source for '+description);
     assert.throws(()=>compileAttoScalarV1(source),/error: program v2:|error: program IR:/,description);
   }
