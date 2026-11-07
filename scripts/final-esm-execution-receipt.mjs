@@ -117,6 +117,15 @@ const receipt={
     ? 'github-actions-node22-executed-emitted-esm'
     : 'local-node22-executed-emitted-esm-unattested',
   verification:'observed-js-only',
+  // Process environment variables are self-reported; even on a real GitHub
+  // runner this output must be matched to independently fetched Actions job
+  // steps, attempt, exact head/tree and reviewed workflow before promotion.
+  external_attestation:{
+    github_job_steps_verified:false,
+    independent_reviewer_verified:false,
+    native_backend_guest_receipts_verified:false,
+    status:'PENDING_EXTERNAL_VERIFICATION'
+  },
   source_commit:head,
   source_tree:tree,
   compiler_sha256:compilerStart,
