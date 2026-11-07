@@ -6,5 +6,11 @@
 /scripts/ @ORESoftware
 /tools/ @ORESoftware
 /package.json @ORESoftware
+
+# Executable CLI entrypoints, contract schemas and integration metadata.
+/contracts/ @ORESoftware
+/schemas/ @ORESoftware
+/bin/ @ORESoftware
+/.oreslang/ @ORESoftware
 /.github/private-ci-approved-repositories.txt @ORESoftware
 /.github/workflows/private-ci-policy.yml @ORESoftware
