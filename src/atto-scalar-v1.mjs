@@ -50,9 +50,50 @@ function rejectRemovedOperators(source) {
   }
 }
 
+export class AttoScalarUnsupportedFeatureError extends Error {
+  constructor(feature) {
+    super('ATTO_SCALAR_UNSUPPORTED_FEATURE: ' + feature);
+    this.name = 'AttoScalarUnsupportedFeatureError';
+    this.code = 'ATTO_SCALAR_UNSUPPORTED_FEATURE';
+  }
+}
+
+// Acceptance in the wider Oreslang program-v2 is not acceptance in the
+// canonical AttoLang scalar-core suite. Retain only typed i64 pure calls and
+// checked arithmetic; do not silently certify bool, modules, classes,
+// conditional/lazy branches, Symbols, generators, ADTs, or match semantics.
+function requirePortableScalarSubset(ir) {
+  const unsupported = feature => {throw new AttoScalarUnsupportedFeatureError(feature);};
+  if (ir.sourceNamespace !== null || ir.modules.length ||
+      (ir.classes ?? []).length || (ir.generators ?? []).length)
+    unsupported('namespace, module, class or generator declarations');
+  const work=[];
+  for (const fn of ir.functions) {
+    if(fn.kind !== 'fnc' || fn.module !== null ||
+       fn.paramTypes !== undefined || fn.returnType !== undefined)
+      unsupported('only pure int -> int fnc declarations are admitted');
+    work.push(fn.body);
+  }
+  while (work.length) {
+    const expr=work.pop();
+    switch(expr.kind) {
+      case 'int': case 'param': break;
+      case 'neg': work.push(expr.inner); break;
+      case 'binary':
+        if(!['+','-','*'].includes(expr.op))
+          unsupported('integer operator ' + expr.op);
+        work.push(expr.left,expr.right);
+        break;
+      case 'call': work.push(...expr.args); break;
+      default: unsupported('expression kind ' + expr.kind);
+    }
+  }
+  return ir;
+}
+
 export function compileToAttoScalarIRV1(source) {
   rejectRemovedOperators(source);
-  return compileToProgramIRV2(source);
+  return requirePortableScalarSubset(compileToProgramIRV2(source));
 }
 export function compileAttoScalarV1(source) {
   return compileProgramIRV2(compileToAttoScalarIRV1(source));

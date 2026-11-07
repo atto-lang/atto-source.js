@@ -32,6 +32,10 @@ dialect and no change to the legacy default scalar-v1 wrapping profile.
   preflight ignores line comments, nested block comments and quoted text.
 - Checked add/subtract/multiply overflow has JS guest-trap tests. This does not
   show Java/LLVM *failure-phase* or diagnostic parity.
+- The strict compatibility gate rejects all non-scalar program-v2 constructs,
+  including modules, classes, generators, booleans, ternary/conditional
+  branches, ADT/match and Symbols, even where the broader Oreslang
+  program-v2 dialect accepts them.
 - Local `const`/type-first bindings, assignment, eager non-return statement
   evaluation, general classes/actors, ownership, async/select and hosted APIs
   remain unsupported here, and must be treated as **NOT_EXECUTED / unsupported**,

@@ -94,6 +94,17 @@ test('Atto scalar: overflow is a runtime checked-i64 guest error, never wrap',as
   });
 });
 
+test('Atto scalar: wider Oreslang constructs cannot silently enter scalar-core',()=>{
+  for(const source of [
+    'pub fnc decision(bool enabled):int{return enabled ? 42 : 0;}',
+    'define module Numbers as pub fnc forty_two():int{return 42;} end',
+    'pub define class Box as pub pick(self):int{return 42;} end'
+  ]) {
+    assert.throws(()=>compileAttoScalarV1(source),error=>
+      error?.code==='ATTO_SCALAR_UNSUPPORTED_FEATURE',source);
+  }
+});
+
 test('Atto scalar: unimplemented declaration and actor lowering refuse source',()=>{
   // In particular, rejecting these is NOT a verified immutable-binding,
   // eager-evaluation, or actor-execution implementation.
