@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {
-  compileToProgramIRV2, compileProgramIRV2, compileProgramV2
+  compileToProgramIRV2, compileProgramIRV2, compileProgramV2,
+  compileAttoScalarV1, checkAttoScalarV1
 } from '../src/program-v2.mjs';
 import {validateProgramIRV2} from '../src/program-ir-v2.mjs';
 
@@ -50,6 +51,8 @@ for(const fixture of fixtures){
     assert.deepEqual(validateProgramIRV2(canonical),ir);
     const esm=compileProgramIRV2(canonical);
     assert.equal(esm,compileProgramV2(fixture.source));
+    assert.equal(esm,compileAttoScalarV1(fixture.source));
+    assert.equal(checkAttoScalarV1(fixture.source),true);
     const ns=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(esm));
     if(fixture.value!==undefined)assert.equal(ns.main(),BigInt(fixture.value));
     else assert.throws(()=>ns.main(),new RegExp(fixture.trap));
@@ -114,4 +117,33 @@ test('unsupported canonical Java .atto cases remain explicit gaps, not false par
     'pub fnc main(): int { const int x = 7; return x * 6; }\n',
     'pub fnc main(): int { const x = 7; return x * 6; }\n'
   ]) assert.throws(()=>compileProgramV2(source),/error: program v2:/);
+});
+
+test('AttoLang scalar profile rejects removed operators instead of emitting wrong semantics',()=>{
+  // Canonical Java cases.json requires rejection, while legacy .ores
+  // program-v2 intentionally still admits remainder pending migration.
+  const removed=[
+    ['9 % 2','45d5794870e93074d9b11b90833a849e96aaa4c1','pub fnc main(): int { return 9 % 2; }\\n'],
+    ['9 ^ 2','6889c7e83c8d94b906fbfe78723caee9580da6aa','pub fnc main(): int { return 9 ^ 2; }\\n'],
+    ['9 ^^ 2','7ee99948018e927cce74c9ad0edc1975e4251689','pub fnc main(): int { return 9 ^^ 2; }\\n']
+  ];
+  for(const [description,sha,escaped] of removed){
+    const source=escaped.replaceAll('\\n','\\n');
+    const raw=Buffer.from(source,'utf8');
+    const blob=createHash('sha1').update('blob '+raw.length+'\\0').update(raw).digest('hex');
+    assert.equal(blob,sha,'exact canonical source for '+description);
+    assert.throws(()=>compileAttoScalarV1(source),/error: program v2:|error: program IR:/,description);
+  }
+  const legacy=compileProgramV2('pub fnc main():int{return 9%2;}');
+  assert.match(legacy,/_rem/);
+});
+
+test('canonical scalar profile refuses JS-only language constructs rather than certifying parity',()=>{
+  for(const source of [
+    'pub fnc main():bool{return true;}',
+    'pub fnc main():int{return true ? 1 : 2;}',
+    'pub fnc main():int{return match 1 over on 1 -> {42;} on _ -> {0;} end;}',
+    'define module m as pub fnc f():int{return 42;} end',
+    'pub define class Foo as pub mtd f(self):int{return 42;} end'
+  ])assert.throws(()=>compileAttoScalarV1(source),/error: program v2:|error: program IR:/,source);
 });
