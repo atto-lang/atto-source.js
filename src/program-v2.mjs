@@ -1344,3 +1344,39 @@ export function checkProgramV2(source) {
   compileProgramV2(source);
   return true;
 }
+
+// The Java canonical AttoLang scalar-v1 source contract removes remainder
+// and does not include JS program-v2's experimental bool, ADT or match forms.
+// Keep this an explicit profile rather than silently changing legacy .ores
+// syntax or treating a broader JS-only feature as verified Java/LLVM parity.
+export function compileAttoScalarV1(source) {
+  const ir=compileToProgramIRV2(source);
+  if(ir.sourceNamespace!==null||ir.modules.length||
+     (ir.classes?.length??0)||(ir.generators?.length??0))
+    fail('AttoLang scalar-v1 admits only root integer functions');
+  const visit=expr=>{
+    switch(expr.kind){
+      case 'int':case 'param':return;
+      case 'neg':return visit(expr.inner);
+      case 'binary':
+        if(!['+','-','*'].includes(expr.op))
+          fail('AttoLang scalar-v1 removed or unsupported operator '+expr.op);
+        visit(expr.left);visit(expr.right);return;
+      case 'call':
+        for(const arg of expr.args)visit(arg);
+        return;
+      default:fail('AttoLang scalar-v1 expression not yet supported: '+expr.kind);
+    }
+  };
+  for(const fn of ir.functions){
+    if(fn.kind!=='fnc'||(fn.returnType??'int')!=='int'||
+       (fn.paramTypes??fn.params.map(()=>'int')).some(t=>t!=='int'))
+      fail('AttoLang scalar-v1 admits only int fnc signatures');
+    visit(fn.body);
+  }
+  return compileProgramIRV2(ir);
+}
+export function checkAttoScalarV1(source) {
+  compileAttoScalarV1(source);
+  return true;
+}
