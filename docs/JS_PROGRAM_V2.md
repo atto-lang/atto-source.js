@@ -200,3 +200,23 @@ Synchronous `gen*` is lazy in its **yield/body** evaluation, but the emitted cal
 A companion, machine-readable [97-case cross-backend candidate corpus](../contracts/v1/final-esm-parity/README.md) contains 17 exact LLVM reference sources (Git blob hash checked) and 80 generated checked-i64 proposals (independent BigInt oracle). Another 31 wrong-ESM mutation cases must be detected, including dropped boundary checks, changed argument binding, incorrect class receiver brands, and generator completion. These additions execute real emitted ESM under the Node tests but do **not** constitute Java or LLVM execution evidence. The checked-i64 profile is provisional; LLVM native reference sources alone do not demonstrate compatible runtime overflow policy.
 
 These are executed-ESM **tests authored for Node 22**, not a current CI or Java/LLVM verification claim. Run them on the exact PR head with nonzero executed GitHub Actions steps and independently attested compiler/guest receipts before marking the corresponding cross-backend parity cells verified. Default scalar-v1 still wraps; use `--program-v2` to request the checked program-v2 lowering. Source syntax/type acceptance, actual emitted-JS syntax, and guest runtime observations must be tracked as separate gates.
+
+## Generator-helper completeness and executable adversarial gate (2026-11-07)
+
+An emitter correctness defect was identified in `emitProgram()`: `hasSymbol` and `usesPortableRuntime` previously inspected function and class-method expression trees but omitted generator `yields`. Thus a standalone `gen*` with `yield #ready eq #ready ? 42 : 0` or `yield Option.unwrap_or(Option.some(42),0)` could emit syntactically valid ESM referencing undefined helpers. Helper discovery now includes every already-validated generator yield DAG. No actor semantics are implied.
+
+The new `tests/final-esm-adversarial50-20261107.test.mjs` adds 50 distinct source programs: ten signed-i64 boundary/trap cases, ten precedence/associativity identities, ten named-call binding cases, ten lazy conditional/match cases, and ten generator-only Symbol/Option/Result runtime cases. Every test validates source-vs-typed-IR ESM byte identity, checks the emitted ESM syntax under Node 22 and **executes** its public export.
+
+The new `tests/final-esm-helper-mutations20-20261107.test.mjs` adds 20 final-ESM mutation executions using 15 distinct helper names. Each mutation keeps a syntactically valid module but changes exactly one helper declaration binding. The good artifact must produce `42n`; the broken artifact must fail with a specific `ReferenceError` on generator pull. The tests explicitly catch missing runtime declarations, not just string differences.
+
+### Exact-head observation receipt
+
+`npm run evidence:final-esm` regenerates all 97 portable corpus artifacts, checks their JS syntax, executes `main()`, classifies typed values or portable checked-i64 traps and emits a JSON observation receipt including:
+
+- source Git commit/tree identity, required clean checkout, expected GitHub PR head
+- compiler and typed IR validator source SHA-256 and corpus SHA-256, checked before/after execution
+- Node version, source digest and final emitted ESM digest per fixture
+- actual 97 observed result/trap classes, run ID, attempt and job identifier when hosted
+- explicit `NOT_EXECUTED` entries for Java/GraalVM and LLVM guest evidence
+
+The GitHub Actions gate writes the JSON to `$RUNNER_TEMP`, prints the complete receipt in the source-repo workflow log, computes a SHA-256 of the saved receipt and rejects wrong-source heads. It **cannot** prove independent native parity or GitHub runner admission on its own; an exact-head hosted job with nonempty executed steps and independent review is still mandatory.
