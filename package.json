@@ -60,6 +60,7 @@
     "test:symbol-wire": "node --test tests/symbol-equality-wire-v1.test.mjs tests/symbol-wire-v1.test.mjs",
     "test:program-classes": "node --test tests/program-classes-v2.test.mjs",
     "test:class-methods": "node --test tests/class-methods-compat-v1.test.mjs",
-    "test:shared-scalar50": "node --test tests/shared-scalar50-js-esm.test.mjs"
+    "test:shared-scalar50": "node --test tests/shared-scalar50-js-esm.test.mjs",
+    "test:atto-canonical": "node --test tests/atto-java-llvm-source-transpilation.test.mjs"
   }
 }
