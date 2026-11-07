@@ -44,6 +44,8 @@ jobs:
         run: npm run test:program-classes
       - name: Execute legacy class-method compatibility adapter checks
         run: npm run test:class-methods
+      - name: Execute opt-in Atto scalar source-to-ESM compatibility gate
+        run: npm run test:atto-scalar-v1
       - run: npm test
       - run: npm run check
       - run: npm run parity:js

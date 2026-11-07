@@ -178,3 +178,11 @@ checks signed-i64 overflow. The additional negative test ensures this suite
 does not accidentally promote wrapping to checked arithmetic. Node's ESM
 runtime is not an untrusted guest sandbox. A passing source-free or in-memory
 V8 test is not an executed Node `npm test` or CI admission receipt.
+
+## AttoLang canonical scalar compatibility (experimental)
+
+Opt in with `--atto-scalar-v1` for the checked program-v2 subset that refuses
+removed Atto operators `%`, `^`, and `^^` without changing legacy Oreslang
+parsing. Run `npm run test:atto-scalar-v1` and see
+[Atto scalar compatibility scope](docs/ATTO_SCALAR_JS_COMPAT_V1.md).
+This is not full language or Java/LLVM guest execution parity.

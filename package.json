@@ -22,6 +22,7 @@
     "./program-ir-v2": "./src/program-ir-v2.mjs",
     "./java-js-parity-v1": "./src/java-js-parity-v1.mjs",
     "./js-numeric-boundary-v1": "./src/js-numeric-boundary-v1.mjs",
+    "./atto-scalar-v1": "./src/atto-scalar-v1.mjs",
     "./static-facts-v0.node": "./src/static-facts-v0.node.mjs",
     "./actor-host.browser": "./src/actor-host.browser.mjs",
     "./actor-host.node": "./src/actor-host.node.mjs",
@@ -60,6 +61,7 @@
     "test:symbol-wire": "node --test tests/symbol-equality-wire-v1.test.mjs tests/symbol-wire-v1.test.mjs",
     "test:program-classes": "node --test tests/program-classes-v2.test.mjs",
     "test:class-methods": "node --test tests/class-methods-compat-v1.test.mjs",
+    "test:atto-scalar-v1": "node --test tests/atto-scalar-v1-compat.test.mjs",
     "test:shared-scalar50": "node --test tests/shared-scalar50-js-esm.test.mjs"
   }
 }
