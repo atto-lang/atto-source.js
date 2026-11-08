@@ -1,0 +1,47 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {GuestCooperationBudget,GuestFuelExhausted,COOPERATION_POLL_INTERVAL} from '../src/guest-cooperation-budget.mjs';
+
+test('runtime slow poll is precisely periodic even after dispatch cap', () => {
+  const meter = new GuestCooperationBudget(10_000);
+  assert.equal(COOPERATION_POLL_INTERVAL, 128);
+  let polls = 0;
+  for (let step = 1; step <= 2048; step++) {
+    const due = meter.charge_backedge();
+    assert.equal(due, step % 128 === 0, 'must never devolve to per-backedge polling');
+    if (due) polls++;
+  }
+  assert.equal(polls, 16);
+  assert.equal(meter.slow_polls_due, 16);
+  assert.equal(meter.remaining_fuel, 7952);
+});
+
+test('resume resets fairness only and cannot replenish hard fuel', () => {
+  const meter = new GuestCooperationBudget(256);
+  for (let turn = 0; turn < 8; turn++) {
+    meter.begin_dispatch();
+    for (let i = 0; i < 32; i++) assert.equal(meter.charge_backedge(), false);
+  }
+  assert.equal(meter.remaining_fuel, 0);
+  meter.begin_dispatch();
+  assert.throws(() => meter.charge_backedge(), GuestFuelExhausted);
+});
+
+test('operation charging prevents recursion and helper work from being free', () => {
+  const meter = new GuestCooperationBudget(6);
+  meter.charge_operation(4);
+  assert.equal(meter.remaining_fuel, 2);
+  assert.equal(meter.charge_backedge(2), false);
+  assert.throws(() => meter.charge_operation(1), GuestFuelExhausted);
+});
+
+test('invalid and fractional credits cannot bypass tenant accounting', () => {
+  for (const fuel of [0, -1, NaN, Infinity, 1.5, 100_000_001]) {
+    assert.throws(() => new GuestCooperationBudget(fuel), RangeError);
+  }
+  const meter = new GuestCooperationBudget(1);
+  for (const weight of [0, -1, NaN, Infinity, 0.5, 100_000_001]) {
+    assert.throws(() => meter.charge_backedge(weight), RangeError);
+  }
+  assert.equal(meter.remaining_fuel, 1);
+});
