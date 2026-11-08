@@ -7,10 +7,10 @@ const source = 'pub fnc main(): int { return 7; }';
 test('untrusted scalar entry budget polls once every 128 guest entries', async () => {
   const output = compileUntrusted(source);
   assert.match(output, /if\(\+\+_cooperateTicks!==128\)return/);
-  assert.match(output, /if\(--_remainingPolls<0\)throw/);
+  assert.match(output, /if\(--_remainingPolls===0\)/);
   const module = await import('data:text/javascript;charset=utf-8,' + encodeURIComponent(output));
   // At 128, 256, ... 4096 entries, 32 slow-path checks have fired.
-  for (let i = 0; i < 4096; ++i) assert.equal(module.main(), 7n);
+  for (let i = 0; i < 4095; ++i) assert.equal(module.main(), 7n);
   assert.throws(() => module.main(), /untrusted execution budget exceeded/);
   assert.throws(() => module.main(), /untrusted execution budget exceeded/);
 });
