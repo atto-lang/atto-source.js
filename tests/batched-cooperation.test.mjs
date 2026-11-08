@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {BatchedCooperationMeter} from '../src/batched-cooperation.mjs';
+import {compileProgramV2} from '../src/program-v2.mjs';
 
 test('slow checkpoint is never executed on nonboundary iterations', () => {
   for (const interval of [128, 512]) {
@@ -122,4 +123,16 @@ test('seeded differential batch sizes preserve exact work/phase boundaries', () 
     }
     assert.equal(count, Math.floor(total / interval));
   }
+});
+
+test('source compiler refuses unmetered recursive guest execution and loops', () => {
+  // A host meter does not make an uninstrumented compiled guest safe.
+  assert.throws(
+    () => compileProgramV2('pub fnc spin() -> int :: return spin(); end'),
+    /recursive call graph unsupported pending fuel budget/
+  );
+  assert.throws(
+    () => compileProgramV2('pub fnc spin() -> int :: while true do end; return 42; end'),
+    /error: program v2:/
+  );
 });
