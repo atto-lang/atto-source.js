@@ -106,3 +106,29 @@ test('weighted basic-block metering crosses phase once, without refill', () => {
   assert.equal(meter.remaining_fuel, 9);
   assert.equal(meter.slow_polls_due, 5);
 });
+
+test('recursive and weighted charges count toward per-dispatch fairness, failed charges do not', () => {
+  const meter = new GuestCooperationBudget(300);
+  assert.equal(meter.work_units_this_dispatch, 0);
+  for (let i = 0; i < 64; i++) assert.equal(meter.charge_operation(1), false);
+  assert.equal(meter.backedges_this_dispatch, 0);
+  assert.equal(meter.work_units_this_dispatch, 64);
+  assert.equal(meter.charge_operation(64), true);
+  assert.equal(meter.slow_polls_due, 1);
+  assert.equal(meter.work_units_this_dispatch, 128);
+  assert.equal(meter.charge_backedge(128), true);
+  assert.equal(meter.backedges_this_dispatch, 1);
+  assert.equal(meter.work_units_this_dispatch, 256);
+  assert.throws(() => meter.charge_operation(45), GuestFuelExhausted);
+  assert.throws(() => meter.charge_backedge(0), RangeError);
+  assert.equal(meter.work_units_this_dispatch, 256);
+  assert.equal(meter.backedges_this_dispatch, 1);
+  assert.equal(meter.slow_polls_due, 2);
+  meter.begin_dispatch();
+  assert.equal(meter.work_units_this_dispatch, 0);
+  assert.equal(meter.backedges_this_dispatch, 0);
+  assert.equal(meter.remaining_fuel, 44);
+  assert.equal(meter.slow_polls_due, 2);
+  assert.equal(meter.charge_operation(44), false);
+  assert.throws(() => meter.charge_operation(1), GuestFuelExhausted);
+});
