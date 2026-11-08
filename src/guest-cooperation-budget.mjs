@@ -6,7 +6,8 @@
 const MAX_FUEL = 100_000_000;
 export const COOPERATION_POLL_INTERVAL = 128;
 // The compiler must split larger basic blocks into bounded charges.
-export const MAX_METERED_BLOCK_WEIGHT = 512;
+// At most one 128-unit boundary can be crossed by one compiler charge.
+export const MAX_METERED_BLOCK_WEIGHT = 128;
 
 export class GuestFuelExhausted extends Error {
   constructor() { super('logical guest fuel exhausted'); this.name = 'GuestFuelExhausted'; }
