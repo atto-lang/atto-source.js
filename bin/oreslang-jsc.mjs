@@ -4,7 +4,7 @@ import {constants} from 'node:fs';
 import {basename, dirname, join, resolve, isAbsolute} from 'node:path';
 import {randomBytes,createHash} from 'node:crypto';
 import {TextDecoder} from 'node:util';
-import {compile, check} from '../src/compiler.mjs';
+import {compile, check, compileUntrusted} from '../src/compiler.mjs';
 import {staticFactsV0} from '../src/static-facts-v0.node.mjs';
 import {compileProgramV2, checkProgramV2} from '../src/program-v2.mjs';
 import {compileClassMethodsV1,checkClassMethodsV1} from '../src/class-methods-v1.mjs';
@@ -65,11 +65,14 @@ try {
   const rawArgs=process.argv.slice(2);
   // Explicit experimental dialect flag. Default scalar-v1 behavior stays stable
   // until cross-backend semantics and host ABI have been independently validated.
+  // Opt-in EXPERIMENTAL scalar entry budget: no loop/actor lowering and no
+  // hostile-code sandbox. The public default compiler remains unchanged.
+  const meteredScalar=rawArgs[0]==='--entry-metered-scalar';
   const extended=rawArgs[0]==='--program-v2';
   const methodOnly=rawArgs[0]==='--class-methods-v1';
   const freestanding=rawArgs[0]==='--freestanding-core';
   const linkedCore=rawArgs[0]==='--linked-core';
-  let args=(extended||methodOnly||freestanding||linkedCore)?rawArgs.slice(1):rawArgs;
+  let args=(meteredScalar||extended||methodOnly||freestanding||linkedCore)?rawArgs.slice(1):rawArgs;
   let coreInput=null,coreSha256=null;
   if(linkedCore) {
     if(!args[0]?.startsWith('--core=')||args[0].length<8)
@@ -85,12 +88,12 @@ try {
   }
   const checkOnly=args[0]==='--check';
   const factOnly=args[0]==='--static-facts';
-  if (factOnly && (extended||methodOnly||freestanding||linkedCore)) throw Error('facts mode does not admit alternate dialects');
+  if (factOnly && (meteredScalar||extended||methodOnly||freestanding||linkedCore)) throw Error('facts mode does not admit alternate dialects');
   const input=checkOnly||factOnly?args[1]:args[0];
   const extras=args.slice(checkOnly||factOnly?2:1);
   if (!input || input.startsWith('--') || extras.length>1 ||
       (extras.length && !extras[0].startsWith('--out=')))
-    throw Error('usage: oreslang-jsc [--program-v2|--class-methods-v1|--freestanding-core|--linked-core --core=/absolute/core.ores [--core-sha256=HEX]] [--check] input.ores [--out=/absolute/output.mjs]');
+    throw Error('usage: oreslang-jsc [--entry-metered-scalar|--program-v2|--class-methods-v1|--freestanding-core|--linked-core --core=/absolute/core.ores [--core-sha256=HEX]] [--check] input.ores [--out=/absolute/output.mjs]');
   if ((checkOnly||factOnly) && extras.length) throw Error('check/facts modes do not accept --out');
   const source=await readSource(resolve(input), {rejectBom:factOnly});
   const coreSource=linkedCore?await readSource(resolve(coreInput)):null;
@@ -104,13 +107,15 @@ try {
     else if (freestanding) checkFreestandingCore(source);
     else if (extended) checkProgramV2(source);
     else if (methodOnly) checkClassMethodsV1(source);
+    else if (meteredScalar) compileUntrusted(source);
     else check(source);
     await writeStdout('OK\n');
   } else {
     const output=linkedCore?compileLinkedFreestandingCore({coreSource,appSource:source}):
       freestanding?compileFreestandingCore(source):
       extended?compileProgramV2(source):
-      methodOnly?compileClassMethodsV1(source):compile(source);
+      methodOnly?compileClassMethodsV1(source):
+      meteredScalar?compileUntrusted(source):compile(source);
     if (!extras.length) await writeStdout(output);
     else {
       const outputPath=extras[0].slice('--out='.length);
