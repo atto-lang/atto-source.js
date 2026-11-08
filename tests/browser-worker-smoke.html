@@ -71,6 +71,25 @@ try {
   try {await actor.request({type:'missing-done'});}
   catch(error) {rejected=/self.done/.test(String(error));}
   assert(rejected,'implicit JS return was misinterpreted as actor reply');
+
+  const layoutActor=spawnBrowserActor({
+    moduleUrl:new URL('./fixtures/worker-layout-handler.mjs',import.meta.url).href
+  });
+  actors.push(layoutActor);
+  await layoutActor.ready;
+  const layoutMeta=await layoutActor.request({
+    type:'init',
+    options:{rows:4,fields:4,layout:'soaos',groupWidths:[2,2]}
+  });
+  assert(layoutMeta.groupCount===2,'browser Worker SoAoS groups unavailable');
+  await layoutActor.request({type:'write',row:1,field:0,value:10});
+  await layoutActor.request({type:'write',row:1,field:2,value:2});
+  const browserPosition=await layoutActor.request({
+    type:'integrate',positionField:0,velocityField:2,dt:0.5
+  });
+  assert(browserPosition[1]===11,'browser Worker dense layout kernel failed');
+  assert(await layoutActor.request({type:'geometry',row:1,field:1})===24,
+    'browser Worker SoAoS physical geometry drift');
   result.textContent='PASS_BROWSER_ESM_WORKER';
 } catch(error) {
   result.textContent='FAIL_BROWSER_ESM_WORKER: '+String(error);
