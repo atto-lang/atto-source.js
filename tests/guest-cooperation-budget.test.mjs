@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {GuestCooperationBudget,GuestFuelExhausted,COOPERATION_POLL_INTERVAL} from '../src/guest-cooperation-budget.mjs';
+import {GuestCooperationBudget,GuestFuelExhausted,COOPERATION_POLL_INTERVAL,MAX_METERED_BLOCK_WEIGHT} from '../src/guest-cooperation-budget.mjs';
 
 test('runtime slow poll is precisely periodic even after dispatch cap', () => {
   const meter = new GuestCooperationBudget(10_000);
@@ -44,7 +44,7 @@ test('invalid and fractional credits cannot bypass tenant accounting', () => {
     assert.throws(() => new GuestCooperationBudget(fuel), RangeError);
   }
   const meter = new GuestCooperationBudget(1);
-  for (const weight of [0, -1, NaN, Infinity, 0.5, 100_000_001]) {
+  for (const weight of [0, -1, NaN, Infinity, 0.5, 513, 100_000_001]) {
     assert.throws(() => meter.charge_backedge(weight), RangeError);
   }
   assert.equal(meter.remaining_fuel, 1);
@@ -79,4 +79,28 @@ test('failure leaves exact fuel intact and never advances poll phase', () => {
   assert.equal(meter.slow_polls_due, 1);
   assert.throws(() => meter.charge_backedge(), GuestFuelExhausted);
   assert.equal(meter.slow_polls_due, 1);
+});
+
+test('recursive helper calls trigger checkpoint eligibility without loop backedges', () => {
+  const meter = new GuestCooperationBudget(600);
+  let due = 0;
+  for (let depth = 1; depth <= 256; depth++)
+    if (meter.charge_operation(1)) due++;
+  assert.equal(due, 2);
+  assert.equal(meter.slow_polls_due, 2);
+  assert.equal(meter.backedges_this_dispatch, 0);
+  assert.equal(meter.remaining_fuel, 344);
+});
+
+test('weighted basic-block metering crosses phase once, without refill', () => {
+  const meter = new GuestCooperationBudget(800);
+  assert.equal(MAX_METERED_BLOCK_WEIGHT, 512);
+  assert.equal(meter.charge_operation(127), false);
+  assert.equal(meter.charge_operation(2), true);
+  assert.equal(meter.charge_operation(512), true);
+  assert.equal(meter.remaining_fuel, 159);
+  assert.equal(meter.slow_polls_due, 2);
+  assert.throws(() => meter.charge_operation(160), GuestFuelExhausted);
+  assert.equal(meter.remaining_fuel, 159);
+  assert.equal(meter.slow_polls_due, 2);
 });
