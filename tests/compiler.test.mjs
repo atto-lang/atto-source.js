@@ -34,7 +34,7 @@ test('module wrappers, parameter checking, precedence and wrapping',async()=>{
  assert.equal(signed.main(), -(1n<<63n));
 });
 test('signed-i64 remainder follows Java long remainder semantics',async()=>{
- const mod=await moduleFrom('pub fnc rem(int a, int b): int { return a % b; }');
+ const mod=await moduleFrom('pub fnc rem(int a, int b): int { return Integer.rem(a, b); }');
  assert.equal(mod.rem(7n,3n),1n);
  assert.equal(mod.rem(-7n,3n),-1n);
  assert.equal(mod.rem(-(1n<<63n),-1n),0n);

@@ -8,7 +8,7 @@ import {compileProgramV2} from '../src/program-v2.mjs';
 // No abstract div_trunc cases: Oreslang source '/' retains separate semantics.
 // These are real JS guest compiler tests, NOT Java/Graal/LLVM attestations.
 const SOURCE_HEADER='// oreslang:checked-i64-v1\n';
-const PINNED_SOURCE_DIGEST='b83276db9e770025291dd09b0837a55cd8fadc2a7f9fff4c2a78a2ea836c3044';
+const PINNED_SOURCE_DIGEST='bf0cbc0465dfd151cd4f7fb5c21d3b4b5c14cf6c52046f88a33f05c065f71d59';
 const CASES=[
   ["literal-zero","0","value","0","none"],
   ["literal-max","9223372036854775807","value","9223372036854775807","none"],
@@ -37,13 +37,13 @@ const CASES=[
   ["neg-zero","(-0)","value","0","none"],
   ["neg-max","(-9223372036854775807)","value","-9223372036854775807","none"],
   ["neg-min","(--9223372036854775808)","error","integer_overflow","runtime"],
-  ["rem-positive","(7 % 3)","value","1","none"],
-  ["rem-negative","(-7 % 3)","value","-1","none"],
-  ["rem-negative-divisor","(7 % -3)","value","1","none"],
-  ["rem-both-negative","(-7 % -3)","value","-1","none"],
-  ["rem-min-minus-one","(-9223372036854775808 % -1)","value","0","none"],
-  ["rem-zero-divisor","(7 % 0)","error","division_by_zero","runtime"],
-  ["rem-zero-zero","(0 % 0)","error","division_by_zero","runtime"],
+  ["rem-positive","(Integer.rem(7, 3))","value","1","none"],
+  ["rem-negative","(Integer.rem(-7, 3))","value","-1","none"],
+  ["rem-negative-divisor","(Integer.rem(7, -3))","value","1","none"],
+  ["rem-both-negative","(Integer.rem(-7, -3))","value","-1","none"],
+  ["rem-min-minus-one","(Integer.rem(-9223372036854775808, -1))","value","0","none"],
+  ["rem-zero-divisor","(Integer.rem(7, 0))","error","division_by_zero","runtime"],
+  ["rem-zero-zero","(Integer.rem(0, 0))","error","division_by_zero","runtime"],
   ["intermediate-add-overflow","((9223372036854775807 + 1) - 1)","error","integer_overflow","runtime"],
   ["intermediate-sub-overflow","((-9223372036854775808 - 1) + 1)","error","integer_overflow","runtime"],
   ["intermediate-mul-overflow","((9223372036854775807 * 2) - 9223372036854775807)","error","integer_overflow","runtime"],

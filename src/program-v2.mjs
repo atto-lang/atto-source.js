@@ -223,7 +223,13 @@ function tokenize(source) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
     } else if (source.startsWith('->',pos) || source.startsWith('::',pos)) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
-    } else if ('(){}:,;+-*/%=.<>!?'.includes(c)) {
+    } else if (c==='%') {
+      fail("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",start);
+    } else if (c==='^') {
+      fail(source.startsWith('^^',pos)
+        ? "'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)"
+        : "'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",start);
+    } else if ('(){}:,;+-*/=.<>!?'.includes(c)) {
       emit('sym',c,start); advance();
     } else fail('unsupported character',start);
   }
@@ -650,7 +656,7 @@ class Parser {
         // lazy conditionals, never JS truthiness or eager bitwise operators.
         const compare=['<','>','<=','>=','==','!=','eq','neq'].includes(op);
         const logical=op==='and'||op==='or';
-        const prec=op==='*'||op==='%'?20:op==='+'||op==='-'?10:
+        const prec=op==='*'?20:op==='+'||op==='-'?10:
           compare?5:op==='and'?4:op==='or'?3:-1;
         if (prec < min) break;
         this.i++;
@@ -708,6 +714,21 @@ class Parser {
       return {kind:'variable', name:first};
     }
     const args=this.argumentsAfterOpen();
+    // Named integer operations replace the reserved %, ^ and ^^ operators.
+    // The binary ops below are internal IR names, never source syntax.
+    if(qualifier==='Integer'){
+      const ops={rem:'%',mod:'mod',bitXor:'^'};
+      if(!Object.hasOwn(ops,symbol))fail('Integer.'+symbol+' is unsupported; use Integer.rem, Integer.mod or Integer.bitXor',token);
+      if(args.length!==2)fail('Integer.'+symbol+' requires two arguments',token);
+      if(args.some(a=>a.name!==null))fail('Integer.'+symbol+' takes positional arguments',token);
+      return {kind:'binary',op:ops[symbol],left:args[0].expr,right:args[1].expr};
+    }
+    // Xor(a, b) evaluates a, then b exactly once on either branch.
+    if(qualifier===null&&symbol==='Xor'){
+      if(args.length!==2)fail('Xor requires two arguments',token);
+      if(args.some(a=>a.name!==null))fail('Xor takes positional arguments',token);
+      return {kind:'if',condition:args[0].expr,yes:{kind:'not',inner:args[1].expr},no:args[1].expr};
+    }
     // Canonical Oreslang constructors also work as pure aliases for the
     // same statically checked intrinsics; don't introduce any new host API.
     if(qualifier===null){
@@ -1067,6 +1088,8 @@ function emitProgram(program) {
       case 'not':return '!('+emitExpr(expr.inner,depth+1)+')';
       case 'binary':
         if(expr.op==='%')return '_rem(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
+        // Inline so programs without Integer.mod keep byte-identical output.
+        if(expr.op==='mod')return '((a,b)=>{const r=_rem(a,b);return r<0n?_check(b>0n?r+b:r-b):r;})(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
         return '_check(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
       case 'compare':return '(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
       case 'symbolCompare': {

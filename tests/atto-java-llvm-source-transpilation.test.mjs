@@ -153,8 +153,9 @@ test('AttoLang scalar profile rejects removed operators instead of emitting wron
     assert.equal(blob,sha,'exact canonical source for '+description);
     assert.throws(()=>compileAttoScalarV1(source),/error: program v2:|error: program IR:/,description);
   }
-  const legacy=compileProgramV2('pub fnc main():int{return 9%2;}');
-  assert.match(legacy,/_rem/);
+  // program-v2 no longer admits % either; the named form compiles to the checked helper.
+  assert.throws(()=>compileProgramV2('pub fnc main():int{return 9%2;}'),/'%' is reserved/);
+  assert.match(compileProgramV2('pub fnc main():int{return Integer.rem(9, 2);}'),/_rem/);
 });
 
 test('canonical scalar profile refuses JS-only language constructs rather than certifying parity',()=>{
@@ -185,7 +186,7 @@ test('CLI --atto-scalar-v1 checks exact .atto source and emits executable ESM',a
     assert.equal(ns.main(),42n);
     const denied=run('--check',removed);
     assert.notEqual(denied.status,0,'removed operator must reject at CLI admission');
-    assert.match(denied.stderr,/removed or unsupported operator %/);
+    assert.match(denied.stderr,/'%' is reserved/);
     const deniedBuild=run(removed,'--out='+failedOutput);
     assert.notEqual(deniedBuild.status,0);
     await assert.rejects(access(failedOutput),/ENOENT/);
