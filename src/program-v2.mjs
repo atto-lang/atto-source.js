@@ -299,6 +299,19 @@ class Parser {
     }
     return args;
   }
+  // Accept both legacy `int value` and canonical AttoLang `value: int`.
+  // The decision is token-based, not a text rewrite, so comments and typed
+  // compound values cannot change parameter binding or evaluation order.
+  typedParameter(readName) {
+    if (this.peek().kind==='id' && this.tokens[this.i+1]?.value===':') {
+      const name=readName();this.expect(':');
+      if (['int','bool','Symbol','Option','Result'].includes(name))
+        fail('type keyword cannot be a name-first parameter',this.peek());
+      return {name,type:this.valueType()};
+    }
+    const type=this.valueType(),name=readName();
+    return {name,type};
+  }
   valueType() {
     if(this.eat('int'))return 'int';
     if(this.eat('bool'))return 'bool';
@@ -333,8 +346,7 @@ class Parser {
       if(!this.eat(')')){
         do {
           if(params.length>=32)fail('method arity budget',this.peek());
-          const type=this.valueType();
-          const param=this.classIdentifier();
+          const {type,name:param}=this.typedParameter(()=>this.classIdentifier());
           if(param==='self'||params.includes(param))fail('duplicate or reserved method parameter '+param,this.peek());
           params.push(param);paramTypes.push(type);
         } while(this.eat(','));
@@ -391,9 +403,8 @@ class Parser {
     if(!this.eat(')')){
       do{
         if(params.length>=128)fail('generator parameter limit',this.peek());
-        const type=this.valueType();
+        const {type,name:param}=this.typedParameter(()=>this.generatorIdentifier());
         if(type!=='int')fail('sync generator v1 currently supports int parameters only',this.peek());
-        const param=this.generatorIdentifier();
         if(params.includes(param))fail('duplicate generator parameter '+param);
         params.push(param);paramTypes.push(type);
       }while(this.eat(','));
@@ -439,8 +450,7 @@ class Parser {
     if (!this.eat(')')) {
       do {
         if (params.length >= 128) fail('parameter limit',this.peek());
-        const type=this.valueType();
-        const p = this.name();
+        const {type,name:p}=this.typedParameter(()=>this.name());
         if (params.includes(p)) fail('duplicate parameter ' + p);
         params.push(p); paramTypes.push(type);
       } while(this.eat(','));
@@ -1332,5 +1342,41 @@ export function compileProgramV2(source) {
 }
 export function checkProgramV2(source) {
   compileProgramV2(source);
+  return true;
+}
+
+// The Java canonical AttoLang scalar-v1 source contract removes remainder
+// and does not include JS program-v2's experimental bool, ADT or match forms.
+// Keep this an explicit profile rather than silently changing legacy .ores
+// syntax or treating a broader JS-only feature as verified Java/LLVM parity.
+export function compileAttoScalarV1(source) {
+  const ir=compileToProgramIRV2(source);
+  if(ir.sourceNamespace!==null||ir.modules.length||
+     (ir.classes?.length??0)||(ir.generators?.length??0))
+    fail('AttoLang scalar-v1 admits only root integer functions');
+  const visit=expr=>{
+    switch(expr.kind){
+      case 'int':case 'param':return;
+      case 'neg':return visit(expr.inner);
+      case 'binary':
+        if(!['+','-','*'].includes(expr.op))
+          fail('AttoLang scalar-v1 removed or unsupported operator '+expr.op);
+        visit(expr.left);visit(expr.right);return;
+      case 'call':
+        for(const arg of expr.args)visit(arg);
+        return;
+      default:fail('AttoLang scalar-v1 expression not yet supported: '+expr.kind);
+    }
+  };
+  for(const fn of ir.functions){
+    if(fn.kind!=='fnc'||(fn.returnType??'int')!=='int'||
+       (fn.paramTypes??fn.params.map(()=>'int')).some(t=>t!=='int'))
+      fail('AttoLang scalar-v1 admits only int fnc signatures');
+    visit(fn.body);
+  }
+  return compileProgramIRV2(ir);
+}
+export function checkAttoScalarV1(source) {
+  compileAttoScalarV1(source);
   return true;
 }
