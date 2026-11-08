@@ -14,6 +14,19 @@ function checkedIndex(value, length) {
   return Number(n);
 }
 
+// A recoverable index miss is distinct from a forged or stale owner token.
+// This yields owned generational handles, not borrowed element references.
+const NO_ROW = Object.freeze({kind: "None"});
+function optionalDenseRow(value, length) {
+  let n;
+  if (typeof value === "bigint") n = value;
+  else if (typeof value === "number" && Number.isSafeInteger(value) &&
+      !Object.is(value, -0)) n = BigInt(value);
+  else throw new TypeError("inverted row index must be an integer");
+  if (n < 0n || n > MAX_I32 || n >= BigInt(length)) return null;
+  return Number(n);
+}
+
 function issue(owner, issuer, slot, generation) {
   const handle = {};
   META.set(handle, {owner, issuer, slot, generation});
@@ -58,6 +71,14 @@ export class InvertedRowIndex {
     state.live = true;
     this.#rows.push(slot);
     return issue(this.#owner, this.#issuer, slot, state.generation);
+  }
+
+  // Candidate Option-like host API. No out-of-bounds handle is minted.
+  // Actor/compiler source lowering must still prove borrow and Send rights.
+  tryIndex(value) {
+    this.#open();
+    const row = optionalDenseRow(value, this.#rows.length);
+    return row === null ? NO_ROW : Object.freeze({kind: "Some", value: this.index(row)});
   }
 
   index(value) {
