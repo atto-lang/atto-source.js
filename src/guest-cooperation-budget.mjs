@@ -18,6 +18,8 @@ export class GuestCooperationBudget {
   // The poll phase persists across dispatches, including short resumes.
   #ticks = 0;
   #dispatch_ticks = 0;
+  // Counts recursive/helper/basic-block work too, not just loop edges.
+  #dispatch_work = 0;
   #polls = 0;
 
   constructor(fuel = MAX_FUEL) {
@@ -29,10 +31,11 @@ export class GuestCooperationBudget {
   get remaining_fuel() { return this.#remaining; }
   get slow_polls_due() { return this.#polls; }
   get backedges_this_dispatch() { return this.#dispatch_ticks; }
+  get work_units_this_dispatch() { return this.#dispatch_work; }
 
   // Reset dispatch fairness only. Never reset poll phase or hard fuel:
   // repeated 127-backedge resumptions must not suppress all slow polls.
-  begin_dispatch() { this.#dispatch_ticks = 0; }
+  begin_dispatch() { this.#dispatch_ticks = 0; this.#dispatch_work = 0; }
 
   // A backedge is a completed unit of guest work. The hot path has no
   // clock read, scheduler call, Promise or Worker operation.
@@ -51,6 +54,7 @@ export class GuestCooperationBudget {
       throw new RangeError('invalid guest work weight');
     if (weight > this.#remaining) throw new GuestFuelExhausted();
     this.#remaining -= weight;
+    this.#dispatch_work += weight;
     const total = this.#ticks + weight;
     this.#ticks = total & (COOPERATION_POLL_INTERVAL - 1);
     if (total < COOPERATION_POLL_INTERVAL) return false;
