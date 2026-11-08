@@ -54,6 +54,15 @@ export function installWorkerActorEndpoint({subscribe,post}) {
           reply({kind:'result',id:frame.id,ok:true,
             value:frame.reply?response:null});
         }catch(error){
+          // Compiler-generated metered scalar budget exhaustion is terminal:
+          // never process another message using a poisoned guest module.
+          // Revocation is per Worker; the parent terminates this Worker on
+          // fatal while independent sibling actor Workers remain healthy.
+          // This does NOT replace OS sandboxing or watchdog termination.
+          let fuelExhausted=false;
+          try{fuelExhausted=error?.code==='ATTO_GUEST_FUEL_EXHAUSTED';}
+          catch{fail('invalid actor handler error');break;}
+          if(fuelExhausted){fail('actor guest execution fuel exhausted');break;}
           if(!terminal){
             try{reply({kind:'result',id:frame.id,ok:false,error:errorText(error)});}
             catch{fail('actor result transport failure');}
