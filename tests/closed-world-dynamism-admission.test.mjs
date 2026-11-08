@@ -78,3 +78,24 @@ test('a statically resolved callable named eval is not dynamic JavaScript eval',
   const scalarMod=await import('data:text/javascript,'+encodeURIComponent(scalarJS));
   assert.equal(scalarMod.main(),42n);
 });
+
+test('scalar-v1 denies pointer intrinsics and legacy mutable borrow spelling', () => {
+  const negatives = [
+    ['rt ref 1', /pointer-style runtime operation rt ref/],
+    ['rt deref 1', /pointer-style runtime operation rt deref/],
+    ['rt unref 1', /pointer-style runtime operation rt unref/],
+    ['rt raw 1', /pointer-style runtime operation rt raw/],
+    ['rt borrow mut 1', /legacy 'rt borrow mut'/]
+  ];
+  for(const [expression, diagnostic] of negatives) {
+    const source='pub fnc main(): int {return '+expression+';}';
+    assert.throws(() => compileToIR(source), diagnostic, source);
+    assert.throws(() => compile(source), diagnostic, source);
+  }
+  // Canonical rt mut borrow is legal in the language but this narrow scalar
+  // transpiler must refuse it until it has actual typed loan lowering.
+  assert.throws(
+    () => compileToIR('pub fnc main(): int {return rt mut borrow 1;}'),
+    /runtime ownership operation requires typed lowering/
+  );
+});
