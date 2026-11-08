@@ -136,3 +136,19 @@ test('source compiler refuses unmetered recursive guest execution and loops', ()
     /error: program v2:/
   );
 });
+
+
+test('asynchronous checkpoint callback cannot silently pretend to yield', () => {
+  const meter = new BatchedCooperationMeter();
+  assert.throws(
+    () => meter.commit_batch(128, () => Promise.resolve('not a synchronous handoff')),
+    /asynchronous checkpoint callback unsupported/
+  );
+  assert.equal(meter.completed, 128); // account remains committed on rejection
+  assert.equal(meter.phase, 0);
+  let later = 0;
+  meter.commit_batch(127, () => {later++;});
+  assert.equal(later, 0);
+  meter.commit_batch(1, () => {later++;});
+  assert.equal(later, 1);
+});
