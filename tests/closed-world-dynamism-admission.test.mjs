@@ -62,7 +62,7 @@ test('finite known-class dispatch compiles without a runtime eval or proxy', asy
   assert.equal(ir.functions[0].body.kind,'methodCall');
   const output=compileProgramIRV2(ir);
   assert.equal(output,compileProgramV2(source));
-  assert.doesNotMatch(output,/\\beval\\s*\\(|new\\s+Function\\s*\\(|new\\s+Proxy\\s*\\(/);
+  assert.doesNotMatch(output,/\beval\s*\(|new\s+Function\s*\(|new\s+Proxy\s*\(/);
   const mod=await import('data:text/javascript,'+encodeURIComponent(output));
   assert.equal(mod.main(),42n);
   assert.equal(new mod.Box().answer(),42n);
@@ -74,7 +74,7 @@ test('a statically resolved callable named eval is not dynamic JavaScript eval',
   const scalar='fnc eval(int x): int {return x;} pub fnc main(): int {return eval(42);}';
   const scalarIR=compileToIR(scalar);
   const scalarJS=compileIR(scalarIR);
-  assert.doesNotMatch(scalarJS,/\\beval\\s*\\(/);
+  assert.doesNotMatch(scalarJS,/\beval\s*\(/);
   const scalarMod=await import('data:text/javascript,'+encodeURIComponent(scalarJS));
   assert.equal(scalarMod.main(),42n);
 });
