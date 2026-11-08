@@ -31,7 +31,7 @@ test('repeated short carrier dispatches cannot reset the slow phase or refill fu
   for(let turn=0;turn<64;turn++){
     meter.begin_dispatch();
     for(let i=0;i<8;i++){
-      const due=meter.charge_and_poll(1,receipt=>boundaries.push({turn,index:i,poll:receipt.poll_index}));
+      const due=meter.charge_and_poll(1,receipt=>{boundaries.push({turn,index:i,poll:receipt.poll_index});});
       assert.equal(due,turn%16===15&&i===7);
     }
     assert.equal(meter.work_units_this_dispatch,8);
