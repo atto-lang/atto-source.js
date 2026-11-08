@@ -1,5 +1,7 @@
 # Oreslang JavaScript backend
 
+**Role:** Experimental Atto/Ores-to-**JavaScript ESM** transpiler, not a WebAssembly compiler. Its browser Web Workers and Node worker_threads execute **trusted JS handlers or compiled scalar ESM**, not Wasmtime and not fully compiler-lowered `define actor` semantics. The `/play/` compiler is `atto-lang/atto-source.rs` (Rust built to Wasm32). See [JS vs Wasm tenant architecture](docs/JS_VS_WASM_TENANT_ARCHITECTURE.md).
+
 Experimental source-to-ESM compiler for Oreslang, intended ultimately for browser/edge JavaScript and the iso-lattes execution host.
 
 Implemented first slice: integer functions with typed int parameters, return-only bodies, operators +, -, *, and %, forward/same-module calls, pub exports, optional module wrapper, lexical comments and bounded source. Unsupported features fail closed. The Java/Truffle frontend is the language reference; this is **not** feature parity.
