@@ -10,7 +10,7 @@ import {
 } from '../src/program-v2.mjs';
 
 const wrap = expr => 'pub fnc main():int{return '+expr+';}';
-const knownClass = 'define class Box as pub answer(self):int{return 42;} end ';
+const knownClass = 'pub define class Box as pub answer(self):int{return 42;} end ';
 
 test('program-v2 unknown runtime code-generation/reflection calls fail before ESM', () => {
   const sources = [
