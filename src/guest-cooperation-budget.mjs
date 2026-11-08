@@ -12,7 +12,9 @@ export class GuestFuelExhausted extends Error {
 
 export class GuestCooperationBudget {
   #remaining;
+  // The poll phase persists across dispatches, including short resumes.
   #ticks = 0;
+  #dispatch_ticks = 0;
   #polls = 0;
 
   constructor(fuel = MAX_FUEL) {
@@ -23,9 +25,11 @@ export class GuestCooperationBudget {
 
   get remaining_fuel() { return this.#remaining; }
   get slow_polls_due() { return this.#polls; }
+  get backedges_this_dispatch() { return this.#dispatch_ticks; }
 
-  // Only fairness state resets on resume. Fuel does not.
-  begin_dispatch() { this.#ticks = 0; }
+  // Reset dispatch fairness only. Never reset poll phase or hard fuel:
+  // repeated 127-backedge resumptions must not suppress all slow polls.
+  begin_dispatch() { this.#dispatch_ticks = 0; }
 
   // Hot path: no wall-clock, scheduler callback, Promise or Worker API.
   // Called after the compiler commits its loop-carried state.
@@ -34,6 +38,7 @@ export class GuestCooperationBudget {
       throw new RangeError('invalid guest work weight');
     if (weight > this.#remaining) throw new GuestFuelExhausted();
     this.#remaining -= weight;
+    this.#dispatch_ticks++;
     this.#ticks = (this.#ticks + 1) & (COOPERATION_POLL_INTERVAL - 1);
     if (this.#ticks !== 0) return false;
     this.#polls++;
