@@ -20,7 +20,11 @@ test('resume resets fairness only and cannot replenish hard fuel', () => {
   const meter = new GuestCooperationBudget(256);
   for (let turn = 0; turn < 8; turn++) {
     meter.begin_dispatch();
-    for (let i = 0; i < 32; i++) assert.equal(meter.charge_backedge(), false);
+    for (let i = 0; i < 32; i++) {
+      const due = meter.charge_backedge();
+      assert.equal(due, turn % 4 === 3 && i === 31);
+    }
+    assert.equal(meter.backedges_this_dispatch, 32);
   }
   assert.equal(meter.remaining_fuel, 0);
   meter.begin_dispatch();
@@ -44,4 +48,35 @@ test('invalid and fractional credits cannot bypass tenant accounting', () => {
     assert.throws(() => meter.charge_backedge(weight), RangeError);
   }
   assert.equal(meter.remaining_fuel, 1);
+});
+
+
+test('repeated short dispatches cannot reset lifetime poll phase', () => {
+  const meter = new GuestCooperationBudget(10_000);
+  let charged = 0, polls = 0;
+  for (let dispatch = 0; dispatch < 8; dispatch++) {
+    meter.begin_dispatch();
+    for (let i = 0; i < 127; i++) {
+      charged++;
+      const due = meter.charge_backedge();
+      assert.equal(due, charged % 128 === 0);
+      if (due) polls++;
+    }
+    assert.equal(meter.backedges_this_dispatch, 127);
+  }
+  assert.equal(polls, 7);
+  assert.equal(meter.remaining_fuel, 10_000 - 8 * 127);
+});
+
+test('failure leaves exact fuel intact and never advances poll phase', () => {
+  const meter = new GuestCooperationBudget(129);
+  for (let i = 0; i < 127; i++) assert.equal(meter.charge_backedge(), false);
+  assert.throws(() => meter.charge_backedge(3), GuestFuelExhausted);
+  assert.equal(meter.remaining_fuel, 2);
+  assert.equal(meter.slow_polls_due, 0);
+  assert.equal(meter.charge_backedge(2), true);
+  assert.equal(meter.remaining_fuel, 0);
+  assert.equal(meter.slow_polls_due, 1);
+  assert.throws(() => meter.charge_backedge(), GuestFuelExhausted);
+  assert.equal(meter.slow_polls_due, 1);
 });
