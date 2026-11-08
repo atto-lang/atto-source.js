@@ -45,8 +45,11 @@ export class GuestCooperationBudget {
   // Reset dispatch fairness only. Never reset poll phase or hard fuel:
   // repeated 127-backedge resumptions must not suppress all slow polls.
   begin_dispatch() {
-    if(this.#failed || this.#poll_in_progress)
-      throw new GuestCooperationFailed();
+    if(this.#poll_in_progress) {
+      this.#failed=true; // even a swallowed reentry attempt poisons the task
+      throw new GuestCooperationFailed('reentrant scheduler poll');
+    }
+    if(this.#failed) throw new GuestCooperationFailed();
     this.#dispatch_ticks = 0;
     this.#dispatch_work = 0;
   }
@@ -63,8 +66,11 @@ export class GuestCooperationBudget {
   // returns checkpoint eligibility without claiming a resumable yield.
   // Failed charges neither spend fuel nor advance the poll phase.
   charge_operation(weight) {
-    if(this.#failed || this.#poll_in_progress)
-      throw new GuestCooperationFailed();
+    if(this.#poll_in_progress) {
+      this.#failed=true; // even a swallowed reentry attempt poisons the task
+      throw new GuestCooperationFailed('reentrant scheduler poll');
+    }
+    if(this.#failed) throw new GuestCooperationFailed();
     if (!Number.isSafeInteger(weight) || weight < 1 ||
         weight > MAX_METERED_BLOCK_WEIGHT)
       throw new RangeError('invalid guest work weight');
@@ -99,6 +105,8 @@ export class GuestCooperationBudget {
       // a Promise or a mutable authority handle.
       if(trustedSlowPoll(receipt)!==undefined)
         throw new GuestCooperationFailed('slow poll must complete synchronously');
+      if(this.#failed)
+        throw new GuestCooperationFailed('reentrant scheduler poll');
     } catch(error) {
       this.#failed=true;
       throw error;
