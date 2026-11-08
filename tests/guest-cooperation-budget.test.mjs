@@ -93,16 +93,16 @@ test('recursive helper calls trigger checkpoint eligibility without loop backedg
 });
 
 test('weighted basic-block metering crosses phase once, without refill', () => {
-  const meter = new GuestCooperationBudget(800);
+  const meter = new GuestCooperationBudget(650);
   assert.equal(MAX_METERED_BLOCK_WEIGHT, 128);
   assert.equal(meter.charge_operation(127), false);
   assert.equal(meter.charge_operation(2), true);
   for (let i = 0; i < 4; i++)
     assert.equal(meter.charge_operation(128), true);
-  assert.equal(meter.remaining_fuel, 159);
+  assert.equal(meter.remaining_fuel, 9);
   assert.equal(meter.slow_polls_due, 5);
   assert.throws(() => meter.charge_operation(129), RangeError);
-  assert.throws(() => meter.charge_operation(160), GuestFuelExhausted);
-  assert.equal(meter.remaining_fuel, 159);
+  assert.throws(() => meter.charge_operation(10), GuestFuelExhausted);
+  assert.equal(meter.remaining_fuel, 9);
   assert.equal(meter.slow_polls_due, 5);
 });
