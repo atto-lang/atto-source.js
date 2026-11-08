@@ -223,7 +223,16 @@ export function compileToIR(source) {
     throw error;
   }
 }
+// Opt-in scalar guest metering. This backend currently rejects recursive
+// call cycles and does not lower source loops/actors. This is a real entry
+// budget, NOT proof of cooperative suspension or a JS security sandbox.
 export function compileIR(input) {
+  return compileIRMode(input, false);
+}
+export function compileIRUntrusted(input) {
+  return compileIRMode(input, true);
+}
+function compileIRMode(input, untrusted) {
   const ir = validateScalarIR(input);
   const fns = ir.functions;
   function lower(e, depth = 0) {
@@ -244,9 +253,17 @@ export function compileIR(input) {
     '// Oreslang JS scalar subset. Signed i64 wrapping is PROVISIONAL, not proven Java parity.',
     'function _int(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang int requires a signed i64 BigInt");return v;}'
   ];
+  if (untrusted) out.push(
+    // The hot path is one increment, compare, and predictable branch.
+    // A cold quota check runs exactly once per 128 function entries.
+    // Never reset hard fuel on the next entry after a trap.
+    'let _cooperateTicks=0,_remainingPolls=32;',
+    'function _cooperate(){if(++_cooperateTicks!==128)return;_cooperateTicks=0;if(--_remainingPolls<0)throw new Error("untrusted execution budget exceeded");}'
+  );
   fns.forEach((f,i) => {
     const params = f.params.map((_,j) => '_p' + j);
     out.push('function _f' + i + '(' + params.join(',') + '){');
+    if (untrusted) out.push('_cooperate();');
     params.forEach(p => out.push('_int(' + p + ');'));
     out.push('return ' + lower(f.body) + ';', '}');
   });
@@ -258,6 +275,12 @@ export function compileIR(input) {
 }
 export function compile(source) {
   return compileIR(compileToIR(source));
+}
+// Explicitly selected for bounded scalar guest entry execution. Synchronous
+// JavaScript cannot yield an active stack; a worker/process execution deadline
+// is still required for hostile guest code and any future source loops.
+export function compileUntrusted(source) {
+  return compileIRUntrusted(compileToIR(source));
 }
 export function check(source) {
   compile(source);
