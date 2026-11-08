@@ -2,7 +2,7 @@
 
 ## Contract
 
-- Default slow-poll interval: **128 completed guest reductions**. The compiler's hot path uses an integer counter/increment and a predictable branch. A clock read, scheduler inspection, cancellation delivery, or runtime FFI is never performed on every iteration.
+- Default slow-poll interval: **128 completed guest reductions**. The instrumented hot path uses a small integer countdown and a predictable branch; 64-bit aggregate accounting occurs only on the 128th reduction. A clock read, scheduler inspection, cancellation delivery, or runtime FFI is never performed on every iteration.
 - A 512-backedge value is a *fairness handoff target*, not the hard tenant execution quota. After 512, slow polls remain at 128-edge boundaries; do not change to a slow poll on every overdue iteration. A separate safe critical-section exit may request one immediate poll.
 - Replenishing a fairness slice must **never replenish hard tenant fuel**. Counter overflow saturates total accounting without disabling the independent window counter.
 - Only committed backedges and compiler-verified call sites count. Untrusted source cannot mutate or bypass compiler-private counter state. Optimizer/codegen must retain checkpoint coverage; uninstrumented loop/cycle admission must fail closed.
@@ -11,9 +11,7 @@
 
 ## Current backend status (2026-11-07)
 
-compileUntrusted/compileIRUntrusted opt in to a generated 128-function-entry counter with a hard 4096-entry trap; default trusted output stays unchanged. The present scalar subset rejects recursion and has no guest loops/actors; this is not full untrusted-worker safepoint coverage.
-
-Relevant files: src/compiler.mjs; tests/untrusted-cooperation-128.test.mjs.
+Explicit `compileUntrusted`/`compileIRUntrusted` and CLI `--entry-metered-scalar` emit a 128-entry cold budget check and a nonrenewable 4096-entry trap. A branded hard-exhaustion error terminally retires the affected Node Worker; a generated 4096-entry DAG and sibling Worker are tested. There is still NO guest loop/actor lowering nor OS sandbox for hostile JS, and ordinary `compile` is intentionally unchanged.
 
 ## Missing compiler-backed gate
 
