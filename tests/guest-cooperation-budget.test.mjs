@@ -44,7 +44,7 @@ test('invalid and fractional credits cannot bypass tenant accounting', () => {
     assert.throws(() => new GuestCooperationBudget(fuel), RangeError);
   }
   const meter = new GuestCooperationBudget(1);
-  for (const weight of [0, -1, NaN, Infinity, 0.5, 513, 100_000_001]) {
+  for (const weight of [0, -1, NaN, Infinity, 0.5, 129, 513, 100_000_001]) {
     assert.throws(() => meter.charge_backedge(weight), RangeError);
   }
   assert.equal(meter.remaining_fuel, 1);
@@ -94,13 +94,15 @@ test('recursive helper calls trigger checkpoint eligibility without loop backedg
 
 test('weighted basic-block metering crosses phase once, without refill', () => {
   const meter = new GuestCooperationBudget(800);
-  assert.equal(MAX_METERED_BLOCK_WEIGHT, 512);
+  assert.equal(MAX_METERED_BLOCK_WEIGHT, 128);
   assert.equal(meter.charge_operation(127), false);
   assert.equal(meter.charge_operation(2), true);
-  assert.equal(meter.charge_operation(512), true);
+  for (let i = 0; i < 4; i++)
+    assert.equal(meter.charge_operation(128), true);
   assert.equal(meter.remaining_fuel, 159);
-  assert.equal(meter.slow_polls_due, 2);
+  assert.equal(meter.slow_polls_due, 5);
+  assert.throws(() => meter.charge_operation(129), RangeError);
   assert.throws(() => meter.charge_operation(160), GuestFuelExhausted);
   assert.equal(meter.remaining_fuel, 159);
-  assert.equal(meter.slow_polls_due, 2);
+  assert.equal(meter.slow_polls_due, 5);
 });
