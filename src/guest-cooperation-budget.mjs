@@ -5,6 +5,8 @@
  */
 const MAX_FUEL = 100_000_000;
 export const COOPERATION_POLL_INTERVAL = 128;
+// The compiler must split larger basic blocks into bounded charges.
+export const MAX_METERED_BLOCK_WEIGHT = 512;
 
 export class GuestFuelExhausted extends Error {
   constructor() { super('logical guest fuel exhausted'); this.name = 'GuestFuelExhausted'; }
@@ -31,25 +33,27 @@ export class GuestCooperationBudget {
   // repeated 127-backedge resumptions must not suppress all slow polls.
   begin_dispatch() { this.#dispatch_ticks = 0; }
 
-  // Hot path: no wall-clock, scheduler callback, Promise or Worker API.
-  // Called after the compiler commits its loop-carried state.
+  // A backedge is a completed unit of guest work. The hot path has no
+  // clock read, scheduler call, Promise or Worker operation.
   charge_backedge(weight = 1) {
-    if (!Number.isSafeInteger(weight) || weight < 1 || weight > MAX_FUEL)
-      throw new RangeError('invalid guest work weight');
-    if (weight > this.#remaining) throw new GuestFuelExhausted();
-    this.#remaining -= weight;
+    const due = this.charge_operation(weight);
     this.#dispatch_ticks++;
-    this.#ticks = (this.#ticks + 1) & (COOPERATION_POLL_INTERVAL - 1);
-    if (this.#ticks !== 0) return false;
-    this.#polls++;
-    return true; // Caller may poll but must not yield inside critical.
+    return due; // A slow poll is due, not authorization to suspend in critical.
   }
 
-  // Charge an admitted operation without creating an arbitrary yield point.
+  // Also use at recursive/function entry and bounded basic blocks. It
+  // returns checkpoint eligibility without claiming a resumable yield.
+  // Failed charges neither spend fuel nor advance the poll phase.
   charge_operation(weight) {
-    if (!Number.isSafeInteger(weight) || weight < 1 || weight > MAX_FUEL)
+    if (!Number.isSafeInteger(weight) || weight < 1 ||
+        weight > MAX_METERED_BLOCK_WEIGHT)
       throw new RangeError('invalid guest work weight');
     if (weight > this.#remaining) throw new GuestFuelExhausted();
     this.#remaining -= weight;
+    const total = this.#ticks + weight;
+    this.#ticks = total & (COOPERATION_POLL_INTERVAL - 1);
+    if (total < COOPERATION_POLL_INTERVAL) return false;
+    this.#polls++;
+    return true;
   }
 }
