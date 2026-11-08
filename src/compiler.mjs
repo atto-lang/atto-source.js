@@ -258,7 +258,7 @@ function compileIRMode(input, untrusted) {
     // A cold quota check runs exactly once per 128 function entries.
     // Never reset hard fuel on the next entry after a trap.
     'let _cooperateTicks=0,_remainingPolls=32;',
-    'function _cooperate(){if(++_cooperateTicks!==128)return;_cooperateTicks=0;if(--_remainingPolls<0)throw new Error("untrusted execution budget exceeded");}'
+    'function _cooperate(){if(++_cooperateTicks!==128)return;_cooperateTicks=0;if(--_remainingPolls===0){_cooperate=function(){throw new Error("untrusted execution budget exceeded");};throw new Error("untrusted execution budget exceeded");}}'
   );
   fns.forEach((f,i) => {
     const params = f.params.map((_,j) => '_p' + j);
