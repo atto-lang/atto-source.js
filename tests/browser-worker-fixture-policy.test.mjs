@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,writeFile,symlink,rm} from 'node:fs/promises';
+import {realpath,mkdtemp,mkdir,writeFile,symlink,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {
@@ -41,7 +41,7 @@ const denied=async(root,url)=>{
 test('allow regular fixture files with MIME, byte reads and HEAD',async()=>{
   await withSandbox(async root=>{
     const a=await resolveBrowserWorkerFixture(root,'/src/compiler.mjs');
-    assert.equal(a.path,join(root,'src','compiler.mjs'));
+    assert.equal(a.path,await realpath(join(root,'src','compiler.mjs')));
     assert.equal(a.contentType,'text/javascript; charset=utf-8');
     const b=await readBrowserWorkerFixture(root,'/tests/fixtures/worker.ores?cache=off');
     assert.match(b.body.toString('utf8'),/pub fnc/);

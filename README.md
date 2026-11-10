@@ -178,3 +178,9 @@ checks signed-i64 overflow. The additional negative test ensures this suite
 does not accidentally promote wrapping to checked arithmetic. Node's ESM
 runtime is not an untrusted guest sandbox. A passing source-free or in-memory
 V8 test is not an executed Node `npm test` or CI admission receipt.
+
+## Canonical browser compiler profile
+
+`--canonical-browser --compiler=/absolute/compiler.wasm --compiler-sha256=<approved sha256>` opts into the canonical `oreslang-source.rs/browser` parser/checker and typed-IR ESM emitter. This profile supports the browser compatibility subset including `define actor`, actor-local int/bool state, receive, spawn and send. It does not change the default legacy scalar or program-v2 profiles. The ESM `instantiate(atto)` factory allocates fresh fixed Wasm memory for actor/class state. `runCanonicalGuest` runs a compiler-emitted module inside a disposable tenant Worker with up to 16 actors and 10,000 messages per actor; the parent must enforce cancellation/deadlines. JS engine memory and stacks are not zero-GC, and generated ESM is not an untrusted-JS sandbox.
+
+Use the host-neutral `./canonical-browser-compiler` export: verify bytes with `verifyCompilerBytes`, call `createCompiler(bytes)`, then `compile(source, "javascript")`. No native Rust/LLVM process runs in the browser. The fixture artifact and receipt under test-support/ pin canonical source commit/tree and binary digest. Integration and remaining Java/LLVM/native-Cranelift differences: [Rust integration PR #52](https://github.com/ores-truffle-oreslang/oreslang-source.rs/pull/52). Browser/source ESM worker execution is tested there; these Node tests do not certify another backend.

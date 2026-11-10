@@ -4,6 +4,7 @@ import {constants} from 'node:fs';
 import {basename, dirname, join, resolve, isAbsolute} from 'node:path';
 import {randomBytes,createHash} from 'node:crypto';
 import {TextDecoder} from 'node:util';
+import {createCompiler,verifyCompilerBytes} from '../src/canonical-browser-compiler.mjs';
 import {compile, check} from '../src/compiler.mjs';
 import {staticFactsV0} from '../src/static-facts-v0.node.mjs';
 import {compileProgramV2, checkProgramV2, compileAttoScalarV1, checkAttoScalarV1} from '../src/program-v2.mjs';
@@ -65,6 +66,32 @@ try {
   const rawArgs=process.argv.slice(2);
   // Explicit experimental dialect flag. Default scalar-v1 behavior stays stable
   // until cross-backend semantics and host ABI have been independently validated.
+  const canonical=rawArgs[0]==='--canonical-browser';
+  let canonicalCompiler=null;
+  if(canonical){
+    const [flag,compilerFlag,shaFlag,...rest]=rawArgs;
+    if(!compilerFlag?.startsWith('--compiler=')||!shaFlag?.startsWith('--compiler-sha256='))
+      throw Error('--canonical-browser requires --compiler=/absolute/compiler.wasm --compiler-sha256=<approved digest>');
+    const path=compilerFlag.slice(11),digest=shaFlag.slice(18);
+    if(!isAbsolute(path)||! /^[a-f0-9]{64}$/.test(digest))throw Error('invalid canonical compiler path/digest');
+    const st=await lstat(path);
+    if(!st.isFile()||st.isSymbolicLink()||st.size>67108864)throw Error('invalid canonical compiler file');
+    const compilerFile=await open(path,constants.O_RDONLY|(constants.O_NOFOLLOW||0)|(constants.O_NONBLOCK||0));
+    let bytes;
+    try {
+      const opened=await compilerFile.stat();
+      if(!opened.isFile()||opened.dev!==st.dev||opened.ino!==st.ino||opened.size!==st.size)
+        throw Error('canonical compiler changed during admission');
+      const snapshot=Buffer.alloc(st.size+1);let size=0;
+      while(size<snapshot.length){const r=await compilerFile.read(snapshot,size,snapshot.length-size,null);if(!r.bytesRead)break;size+=r.bytesRead;}
+      if(size!==st.size)throw Error('canonical compiler size changed during read');
+      bytes=snapshot.subarray(0,size);
+    } finally {await compilerFile.close();}
+    await verifyCompilerBytes(bytes,digest,st.size);
+    canonicalCompiler=await createCompiler(bytes);
+    rawArgs.splice(0,rawArgs.length,...rest);
+  }
+  const canonicalCompile=source=>{const r=canonicalCompiler.compile(source,'javascript');if(!r.ok)throw Error(r.diagnostics[0].message);return r.esm;};
   const extended=rawArgs[0]==='--program-v2';
   const attoScalar=rawArgs[0]==='--atto-scalar-v1';
   const methodOnly=rawArgs[0]==='--class-methods-v1';
@@ -101,7 +128,8 @@ try {
   if (factOnly) {
     await writeStdout(JSON.stringify(staticFactsV0(source))+'\n');
   } else if (checkOnly) {
-    if (linkedCore) checkLinkedFreestandingCore({coreSource,appSource:source});
+    if (canonical) canonicalCompile(source);
+    else if (linkedCore) checkLinkedFreestandingCore({coreSource,appSource:source});
     else if (freestanding) checkFreestandingCore(source);
     else if (extended) checkProgramV2(source);
     else if (attoScalar) checkAttoScalarV1(source);
@@ -109,7 +137,7 @@ try {
     else check(source);
     await writeStdout('OK\n');
   } else {
-    const output=linkedCore?compileLinkedFreestandingCore({coreSource,appSource:source}):
+    const output=canonical?canonicalCompile(source):linkedCore?compileLinkedFreestandingCore({coreSource,appSource:source}):
       freestanding?compileFreestandingCore(source):
       extended?compileProgramV2(source):
       attoScalar?compileAttoScalarV1(source):
