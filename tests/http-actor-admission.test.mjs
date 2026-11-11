@@ -47,10 +47,12 @@ test('quoted/commented lookalikes are lexically inert, and http remains an ident
     ].join('\n');
     assert.doesNotThrow(() => compileSource(source));
   }
-  const quoted = 'pub fnc main(): int { return #"define http actor"; }';
-  // The program-v2 frontend admits Symbols as a *different* feature; the
-  // admission guard must never misreport quoted source as an HTTP declaration.
-  assert.doesNotThrow(() => compileToProgramIRV2(quoted));
+  // A Symbol literal token is not a declaration keyword; unrelated type
+  // errors must not be mislabeled as HTTP actor admission.
+  assert.throws(
+    () => compileToProgramIRV2('pub fnc main(): int { return #"define http actor"; }'),
+    error => !unsupported.test(error.message)
+  );
 });
 
 test('CLI --check and --out fail closed without creating JavaScript artifacts', async () => {
