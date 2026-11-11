@@ -34,7 +34,8 @@
     "./selectable-i64-future": "./src/selectable-i64-future.mjs",
     "./select-continuation-fence": "./src/select-continuation-fence.mjs",
     "./canonical-browser-compiler": "./src/canonical-browser-compiler.mjs",
-    "./canonical-actor-runtime": "./src/canonical-actor-runtime.mjs"
+    "./canonical-actor-runtime": "./src/canonical-actor-runtime.mjs",
+    "./tenant-turn-queue": "./src/tenant-turn-queue.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"

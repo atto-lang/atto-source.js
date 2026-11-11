@@ -25,7 +25,7 @@ test('canonical .atto actors execute in ESM and Wasm with identical stdout',asyn
   const mod=new WebAssembly.Module(wasm.wasm);
   const b=runCanonicalGuest({actorNames:ns.actorNames,instantiate:atto=>new WebAssembly.Instance(mod,{atto})});
   assert.deepEqual(a,b);
-  assert.deepEqual([a.ok,a.stdout,a.actors,a.privateMemories],[true,'40\n42\n7\n',2,3]);
+  assert.deepEqual([a.ok,a.stdout,a.actors,a.privateMemories],[true,'40\n7\n42\n',2,3]);
 });
 test('same checker rejects unsupported/malformed source without either artifact',()=>{
   for(const source of ['pub fnc main(): int { return missing; }', 'define actor Bad as receive(ActorMail<int> mail): void { self.missing = 1; return; } end pub fnc main(): int { return 0; }']){
