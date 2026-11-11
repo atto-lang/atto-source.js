@@ -363,13 +363,16 @@ class Parser {
       const terminator=braced?'}':'end';
       let body=null;
       if(returnType==='void'){
-        if(this.eat('return'))this.expect(';');
+        if(this.eat('return')){
+          if(this.peek().value!==';')fail('RETURN_VOID_VALUE: void method cannot return a value',this.peek());
+          this.expect(';');
+        }
         if(this.peek().value!==terminator)
           fail('void method body unsupported in convergence slice',this.peek());
       }else{
         const statements=this.statementSequence([terminator]);
         body=this.lowerStatements(statements,null);
-        if(!body)fail('method requires a return on every path',this.peek());
+        if(!body)fail('RETURN_EXPLICIT_REQUIRED: method requires a return on every path',this.peek());
         this.checkExpandedBudget(body);
       }
       this.expect(terminator);
@@ -469,13 +472,16 @@ class Parser {
     if(returnType==='void'){
       // Program-v2 has no general statement/effect lowering yet. Match the
       // existing pure-void class-method subset without fabricating a value.
-      if(this.eat('return'))this.expect(';');
+      if(this.eat('return')){
+        if(this.peek().value!==';')fail('RETURN_VOID_VALUE: void function cannot return a value',this.peek());
+        this.expect(';');
+      }
       if(this.peek().value!==terminator)
         fail('void function effects require checked statement lowering',this.peek());
     }else{
       const statements=this.statementSequence([terminator]);
       body=this.lowerStatements(statements,null);
-      if(!body)fail('int function requires a return on every path');
+      if(!body)fail('RETURN_EXPLICIT_REQUIRED: int function requires a return on every path');
       this.checkExpandedBudget(body);
     }
     this.expect(terminator);
@@ -496,6 +502,8 @@ class Parser {
     while(this.peek().kind!=='eof'&&!terminators.includes(this.peek().value)) {
       if(++this.statementNodes>MAX_TOKENS)fail('statement budget exceeded',this.peek());
       if(this.eat('return')) {
+        if(this.peek().value===';')
+          fail('RETURN_VALUE_REQUIRED: nonvoid return requires a value',this.peek());
         const body=this.expression();
         this.expect(';');
         statements.push({kind:'return',body});
@@ -530,7 +538,7 @@ class Parser {
       else {
         const yes=this.lowerStatements(stmt.yes,result);
         const no=this.lowerStatements(stmt.no,result);
-        if(!yes||!no)fail('int function requires return on every if branch');
+        if(!yes||!no)fail('RETURN_EXPLICIT_REQUIRED: int function requires return on every if branch');
         result={kind:'if',condition:stmt.condition,yes,no};
       }
     }

@@ -74,3 +74,18 @@ test('strict IR rejects forged void values and nonvoid fallthrough', () => {
   assert.throws(() => compileProgramIRV2(getter), /accessor|missing\/extra fields|data/i);
   assert.equal(reads,0);
 });
+
+test('canonical return diagnostic families are explicit and fail closed', () => {
+  const cases = [
+    ['pub fnc bad():int{}','RETURN_EXPLICIT_REQUIRED'],
+    ['pub fnc bad():int{return;}','RETURN_VALUE_REQUIRED'],
+    ['pub fnc bad():void{return 9;}','RETURN_VOID_VALUE'],
+    ['pub fnc bad():int{if true then return 1; fi}','RETURN_EXPLICIT_REQUIRED'],
+    ['pub define class C as pub method bad():int{} end','RETURN_EXPLICIT_REQUIRED'],
+    ['pub define class C as pub method bad():void{return 1;} end','RETURN_VOID_VALUE']
+  ];
+  for (const [source,diagnostic] of cases) {
+    assert.throws(() => compileProgramV2(source),error =>
+      String(error?.message).includes(diagnostic), source);
+  }
+});
