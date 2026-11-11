@@ -720,21 +720,33 @@ class Parser {
     return {kind:'call',qualifier,name:symbol,args};
   }
   matchExpression() {
+    // A typed scalar match is a canonical source form, not a new
+    // dynamically-dispatched container or unchecked JS pattern primitive.
+    const typed=this.eat('<');
+    if(typed){this.expect('int');this.expect('>');}
     const subject=this.expression();
-    this.eat('over');
+    const hasOver=this.eat('over');
+    if(typed&&!hasOver)fail('typed scalar match requires over',this.peek());
     const braced=this.eat('{');
     const arms=[],seen=new Set();
     let family=null,wildcard=false;
     const ended=()=>braced?this.peek().value==='}':this.peek().value==='end';
     while(!ended()&&this.peek().kind!=='eof') {
       let tag=null, bind=null, value=null;
-      if(this.eat('else')) {
-        if(family==='adt')fail('ADT match requires exhaustive named variants, not else');
+      const canonicalDefault=this.eat('default');
+      const legacyElse=!canonicalDefault&&this.eat('else');
+      let legacyOnDefault=false;
+      if(canonicalDefault||legacyElse) {
+        if(family==='adt')fail('ADT match requires exhaustive named variants, not default',this.peek());
         family='int';tag='wildcard';
       } else {
         this.expect('on');
         const at=this.peek();
-        if(this.eat('_')){
+        legacyOnDefault=this.eat('default');
+        if(legacyOnDefault) {
+          if(family==='adt')fail('ADT match forbids default in ADT variant patterns',at);
+          family='int';tag='wildcard';
+        } else if(this.eat('_')){
           if(family==='adt')fail('ADT match forbids wildcard');
           family='int';tag='wildcard';
         } else if(['Some','None','Ok','Err'].includes(at.value)){
@@ -753,12 +765,15 @@ class Parser {
           value=this.integer(this.eat('-'));
         }
       }
+      if(tag==='wildcard'&&(this.peek().value==='when'||this.peek().value==='as'))
+        fail('match default/wildcard arm cannot have a guard or binding',this.peek());
       if(wildcard)fail('unreachable arm after wildcard',this.peek());
       if(tag==='wildcard')wildcard=true;
       const key=tag==='integer'?'int:'+value:tag;
       if(seen.has(key))fail('duplicate match pattern '+key);
       seen.add(key);
-      this.eat('->');
+      if(canonicalDefault||legacyOnDefault)this.expect('->');
+      else this.eat('->');
       this.expect('{');
       // Existing Oreslang ADT fixture uses statement-looking return bodies
       // inside a match expression. Treat that spelling as an expression arm.
