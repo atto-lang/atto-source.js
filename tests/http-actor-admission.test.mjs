@@ -74,3 +74,18 @@ test('CLI --check and --out fail closed without creating JavaScript artifacts', 
     }
   } finally { await rm(dir,{recursive:true,force:true}); }
 });
+
+test('CR, NEL and Unicode separators cannot mask actual HTTP actor declarations', () => {
+  for (const separator of ['\r','\n','\u0085','\u2028','\u2029']) {
+    const source = 'pub fnc main(): int { return 42; } // inert HTTP text' +
+      separator + 'define http actor Endpoint as end';
+    for (const [name, compileSource, frontend] of frontends) {
+      assert.throws(() => frontend(source), unsupported, name + JSON.stringify(separator));
+      assert.throws(() => compileSource(source), unsupported, name + JSON.stringify(separator));
+    }
+    const displaced = 'pub fnc main(): int { return 42; } // inert' +
+      separator + '// oreslang:checked-i64-v1\n';
+    assert.throws(() => compileToProgramIRV2(displaced),
+      /checked-i64-v1: malformed, duplicated, displaced or unsupported directive/);
+  }
+});

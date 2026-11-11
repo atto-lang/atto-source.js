@@ -42,6 +42,7 @@ export class ProgramCompileError extends Error {
   }
 }
 const fail = (message, loc) => {throw new ProgramCompileError(message, loc);};
+const sourceLineEnd = ch => ch==='\n'||ch==='\r'||ch==='\u0085'||ch==='\u2028'||ch==='\u2029';
 
 /**
  * Align source-profile negotiation with Java CheckedI64SourceHeader.
@@ -71,13 +72,13 @@ function requireWellFormedCheckedI64Header(source) {
     if(ch==='"'||ch==="'"){quote=ch;i++;continue;}
     if(ch==='/'&&next==='*'){depth=1;i+=2;continue;}
     if(ch==='/'&&next==='/'){
-      const end=source.indexOf('\n',i);
-      const stop=end<0?source.length:end;
+      let stop=i+2;
+      while(stop<source.length&&!sourceLineEnd(source[stop]))stop++;
       let marker=i+2;
       while(marker<stop&&' \t\r\v\f'.includes(source[marker]))marker++;
       if(source.startsWith(prefix,marker)&&(!enabled||i!==0))
         fail('checked-i64-v1: malformed, duplicated, displaced or unsupported directive');
-      i=end<0?stop:end+1;
+      i=stop;
       continue;
     }
     i++;
@@ -131,7 +132,9 @@ function tokenize(source) {
   const result = [];
   let pos = 0, line = 1, col = 1;
   function advance() {
-    if (source[pos] === '\n') {line++; col = 1;} else col++;
+    const ch=source[pos];
+    if(sourceLineEnd(ch)){if(ch!=='\n'||source[pos-1]!=='\r')line++;col=1;}
+    else col++;
     pos++;
   }
   function emit(kind, value, start) {
@@ -143,7 +146,7 @@ function tokenize(source) {
     const c = source[pos];
     if (/\s/.test(c)) {advance(); continue;}
     if (source.startsWith('//',pos)) {
-      while (pos < source.length && source[pos] !== '\n') advance();
+      while (pos < source.length && !sourceLineEnd(source[pos])) advance();
       continue;
     }
     if (source.startsWith('/*',pos)) {
