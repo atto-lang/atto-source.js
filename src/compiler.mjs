@@ -1,5 +1,6 @@
 import {createScalarIR, validateScalarIR} from './scalar-ir.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
+import {rejectUnsupportedHttpActors} from './http-actor-admission.mjs';
 /** Experimental fail-closed Oreslang scalar-to-ESM compiler. */
 const MAX_BYTES = 262144;
 const I64_MAX = (1n << 63n) - 1n;
@@ -208,6 +209,7 @@ class Parser {
 export function compileToIR(source) {
   const tokens=lex(source);
   rejectExecutionDomains(tokens,(message,token)=>{throw new CompileError(message,token);});
+  rejectUnsupportedHttpActors(tokens,(message,token)=>{throw new CompileError(message,token);});
   rejectUnloweredInvertedClasses(tokens);
   rejectUnsupportedSelect(tokens);
   const parsed=new Parser(tokens).parse();

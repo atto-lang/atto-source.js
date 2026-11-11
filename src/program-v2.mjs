@@ -1,5 +1,6 @@
 import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
+import {rejectUnsupportedHttpActors} from './http-actor-admission.mjs';
 /**
  * Experimental Oreslang program-to-ESM v2 slice:
  * flat runtime modules, private/public functions, qualified calls, integer matches.
@@ -1325,6 +1326,7 @@ function emitProgram(program) {
 export function compileToProgramIRV2(source) {
   const tokens=tokenize(source);
   rejectExecutionDomains(tokens,fail);
+  rejectUnsupportedHttpActors(tokens,fail);
   rejectUnsupportedStaticSelect(tokens);
   const program=resolveProgram(new Parser(tokens).parse());
   return validateProgramIRV2({
