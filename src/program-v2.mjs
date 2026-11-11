@@ -735,18 +735,15 @@ class Parser {
       let tag=null, bind=null, value=null;
       const canonicalDefault=this.eat('default');
       const legacyElse=!canonicalDefault&&this.eat('else');
-      let legacyOnDefault=false;
       if(canonicalDefault||legacyElse) {
         if(family==='adt')fail('ADT match requires exhaustive named variants, not default',this.peek());
         family='int';tag='wildcard';
       } else {
         this.expect('on');
         const at=this.peek();
-        legacyOnDefault=this.eat('default');
-        if(legacyOnDefault) {
-          if(family==='adt')fail('ADT match forbids default in ADT variant patterns',at);
-          family='int';tag='wildcard';
-        } else if(this.eat('_')){
+        if(this.eat('default'))
+          fail("match fallback must use 'default ->' without 'on'",at);
+        if(this.eat('_')){
           if(family==='adt')fail('ADT match forbids wildcard');
           family='int';tag='wildcard';
         } else if(['Some','None','Ok','Err'].includes(at.value)){
@@ -772,7 +769,7 @@ class Parser {
       const key=tag==='integer'?'int:'+value:tag;
       if(seen.has(key))fail('duplicate match pattern '+key);
       seen.add(key);
-      if(canonicalDefault||legacyOnDefault)this.expect('->');
+      if(canonicalDefault)this.expect('->');
       else this.eat('->');
       this.expect('{');
       // Existing Oreslang ADT fixture uses statement-looking return bodies

@@ -18,8 +18,8 @@ test('canonical typed scalar default compiles to actual ESM guest exit 42',async
   assert.equal(await run(source('default -> {42;}')),42n);
   assert.equal(await run('pub fnc main():int { return match<int> 2 over on 1 -> {0;} on 2 -> {42;} default -> {99;} end; }'),42n);
 });
-test('legacy on default and on underscore lower to the same checked fallback',async()=>{
-  for (const alternative of ['on default -> {42;}','on _ -> {42;}','else -> {42;}']) {
+test('legacy on underscore and else retain checked fallback compatibility',async()=>{
+  for (const alternative of ['on _ -> {42;}','else -> {42;}']) {
     assert.equal(await run(source('on 1 -> {11;} '+alternative)),42n,alternative);
   }
 });
@@ -31,6 +31,7 @@ test('duplicate/nonterminal/guarded default and typed missing over reject before
     source('default as item -> {42;}'),
     source('on default when true -> {42;}'),
     source('on 1 -> {11;} on 1 -> {42;} default -> {0;}'),
+    source('on default -> {42;}'),
     'pub fnc main():int { return match<int> 99 on 1 -> {11;} default -> {42;} end; }',
     source('on 1 -> {11;} default {42;}')
   ];
