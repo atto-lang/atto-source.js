@@ -44,6 +44,18 @@ test('literal parser is bounded and fails closed on malformed strings', () => {
   assert.throws(() => scanStringLiteral('`x ${`'.repeat(70)), SyntaxError);
 });
 
+test('Java-v1 interpolation, brace and template depth limits are exact', () => {
+  const tick = '`';
+  const many = n => tick + '${"x"}'.repeat(n) + tick;
+  assert.equal(scanStringLiteral(many(1024)).end, many(1024).length);
+  assert.throws(() => scanStringLiteral(many(1025)), /template substitution limit/);
+  const braces = n => tick + '${' + '{'.repeat(n) + 'x' + '}'.repeat(n) + '}' + tick;
+  assert.equal(scanStringLiteral(braces(255)).end, braces(255).length);
+  assert.throws(() => scanStringLiteral(braces(256)), /brace nesting limit/);
+  const nested = n => tick + '${`'.repeat(n) + 'x' + '`}'.repeat(n) + tick;
+  assert.equal(scanStringLiteral(nested(16)).end, nested(16).length);
+  assert.throws(() => scanStringLiteral(nested(17)), /nesting limit/);
+});
 test('i64 scalar compiler preserves lexical boundaries, but rejects typed String lowering', () => {
   const expr = src => 'pub fnc main(): int { return ' + src + '; }';
   for (const literal of ["'select { hidden }'", '"/* hidden */"', '`select ${x} end`']) {
