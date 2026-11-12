@@ -18,6 +18,16 @@ test('single and double quoted source literals are atomic and quote-safe', () =>
   }
 });
 
+test('raw Unicode surrogate pairs are valid but isolated code units are denied', () => {
+  for (const quote of ["'", '"', '`']) {
+    const pair = quote + String.fromCharCode(0xd83d, 0xde00) + quote;
+    assert.equal(scanStringLiteral(pair).end, pair.length);
+    for (const isolated of [0xd800, 0xdbff, 0xdc00, 0xdfff]) {
+      const bad = quote + String.fromCharCode(isolated) + quote;
+      assert.throws(() => scanStringLiteral(bad), /unpaired Unicode surrogate/);
+    }
+  }
+});
 test('templates keep raw multiline and balanced nested interpolations', () => {
   const source = '`start ${call({a: "}", b: 1}, /* { */ `nested ${other}`)} end`';
   const scanned = scanStringLiteral(source);
