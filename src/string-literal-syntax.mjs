@@ -51,6 +51,19 @@ export function scanStringLiteral(source, start = 0) {
           }
           continue;
         }
+        // A backslash must not hide an isolated raw UTF-16 surrogate from
+        // direct scanner callers. Paired code units remain one raw scalar.
+        const escapedCode = source.charCodeAt(i);
+        if (escapedCode >= 0xd800 && escapedCode <= 0xdbff) {
+          const low = source.charCodeAt(i+1);
+          if (!(low >= 0xdc00 && low <= 0xdfff))
+            fail('unpaired Unicode surrogate in string', i);
+          if (quote === '`') fail('invalid template escape', atEscape);
+          i += 2;
+          continue;
+        }
+        if (escapedCode >= 0xdc00 && escapedCode <= 0xdfff)
+          fail('unpaired Unicode surrogate in string', i);
         // Ordinary quotes preserve Java's legacy escaped-character fallback.
         // Backtick templates have a deliberately strict escape whitelist.
         if (quote === '`' && !"\\'\"`$nrt".includes(next))
