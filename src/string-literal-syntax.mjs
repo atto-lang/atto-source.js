@@ -46,6 +46,9 @@ export function scanStringLiteral(source, start = 0) {
           } else {
             if (![0,1,2,3].every(n => hex(source[i+n])))
               fail('invalid Unicode escape', atEscape);
+            const scalar = Number.parseInt(source.slice(i,i+4), 16);
+            if (scalar >= 0xd800 && scalar <= 0xdfff)
+              fail('invalid Unicode escape', atEscape);
             i += 4;
           }
           continue;
@@ -86,7 +89,7 @@ export function scanStringLiteral(source, start = 0) {
   }
   function scanInterpolation(at, depth) {
     if (depth > 64) fail('template nesting limit', at);
-    let i=at, braces=1;
+    let i=at, braces=1, hasCode=false;
     while (i < source.length) {
       if (source.startsWith('//',i)) {
         i+=2;
@@ -108,13 +111,21 @@ export function scanStringLiteral(source, start = 0) {
         continue;
       }
       if (["'",'"','`'].includes(source[i])) {
+        hasCode = true;
         i = scanQuoted(i,depth+1).end;
         continue;
       }
       if (source[i] === '{') {
+        hasCode = true;
         if (++braces > 128) fail('interpolation brace nesting limit',i);
       } else if (source[i] === '}') {
-        if (--braces === 0) return i+1;
+        if (--braces === 0) {
+          if (!hasCode) fail('empty template interpolation',at-2);
+          return i+1;
+        }
+        hasCode = true;
+      } else if (!/\s/.test(source[i])) {
+        hasCode = true;
       }
       i++;
     }
