@@ -33,6 +33,8 @@ test('templates keep raw multiline and balanced nested interpolations', () => {
 test('literal parser is bounded and fails closed on malformed strings', () => {
   for (const source of [
     "'raw\nnewline'", "'unclosed", "'\\q'", "'\\u12X4'", "'\\x0G'",
+    "'\\uD800'", "'\\uDFFF'", '`comment only ${/* comment */}`',
+    '`line comment only ${ // ignored\n }`',
     '`bad ${  }`', '`bad ${call(1)`', '`bad ${/* unterminated}`',
     '`bad ${"unterminated}`', '`bad ${a /* ${ */ + b`'
   ]) assert.throws(() => scanStringLiteral(source), SyntaxError, source);
