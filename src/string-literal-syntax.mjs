@@ -96,7 +96,7 @@ export function scanStringLiteral(source, start = 0) {
         const bodyStart = i + 2;
         const end = scanInterpolation(bodyStart, depth+1);
         const body = source.slice(bodyStart,end-1);
-        if (!body.trim()) fail('empty template interpolation', interpolationStart);
+        if (!/[^\s\u0085]/.test(body)) fail('empty template interpolation', interpolationStart);
         parts.push({kind:'interpolation',source:body,start:interpolationStart,end});
         i = end;
         textStart = i;
@@ -143,7 +143,7 @@ export function scanStringLiteral(source, start = 0) {
           return i+1;
         }
         hasCode = true;
-      } else if (!/\s/.test(source[i])) {
+      } else if (source[i] !== '\u0085' && !/\s/.test(source[i])) {
         hasCode = true;
       }
       i++;
