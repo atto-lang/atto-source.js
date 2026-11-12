@@ -7,7 +7,8 @@ test('single and double quoted source literals are atomic and quote-safe', () =>
   for (const source of [
     "'single'", '"double"', "'a\\'b'", '"a\\\"b"',
     "'opposite \"quote\"'", '"opposite \'quote\'"',
-    "'line\\\ncontinued'", "'unicode \\u0041'", '"hex \\x41"'
+    "'line\\\ncontinued'", "'unicode \\u0041'", '"hex \\x41"',
+    "'raw\nnewline'", "'\\q'", "'\\x0G'", "'\\uD83D\\uDE00'"
   ]) {
     const value = scanStringLiteral(source);
     assert.equal(value.kind, 'string', source);
@@ -32,8 +33,9 @@ test('templates keep raw multiline and balanced nested interpolations', () => {
 
 test('literal parser is bounded and fails closed on malformed strings', () => {
   for (const source of [
-    "'raw\nnewline'", "'unclosed", "'\\q'", "'\\u12X4'", "'\\x0G'",
-    "'\\uD800'", "'\\uDFFF'", '`comment only ${/* comment */}`',
+    "'unclosed", "'\\u12X4'", "'\\uD800'", "'\\uDFFF'", "'\\u{1f600}'",
+    '`invalid \\x41`', '`invalid \\q`', '`invalid \\u{1f600}`',
+    '`comment only ${/* comment */}`',
     '`line comment only ${ // ignored\n }`',
     '`bad ${  }`', '`bad ${call(1)`', '`bad ${/* unterminated}`',
     '`bad ${"unterminated}`', '`bad ${a /* ${ */ + b`'
@@ -49,9 +51,9 @@ test('i64 scalar compiler preserves lexical boundaries, but rejects typed String
     assert.throws(() => compile(expr(literal)),
       /quoted strings and template interpolation require typed String lowering/,literal);
   }
-  for (const bad of ["'raw\nnewline'", "'\\q'", '`bad ${oops`']) {
+  for (const bad of ["'\\u12X4'", '`invalid \\q`', '`bad ${oops`']) {
     assert.throws(() => compile(expr(bad)),
-      /unterminated|newline in quoted string|invalid string escape/,bad);
+      /unterminated|invalid Unicode escape|invalid template escape/,bad);
   }
   // Existing signed-i64 path remains executable, and comments remain trivia.
   assert.doesNotThrow(() => compile('pub fnc main(): int { /* ` ${ } */ return 42; }'));
