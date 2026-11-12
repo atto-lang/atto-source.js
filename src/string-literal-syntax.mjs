@@ -108,7 +108,7 @@ export function scanStringLiteral(source, start = 0) {
         let nested = 1;
         while (nested && i < source.length) {
           if (source.startsWith('/*',i)) {
-            if (++nested > 64) fail('comment nesting limit',i);
+            if (++nested > 128) fail('comment nesting limit',i);
             i += 2;
           } else if (source.startsWith('*/',i)) { nested--;i+=2; }
           else i++;
