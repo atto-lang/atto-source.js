@@ -54,6 +54,13 @@ test('literal parser is bounded and fails closed on malformed strings', () => {
   assert.throws(() => scanStringLiteral('`x ${`'.repeat(70)), SyntaxError);
 });
 
+test('nested interpolation comments allow 128 levels and reject 129', () => {
+  const source = count => '`' + '${' + '/*'.repeat(count) +
+    'ignored' + '*/'.repeat(count) + 'x}' + '`';
+  assert.equal(scanStringLiteral(source(128)).end, source(128).length);
+  assert.throws(() => scanStringLiteral(source(129)), /comment nesting limit/);
+});
+
 test('Java-v1 interpolation, brace and template depth limits are exact', () => {
   const tick = '`';
   const many = n => tick + '${"x"}'.repeat(n) + tick;
