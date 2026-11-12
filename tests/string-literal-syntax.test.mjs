@@ -28,6 +28,17 @@ test('raw Unicode surrogate pairs are valid but isolated code units are denied',
     }
   }
 });
+test('backslash cannot conceal isolated raw Unicode surrogate', () => {
+  for (const quote of ["'", '"']) {
+    const pair = quote + '\\' + String.fromCharCode(0xd83d, 0xde00) + quote;
+    assert.equal(scanStringLiteral(pair).end, pair.length);
+    for (const unit of [0xd800, 0xdbff, 0xdc00, 0xdfff]) {
+      const invalid = quote + '\\' + String.fromCharCode(unit) + quote;
+      assert.throws(() => scanStringLiteral(invalid), /unpaired Unicode surrogate/);
+    }
+  }
+});
+
 test('templates keep raw multiline and balanced nested interpolations', () => {
   const source = '`start ${call({a: "}", b: 1}, /* { */ `nested ${other}`)} end`';
   const scanned = scanStringLiteral(source);
