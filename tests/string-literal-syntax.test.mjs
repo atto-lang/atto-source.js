@@ -86,6 +86,29 @@ test('deterministic quote/template source fuzz remains bounded', () => {
     }
   }
 });
+test('Unicode UTF-8 source with multiline template and comments stays bounded', () => {
+  const alphabet = ['a', 'b', '{', '}', '$', '/', '*', '`',
+    '\\', '\"', "'", ' ', '\n', '\r', '\u0085', '\u2028',
+    '\u2029', 'é', '💻', '中', '\t', 'x'];
+  let state = 0x42ff3391;
+  for (let k = 0; k < 30000; k++) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    let source = k % 3 === 0 ? "'" : k % 3 === 1 ? '\"' : '`';
+    const count = state % 100;
+    for (let j = 0; j < count; j++) {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      source += alphabet[state % alphabet.length];
+    }
+    if ((k & 1) === 0) source += source[0];
+    try {
+      const parsed = scanStringLiteral(source);
+      assert.ok(parsed.end > 0 && parsed.end <= source.length);
+      assert.ok(parsed.raw.length > 0);
+    } catch (error) {
+      assert.ok(error instanceof SyntaxError, String(error));
+    }
+  }
+});
 test('i64 scalar compiler preserves lexical boundaries, but rejects typed String lowering', () => {
   const expr = src => 'pub fnc main(): int { return ' + src + '; }';
   for (const literal of ["'select { hidden }'", '"/* hidden */"', '`select ${x} end`']) {
