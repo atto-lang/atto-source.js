@@ -35,6 +35,7 @@ test('literal parser is bounded and fails closed on malformed strings', () => {
   for (const source of [
     "'unclosed", "'\\u12X4'", "'\\uD800'", "'\\uDFFF'", "'\\u{1f600}'",
     '`invalid \\x41`', '`invalid \\q`', '`invalid \\u{1f600}`',
+    '`invalid \\' + '\n' + 'newline`',
     '`comment only ${/* comment */}`',
     '`line comment only ${ // ignored\n }`',
     '`bad ${  }`', '`bad ${call(1)`', '`bad ${/* unterminated}`',
