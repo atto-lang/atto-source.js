@@ -65,6 +65,16 @@ test('literal parser is bounded and fails closed on malformed strings', () => {
   assert.throws(() => scanStringLiteral('`x ${`'.repeat(70)), SyntaxError);
 });
 
+test('Unicode NEL is interpolation whitespace, not a hidden expression', () => {
+  for (const body of ['\u0085', '\u0085/* comment */', '\u0085\n',
+                      '\u0085\u2028\u2029']) {
+    assert.throws(() => scanStringLiteral('`x ${' + body + '}`'),
+      /empty template interpolation/);
+  }
+  const valid = '`x ${\u0085x}`';
+  assert.equal(scanStringLiteral(valid).end, valid.length);
+});
+
 test('nested interpolation comments allow 128 levels and reject 129', () => {
   const source = count => '`' + '${' + '/*'.repeat(count) +
     'ignored' + '*/'.repeat(count) + 'x}' + '`';
