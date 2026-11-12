@@ -32,35 +32,28 @@ export function scanStringLiteral(source, start = 0) {
         }
         if (next === 'u') {
           i++;
-          if (source[i] === '{') {
-            const digitStart = ++i;
-            while (hex(source[i]) && i - digitStart < 7) i++;
-            const digits = source.slice(digitStart, i);
-            if (!digits.length || digits.length > 6 || source[i] !== '}' ||
-                Number.parseInt(digits, 16) > 0x10ffff ||
-                (Number.parseInt(digits, 16) >= 0xd800 &&
-                 Number.parseInt(digits, 16) <= 0xdfff)) {
+          if (![0,1,2,3].every(n => hex(source[i+n])))
+            fail('invalid Unicode escape', atEscape);
+          const scalar = Number.parseInt(source.slice(i,i+4),16);
+          i += 4;
+          if (scalar >= 0xd800 && scalar <= 0xdbff) {
+            // Java's decoded String contract admits valid surrogate pairs,
+            // never a lone surrogate across literal/interpolation boundaries.
+            if (source.slice(i,i+2) !== '\\u' ||
+                ![0,1,2,3].every(n => hex(source[i+2+n])) ||
+                Number.parseInt(source.slice(i+2,i+6),16) < 0xdc00 ||
+                Number.parseInt(source.slice(i+2,i+6),16) > 0xdfff)
               fail('invalid Unicode escape', atEscape);
-            }
-            i++;
-          } else {
-            if (![0,1,2,3].every(n => hex(source[i+n])))
-              fail('invalid Unicode escape', atEscape);
-            const scalar = Number.parseInt(source.slice(i,i+4), 16);
-            if (scalar >= 0xd800 && scalar <= 0xdfff)
-              fail('invalid Unicode escape', atEscape);
-            i += 4;
+            i += 6;
+          } else if (scalar >= 0xdc00 && scalar <= 0xdfff) {
+            fail('invalid Unicode escape', atEscape);
           }
           continue;
         }
-        if (next === 'x') {
-          if (!hex(source[i+1]) || !hex(source[i+2]))
-            fail('invalid hex escape', atEscape);
-          i += 3;
-          continue;
-        }
-        if (!"\\'\"`$0bfnrtv".includes(next))
-          fail('invalid string escape', atEscape);
+        // Ordinary quotes preserve Java's legacy escaped-character fallback.
+        // Backtick templates have a deliberately strict escape whitelist.
+        if (quote === '`' && !"\\'\"`$nrt".includes(next))
+          fail('invalid template escape', atEscape);
         i++;
         continue;
       }
@@ -69,7 +62,7 @@ export function scanStringLiteral(source, start = 0) {
         return {kind: quote === '`' ? 'template' : 'string',
           quote, start:at, end:i+1, raw:source.slice(at,i+1), parts};
       }
-      if (quote !== '`' && isLine(ch)) fail('newline in quoted string', i);
+      // Ordinary Java/Graal quoted strings preserve raw newlines; templates do too.
       if (quote === '`' && ch === '$' && source[i+1] === '{') {
         if (++substitutions > 128) fail('template substitution limit', i);
         parts.push({kind:'text',raw:source.slice(textStart,i),start:textStart,end:i});
