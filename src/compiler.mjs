@@ -78,7 +78,9 @@ function lex(src) {
       if (s.length > 64) throw new CompileError('integer literal length limit',loc);
       add('int',s,loc);
     }else if(src.startsWith('->',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
-    else if('(){}:,;+-*/%=.'.includes(src[i])){add('sym',src[i],loc);advance();}
+    else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
+    else if(src[i]==='^')throw new CompileError(src.startsWith('^^',i)?"'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)":"'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",loc);
+    else if('(){}:,;+-*/=.'.includes(src[i])){add('sym',src[i],loc);advance();}
     else throw new CompileError('unsupported character',loc);
   }
   out.push({kind:'eof',value:'<eof>',line,col});return out;
@@ -158,7 +160,7 @@ class Parser {
       while(true){
         const op=this.peek().value;
         if(op==='/')throw new CompileError('unsupported operator '+op,this.peek());
-        const prec=op==='*'||op==='%'?20:op==='+'||op==='-'?10:-1;
+        const prec=op==='*'?20:op==='+'||op==='-'?10:-1;
         if(prec<min)break;
         this.pos++;left={kind:'binary',op,left,right:this.expr(prec+1)};
       }
@@ -190,6 +192,15 @@ class Parser {
       if(op.value==='mut' && this.ts[this.pos+1]?.value!=='borrow')
         throw new CompileError("'rt mut' only supports borrowing; use 'rt mut borrow value'",op);
       throw new CompileError('runtime ownership operation requires typed lowering in the JS scalar backend',op);
+    }
+    if(t.kind==='id'&&t.value==='Integer'&&this.ts[this.pos+1]?.value==='.'){
+      // Named integer operations replace the reserved %, ^ and ^^ operators.
+      this.pos+=2;
+      const name=this.peek();
+      const ops={rem:'%',mod:'mod',bitXor:'^'};
+      if(name.kind!=='id'||!Object.hasOwn(ops,name.value))throw new CompileError('Integer.'+name.value+' is unsupported; use Integer.rem, Integer.mod or Integer.bitXor',name);
+      this.pos++;this.expect('(');const left=this.expr();this.expect(',');const right=this.expr();this.expect(')');
+      return {kind:'binary',op:ops[name.value],left,right};
     }
     if(t.kind==='id'){
       this.pos++;
@@ -232,6 +243,10 @@ export function compileIR(input) {
     if (e.kind === 'param') return '_p' + e.index;
     if (e.kind === 'neg') return 'BigInt.asIntN(64,-(' + lower(e.inner, depth+1) + '))';
     if (e.kind === 'binary') {
+      // Inline so programs without Integer.mod keep byte-identical output.
+      if (e.op === 'mod')
+        return '((a,b)=>{if(b===0n)throw new RangeError("ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit remainder by zero");const r=a%b;return r<0n?BigInt.asIntN(64,b>0n?r+b:r-b):r;})(' +
+          lower(e.left, depth+1) + ',' + lower(e.right, depth+1) + ')';
       return 'BigInt.asIntN(64,(' + lower(e.left, depth+1) + ')' + e.op + '(' +
         lower(e.right, depth+1) + '))';
     }
@@ -242,7 +257,7 @@ export function compileIR(input) {
   }
   const out = [
     '// Oreslang JS scalar subset. Signed i64 wrapping is PROVISIONAL, not proven Java parity.',
-    'function _int(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang int requires a signed i64 BigInt");return v;}'
+    'function _int(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang int requires a signed i64 BigInt");return v;}',
   ];
   fns.forEach((f,i) => {
     const params = f.params.map((_,j) => '_p' + j);

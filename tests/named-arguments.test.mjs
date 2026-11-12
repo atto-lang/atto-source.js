@@ -44,8 +44,8 @@ test('qualified typed calls reorder values without losing formal types',async()=
 test('named argument lowering preserves lexical evaluation order before ABI reorder',async()=>{
   const source=[
     'fnc pick(int a,int b):int{return a;}',
-    'pub fnc overflowFirst():int{return pick(b:9223372036854775807+1,a:1%0);}',
-    'pub fnc zeroFirst():int{return pick(a:1%0,b:9223372036854775807+1);}'
+    'pub fnc overflowFirst():int{return pick(b:9223372036854775807+1,a:Integer.rem(1, 0));}',
+    'pub fnc zeroFirst():int{return pick(a:Integer.rem(1, 0),b:9223372036854775807+1);}'
   ].join('\n');
   const mod=await load(source);
   assert.throws(()=>mod.overflowFirst(),/ORES_I64_OVERFLOW/);
