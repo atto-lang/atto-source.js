@@ -56,6 +56,26 @@ test('Java-v1 interpolation, brace and template depth limits are exact', () => {
   assert.equal(scanStringLiteral(nested(16)).end, nested(16).length);
   assert.throws(() => scanStringLiteral(nested(17)), /nesting limit/);
 });
+test('deterministic quote/template source fuzz remains bounded', () => {
+  let state = 0xc01d1234;
+  const alphabet = "abc01{}$/*'\"`\\\\ \\n\\rux()";
+  for (let k = 0; k < 24000; k++) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    let source = k % 3 === 0 ? "'" : k % 3 === 1 ? '"' : '`';
+    const size = state % 120;
+    for (let j = 0; j < size; j++) {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      source += alphabet[state % alphabet.length];
+    }
+    if ((k & 1) === 0) source += source[0];
+    try {
+      const value = scanStringLiteral(source);
+      assert.ok(value.end > 0 && value.end <= source.length);
+    } catch (error) {
+      assert.ok(error instanceof SyntaxError, String(error));
+    }
+  }
+});
 test('i64 scalar compiler preserves lexical boundaries, but rejects typed String lowering', () => {
   const expr = src => 'pub fnc main(): int { return ' + src + '; }';
   for (const literal of ["'select { hidden }'", '"/* hidden */"', '`select ${x} end`']) {
