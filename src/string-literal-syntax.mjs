@@ -26,6 +26,7 @@ export function scanStringLiteral(source, start = 0) {
         if (i >= source.length) fail('unterminated escape', atEscape);
         const next = source[i];
         if (isLine(next)) {
+          if (quote === '`') fail('invalid template escape', atEscape);
           if (next === '\r' && source[i+1] === '\n') i++;
           i++;
           continue;
