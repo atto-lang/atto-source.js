@@ -13,7 +13,7 @@ export function scanStringLiteral(source, start = 0) {
   const hex = ch => ch !== undefined && /^[0-9a-fA-F]$/.test(ch);
   let substitutions = 0;
   function scanQuoted(at, depth) {
-    if (depth > 64) fail('string/template nesting limit', at);
+    if (depth > 32) fail('string/template nesting limit', at);
     const quote = source[at];
     let i = at + 1;
     let textStart = i;
@@ -65,7 +65,7 @@ export function scanStringLiteral(source, start = 0) {
       }
       // Ordinary Java/Graal quoted strings preserve raw newlines; templates do too.
       if (quote === '`' && ch === '$' && source[i+1] === '{') {
-        if (++substitutions > 128) fail('template substitution limit', i);
+        if (++substitutions > 1024) fail('template substitution limit', i);
         parts.push({kind:'text',raw:source.slice(textStart,i),start:textStart,end:i});
         const interpolationStart = i;
         const bodyStart = i + 2;
@@ -82,7 +82,7 @@ export function scanStringLiteral(source, start = 0) {
     fail('unterminated string/template', at);
   }
   function scanInterpolation(at, depth) {
-    if (depth > 64) fail('template nesting limit', at);
+    if (depth > 32) fail('template nesting limit', at);
     let i=at, braces=1, hasCode=false;
     while (i < source.length) {
       if (source.startsWith('//',i)) {
@@ -111,7 +111,7 @@ export function scanStringLiteral(source, start = 0) {
       }
       if (source[i] === '{') {
         hasCode = true;
-        if (++braces > 128) fail('interpolation brace nesting limit',i);
+        if (++braces > 256) fail('interpolation brace nesting limit',i);
       } else if (source[i] === '}') {
         if (--braces === 0) {
           if (!hasCode) fail('empty template interpolation',at-2);
