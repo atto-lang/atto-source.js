@@ -63,8 +63,83 @@ export function scanStringLiteral(source, start = 0) {
         return {kind: quote === '`' ? 'template' : 'string',
           quote, start:at, end:i+1, raw:source.slice(at,i+1), parts};
       }
+      // Keep raw UTF-16 literal text scalar-valid, even when this helper is
+      // called independently of the full compiler's source-text validator.
+      const code = source.charCodeAt(i);
+      if (code >= 0xd800 && code <= 0xdbff) {
+        const low = source.charCodeAt(i+1);
+        if (!(low >= 0xdc00 && low <= 0xdfff))
+          fail('unpaired Unicode surrogate in string', i);
+        i += 2;
+        continue;
+      }
+      if (code >= 0xdc00 && code <= 0xdfff)
+        fail('unpaired Unicode surrogate in string', i);
       // Ordinary Java/Graal quoted strings preserve raw newlines; templates do too.
-      if (quote === '`' && ch === '$' && source[i+1] === '{') {
+      if (quote === '`' && ch === '
+        if (++substitutions > 1024) fail('template substitution limit', i);
+        parts.push({kind:'text',raw:source.slice(textStart,i),start:textStart,end:i});
+        const interpolationStart = i;
+        const bodyStart = i + 2;
+        const end = scanInterpolation(bodyStart, depth+1);
+        const body = source.slice(bodyStart,end-1);
+        if (!body.trim()) fail('empty template interpolation', interpolationStart);
+        parts.push({kind:'interpolation',source:body,start:interpolationStart,end});
+        i = end;
+        textStart = i;
+        continue;
+      }
+      i++;
+    }
+    fail('unterminated string/template', at);
+  }
+  function scanInterpolation(at, depth) {
+    if (depth > 32) fail('template nesting limit', at);
+    let i=at, braces=1, hasCode=false;
+    while (i < source.length) {
+      if (source.startsWith('//',i)) {
+        i+=2;
+        while (i < source.length && !isLine(source[i])) i++;
+        continue;
+      }
+      if (source.startsWith('/*',i)) {
+        const commentStart = i;
+        i += 2;
+        let nested = 1;
+        while (nested && i < source.length) {
+          if (source.startsWith('/*',i)) {
+            if (++nested > 64) fail('comment nesting limit',i);
+            i += 2;
+          } else if (source.startsWith('*/',i)) { nested--;i+=2; }
+          else i++;
+        }
+        if (nested) fail('unterminated interpolation comment', commentStart);
+        continue;
+      }
+      if (["'",'"','`'].includes(source[i])) {
+        hasCode = true;
+        i = scanQuoted(i,depth+1).end;
+        continue;
+      }
+      if (source[i] === '{') {
+        hasCode = true;
+        if (++braces > 256) fail('interpolation brace nesting limit',i);
+      } else if (source[i] === '}') {
+        if (--braces === 0) {
+          if (!hasCode) fail('empty template interpolation',at-2);
+          return i+1;
+        }
+        hasCode = true;
+      } else if (!/\s/.test(source[i])) {
+        hasCode = true;
+      }
+      i++;
+    }
+    fail('unterminated template interpolation',at-2);
+  }
+  return scanQuoted(start,0);
+}
+ && source[i+1] === '{') {
         if (++substitutions > 1024) fail('template substitution limit', i);
         parts.push({kind:'text',raw:source.slice(textStart,i),start:textStart,end:i});
         const interpolationStart = i;
