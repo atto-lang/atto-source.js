@@ -38,7 +38,7 @@ test('scalar compiler resolves exported fnc after collecting declarations', asyn
   const m = await import('data:text/javascript;charset=utf-8,' + encodeURIComponent(top));
   assert.equal(m.compute(), 42n);
   const scoped = compileScalar('export pub[pkg] fnc compute;\n' + source);
-  assert.doesNotMatch(scoped, /export \\{/);
+  assert.doesNotMatch(scoped, /export \{/);
 });
 
 test('export directives reject bad symbols, visibility and kinds', () => {
