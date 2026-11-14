@@ -80,7 +80,7 @@ function lex(src) {
     }else if(src.startsWith('->',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
     else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
     else if(src[i]==='^')throw new CompileError(src.startsWith('^^',i)?"'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)":"'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",loc);
-    else if('(){}:,;+-*/=.'.includes(src[i])){add('sym',src[i],loc);advance();}
+    else if('(){}[]:,;+-*/=.'.includes(src[i])){add('sym',src[i],loc);advance();}
     else throw new CompileError('unsupported character',loc);
   }
   out.push({kind:'eof',value:'<eof>',line,col});return out;
@@ -118,11 +118,25 @@ class Parser {
   match(v){if(this.peek().value===v){this.pos++;return true;}return false;}
   expect(v){if(!this.match(v))throw new CompileError('expected '+v+', found '+this.peek().value,this.peek());}
   id(){const t=this.peek();if(t.kind!=='id')throw new CompileError('expected identifier',t);this.pos++;return t.value;}
+  exportDeclaration(){
+    this.expect('export');this.expect('pub');
+    let visibility='public';
+    if(this.match('[')){this.expect('pkg');this.expect(']');visibility='package';}
+    let kind=null;
+    if(this.match('class'))kind='class';
+    else if(this.match('fnc'))kind='fnc';
+    const name=this.id();this.expect(';');
+    return {name,kind,visibility};
+  }
   parse(){
     const module=this.peek().value==='define' && this.ts[this.pos+1]?.value==='module';
     if(module){this.pos++;this.expect('module');this.id();this.match('as');}
-    const functions=[];
+    const functions=[],exports=[];
     while(this.peek().kind!=='eof'&&!(module&&this.peek().value==='end')){
+      if(this.peek().value==='export'){
+        if(exports.length>=1024)throw new CompileError('file export budget',this.peek());
+        exports.push(this.exportDeclaration());continue;
+      }
       if(functions.length>=512)throw new CompileError('function limit',this.peek());
       // Accept only one define and one pub, in either canonical order.
       // Deliberately do not admit pub define module in this scalar subset.
@@ -151,7 +165,20 @@ class Parser {
     }
     if(module)this.expect('end');
     if(this.peek().kind!=='eof')throw new CompileError('trailing tokens',this.peek());
-    if(!functions.length)throw new CompileError('no functions');return functions;
+    if(!functions.length)throw new CompileError('no functions');
+    const seen=new Set();
+    for(const entry of exports){
+      if(seen.has(entry.name))throw new CompileError('duplicate export '+entry.name);
+      seen.add(entry.name);
+      if(entry.kind!==null&&entry.kind!=='fnc')
+        throw new CompileError('export kind mismatch '+entry.name);
+      const family=functions.filter(f=>f.name===entry.name);
+      if(!family.length)throw new CompileError('unbound export '+entry.name);
+      if(entry.visibility==='package'&&family.some(f=>f.pub))
+        throw new CompileError('package export conflicts with public declaration '+entry.name);
+      if(entry.visibility==='public')family.forEach(f=>{f.pub=true;});
+    }
+    return functions;
   }
   expr(min=0){
     if(++this.depth>256)throw new CompileError('expression nesting limit',this.peek());
