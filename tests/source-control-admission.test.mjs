@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {compile} from '../src/compiler.mjs';
+import {compileToProgramIRV2} from '../src/program-v2.mjs';
 
 const base = 'pub fnc main(): int { return 42; }';
 
@@ -12,6 +13,7 @@ test('source ESC/DEL are rejected in comments and literals before emission', () 
       'pub fnc main():int { let string s = "' + control + '"; return 42; }',
     ]) {
       assert.throws(() => compile(source), /terminal control in source/);
+      assert.throws(() => compileToProgramIRV2(source), /terminal control in source/);
     }
   }
 });
