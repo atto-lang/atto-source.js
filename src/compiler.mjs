@@ -193,8 +193,10 @@ class Parser {
       if(op.kind!=='id')throw new CompileError('expected runtime operation after rt',op);
       if(['ref','unref','deref','raw'].includes(op.value))
         throw new CompileError('pointer-style runtime operation rt '+op.value+' is not valid Oreslang source',op);
+      // Both historical mutable-borrow orders are valid source aliases.
+      // This scalar backend lacks the typed ownership MIR to execute either.
       if(op.value==='borrow' && this.ts[this.pos+1]?.value==='mut')
-        throw new CompileError("legacy 'rt borrow mut' is not valid Oreslang; use 'rt mut borrow value'",op);
+        throw new CompileError('runtime ownership operation requires typed lowering in the JS scalar backend',op);
       if(op.value==='mut' && this.ts[this.pos+1]?.value!=='borrow')
         throw new CompileError("'rt mut' only supports borrowing; use 'rt mut borrow value'",op);
       throw new CompileError('runtime ownership operation requires typed lowering in the JS scalar backend',op);
