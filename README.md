@@ -7,8 +7,9 @@ Supported in v1: a single `pub fnc main(): int { return EXPRESSION; }` (or non-p
 ```js
 import { transpile_to_worker } from './src/transpile-worker.mjs';
 const {module_source} = transpile_to_worker('pub fnc main(): int { return 6 * 7; }');
-// Write module_source to a same-origin ES module URL, then start an
-// atto-browser tenant with { backend:'js', trusted:true, entry:moduleUrl }.
+// const moduleUrl = URL.createObjectURL(new Blob([module_source], {type:'text/javascript'}));
+// await app.spawn('tenant_a', {backend:'js',trusted:true,entry:moduleUrl});
+// Revoke the URL after the tenant has finished loading it.
 ```
 
 The output is **trusted JavaScript**. Browser Web Workers do not sandbox hostile JavaScript running under the same origin. Do not use the JS backend for untrusted tenants; use a rigorously vetted Wasm sandbox and limited host imports instead.
