@@ -71,6 +71,12 @@ function lex(src) {
     const loc={line,col};
     if(/[A-Za-z_]/.test(src[i])){
       let s='';while(i<src.length&&/[A-Za-z0-9_]/.test(src[i])){s+=src[i];advance();}
+      // Contextual ownership bangs must never fall through to future macro
+      // parsing without typed move/borrow/share IR. Comments are skipped above.
+      if(['copy','take','borrow','share'].includes(s) && src[i]==='!' &&
+          src[i+1]!=='=' &&
+          !(src.slice(i+1,i+3)==='eq' && !/[A-Za-z0-9_]/.test(src[i+3]??'')))
+        throw new CompileError('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: checked JS ownership lowering required',loc);
       add('id',s,loc);
     }else if(/[0-9]/.test(src[i])){
       let s='';while(i<src.length&&/[0-9_]/.test(src[i])){s+=src[i];advance();}
