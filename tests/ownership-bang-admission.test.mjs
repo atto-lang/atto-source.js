@@ -45,3 +45,16 @@ test('legacy rt mutable borrowing is source-compatible but must fail typed lower
       /runtime ownership operation requires typed lowering/, expression);
   }
 });
+
+test('nested ownership-looking comments remain inert in both JS compilers', () => {
+  for (const compile of [compileToIR, compileToProgramIRV2]) {
+    assert.doesNotThrow(() => compile(
+      'pub fnc main(): int { /* outer /* borrow! mut value */ '+
+      'middle /* copy!42 */ */ return 42; }'));
+    assert.throws(() => compile('pub fnc main(): int { /* outer /* copy!42 */ return 42; }'),
+      /unterminated comment/, 'unclosed nested comment must never emit IR');
+    assert.throws(() => compile(
+      'pub fnc main(): int { '+'/*'.repeat(65)+'*/'.repeat(65)+' return 42; }'),
+      /comment nesting/, 'nested comments are bounded to 64');
+  }
+});
