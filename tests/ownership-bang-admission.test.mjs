@@ -11,6 +11,8 @@ test('both JS scalar frontends deny contextual ownership until typed IR', () => 
       'copy!42', 'take!42', 'borrow! value',
       'borrow!mut value', 'borrow! mut value',
       'mut borrow!value', 'mut borrow! value', 'share!value',
+      'borrow!\nmut value', 'borrow!/* checked loan */mut value',
+      'mut borrow!\nvalue',
     ]) {
       assert.throws(() => compile(source(expression)),
         /OWNERSHIP_BANG_BACKEND_UNSUPPORTED/, expression);
