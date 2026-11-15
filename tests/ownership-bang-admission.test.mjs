@@ -9,7 +9,8 @@ test('both JS scalar frontends deny contextual ownership until typed IR', () => 
   for (const compile of [compileToIR, compileToProgramIRV2]) {
     for (const expression of [
       'copy!42', 'take!42', 'borrow! value',
-      'borrow!mut value', 'borrow! mut value', 'share!value',
+      'borrow!mut value', 'borrow! mut value',
+      'mut borrow!value', 'mut borrow! value', 'share!value',
     ]) {
       assert.throws(() => compile(source(expression)),
         /OWNERSHIP_BANG_BACKEND_UNSUPPORTED/, expression);
