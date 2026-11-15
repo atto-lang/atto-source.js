@@ -1,30 +1,16 @@
-# atto-source.js
+# atto-source.js — browser worker transpiler (strict subset)
 
-JavaScript compilation backend and runtime compatibility layer for AttoLang.
+This experimental JavaScript backend emits an ES module with `create_tenant({tenant,generation})` and `on_message()`, compatible with [atto-browser](https://github.com/atto-lang/atto-browser). It does **not** implement the full AttoLang language or general actors yet.
 
-## Scope
+Supported in v1: a single `pub fnc main(): int { return EXPRESSION; }` (or non-public `fnc`) with decimal signed 64-bit integers, unary minus, parentheses, addition, subtraction and multiplication. Every arithmetic operation is overflow-checked with `BigInt`; unsupported syntax or source-injection attempts fail closed. Max source: 64 KiB, max tokens: 4096, max recursion depth: 64.
 
-This repository is the AttoLang ecosystem home for:
+```js
+import { transpile_to_worker } from './src/transpile-worker.mjs';
+const {module_source} = transpile_to_worker('pub fnc main(): int { return 6 * 7; }');
+// Write module_source to a same-origin ES module URL, then start an
+// atto-browser tenant with { backend:'js', trusted:true, entry:moduleUrl }.
+```
 
-- JavaScript lowering, host interoperability, and web-compatible actor semantics.
-- Compatibility with the [canonical language specification](https://github.com/atto-lang/atto-spec) where applicable.
-- Evidence-based tests, benchmark results, and cross-backend conformance reporting.
+The output is **trusted JavaScript**. Browser Web Workers do not sandbox hostile JavaScript running under the same origin. Do not use the JS backend for untrusted tenants; use a rigorously vetted Wasm sandbox and limited host imports instead.
 
-## Architecture and compatibility
-
-AttoLang is designed around actors, explicit ownership, and portable concurrency semantics. Backend-specific optimizations must not silently change the shared language contract. Runtime capabilities, target restrictions, and unsupported features should be documented explicitly.
-
-## Building and testing
-
-Consult the checked-in source tree and CI workflows for verified commands and supported targets. Add target-specific build instructions and exact-head execution results as they become available; do not treat a passing host-unit test as proof of guest-language conformance.
-
-## Project status
-
-This README describes the repository's intended responsibilities. Feature support and release readiness must be established from implementation, tests, and CI evidence rather than this description alone.
-
-## Related repositories
-
-- [AttoLang organization](https://github.com/atto-lang)
-- [Language specification](https://github.com/atto-lang/atto-spec)
-- [Platform conformance](https://github.com/atto-lang/atto-platform-conformance)
-- [Commercial infrastructure](https://github.com/atto-co)
+Run `npm test` (Node 20+). Host-unit tests verify checked signed math, independent module instances, and unsupported-source rejection. Browser E2E, actor syntax/codegen and parity with the richer Rust compiler are not yet established.
