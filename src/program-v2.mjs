@@ -93,6 +93,7 @@ function validateSourceText(source) {
   for(let i=0;i<source.length;i++){
     const unit=source.charCodeAt(i);
     if(unit===0)fail('NUL in source');
+    if(unit===0x1b||unit===0x7f)fail('terminal control in source');
     if(unit>=0xd800&&unit<=0xdbff){
       const lo=source.charCodeAt(i+1);
       if(!(lo>=0xdc00&&lo<=0xdfff))fail('invalid UTF-16 source');
