@@ -38,3 +38,10 @@ test('spaced bang and inequality are not classified as ownership aliases', () =>
     }
   }
 });
+
+test('legacy rt mutable borrowing is source-compatible but must fail typed lowering', () => {
+  for (const expression of ['rt borrow mut value', 'rt mut borrow value']) {
+    assert.throws(() => compileToIR(source(expression)),
+      /runtime ownership operation requires typed lowering/, expression);
+  }
+});
