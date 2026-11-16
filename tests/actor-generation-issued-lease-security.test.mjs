@@ -54,3 +54,27 @@ test('synchronous boolean and generation reentry constraints remain enforced',()
   assert.equal(lease.tryRun(()=>false),false);
   assert.equal(lease.tryRun(()=>true),true);
 });
+
+test('post-import WeakMap prototype tampering cannot mint or consume leases',()=>{
+  const owner=new ActorGenerationFence();
+  const current=owner.capture();
+  const initialGet=WeakMap.prototype.get;
+  const initialSet=WeakMap.prototype.set;
+  const initialFreeze=Object.freeze;
+  let uses=0;
+  try {
+    WeakMap.prototype.get=()=>{uses++;throw Error('polluted get');};
+    WeakMap.prototype.set=()=>{uses++;throw Error('polluted set');};
+    Object.freeze=value=>value;
+    const live=owner.capture();
+    assert.equal(Object.isFrozen(live),true);
+    assert.equal(current.current,true);
+    assert.equal(live.tryRun(()=>true),true);
+    assert.equal(owner._tryRun({generation:1},()=>true),false);
+    assert.equal(uses,0);
+  } finally {
+    WeakMap.prototype.get=initialGet;
+    WeakMap.prototype.set=initialSet;
+    Object.freeze=initialFreeze;
+  }
+});
