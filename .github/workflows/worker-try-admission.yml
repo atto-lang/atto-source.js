@@ -1,0 +1,39 @@
+name: JS Worker atomic tryTell host gate
+on:
+  pull_request:
+    paths:
+      - 'src/worker-actor-client.mjs'
+      - 'tests/worker-try-admission.test.mjs'
+      - 'tests/worker-mailbox-invariants.test.mjs'
+      - 'tests/worker-mailbox-bytes.test.mjs'
+      - '.github/workflows/worker-try-admission.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  worker-admission:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Bind host-runtime test to exact PR head and Git blobs
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git rev-parse 'HEAD^{tree}'
+          git hash-object src/worker-actor-client.mjs tests/worker-try-admission.test.mjs
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Execute real JS Worker host admission and receipt tests
+        run: |
+          set -euo pipefail
+          node --test tests/worker-try-admission.test.mjs \
+            tests/worker-mailbox-invariants.test.mjs \
+            tests/worker-mailbox-bytes.test.mjs
