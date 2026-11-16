@@ -7,6 +7,9 @@
  * JavaScript is run-to-completion within one isolate.
  */
 const ISSUED_LEASES = new WeakMap();
+const issuedGet = Function.prototype.call.bind(WeakMap.prototype.get);
+const issuedSet = Function.prototype.call.bind(WeakMap.prototype.set);
+const freeze = Object.freeze;
 const LEASE_FACTORY_KEY = Symbol('actor-generation-lease-factory');
 
 export class ActorGenerationFence {
@@ -17,8 +20,8 @@ export class ActorGenerationFence {
 
   capture() {
     const lease = new ActorGenerationLease(LEASE_FACTORY_KEY);
-    ISSUED_LEASES.set(lease, {owner:this, generation:this.#generation});
-    return Object.freeze(lease);
+    issuedSet(ISSUED_LEASES, lease, {owner:this, generation:this.#generation});
+    return freeze(lease);
   }
 
   advanceGeneration() {
@@ -31,7 +34,7 @@ export class ActorGenerationFence {
   }
 
   _current(lease) {
-    const identity = ISSUED_LEASES.get(lease);
+    const identity = issuedGet(ISSUED_LEASES, lease);
     return identity?.owner === this && this.#generation === identity.generation;
   }
 
@@ -61,10 +64,10 @@ class ActorGenerationLease {
       throw new TypeError('generation leases must be captured from their fence');
   }
 
-  get generation() { return ISSUED_LEASES.get(this).generation; }
-  get current() { return ISSUED_LEASES.get(this).owner._current(this); }
+  get generation() { return issuedGet(ISSUED_LEASES, this).generation; }
+  get current() { return issuedGet(ISSUED_LEASES, this).owner._current(this); }
 
   tryRun(commit) {
-    return ISSUED_LEASES.get(this).owner._tryRun(this, commit);
+    return issuedGet(ISSUED_LEASES, this).owner._tryRun(this, commit);
   }
 }
