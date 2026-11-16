@@ -15,16 +15,20 @@ const LEASE_FACTORY_KEY = Symbol('actor-generation-lease-factory');
 export class ActorGenerationFence {
   #generation = 1;
   #commitInProgress = false;
+  #closed = false;
 
+  get closed() { return this.#closed; }
   get generation() { return this.#generation; }
 
   capture() {
+    if (this.#closed) throw new Error('actor generation fence is closed');
     const lease = new ActorGenerationLease(LEASE_FACTORY_KEY);
     issuedSet(ISSUED_LEASES, lease, {owner:this, generation:this.#generation});
     return freeze(lease);
   }
 
   advanceGeneration() {
+    if (this.#closed) throw new Error('actor generation fence is closed');
     if (this.#commitInProgress)
       throw new Error('actor generation cannot advance inside a fenced commit');
     if (!Number.isSafeInteger(this.#generation) ||
@@ -33,9 +37,18 @@ export class ActorGenerationFence {
     return ++this.#generation;
   }
 
+  // Logical terminal seal only; the caller still owns worker/task teardown.
+  close() {
+    if (this.#commitInProgress)
+      throw new Error('actor generation cannot close inside a fenced commit');
+    if (this.#closed) return false;
+    this.#closed = true;
+    return true;
+  }
+
   _current(lease) {
     const identity = issuedGet(ISSUED_LEASES, lease);
-    return identity?.owner === this && this.#generation === identity.generation;
+    return !this.#closed && identity?.owner === this && this.#generation === identity.generation;
   }
 
   _tryRun(lease, commit) {
