@@ -1,5 +1,6 @@
 import {createScalarIR, validateScalarIR} from './scalar-ir.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
+import {scanStringLiteral} from './string-literal-syntax.mjs';
 /** Experimental fail-closed Oreslang scalar-to-ESM compiler. */
 const MAX_BYTES = 262144;
 const I64_MAX = (1n << 63n) - 1n;
@@ -77,6 +78,17 @@ function lex(src) {
       if(!/^[0-9]+(?:_[0-9]+)*$/.test(s))throw new CompileError('invalid integer literal',loc);
       if (s.length > 64) throw new CompileError('integer literal length limit',loc);
       add('int',s,loc);
+    }else if(src[i]==="'" || src[i]==='"' || src[i]==='\x60'){
+      // Keep a quoted literal or entire balanced backtick template opaque:
+      // keywords, braces and comments inside it are not outer-source tokens.
+      let literal;
+      try { literal=scanStringLiteral(src,i); }
+      catch(error) {
+        if(error instanceof SyntaxError)throw new CompileError(error.message,loc);
+        throw error;
+      }
+      while(i<literal.end)advance();
+      add(literal.kind,literal,loc);
     }else if(src.startsWith('->',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
     else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
     else if(src[i]==='^')throw new CompileError(src.startsWith('^^',i)?"'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)":"'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",loc);
@@ -181,6 +193,8 @@ class Parser {
     if(this.match('+'))return this.expr(30);
     if(this.match('(')){const v=this.expr();this.expect(')');return v;}
     if(t.kind==='int'){this.pos++;const n=BigInt(t.value.replaceAll('_',''));if(n>I64_MAX)throw new CompileError('positive int outside signed i64',t);return {kind:'int',n};}
+    if(t.kind==='string'||t.kind==='template')
+      throw new CompileError('quoted strings and template interpolation require typed String lowering; unsupported in JS scalar-v1',t);
     if(t.kind==='id' && t.value==='rt'){
       this.pos++;
       const op=this.peek();
