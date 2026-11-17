@@ -229,7 +229,7 @@ function tokenize(source) {
       fail(source.startsWith('^^',pos)
         ? "'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)"
         : "'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",start);
-    } else if ('(){}:,;+-*/=.<>!?'.includes(c)) {
+    } else if ('(){}[]:,;+-*/=.<>!?'.includes(c)) {
       emit('sym',c,start); advance();
     } else fail('unsupported character',start);
   }
@@ -587,6 +587,18 @@ class Parser {
     }
     size(root);
   }
+  exportDeclaration() {
+    this.expect('export');this.expect('pub');
+    let visibility='public';
+    if(this.eat('[')) {
+      this.expect('pkg');this.expect(']');visibility='package';
+    }
+    let kind=null;
+    if(this.eat('class'))kind='class';
+    else if(this.eat('fnc'))kind='fnc';
+    const name=this.name();this.expect(';');
+    return {name,kind,visibility};
+  }
   parse() {
     // Oreslang's flat source namespace is compile-time package metadata,
     // not a runtime module/object. It must occur only once at file start.
@@ -596,7 +608,13 @@ class Parser {
       this.expect(';');
     }
     const modules=[],functions=[],generators=[],classes=[],usedModules=new Set(),usedClasses=new Set();
+    const exportDeclarations=[];
     while(this.peek().kind!=='eof'){
+      if(this.peek().value==='export') {
+        if(exportDeclarations.length>=1024)fail('file export budget exceeded',this.peek());
+        exportDeclarations.push(this.exportDeclaration());
+        continue;
+      }
       if(this.peek().value==='import'){
         const next=this.tokens[this.i+1]?.value;
         fail(next==='namespace'
@@ -647,7 +665,7 @@ class Parser {
       }
     }
     if(!functions.length&&!generators.length&&!modules.length&&!classes.length)fail('empty program');
-    return {namespace,modules,functions,generators,classes};
+    return {namespace,modules,functions,generators,classes,exportDeclarations};
   }
   integer(negative = false) {
     const token=this.peek();
@@ -829,7 +847,24 @@ class Parser {
   }
 }
 function resolveProgram(parsed) {
-  const {modules,functions,generators=[],classes=[]}=parsed;
+  const {modules,functions,generators=[],classes=[],exportDeclarations=[]}=parsed;
+  const seenExportNames=new Set();
+  for(const entry of exportDeclarations) {
+    if(seenExportNames.has(entry.name))fail('duplicate export '+entry.name);
+    seenExportNames.add(entry.name);
+    const targetClasses=classes.filter(c=>c.name===entry.name);
+    const targetFns=functions.filter(f=>f.module===null&&f.name===entry.name);
+    if(!targetClasses.length&&!targetFns.length)fail('unknown export '+entry.name);
+    if(targetClasses.length&&targetFns.length)fail('ambiguous export '+entry.name);
+    const kind=targetClasses.length?'class':'fnc';
+    if(entry.kind!==null&&entry.kind!==kind)fail('export kind mismatch '+entry.name);
+    const targets=targetClasses.length?targetClasses:targetFns;
+    if(entry.visibility==='package'&&targets.some(t=>t.pub))
+      fail('package export conflicts with public declaration '+entry.name);
+    if(kind==='fnc'&&targets.some(t=>t.kind==='routine')&&entry.visibility==='public')
+      fail('routine is not a public exported fnc '+entry.name);
+    if(entry.visibility==='public')targets.forEach(t=>{t.pub=true;});
+  }
   const slots=new Map(),exports=new Set(),symbolKinds=new Map(),classByName=new Map();
   const classTables=classes.map((cls,classIndex)=>{
     if(classByName.has(cls.name))fail('duplicate class '+cls.name);
@@ -1082,6 +1117,10 @@ function resolveProgram(parsed) {
   resolved.forEach((_,i)=>visit(i));
   return {
     sourceNamespace:parsed.namespace,modules,functions:resolved,
+    ...(exportDeclarations.length?{fileExports:exportDeclarations.map(e=>({
+      name:e.name,kind:e.kind??(classes.some(c=>c.name===e.name)?'class':'fnc'),
+      visibility:e.visibility
+    }))}:{}),
     ...(resolvedGenerators.length?{generators:resolvedGenerators}:{}),
     ...(resolvedClasses.length?{classes:resolvedClasses}:{})
   };

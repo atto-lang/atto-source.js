@@ -123,9 +123,11 @@ export function validateProgramIRV2(input) {
   const rawKeys=Reflect.ownKeys(input);
   const hasClasses=rawKeys.includes('classes');
   const hasGenerators=rawKeys.includes('generators');
+  const hasFileExports=rawKeys.includes('fileExports');
   const programKeys=['schemaVersion','dialect','integerModel','sourceNamespace','modules','functions'];
   if(hasGenerators)programKeys.push('generators');
   if(hasClasses)programKeys.push('classes');
+  if(hasFileExports)programKeys.push('fileExports');
   record(input,programKeys,'program');
   if(input.schemaVersion!==PROGRAM_IR_VERSION||input.dialect!==PROGRAM_IR_DIALECT||
      input.integerModel!==PROGRAM_IR_INT_MODEL)fail('unsupported IR version/dialect/model');
@@ -242,6 +244,28 @@ export function validateProgramIRV2(input) {
     if(module===null&&gen.pub)exportNames.add(name);
     return {module,name,pub:gen.pub,params,paramTypes:[...paramTypes],elementType:'int',yields};
   });
+  // Export directives are compile-time capability metadata, not permissive
+  // ESM exports. Revalidate untrusted direct IR independently of the parser.
+  const validatedFileExports=[];
+  const seenFileExports=new Set();
+  if(hasFileExports) {
+    for(const entry of sequence(input.fileExports,1024,'fileExports')) {
+      record(entry,['name','kind','visibility'],'file export');
+      const name=ident(entry.name,'export name');
+      if(seenFileExports.has(name))fail('duplicate export '+name);
+      seenFileExports.add(name);
+      if(!['class','fnc'].includes(entry.kind))fail('invalid export kind '+entry.kind);
+      if(!['public','package'].includes(entry.visibility))fail('invalid export visibility');
+      const targets=entry.kind==='class'
+        ? classHeaders.filter(c=>c.name===name)
+        : headers.filter(f=>f.module===null&&f.name===name&&f.kind==='fnc');
+      if(!targets.length)fail('unbound export '+name);
+      if(targets.some(t=>t.pub!==(entry.visibility==='public')))
+        fail('export visibility does not match symbol table '+name);
+      validatedFileExports.push({name,kind:entry.kind,visibility:entry.visibility});
+    }
+    if(!validatedFileExports.length)fail('redundant empty fileExports field');
+  }
   // Export-name collisions are legal only for overloads of the same root
   // function, and NEVER between a runtime module object and a root function.
   for(const header of [...headers,...generatorHeaders])
@@ -599,7 +623,8 @@ export function validateProgramIRV2(input) {
     integerModel:PROGRAM_IR_INT_MODEL,sourceNamespace:namespace,
     modules:moduleNames,functions,
     ...(hasGenerators?{generators}:{}),
-    ...(hasClasses?{classes}:{})
+    ...(hasClasses?{classes}:{}),
+    ...(hasFileExports?{fileExports:validatedFileExports}:{})
   };
 }
 export function stringifyProgramIRV2(ir){
