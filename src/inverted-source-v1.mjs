@@ -86,7 +86,10 @@ class CheckedParser {
     const fields=[],names=new Set();
     while(!this.take("end")){
       if(this.peek().value==="<eof>" || fields.length>=64)reject("unterminated or oversized inverted class",this.peek());
-      const kindName=this.identifier(),type=SCALARS[kindName];
+      const kindName=this.identifier();
+      // Reject inherited Object.prototype entries before evaluating a property.
+      // Unknown guest type names must never invoke ambient prototype getters.
+      const type=Object.hasOwn(SCALARS,kindName)?SCALARS[kindName]:undefined;
       if(!type)reject("pointer-free i64/f64/bool scalar fields only",this.peek());
       const fieldName=this.identifier();
       if(names.has(fieldName))reject("duplicate class field",this.peek());

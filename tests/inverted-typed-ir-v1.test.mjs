@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {compileProgramV2,checkProgramV2,compileToProgramIRV2} from "../src/program-v2.mjs";
-import {compileToInvertedIRV1,compileInvertedIRV1,compileInvertedSourceV1} from "../src/inverted-source-v1.mjs";
+import {compileToInvertedIRV1,compileInvertedIRV1,compileInvertedSourceV1,InvertedSourceCompileError} from "../src/inverted-source-v1.mjs";
 import {validateInvertedIRV1,InvertedIRError} from "../src/inverted-ir-v1.mjs";
 
 const runtimeSpecifier=new URL("../src/worker-inverted-array.mjs",import.meta.url).href;
@@ -346,5 +346,36 @@ test("browser Blob ESM admits only trusted same-origin inverted runtime URL", ()
   } finally {
     if(previous)Object.defineProperty(globalThis,"location",previous);
     else delete globalThis.location;
+  }
+});
+
+test("scalar field type admission ignores inherited prototype getters", () => {
+  const sourceWithType=type=>[
+    "define inverted class Particle as",
+    `  ${type} id;`,
+    "end",
+    "define pub fnc main(): int {",
+    "  let rows = InvertedArray<Particle>.with_capacity(1);",
+    "  let h = rows.push(Particle {id: 42});",
+    "  return rows[h].id;",
+    "}"
+  ].join("\n");
+  assert.equal(compileToInvertedIRV1(sourceWithType("int")).schema.fields[0].type,"i64");
+  for(const inherited of ["constructor","toString","__proto__"]) {
+    assert.throws(()=>compileToInvertedIRV1(sourceWithType(inherited)),
+      InvertedSourceCompileError, inherited+" must not resolve as a scalar type");
+  }
+  let getterCalls=0;
+  const poison="attolang_inherited_scalar_probe";
+  Object.defineProperty(Object.prototype,poison,{
+    configurable:true,
+    get(){getterCalls++;throw new Error("inherited scalar getter executed");}
+  });
+  try {
+    assert.throws(()=>compileToInvertedIRV1(sourceWithType(poison)),
+      InvertedSourceCompileError);
+    assert.equal(getterCalls,0,"untrusted source must not execute an inherited getter");
+  } finally {
+    delete Object.prototype[poison];
   }
 });
