@@ -24,7 +24,9 @@
     "./actor-host.node": "./src/actor-host.node.mjs",
     "./worker-actor-client": "./src/worker-actor-client.mjs",
     "./worker-layout-f64": "./src/worker-layout-f64.mjs",
-    "./actor-compressed32": "./src/actor-compressed32.mjs"
+    "./actor-compressed32": "./src/actor-compressed32.mjs",
+    "./worker-inverted-array": "./src/worker-inverted-array.mjs",
+    "./worker-mixed-layout": "./src/worker-mixed-layout.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
@@ -35,7 +37,7 @@
     "parity:js": "node bin/js-semantic-parity-report.mjs",
     "parity:numeric-js": "node bin/js-numeric-boundary-report.mjs",
     "static-facts:smoke": "node bin/oreslang-jsc.mjs --static-facts tests/fixtures/forward-call.ores",
-    "test:workers": "node --test tests/worker-node.test.mjs tests/worker-layout-node.test.mjs tests/actor-compressed32.test.mjs tests/worker-mixed-node.test.mjs tests/worker-mixed-layout.test.mjs",
+    "test:workers": "node --test tests/worker-node.test.mjs tests/worker-layout-node.test.mjs tests/actor-compressed32.test.mjs tests/worker-mixed-node.test.mjs tests/worker-mixed-layout.test.mjs tests/worker-inverted-array.test.mjs",
     "test:browser": "node scripts/browser-worker-smoke.mjs"
   }
 }

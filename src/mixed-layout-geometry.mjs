@@ -20,7 +20,7 @@ const nativeFloor = Math.floor;
 const isArray = Array.isArray;
 const safeInteger = Number.isSafeInteger;
 const hasOwn = Object.hasOwn;
-const TYPES = Object.freeze({u32:Object.freeze({bytes:4,alignment:4}),f64:Object.freeze({bytes:8,alignment:8}),bool:Object.freeze({bytes:1,alignment:1}),ref32:Object.freeze({bytes:4,alignment:4})});
+const TYPES = Object.freeze({u32:Object.freeze({bytes:4,alignment:4}),i64:Object.freeze({bytes:8,alignment:8}),f64:Object.freeze({bytes:8,alignment:8}),bool:Object.freeze({bytes:1,alignment:1}),ref32:Object.freeze({bytes:4,alignment:4})});
 const align = (v,a)=>(v+a-1n)/a*a;
 class MixedLayoutGeometry {
   #fields; #byName; #segments; #locators; #rows; #layout; #tileWidth; #allocationBytes; #totalBytes;
