@@ -202,7 +202,10 @@ export function validateProgramIRV2(input) {
     if(paramTypes.length!==params.length||
        paramTypes.some(t=>!types.includes(t)))fail('unsupported function parameter type');
     const returnType=typed?f.returnType:'int';
-    if(!types.includes(returnType))fail('unsupported function return type');
+    if(returnType!=='void'&&!types.includes(returnType))fail('unsupported function return type');
+    if(returnType==='void'&&f.body!==null)fail('void function body must be null');
+    if(returnType!=='void'&&(f.body===null||typeof f.body!=='object'))
+      fail('nonvoid function requires an expression body');
     if(typed&&returnType==='int'&&paramTypes.every(t=>t==='int'))
       fail('redundant typed metadata on int-only function');
     const slot=(module===null?'@file/':'@module/'+module+'/')+name+'/'+params.length;
@@ -571,7 +574,8 @@ export function validateProgramIRV2(input) {
       default:fail('unsupported method expression kind '+desc.value);
     }
   }
-  const functions=headers.map((f,i)=>({...f,body:node(sourceFunctions[i].body,i,0,f.returnType??'int')}));
+  const functions=headers.map((f,i)=>({...f,
+    body:f.returnType==='void'?null:node(sourceFunctions[i].body,i,0,f.returnType??'int')}));
   const generators=generatorHeaders.map((gen,i)=>({
     ...gen,
     yields:gen.yields.map(expr=>node(expr,headers.length+i,0,gen.elementType))
