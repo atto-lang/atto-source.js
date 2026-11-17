@@ -1,0 +1,9 @@
+define inverted class Particle as
+    int id;
+    float x;
+    bool ready;
+end
+
+define pub fnc escape(InvertedArray<Particle> rows): Particle {
+    return rows[0];
+}

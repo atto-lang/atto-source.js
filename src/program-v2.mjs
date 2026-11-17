@@ -1,3 +1,4 @@
+import {compileInvertedSourceV1} from './inverted-source-v1.mjs';
 import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 /**
  * Experimental Oreslang program-to-ESM v2 slice:
@@ -426,10 +427,44 @@ export function compileToProgramIRV2(source) {
 export function compileProgramIRV2(ir) {
   return emitProgram(validateProgramIRV2(ir));
 }
-export function compileProgramV2(source) {
+// Opt-in dispatch lives at the existing program-to-ESM entry point, not in
+// an unrelated user-visible command. Legacy callers are unaffected.
+function normalizeProgramOptions(options) {
+  if(options===undefined)return {experimentalInvertedV1:false,runtimeSpecifier:undefined};
+  if(options===null || typeof options!=='object' ||
+     (Object.getPrototypeOf(options)!==Object.prototype &&
+      Object.getPrototypeOf(options)!==null))
+    fail('invalid compile options');
+  const keys=Reflect.ownKeys(options);
+  if(keys.some(k=>typeof k!=='string' ||
+       !['experimentalInvertedV1','runtimeSpecifier'].includes(k)))
+    fail('unsupported compile option');
+  for(const key of keys) {
+    const desc=Object.getOwnPropertyDescriptor(options,key);
+    if(!desc || !Object.hasOwn(desc,'value'))fail('accessor compile option');
+  }
+  // Read only previously admitted own-data descriptors. Plain-record
+  // property access can execute poisoned Object.prototype getters.
+  const enabled=keys.includes('experimentalInvertedV1')
+    ? Object.getOwnPropertyDescriptor(options,'experimentalInvertedV1').value
+    : undefined;
+  if(enabled!==undefined && typeof enabled!=='boolean')
+    fail('experimental inverted compiler gate must be boolean');
+  if(!enabled && keys.includes('runtimeSpecifier'))
+    fail('runtime import option requires explicit experimental compiler gate');
+  const runtimeSpecifier=keys.includes('runtimeSpecifier')
+    ? Object.getOwnPropertyDescriptor(options,'runtimeSpecifier').value
+    : undefined;
+  return {experimentalInvertedV1:enabled===true,runtimeSpecifier};
+}
+export function compileProgramV2(source, options=undefined) {
+  const checked=normalizeProgramOptions(options);
+  if(checked.experimentalInvertedV1)
+    return compileInvertedSourceV1(source,checked.runtimeSpecifier===undefined?{}:
+      {runtimeSpecifier:checked.runtimeSpecifier});
   return emitProgram(compileToProgramIRV2(source));
 }
-export function checkProgramV2(source) {
-  compileProgramV2(source);
+export function checkProgramV2(source,options=undefined) {
+  compileProgramV2(source,options);
   return true;
 }

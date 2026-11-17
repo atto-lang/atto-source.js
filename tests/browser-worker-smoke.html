@@ -8,7 +8,7 @@ import {spawnBrowserActor} from '../src/actor-host.browser.mjs';
 const result=document.getElementById('result');
 const assert=(condition,message)=>{if(!condition)throw new Error(message);};
 const actors=[];
-let generatedUrl;
+let generatedUrl, invertedUrl;
 try {
   const source='pub fnc answer() -> int :: return 40+2; end';
   const generated=compileProgramV2(source);
@@ -19,6 +19,45 @@ try {
   actors.push(compiled);
   await compiled.ready;
   assert(await compiled.request({args:[]})===42n,'transpiled Worker function failed');
+  // Inverted source must compile to real ESM, load its own same-origin SoA
+  // runtime from a Blob module, and execute inside a browser module Worker.
+  const invertedSource=[
+    'define inverted class Particle as',
+    '  int id;',
+    '  float x;',
+    '  bool ready;',
+    'end',
+    'define pub fnc main(): int {',
+    '  let rows = InvertedArray<Particle>.with_capacity(2);',
+    '  let h = rows.push(Particle {id: 37, x: -0.0, ready: true});',
+    '  rows[h].id += 5;',
+    '  return rows[h].id;',
+    '}'
+  ].join('\n');
+  const invertedRuntime=new URL('../src/worker-inverted-array.mjs',import.meta.url).href;
+  let remoteRuntimeAccepted=false;
+  try {
+    compileProgramV2(invertedSource,{
+      experimentalInvertedV1:true,
+      runtimeSpecifier:'https://not-our-origin.invalid/src/worker-inverted-array.mjs'
+    });
+    remoteRuntimeAccepted=true;
+  } catch {}
+  assert(!remoteRuntimeAccepted,'foreign-origin inverted runtime import admitted');
+  const invertedESM=compileProgramV2(invertedSource,{
+    experimentalInvertedV1:true,
+    runtimeSpecifier:invertedRuntime
+  });
+  assert(invertedESM.includes('.addI64('),'checked inverted i64 update missing from ESM');
+  invertedUrl=URL.createObjectURL(new Blob([invertedESM],{type:'text/javascript'}));
+  const invertedModule=await import(invertedUrl);
+  assert(invertedModule.main()===42n,'inverted browser ESM main failed');
+  const invertedWorker=spawnBrowserActor({moduleUrl:invertedUrl,exportName:'main',mode:'call'});
+  actors.push(invertedWorker);
+  await invertedWorker.ready;
+  assert(await invertedWorker.request({args:[]})===42n,'inverted browser module Worker failed');
+  assert(await invertedWorker.request({args:[]})===42n,'reused browser Worker leaked old SoA owner');
+
   const actor=spawnBrowserActor({
     moduleUrl:new URL('./fixtures/worker-handler.mjs',import.meta.url).href
   });
@@ -89,5 +128,6 @@ try {
 } finally {
   await Promise.all(actors.map(a=>a.close()));
   if(generatedUrl) URL.revokeObjectURL(generatedUrl);
+  if(invertedUrl) URL.revokeObjectURL(invertedUrl);
 }
 </script>

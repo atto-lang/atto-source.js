@@ -1,0 +1,13 @@
+define inverted class Particle as
+    int id;
+    float x;
+    bool ready;
+end
+
+define pub async fnc check(): int {
+    let rows = InvertedArray<Particle>.with_capacity(2);
+    let h = rows.push(Particle { id: 42, x: 0.0, ready: true });
+    let loan = rt borrow mut rows.columns.id;
+    await task { return 0; };
+    return rows[h].id;
+}
