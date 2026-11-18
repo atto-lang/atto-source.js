@@ -180,3 +180,14 @@ checks signed-i64 overflow. The additional negative test ensures this suite
 does not accidentally promote wrapping to checked arithmetic. Node's ESM
 runtime is not an untrusted guest sandbox. A passing source-free or in-memory
 V8 test is not an executed Node `npm test` or CI admission receipt.
+
+## Repository ownership and migration (2026-11-08)
+
+**Present home:** `ores-truffle-oreslang/oreslang-source.js` in the legacy Oreslang organization; the public language name is **AttoLang**. Preserve existing `oreslang-*` project, package and command names and `.ores` fixtures until explicitly verified migration steps are approved.
+
+- **Belongs here:** AttoLang-to-ESM transpiler and trusted browser/Node.js worker integration.
+- **Does not belong here:** Claiming per-actor Wasm heaps or Wasmtime running inside browser Web Workers. Shared language semantics and portable core/std should be implemented as canonical `.atto` code rather than copied into per-host adapters.
+- **Organization separation:** [atto-lang](https://github.com/atto-lang) governs language/compiler/runtime/tooling/conformance and portable ecosystem code. [atto-co](https://github.com/atto-co) governs commercial cloud deployments, billing, identity, tenancy and hosted services. A similarly named pre-existing `atto-*` repository is not proof of an executed Git transfer or parity.
+- **Proposed migration:** this legacy repository may first transfer to `atto-lang/oreslang-source.js` under its **existing name and stable GitHub repository ID**. No direct `atto-co` move is currently authorized; product carve-outs require a later independent plan.
+
+**Transfer gate:** claim coordination in [legacy issue #26](https://github.com/ores-truffle-oreslang/.github/issues/26) and use [review-only transfer runbook #25](https://github.com/ores-truffle-oreslang/.github/pull/25). Record exact head SHA/tree and ID, independent security and source/target admin approval, destination rules/visibility, PRs, Actions, app credentials, packages, releases, webhooks, Pages, dependents and rollback owner. Do **not** mirror private sources or overwrite existing `atto-*` repos. Recheck unchanged ID/tree and controls after real GitHub ownership transfer; execute exact-head CI at destination. `steps=[]` or `steps=null` is `NOT_EXECUTED`; host-only or source-free tests do not prove compiled AttoLang guest features. Do not mix repository transfers with forced syntax renames or AOT/zero-GC claims.
