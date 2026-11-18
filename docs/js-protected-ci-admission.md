@@ -113,3 +113,12 @@ References:
 - Worker draft: https://github.com/ores-truffle-oreslang/oreslang-source.js/pull/46
 - Private-source incident: https://github.com/ores-truffle-oreslang/oreslang-platform-conformance/issues/22
 - Mirror identity/approval gate: https://github.com/ores-truffle-oreslang/oreslang-source.java/issues/962
+
+## November 2026 status refresh (supersedes only dated facts above)
+
+- Verified 2026-11-17: `main` commit `a1e8c81b3d40e1ccec187a2708a720c263234536`, `protected:false`; required status-check enforcement is off. GitHub App administration endpoints remain inaccessible; a repository administrator must make and validate the rule change.
+- Contrary to the historical October 24 observation above, `main` **now has** `.github/CODEOWNERS`, Git blob `9b212c48c67c57816fe55715905abfd0ef606215`. Do not replace it with the obsolete #48 version.
+- Source-owned Actions retry: test workflow run `42430206089`, attempt 2 job `134542819781` completed with `failure`, `steps:null`. No Node tests ran and retrying did not repair admission.
+- `.github/private-ci-approved-repositories.txt` has **zero active destination approvals**. Security incident `oreslang-platform-conformance#22` is still open, including its independent resume-approval gate. **NO_TRANSFER** until both governance requirements are actually satisfied; private destination status alone is insufficient.
+- Five clean mainline integrations are under review as #262 (ESM tests), #263 (scheduler cooperation), #264 (this document), #265 (Worker receipt/ownership hardening) and #266 (generation-fence authentication/closure). They have focused local/identity evidence only; the code PRs require exact-head executable tests and independent approvals before merging.
+- Before enabling required checks, first restore one trusted checkout-free CI smoke workflow with an allocated runner and recorded steps, then execute the full required Node 22/Worker/browser matrix, and only then pin the verified check identities. Review of the policy document itself can proceed independently of code execution.
