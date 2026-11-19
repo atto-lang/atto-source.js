@@ -31,6 +31,16 @@ export function transpile_to_worker(source) {
     const code = source.charCodeAt(offset);
     if (code === 0 || code === 0x1b || code === 0x7f)
       throw new TranspileError('E_RAW_SOURCE_CONTROL');
+    // TextEncoder replaces lone surrogates with U+FFFD. Reject the raw
+    // source instead of silently changing its contents (including comments).
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const tail = source.charCodeAt(offset + 1);
+      if (tail < 0xdc00 || tail > 0xdfff || Number.isNaN(tail))
+        throw new TranspileError('E_INVALID_UTF16');
+      offset++; // An intact surrogate pair denotes one valid scalar value.
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      throw new TranspileError('E_INVALID_UTF16');
+    }
   }
   // Inspect the raw source before the lexer discards comments.
   // Trojan Source controls can reorder displayed source invisibly.
