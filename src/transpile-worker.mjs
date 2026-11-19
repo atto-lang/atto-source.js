@@ -25,6 +25,10 @@ function tokenize(source) {
 }
 export function transpile_to_worker(source) {
   if (typeof source !== 'string' || new TextEncoder().encode(source).byteLength > MAX_SOURCE) throw new TranspileError('E_SOURCE_LIMIT');
+  // Inspect the raw source before the lexer discards comments.
+  // Trojan Source controls can reorder displayed source invisibly.
+  if (/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(source))
+    throw new TranspileError('E_BIDI_CONTROL');
   const tokens=tokenize(source);
   if(tokens[0]==='define')return transpile_actor_tokens(tokens);
   let i=0;
