@@ -76,3 +76,9 @@ test('unsupported unions and rewritten payloads cannot masquerade as typed ingre
   reject(with_header.replace('ActorMail<int>','ActorMail<bool>'),
          'E_UNSUPPORTED_ACTOR_SYNTAX');
 });
+
+test('typed ingress rejects hidden Unicode, invalid surrogates and raw source controls', () => {
+  reject(with_header + '// bidi:' + String.fromCodePoint(0x202e), 'E_BIDI_CONTROL');
+  reject(with_header + '// invalid UTF-16:' + String.fromCharCode(0xd800), 'E_INVALID_UTF16');
+  reject(with_header + '// NUL:' + String.fromCharCode(0), 'E_RAW_SOURCE_CONTROL');
+});
