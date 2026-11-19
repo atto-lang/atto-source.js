@@ -25,6 +25,13 @@ function tokenize(source) {
 }
 export function transpile_to_worker(source) {
   if (typeof source !== 'string' || new TextEncoder().encode(source).byteLength > MAX_SOURCE) throw new TranspileError('E_SOURCE_LIMIT');
+  // Raw terminal controls and NUL must not be hidden in comments or
+  // visually interfere with reviewing source code before compilation.
+  for (let offset = 0; offset < source.length; offset++) {
+    const code = source.charCodeAt(offset);
+    if (code === 0 || code === 0x1b || code === 0x7f)
+      throw new TranspileError('E_RAW_SOURCE_CONTROL');
+  }
   // Inspect the raw source before the lexer discards comments.
   // Trojan Source controls can reorder displayed source invisibly.
   if (/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(source))
