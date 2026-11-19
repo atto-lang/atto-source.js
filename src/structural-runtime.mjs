@@ -63,7 +63,10 @@ export function createStructuralDomain() {
     if (new Set(fields.map(x=>x.name)).size !== fields.length) throw new TypeError('duplicate field');
     if (metadata.kind!=='record' && (!identifier.test(metadata.name) || excluded.has(metadata.name)))
       throw new TypeError('nominal carrier needs safe name');
-    const shape = Object.freeze({kind:metadata.kind, name: metadata.name,
+    // A structural record has no nominal identity: never attach an own
+    // `name: undefined` property. The typed-IR proof rejects such metadata.
+    const shape = Object.freeze({kind:metadata.kind,
+      ...(metadata.kind==='record' ? {} : {name:metadata.name}),
       actor:false,fields:Object.freeze(fields), methods:Object.freeze([])});
     const token = Object.freeze(Object.create(null));
     types.set(token,{shape,index:new Map(fields.map((f,i)=>[f.name,i]))});
