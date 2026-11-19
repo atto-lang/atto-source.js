@@ -48,3 +48,26 @@ This README describes the repository's intended responsibilities. Feature suppor
 Keep canonical AttoLang (`.atto`) semantics consistent with the language specification; migration-era interfaces are not evidence of current portable support.
 
 Changes asserting compiler/runtime support must identify the exact source head, target, toolchain, executed positive and negative guest tests, and failure/unsupported status; an empty CI step list is **not executed**. Documentation records responsibility, **not** a claim of feature completion.
+
+
+## Experimental checked-i64 browser-worker subset
+
+`src/transpile-worker.mjs` exposes `transpile_to_worker(source)`. Its emitted
+ES module exports `create_tenant({tenant,generation})` with a one-shot
+`on_message()` handler. The *supported* scalar profile accepts only a single
+`main(): int` returning a signed-i64 expression (unary minus, parentheses,
+addition, subtraction and multiplication). Checked BigInt overflow traps.
+
+An additional, tightly restricted actor profile accepts **one**
+`define actor` with one signed-i64 additive `ActorMail<int>` receiver,
+an actor-local integer field, `stdio.println`, and `main` spawning that actor.
+It exposes `on_route` to a **trusted** JS Worker host. All other actor
+features and unsupported syntax must be rejected, not silently compiled.
+See `tests/transpile-worker.test.mjs` and `tests/actor-worker.test.mjs`.
+
+These are experimental host-execution subsets; **not** the full Atto language,
+general actor lowering, source ownership/borrow analysis, or a substitute for
+Rust/Wasm compiled guest conformance. Web/Node Workers do **not** securely
+sandbox arbitrary JavaScript within the same origin. Do not run untrusted
+tenants through this JS backend. Use `npm test` with Node 22+ for its focused
+host tests, and report separate browser/compiler/guest validation evidence.
