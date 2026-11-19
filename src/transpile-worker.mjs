@@ -126,6 +126,19 @@ function transpile_actor_tokens(tokens) {
   };
   expect('define');expect('actor');
   const actor=identifier();
+  // Stage 1 typed ingress: the only executable actor subset has exactly one
+  // ActorMail<int> handler and a checked signed-i64 worker wire. An explicit
+  // receives header must describe that EXISTING handler, never widen it.
+  if(peek()==='receives'){
+    i++;
+    const received=identifier();
+    if(received==='never')throw new TranspileError('E_ACTOR_RECEIVES_NEVER_UNSUPPORTED');
+    if(received!=='int')throw new TranspileError('E_ACTOR_RECEIVES_MISMATCH');
+  }
+  // Outbound sends effects need transitive effect checking across helpers and
+  // callback paths. Do not mistake a parsed header for that proof.
+  if(peek()==='sends')throw new TranspileError('E_ACTOR_SENDS_EFFECT_UNSUPPORTED');
+  if(peek()==='emits')throw new TranspileError('E_ACTOR_EMITS_EFFECT_UNSUPPORTED');
   expect('as');expect('let');expect('int');
   const field=identifier();
   expect('=');
