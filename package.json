@@ -1,1 +1,11 @@
-{"name":"@atto-lang/source-js","private":true,"type":"module","scripts":{"test":"node --test tests/*.test.mjs"}}
+{
+  "name": "@atto-lang/source-js",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "exports": {
+    "./structural-runtime": "./src/structural-runtime.mjs"
+  }
+}
