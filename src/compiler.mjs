@@ -20,6 +20,12 @@ function validateSourceText(src) {
   for (let i=0; i<src.length; i++) {
     const code=src.charCodeAt(i);
     if (code===0) throw new CompileError('NUL in source');
+    // Trojan Source: bidi format controls can reorder displayed source,
+    // including comments and literals that the lexer would otherwise skip.
+    if (code===0x061c || code===0x200e || code===0x200f ||
+        (code>=0x202a && code<=0x202e) ||
+        (code>=0x2066 && code<=0x2069))
+      throw new CompileError('bidirectional Unicode control in source');
     if (code>=0xd800 && code<=0xdbff) {
       const lo=src.charCodeAt(i+1);
       if (!(lo>=0xdc00 && lo<=0xdfff)) throw new CompileError('invalid UTF-16 in source');
