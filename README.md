@@ -1,17 +1,73 @@
-# atto-source.js — browser worker transpiler (strict subset)
+# atto-source.js
 
-This experimental JavaScript backend emits an ES module with `create_tenant({tenant,generation})` and `on_message()`, compatible with [atto-browser](https://github.com/atto-lang/atto-browser). It does **not** implement the full AttoLang language or general actors yet.
+JavaScript compilation backend and runtime compatibility layer for AttoLang.
 
-Supported in v1: a single `pub fnc main(): int { return EXPRESSION; }` (or non-public `fnc`) with decimal signed 64-bit integers, unary minus, parentheses, addition, subtraction and multiplication. Every arithmetic operation is overflow-checked with `BigInt`; unsupported syntax or source-injection attempts fail closed. Max source: 64 KiB, max tokens: 4096, max recursion depth: 64.
+## Naming and specification migration
 
-```js
-import { transpile_to_worker } from './src/transpile-worker.mjs';
-const {module_source} = transpile_to_worker('pub fnc main(): int { return 6 * 7; }');
-// const moduleUrl = URL.createObjectURL(new Blob([module_source], {type:'text/javascript'}));
-// await app.spawn('tenant_a', {backend:'js',trusted:true,entry:moduleUrl});
-// Revoke the URL after the tenant has finished loading it.
-```
+This is the canonical [AttoLang backend repository](https://github.com/atto-lang/atto-source.js). Use `.atto` for portable AttoLang source and update local remotes to `https://github.com/atto-lang/atto-source.js.git`; do not use historical repository links or naming in new examples.
 
-The output is **trusted JavaScript**. Browser Web Workers do not sandbox hostile JavaScript running under the same origin. Do not use the JS backend for untrusted tenants; use a rigorously vetted Wasm sandbox and limited host imports instead.
+- **Normative grammar and semantics:** [atto-spec](https://github.com/atto-lang/atto-spec). Check the current versioned contracts for ownership operations (`borrow!`, `take!`, `share!`, `copy!`, `copy!!`), implicit argument borrowing, `lt!` binders, `eq`/`neq` value equality, `susp` effects and file/module `define const`. These are *specification targets*, not claims of executable support in this backend.
+- **Positive and negative guest execution evidence:** [atto-platform-conformance](https://github.com/atto-lang/atto-platform-conformance) and [atto-compilers-parity-testing](https://github.com/atto-lang/atto-compilers-parity-testing). Report `passed`, `failed`, `unsupported` or `not executed`, and pin exact compiler, source tree, target and toolchain.
+- **Portable shared sources and target constraints:** [atto-common-source](https://github.com/atto-lang/atto-common-source) and [atto-target-profiles](https://github.com/atto-lang/atto-target-profiles). Keep backend-specific gaps explicit, and do not infer guest parity from host tests or zero-step CI runs.
 
-Run `npm test` (Node 20+). Host-unit tests verify checked signed math, independent module instances, and unsupported-source rejection. Browser E2E, actor syntax/codegen and parity with the richer Rust compiler are not yet established.
+## Scope
+
+This repository is the AttoLang ecosystem home for:
+
+- JavaScript lowering, host interoperability, and web-compatible actor semantics.
+- Compatibility with the [canonical language specification](https://github.com/atto-lang/atto-spec) where applicable.
+- Evidence-based tests, benchmark results, and cross-backend conformance reporting.
+
+## Architecture and compatibility
+
+AttoLang is designed around actors, explicit ownership, and portable concurrency semantics. Backend-specific optimizations must not silently change the shared language contract. Runtime capabilities, target restrictions, and unsupported features should be documented explicitly.
+
+## Building and testing
+
+Consult the checked-in source tree and CI workflows for verified commands and supported targets. Add target-specific build instructions and exact-head execution results as they become available; do not treat a passing host-unit test as proof of guest-language conformance.
+
+## Project status
+
+This README describes the repository's intended responsibilities. Feature support and release readiness must be established from implementation, tests, and CI evidence rather than this description alone.
+
+## Related repositories
+
+- [AttoLang organization](https://github.com/atto-lang)
+- [Language specification](https://github.com/atto-lang/atto-spec)
+- [Platform conformance](https://github.com/atto-lang/atto-platform-conformance)
+- [Commercial infrastructure](https://github.com/atto-co)
+
+## Repository ownership and contribution routing
+
+**Belongs in this repository:** AttoLang-to-JavaScript lowering, JS runtime/interop boundaries and browser/Node worker scheduling adapters with capability-scoped messaging.
+
+**Belongs elsewhere:** Rust-to-Wasm compiler internals (atto-source.rs), Wasm backend ABI (atto-source.wasm), or static playground deployment (atto-playground).
+
+**Safety and verification boundary:** Web Workers and Node worker_threads are hosts, not hardware tenant sandboxes; reject unsupported semantics, bound workers/mailboxes/output, and keep guest data separate from host capabilities.
+
+Keep canonical AttoLang (`.atto`) semantics consistent with the language specification; migration-era interfaces are not evidence of current portable support.
+
+Changes asserting compiler/runtime support must identify the exact source head, target, toolchain, executed positive and negative guest tests, and failure/unsupported status; an empty CI step list is **not executed**. Documentation records responsibility, **not** a claim of feature completion.
+
+
+## Experimental checked-i64 browser-worker subset
+
+`src/transpile-worker.mjs` exposes `transpile_to_worker(source)`. Its emitted
+ES module exports `create_tenant({tenant,generation})` with a one-shot
+`on_message()` handler. The *supported* scalar profile accepts only a single
+`main(): int` returning a signed-i64 expression (unary minus, parentheses,
+addition, subtraction and multiplication). Checked BigInt overflow traps.
+
+An additional, tightly restricted actor profile accepts **one**
+`define actor` with one signed-i64 additive `ActorMail<int>` receiver,
+an actor-local integer field, `stdio.println`, and `main` spawning that actor.
+It exposes `on_route` to a **trusted** JS Worker host. All other actor
+features and unsupported syntax must be rejected, not silently compiled.
+See `tests/transpile-worker.test.mjs` and `tests/actor-worker.test.mjs`.
+
+These are experimental host-execution subsets; **not** the full Atto language,
+general actor lowering, source ownership/borrow analysis, or a substitute for
+Rust/Wasm compiled guest conformance. Web/Node Workers do **not** securely
+sandbox arbitrary JavaScript within the same origin. Do not run untrusted
+tenants through this JS backend. Use `npm test` with Node 22+ for its focused
+host tests, and report separate browser/compiler/guest validation evidence.
