@@ -2,6 +2,14 @@
 
 JavaScript compilation backend and runtime compatibility layer for AttoLang.
 
+## Naming and specification migration
+
+This is the canonical [AttoLang backend repository](https://github.com/atto-lang/atto-source.js). Use `.atto` for portable AttoLang source and update local remotes to `https://github.com/atto-lang/atto-source.js.git`; do not use historical repository links or naming in new examples.
+
+- **Normative grammar and semantics:** [atto-spec](https://github.com/atto-lang/atto-spec). Check the current versioned contracts for ownership operations (`borrow!`, `take!`, `share!`, `copy!`, `copy!!`), implicit argument borrowing, `lt!` binders, `eq`/`neq` value equality, `susp` effects and file/module `define const`. These are *specification targets*, not claims of executable support in this backend.
+- **Positive and negative guest execution evidence:** [atto-platform-conformance](https://github.com/atto-lang/atto-platform-conformance) and [atto-compilers-parity-testing](https://github.com/atto-lang/atto-compilers-parity-testing). Report `passed`, `failed`, `unsupported` or `not executed`, and pin exact compiler, source tree, target and toolchain.
+- **Portable shared sources and target constraints:** [atto-common-source](https://github.com/atto-lang/atto-common-source) and [atto-target-profiles](https://github.com/atto-lang/atto-target-profiles). Keep backend-specific gaps explicit, and do not infer guest parity from host tests or zero-step CI runs.
+
 ## Scope
 
 This repository is the AttoLang ecosystem home for:
@@ -28,3 +36,38 @@ This README describes the repository's intended responsibilities. Feature suppor
 - [Language specification](https://github.com/atto-lang/atto-spec)
 - [Platform conformance](https://github.com/atto-lang/atto-platform-conformance)
 - [Commercial infrastructure](https://github.com/atto-co)
+
+## Repository ownership and contribution routing
+
+**Belongs in this repository:** AttoLang-to-JavaScript lowering, JS runtime/interop boundaries and browser/Node worker scheduling adapters with capability-scoped messaging.
+
+**Belongs elsewhere:** Rust-to-Wasm compiler internals (atto-source.rs), Wasm backend ABI (atto-source.wasm), or static playground deployment (atto-playground).
+
+**Safety and verification boundary:** Web Workers and Node worker_threads are hosts, not hardware tenant sandboxes; reject unsupported semantics, bound workers/mailboxes/output, and keep guest data separate from host capabilities.
+
+Keep canonical AttoLang (`.atto`) semantics consistent with the language specification; migration-era interfaces are not evidence of current portable support.
+
+Changes asserting compiler/runtime support must identify the exact source head, target, toolchain, executed positive and negative guest tests, and failure/unsupported status; an empty CI step list is **not executed**. Documentation records responsibility, **not** a claim of feature completion.
+
+
+## Experimental checked-i64 browser-worker subset
+
+`src/transpile-worker.mjs` exposes `transpile_to_worker(source)`. Its emitted
+ES module exports `create_tenant({tenant,generation})` with a one-shot
+`on_message()` handler. The *supported* scalar profile accepts only a single
+`main(): int` returning a signed-i64 expression (unary minus, parentheses,
+addition, subtraction and multiplication). Checked BigInt overflow traps.
+
+An additional, tightly restricted actor profile accepts **one**
+`define actor` with one signed-i64 additive `ActorMail<int>` receiver,
+an actor-local integer field, `stdio.println`, and `main` spawning that actor.
+It exposes `on_route` to a **trusted** JS Worker host. All other actor
+features and unsupported syntax must be rejected, not silently compiled.
+See `tests/transpile-worker.test.mjs` and `tests/actor-worker.test.mjs`.
+
+These are experimental host-execution subsets; **not** the full Atto language,
+general actor lowering, source ownership/borrow analysis, or a substitute for
+Rust/Wasm compiled guest conformance. Web/Node Workers do **not** securely
+sandbox arbitrary JavaScript within the same origin. Do not run untrusted
+tenants through this JS backend. Use `npm test` with Node 22+ for its focused
+host tests, and report separate browser/compiler/guest validation evidence.
