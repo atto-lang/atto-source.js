@@ -62,16 +62,12 @@ test('actor header cannot widen or disable the concrete ActorMail<int> ingress',
 });
 
 test('unproved sends/emits effect headers fail closed before JavaScript generation', () => {
-  for (const source of [baseline, with_header]) {
-    reject(source.replace('Counter as','Counter sends int as'),
-           'E_ACTOR_SENDS_EFFECT_UNSUPPORTED');
-    reject(source.replace('Counter as','Counter emits int as'),
-           'E_ACTOR_EMITS_EFFECT_UNSUPPORTED');
+  for (const header of ['Counter', 'Counter receives int']) {
+    const with_sends = baseline.replace('Counter as', `${header} sends int as`);
+    const with_emits = baseline.replace('Counter as', `${header} emits int as`);
+    reject(with_sends, 'E_ACTOR_SENDS_EFFECT_UNSUPPORTED');
+    reject(with_emits, 'E_ACTOR_EMITS_EFFECT_UNSUPPORTED');
   }
-  reject(with_header.replace('receives int as','receives int sends int as'),
-         'E_ACTOR_SENDS_EFFECT_UNSUPPORTED');
-  reject(with_header.replace('receives int as','receives int emits int as'),
-         'E_ACTOR_EMITS_EFFECT_UNSUPPORTED');
 });
 
 test('unsupported unions and rewritten payloads cannot masquerade as typed ingress', () => {
