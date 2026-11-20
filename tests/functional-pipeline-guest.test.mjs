@@ -4,6 +4,7 @@ import {readFile,writeFile,mkdtemp,rm,access} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {pathToFileURL,fileURLToPath} from 'node:url';
 import {compileFunctionalPipelineSource,FunctionalPipelineSourceError} from '../src/functional-pipelines.mjs';
 const fixtures=resolve(fileURLToPath(new URL('fixtures/functional-pipelines-v1/',import.meta.url)));
@@ -72,3 +73,53 @@ test('i64 lower bound compiles exactly and overflow aborts execution',async()=>{
   const guest=await import('data:text/javascript,'+encodeURIComponent(code));
   assert.throws(()=>guest.main(),{name:'RangeError',message:'E_OVERFLOW'});
 });
+
+test('supplemental spec edge suite runs real multi-argument and i64 ESM guests',()=>isolated(async dir=>{
+  const edge=join(fixtures,'edge');
+  const pins=[
+    ['two-argument-61.atto','4089c524db1d076593994ad65acb5ca7f90eea32'],
+    ['preapplied-grouped-42.atto','9a89ada18865fead0d92a7de75415957fbb5f67f'],
+    ['signed-i64-min.atto','bbc22347d7ccb0a5be1a7c2193f11c5f2f4805cc'],
+    ['checked-overflow.atto','59bb890b54addc1659065ab55cd565771523bfce'],
+    ['reject-i64-positive-overflow.atto','2e584ee01ee74a3a31e282cf0116957f9ff95bd1'],
+    ['reject-i64-negative-underflow.atto','8b63b45e406db3e19aa793e0f7a627914623b9e0'],
+    ['reject-reserved-unsafe.atto','b159def3fa26ca6023395e1c546b95c1b929fd14']
+  ];
+  for(const [name,expected] of pins) {
+    const bytes=await readFile(join(edge,name));
+    const hash=createHash('sha1')
+      .update(Buffer.from('blob '+bytes.length+'\0'))
+      .update(bytes).digest('hex');
+    assert.equal(hash,expected,name+': shared Atto source differs from spec');
+  }
+  const positives=[
+    ['two-argument-61.atto','61'],
+    ['preapplied-grouped-42.atto','42'],
+    ['signed-i64-min.atto','-9223372036854775808']
+  ];
+  const observer='import{pathToFileURL}from"node:url";const guest=await import(pathToFileURL(process.argv[1]).href);console.log(guest.main().toString());';
+  for(const [name,expected] of positives) {
+    const guest=compileFunctionalPipelineSource(await readFile(join(edge,name),'utf8'));
+    const output=join(dir,name+'.mjs');await writeFile(output,guest);
+    const observed=spawnSync(process.execPath,
+      ['--input-type=module','-e',observer,output],
+      {encoding:'utf8',timeout:15000});
+    assert.equal(observed.status,0,name+': '+observed.stderr);
+    assert.equal(observed.stdout,expected+'\n',name);
+    assert.equal(observed.stderr,'',name);
+  }
+  const overflow=compileFunctionalPipelineSource(
+    await readFile(join(edge,'checked-overflow.atto'),'utf8'));
+  const overflowGuest=await import('data:text/javascript,'+encodeURIComponent(overflow));
+  assert.throws(()=>overflowGuest.main(),{name:'RangeError',message:'E_OVERFLOW'});
+  for(const [name,code] of [
+    ['reject-i64-positive-overflow.atto','E_LITERAL'],
+    ['reject-i64-negative-underflow.atto','E_LITERAL'],
+    ['reject-reserved-unsafe.atto','E_NAME']
+  ]) {
+    const source=await readFile(join(edge,name),'utf8');
+    assert.throws(()=>compileFunctionalPipelineSource(source),
+      e=>e instanceof FunctionalPipelineSourceError&&e.code===code,name);
+    await assert.rejects(access(join(dir,name+'.mjs')),{code:'ENOENT'});
+  }
+}));
