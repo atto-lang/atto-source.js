@@ -41,8 +41,10 @@ jobs:
             test "$mode" = "100644" || { echo "Unexpected symlink or mode for $path"; exit 1; }
           done
           test -f .github/private-ci-approved-repositories.txt
-          # A mirror approval requires independent review; the build itself
-          # never treats a self-edited allowlist as permission to export.
+          # The integration branch is intentionally carrier-export DENIED.
+          # A separate independently reviewed policy change is required to
+          # alter this SHA; workflow changes alone do not authorize export.
+          test "$(git hash-object .github/private-ci-approved-repositories.txt)" = "e861197f825e7f4c3587dd377d099f3eb3c862fe"
           git rev-parse 'HEAD^{tree}'
           git ls-files -s src/transpile-worker.mjs src/actor-state-counter.mjs src/result-int-parse-compiler.mjs
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
