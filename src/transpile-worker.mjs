@@ -134,7 +134,7 @@ function transpile_actor_tokens(tokens) {
     i++;
     received=identifier();
     if(received==='never')throw new TranspileError('E_ACTOR_RECEIVES_NEVER_UNSUPPORTED');
-    if(received!=='int'&&received!=='bool')throw new TranspileError('E_ACTOR_RECEIVES_MISMATCH');
+    if(received!=='int'&&received!=='bool')throw new TranspileError('E_ACTOR_RECEIVES');
   }
   // In this exact admitted program shape the actor handler only updates its
   // scalar state and prints. There are NO application send operations, helper
@@ -145,6 +145,7 @@ function transpile_actor_tokens(tokens) {
   if(peek()==='sends'){
     i++;
     const payload=identifier();
+    if(payload==='void')throw new TranspileError('E_ACTOR_SEND_CONTRACT');
     if(!['int','bool','never'].includes(payload))
       throw new TranspileError('E_ACTOR_SENDS_EFFECT_UNSUPPORTED');
   }
@@ -158,7 +159,7 @@ function transpile_actor_tokens(tokens) {
   // generic erasure, mutable aliases or arbitrary JavaScript expressions.
   if(peek()==='let' && tokens[i+1]==='bool'){
     if(received!==null&&received!=='bool')
-      throw new TranspileError('E_ACTOR_RECEIVES_MISMATCH');
+      throw new TranspileError('E_ACTOR_RECEIVES');
     expect('let');expect('bool');
     const field=identifier();
     expect('=');
@@ -168,7 +169,10 @@ function transpile_actor_tokens(tokens) {
     i++;expect(';');
     if(peek()==='susp')i++; // syntactic only, no await/resume body admitted
     expect('receive');expect('(');
-    expect('ActorMail');expect('<');expect('bool');expect('>');
+    expect('ActorMail');expect('<');
+    const handlerPayload=identifier();
+    expect('>');
+    if(handlerPayload!=='bool')throw new TranspileError('E_ACTOR_RECEIVES');
     const mail=identifier();
     expect(')');expect(':');expect('void');expect('{');
     expect('self');expect('.');expect(field);expect('=');
@@ -213,7 +217,7 @@ function transpile_actor_tokens(tokens) {
     ].join('\n');
     return {backend:'js',trusted:true,guest_abi:'atto.js.browser.actor-subset.v1',module_source:code};
   }
-  if(received==='bool')throw new TranspileError('E_ACTOR_RECEIVES_MISMATCH');
+  if(received==='bool')throw new TranspileError('E_ACTOR_RECEIVES');
   expect('let');expect('int');
   const field=identifier();
   expect('=');
@@ -221,7 +225,10 @@ function transpile_actor_tokens(tokens) {
   expect(';');
   if(peek()==='susp')i++; // inert marker in the fixed no-await actor subset
   expect('receive');expect('(');
-  expect('ActorMail');expect('<');expect('int');expect('>');
+  expect('ActorMail');expect('<');
+  const handlerPayload=identifier();
+  expect('>');
+  if(handlerPayload!=='int')throw new TranspileError('E_ACTOR_RECEIVES');
   const mail=identifier();
   expect(')');expect(':');expect('void');expect('{');
   expect('self');expect('.');expect(field);expect('=');
