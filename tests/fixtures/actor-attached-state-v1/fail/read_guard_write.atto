@@ -1,0 +1,8 @@
+// TARGET REJECT: critical-read must not be upgraded to mutable block
+define actor Counter as
+  state { let int count: 0; }
+  on_start(): void using state.read {
+    self.handle_state(critical-read |s| -> { s.count = 4; });
+  }
+end
+pub fnc main(): int { return 0; }
