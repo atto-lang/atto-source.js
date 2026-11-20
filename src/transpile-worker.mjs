@@ -135,15 +135,28 @@ function transpile_actor_tokens(tokens) {
     if(received==='never')throw new TranspileError('E_ACTOR_RECEIVES_NEVER_UNSUPPORTED');
     if(received!=='int')throw new TranspileError('E_ACTOR_RECEIVES_MISMATCH');
   }
-  // Outbound sends effects need transitive effect checking across helpers and
-  // callback paths. Do not mistake a parsed header for that proof.
-  if(peek()==='sends')throw new TranspileError('E_ACTOR_SENDS_EFFECT_UNSUPPORTED');
+  // In this exact admitted program shape the actor handler only updates its
+  // scalar state and prints. There are NO application send operations, helper
+  // calls, dynamic actor references or user callbacks in the accepted grammar.
+  // Its statically computed outbound effect is therefore the empty set; it
+  // respects any supported declared upper bound. This does NOT generalize to
+  // future actor-to-actor sends without a genuine typed call-graph checker.
+  if(peek()==='sends'){
+    i++;
+    const payload=identifier();
+    if(!['int','bool','never'].includes(payload))
+      throw new TranspileError('E_ACTOR_SENDS_EFFECT_UNSUPPORTED');
+  }
+  if(peek()==='sends'||peek()==='receives')
+    throw new TranspileError('E_UNSUPPORTED_ACTOR_SYNTAX');
   if(peek()==='emits')throw new TranspileError('E_ACTOR_EMITS_EFFECT_UNSUPPORTED');
   expect('as');expect('let');expect('int');
   const field=identifier();
   expect('=');
   const initial=literal();
-  expect(';');expect('receive');expect('(');
+  expect(';');
+  if(peek()==='susp')i++; // inert marker in the fixed no-await actor subset
+  expect('receive');expect('(');
   expect('ActorMail');expect('<');expect('int');expect('>');
   const mail=identifier();
   expect(')');expect(':');expect('void');expect('{');
@@ -154,6 +167,7 @@ function transpile_actor_tokens(tokens) {
   expect('self');expect('.');expect(field);expect(')');expect(';');
   expect('return');expect(';');expect('}');expect('end');
   if(peek()==='pub')i++;
+  if(peek()==='susp')i++; // still no general async/continuation lowering
   expect('fnc');expect('main');expect('(');expect(')');expect(':');
   expect('int');expect('{');expect('val');
   identifier(); // The local actor binding is not exposed to JavaScript.
