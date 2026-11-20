@@ -61,3 +61,15 @@ test('void lambda rejects forged execution effects, malformed signatures, arity 
   assert.throws(() => compileToIR(guest(forms[0])), /error:/);
   assert.doesNotThrow(() => compile('pub fnc main(): int { return 40 + 2; }'));
 });
+
+test('shared four negative fixture families retain exact diagnostic codes', () => {
+  const cases = [
+    ['|int foo, foo: string| -> { return; };', 'E_DUPLICATE'],
+    ['|foo: int, x: string| : void -> { return 7; };', 'E_TYPE'],
+    ['|void foo, string x| : void -> { return; };', 'E_TYPE'],
+    ['|foo: int, x: string| -> void return;', 'E_SYNTAX']
+  ];
+  for (const [form, code] of cases) {
+    assert.throws(() => compile(guest(form)), {code}, form);
+  }
+});
