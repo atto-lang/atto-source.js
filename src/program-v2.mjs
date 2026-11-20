@@ -211,6 +211,11 @@ function tokenize(source) {
         word += source[pos]; advance();
       }
       if (word.length > 128) fail('identifier limit',start);
+      // Canonical bang exceptional control requires typed Error/Result and
+      // checked guest unwind; no fallback to an ordinary JS exception.
+      if(['trap','throw','raise','panic'].includes(word) && source[pos]==='!' &&
+         source[pos+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(source.slice(pos)))
+        fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: typed guest effects and Result lowering required',start);
       emit('id',word,start);
     } else if (/[0-9]/.test(c)) {
       let number = '';
