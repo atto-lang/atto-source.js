@@ -71,6 +71,17 @@ function reject_unsupported_mutex_constructor(tokens) {
     throw new TranspileError('E_LOCK_UNSUPPORTED');
   }
 }
+// ^ is a return *statement*, never an infix or power operator.
+// Admit it only at a statement boundary; do not rewrite infix `a ^ b` or a
+// caret inside a call/expression into a return statement.
+function normalize_return_shorthand(tokens) {
+  return tokens.map((token,i)=>{
+    if(token!=='^')return token;
+    const before=tokens[i-1],after=tokens[i+1];
+    return (before==='{'||before===';'||before==='}')&&after!==';'
+      ? 'return' : token;
+  });
+}
 export function transpile_to_worker(source) {
   if (typeof source !== 'string' || new TextEncoder().encode(source).byteLength > MAX_SOURCE) throw new TranspileError('E_SOURCE_LIMIT');
   // Raw terminal controls and NUL must not be hidden in comments or
@@ -94,7 +105,7 @@ export function transpile_to_worker(source) {
   // Trojan Source controls can reorder displayed source invisibly.
   if (/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(source))
     throw new TranspileError('E_BIDI_CONTROL');
-  const tokens=normalize_generic_closers(tokenize(source));
+  const tokens=normalize_return_shorthand(normalize_generic_closers(tokenize(source)));
   // Read/write shorthands need typed capability and suspension lowering. This
   // narrow arithmetic guest must not reinterpret them as integer shifts.
   if(tokens.includes('<<')||tokens.includes('>>'))
