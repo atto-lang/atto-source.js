@@ -34,6 +34,11 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           git diff --exit-code HEAD --
           test -z "$(git ls-files --others --exclude-standard)"
+          test -z "$(git ls-files --others --ignored --exclude-standard)"
+          for path in src/transpile-worker.mjs tests/scalar-xor-contract.test.mjs tests/transpile-worker.test.mjs tests/actor-worker.test.mjs .github/workflows/operator-spellings.yml; do
+            mode="$(git ls-files -s -- "$path" | cut -d' ' -f1)"
+            test "$mode" = "100644" || { echo "Untrusted file mode or symlink: $path" >&2; exit 1; }
+          done
           printf "head=%s\ntree=%s\n" "$EXPECTED_HEAD" "$(git rev-parse 'HEAD^{tree}')"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -43,6 +48,6 @@ jobs:
           node --check src/transpile-worker.mjs
           node --check tests/scalar-xor-contract.test.mjs
       - name: Execute generated ESM guest and negative operator cases
-        run: node --test tests/scalar-xor-contract.test.mjs tests/transpile-worker.test.mjs
+        run: node --test tests/scalar-xor-contract.test.mjs tests/transpile-worker.test.mjs tests/actor-worker.test.mjs
       - name: Execute whole canonical target Node suite
         run: npm test
