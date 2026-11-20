@@ -10,7 +10,7 @@ const RESERVED = new Set([
   'unsafe','await','async','susp','suspends','critical','trap','panic','raise',
   'throw','borrow','take','share','copy','drop','pin','rt','io','stdio',
   'process','spawn','select','import','module','define','namespace','use',
-  'pipe','rpipe','constructor','prototype','__proto__'
+  'pipe','rpipe','sync','task','yield','constructor','prototype','__proto__'
 ]);
 export class FunctionalPipelineSourceError extends Error {
   constructor(code) { super(code); this.code = code; this.name = 'FunctionalPipelineSourceError'; }
