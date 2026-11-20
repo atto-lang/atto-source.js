@@ -184,3 +184,22 @@ test('nominal on-is Result patterns preserve checked braced match and guard sema
   assert.throws(()=>transpile(newer.replace('on is Err<error> -> { return 0; }','')),
     e=>e.code==='E_MATCH_NONEXHAUSTIVE');
 });
+
+
+test('generated Result guest fails closed on invalid tenant identity and epoch',async()=>{
+  const {module_source}=transpile(source('42'));
+  const compiled=await import('data:text/javascript;charset=utf-8,'+
+    encodeURIComponent(module_source));
+  for(const params of [
+    undefined, {}, {tenant:'',generation:1}, {tenant:'  ',generation:1},
+    {tenant:'a',generation:0}, {tenant:'a',generation:-1},
+    {tenant:'a',generation:2147483648}, {tenant:'a',generation:1.5},
+    {tenant:'a',generation:'1'}, {tenant:'a'.repeat(129),generation:1},
+  ]) {
+    await assert.rejects(compiled.create_tenant(params),/E_TENANT_BINDING/);
+  }
+  const guest=await compiled.create_tenant({tenant:'a',generation:2147483647});
+  assert.equal(Object.isFrozen(guest),true,'trusted guest adapter must not be mutable');
+  assert.equal((await guest.on_message()).value,'42');
+  await assert.rejects(guest.on_message(),/E_MAIN_ALREADY_CALLED/);
+});
