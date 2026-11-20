@@ -73,3 +73,23 @@ Rust/Wasm compiled guest conformance. Web/Node Workers do **not** securely
 sandbox arbitrary JavaScript within the same origin. Do not run untrusted
 tenants through this JS backend. Use `npm test` with Node 22+ for its focused
 host tests, and report separate browser/compiler/guest validation evidence.
+
+
+## Narrow inline `sync task` preview (trusted JS only)
+
+The checked-i64 browser-worker subset admits pure, nonsuspending
+`sync task<int> { return expression; }` and inferred
+`sync task { return expression; }` expressions, including nesting.
+Empty `sync task {}` has a `void` result and can be executed as a
+standalone statement (or with `do`); `do sync task` discards an evaluated
+result. Every supported inline body executes immediately on the caller's
+logical execution path, without a child Future, TaskId, worker dispatch,
+or new cancellation target. Checked-i64 panics in discarded expressions
+are still observed. There is no host-JavaScript passthrough.
+
+This is **not** a general Task implementation. Task spawning, `await task`,
+suspension inside inline bodies, captures, `using`/`defer`, locks,
+cancellation safepoints and arbitrary side effects remain unsupported and
+fail closed before generating a guest module. Web Workers are not a secure
+TenantVM. See `tests/sync-task-inline.test.mjs` and the normative target in
+atto-spec #129; host tests alone do not certify cross-backend conformance.
