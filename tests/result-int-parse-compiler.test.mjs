@@ -287,3 +287,53 @@ test('trap denies untyped calls, arbitrary scalar operands, and nested trapping'
   const scalar='pub fnc main(): int { return trap 42; }';
   assert.throws(()=>transpile(scalar),e=>e.code==='E_UNSUPPORTED_EXPRESSION');
 });
+
+
+test('Result-valued trap evaluates the operand once on both success and Err',async()=>{
+  for(const [input,expected] of [['42','42'],['invalid','7']]) {
+    const guestSource='pub fnc main(): int { return match trap int.parse('+
+      JSON.stringify(input)+') over on Ok(value) -> value, on Err() -> 7 end; }';
+    const {module_source}=transpile(guestSource);
+    const before='function int_parse(text){';
+    assert.ok(module_source.includes(before),'expected generated parser');
+    const instrumented=module_source.replace(before,
+      'let __parse_invocations = 0;\n'+before+'\n __parse_invocations++;')+
+      '\nexport function __parse_count(){ return __parse_invocations; }\n';
+    const mod=await import('data:text/javascript;charset=utf-8,'+
+      encodeURIComponent(instrumented));
+    const guest=await mod.create_tenant({tenant:'exactly-once',generation:1});
+    assert.equal((await guest.on_message()).value,expected);
+    assert.equal(mod.__parse_count(),1,'trap must not re-evaluate its operand');
+    await assert.rejects(guest.on_message(),/E_MAIN_ALREADY_CALLED/);
+    assert.equal(mod.__parse_count(),1,'rejected second turn must not call parser');
+  }
+});
+
+test('Result identity trap never catches host faults as guest Err',async()=>{
+  const sourceText='pub fnc main(): int { return match trap int.parse("42") over '+
+    'on Ok(value) -> value, on Err() -> 7 end; }';
+  const {module_source}=transpile(sourceText);
+  const target='function int_parse(text){';
+  assert.ok(module_source.includes(target),'expected typed guest int parser');
+  // Test-only module instrumentation: a simulated host TextEncoder failure
+  // must escape unchanged; production module code is not modified.
+  const trappedHostFault=module_source.replace(target,
+    "const host_fault=new Error('HOST_FAULT');\n"+
+    'class TextEncoder { encode(){ throw host_fault; } }\n'+target)+
+    '\nexport {host_fault};\n';
+  const mod=await import('data:text/javascript;charset=utf-8,'+
+    encodeURIComponent(trappedHostFault));
+  const guest=await mod.create_tenant({tenant:'host-fault',generation:1});
+  await assert.rejects(guest.on_message(),error=>error===mod.host_fault,
+    'host error must retain identity and bypass guest trap');
+});
+
+test('unlowered ordinary throw and raise effects cannot masquerade as Result traps',()=>{
+  const template='pub fnc main(): int { return match trap int.parse("42") over '+
+    'on Ok(value) -> value, on Err() -> 7 end; }';
+  for(const keyword of ['throw','raise','panic']){
+    const sourceText=template.replace('trap int.parse("42")',
+      'trap '+keyword+' Error("x")');
+    assert.throws(()=>transpile(sourceText),e=>e.code==='E_TRAP_UNSUPPORTED');
+  }
+});
