@@ -73,3 +73,9 @@ test('shared four negative fixture families retain exact diagnostic codes', () =
     assert.throws(() => compile(guest(form)), {code}, form);
   }
 });
+
+test('source validation remains fail-closed for nonstrings', () => {
+  for (const input of [null, undefined, 0, {}, []]) {
+    assert.throws(() => compile(input), /error: invalid or oversized source/);
+  }
+});
