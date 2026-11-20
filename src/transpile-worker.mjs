@@ -107,19 +107,25 @@ export function transpile_to_worker(source) {
     }
     return left;
   };
-  // Statement-form sync task executes eagerly, even when its value is discarded.
-  // do task/await task remain unsupported: they need a real structured scheduler.
+  // Discarded inline task expressions require an explicit 'do' statement.
+  // Bare 'sync task { ... }' is an expression, not a statement.
+  // Spawned 'do task' / 'await task' still require a real scheduler.
   const preludes=[];
-  while(peek()==='do'||peek()==='sync'){
-    if(peek()==='do')i++;
+  while(peek()==='do'){
+    i++;
     if(peek()!=='sync')throw new TranspileError('E_TASK_UNSUPPORTED');
     const item=parse_expression();
     if(item.kind!=='inline_task')throw new TranspileError('E_TASK_UNSUPPORTED');
     preludes.push(item);
     if(peek()===';')i++;
-    else if(!['return','sync','do'].includes(peek()))
+    else if(!['return','do'].includes(peek())) {
+      if(peek()==='sync'&&tokens[i+1]==='task')
+        throw new TranspileError('E_TASK_DISCARD_REQUIRES_DO');
       throw new TranspileError('E_UNSUPPORTED_SYNTAX');
+    }
   }
+  if(peek()==='sync'&&tokens[i+1]==='task')
+    throw new TranspileError('E_TASK_DISCARD_REQUIRES_DO');
   expect('return');
   const ast=parse_expression();
   if(result_type(ast)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');

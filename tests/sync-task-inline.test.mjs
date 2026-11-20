@@ -20,12 +20,30 @@ test('typed and inferred sync task execute as inline scalar expressions',async()
   ])assert.equal(await execute(main(body)),want,body);
 });
 
-test('empty sync task and do sync task run inline and discard only after evaluation',async()=>{
-  assert.equal(await execute(main('sync task {}; do sync task<void> {} do sync task { return 13 * 3; }; return 42;')),'42');
+test('empty and value-bearing do sync task statements run inline and discard only after evaluation',async()=>{
+  assert.equal(await execute(main('do sync task {}; do sync task<void> {} do sync task { return 13 * 3; }; return 42;')),'42');
   assert.equal(await execute(main('do sync task<int> { return 4 + 2; }; return 42;')),'42');
   const {module_source}=transpile_to_worker(main('do sync task<int> { return 40; }; return sync task<int> { return 42; };'));
   assert.doesNotMatch(module_source,/TaskSpawn|TaskJoin|new Worker|new Promise|worker_threads/);
   assert.match(module_source,/\(\(\)=>\{return 40n;\}\)\(\)/);
+});
+
+test('do required for discard, but return sync task produces value',async()=>{
+  const valid=`pub fnc main(): int {
+    do sync task {};
+
+    return sync task<int> {
+        return 40 + 2;
+    };
+}`;
+  assert.equal(await execute(valid),'42');
+  const invalid=valid.replace('do sync task {};','sync task {};');
+  assert.throws(()=>transpile_to_worker(invalid),
+    error=>error instanceof TranspileError&&error.code==='E_TASK_DISCARD_REQUIRES_DO');
+  for(const bare of ['sync task {};','sync task {}','sync task<int> { return 42; };']){
+    assert.throws(()=>transpile_to_worker(main(bare+' return 7;')),
+      error=>error instanceof TranspileError&&error.code==='E_TASK_DISCARD_REQUIRES_DO');
+  }
 });
 
 test('discarded inline work still traps before following parent return',async()=>{
@@ -49,6 +67,11 @@ test('unsupported spawned/suspending/ill-typed task input fails before an artifa
     'return sync task { await task<int> { return 1; } };',
     'return sync task { using guard = new Mutex<int>(0); return 1; };',
     'return sync task { val x = 2; return x; };',
+    'sync task {}; return 42;',
+    'sync task {} return 42;',
+    'sync task { return 1; }; return 42;',
+    'do sync task {}; sync task {}; return 42;',
+    'do sync task {} sync task {} return 42;',
     'sync task { return 1; }; do task<int> {return 2;} return 42;',
   ];
   for(const body of bad)
