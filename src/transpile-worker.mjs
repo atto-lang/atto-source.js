@@ -42,8 +42,14 @@ function normalize_generic_closers(tokens) {
       depth--;
       out.push(token);
     } else if((token==='>>'||token==='>>>')&&depth>0) {
-      for(let j=0;j<token.length;j++)out.push('>');
-      depth=Math.max(0,depth-token.length);
+      // Close only actually open type arguments. An excess >> remains a
+      // capability-checked I/O token; never erase it as a type delimiter.
+      const closers=Math.min(depth,token.length);
+      for(let j=0;j<closers;j++)out.push('>');
+      depth-=closers;
+      const remainder=token.length-closers;
+      if(remainder===2)out.push('>>');
+      else if(remainder===1)out.push('>');
     } else {
       out.push(token);
     }
