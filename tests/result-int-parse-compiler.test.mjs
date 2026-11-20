@@ -192,6 +192,7 @@ test('generated Result guest fails closed on invalid tenant identity and epoch',
     encodeURIComponent(module_source));
   for(const params of [
     undefined, {}, {tenant:'',generation:1}, {tenant:'  ',generation:1},
+    {tenant:' x',generation:1}, {tenant:'x ',generation:1},
     {tenant:'a',generation:0}, {tenant:'a',generation:-1},
     {tenant:'a',generation:2147483648}, {tenant:'a',generation:1.5},
     {tenant:'a',generation:'1'}, {tenant:'a'.repeat(129),generation:1},
