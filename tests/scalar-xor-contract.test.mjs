@@ -23,6 +23,24 @@ test('caret return shorthand is the same operation as return, not XOR or exponen
   assert.equal(await guest('40 + 2','^'),'42');
 });
 
+test('restricted actor main accepts caret return without altering actor semantics',async()=>{
+  const source=[
+    'define actor Counter as',
+    'let int total = 0;',
+    'receive(ActorMail<int> mail): void {',
+    'self.total = self.total + mail.value;',
+    'stdio.println(self.total); return;',
+    '} end',
+    'pub fnc main(): int { val counter = spawn Counter(); ^ 0; }'
+  ].join(' ');
+  const output=compile(source);
+  assert.equal(output.guest_abi,'atto.js.browser.actor-subset.v1');
+  const mod=await import('data:text/javascript;charset=utf-8,'+
+    encodeURIComponent(output.module_source));
+  const actor=await mod.create_tenant({tenant:'actor-test',generation:1});
+  assert.deepEqual(await actor.on_message(),{value:'0',stdout:'',actors:1});
+});
+
 test('typed integer ^^ is bitwise XOR, not Boolean XOR or power',async()=>{
   assert.equal(await guest('12 ^^ 10'),'6');
   assert.equal(await guest('12 ^^ 10 ^^ 3'),'5');
