@@ -16,9 +16,13 @@ const vectors={
   'mixed-channel-stream-reverse':'060b61b80cfb3946a9510edd1190be6256212424',
   'actor-duplicate-direction':'d738937d72c791c41d55f088eaed65a5f9ed224f',
   'actor-mixed-directions':'1addd9cc44879d24f7e76b2d5eb69d6837a711ab',
+  'stopped-source':'cdfa3473793a0eed556288db06ebaa3ed8f9d4c7',
+  'closed-channel':'523e0da79a1e373c03c1ef216259b34c0b0c0889',
+  'stopped-consumer':'8896a1bf0aef74926be291ace2d86ecf852985b1',
+  'stopped-actor-sink':'329661c81fa4bb832fcacbbff5a4fb068e1bb6dd',
 };
-test('all eight canonical .atto fixtures have exact source Git blob hashes',()=>{
-  assert.equal(Object.keys(vectors).length,8);
+test('all twelve canonical .atto fixtures have exact source Git blob hashes',()=>{
+  assert.equal(Object.keys(vectors).length,12);
   for(const [name,expected] of Object.entries(vectors)){
     const source=readFileSync(new URL(
       './fixtures/conformance/pipe-rpipe-v1/'+name+'.atto',import.meta.url));
