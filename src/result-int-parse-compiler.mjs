@@ -106,13 +106,30 @@ export function transpile_result_int_parse_tokens(toks) {
   for (let n=0; peek()==='on'; n++) {
     if(n>=3)fail('E_MATCH_DUPLICATE');
     expect('on');
+    // Nominal constructor alias only: "on is Ok<value>" is exactly the
+    // same ADT tag as "on Ok(value)". Angle brackets bind a payload;
+    // they are NOT generic type tests or arbitrary guest extractors.
+    const isNominal=eat('is');
     const tag=toks[i++];
-    if (tag!=='Ok' && tag!=='Err') fail('E_MATCH');
+    if(tag!=='Ok' && tag!=='Err') {
+      if(isNominal && (tag==='None'||tag==='Some'))fail('E_TYPE');
+      fail(isNominal?'E_PATTERN':'E_MATCH');
+    }
     if(Object.hasOwn(arms,tag))fail('E_MATCH_DUPLICATE');
-    expect('(');
     let bind=null;
-    if(peek()!==')')bind=name();
-    expect(')');
+    if(isNominal) {
+      if(!eat('<'))fail('E_ARITY'); // Result<int,Error> Ok/Err have a payload.
+      if(peek()==='>' || peek()==='(' || peek()==='<' ||
+         peek()===',' || peek()==='None' || peek()==='Some')fail('E_UNSUPPORTED_RESULT_SYNTAX');
+      bind=name();
+      if(peek()!=='>')fail('E_UNSUPPORTED_RESULT_SYNTAX');
+      expect('>');
+    } else {
+      expect('(');
+      if(peek()!==')')bind=name();
+      expect(')');
+    }
+    if(tag==='Ok' && bind===null)fail('E_ARITY');
     expect('->');
     let expression;
     if(!returnMatch) {
