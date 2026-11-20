@@ -119,3 +119,48 @@ test('a pending admitted turn cannot be bypassed by forged route; malformed wire
   await assert.rejects(actor.on_route({...message(1),buffer:new ArrayBuffer(3)}),/E_ROUTE_WIRE/);
   await assert.rejects(actor.on_message(),/E_MAIN_ALREADY_CALLED/);
 });
+
+test('inline and attached protected Counter layouts generate identical executable modules',()=>{
+  const inline=transpile_to_worker(read('pass','inline_counter'));
+  const attached=transpile_to_worker(read('pass','attached_counter'));
+  assert.equal(inline.guest_abi,'atto.js.browser.actor-state-counter-preview.v1');
+  assert.equal(attached.module_source,inline.module_source,
+    'declaration placement must not alter state layout, checked effects or emitted code');
+});
+
+test('actor creation rejects malformed tenant handles and incarnation generations',async()=>{
+  const artifact=transpile_to_worker(read('pass','inline_counter'));
+  const module=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(artifact.module_source));
+  const bad=[
+    undefined,{}, {tenant:'t'}, {tenant:'',generation:1},
+    {tenant:' t',generation:1}, {tenant:'t',generation:0},
+    {tenant:'t',generation:-1}, {tenant:'t',generation:NaN},
+    {tenant:'t',generation:Infinity},{tenant:'t',generation:1.5},
+    {tenant:'t',generation:Number.MAX_SAFE_INTEGER+1},
+    {tenant:{toString:()=> 't'},generation:1}
+  ];
+  for(const value of bad){
+    await assert.rejects(()=>module.create_tenant(value),
+      /E_TENANT_ID|E_TENANT_GENERATION/);
+  }
+  const a=await module.create_tenant({tenant:'tenantA',generation:1});
+  const b=await module.create_tenant({tenant:'tenantA',generation:2});
+  await a.on_message();
+  await b.on_message();
+  assert.equal((await a.on_drain()).stdout,'1\\n');
+  assert.equal((await b.on_drain()).stdout,'1\\n',
+    'one new incarnation must never reuse stale actor state');
+});
+
+test('huge signed literals fail with explicit bound before BigInt parsing',()=>{
+  const source=read('pass','inline_counter');
+  for(const literal of ['9'.repeat(4096),'-'+'9'.repeat(4096)]){
+    assert.throws(()=>transpile_to_worker(
+      source.replace('counter.send(1)',`counter.send(${literal})`)),
+      error=>error instanceof TranspileError && error.code==='E_INT_OVERFLOW');
+  }
+  // Long leading-zero spelling is valid and has the same i64 semantics.
+  const padded=source.replace('counter.send(1)','counter.send('+'0'.repeat(2048)+'1)');
+  assert.equal(transpile_to_worker(padded).module_source,
+               transpile_to_worker(source).module_source);
+});
