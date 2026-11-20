@@ -105,3 +105,29 @@ test('trivia cannot invent operators, preserved raw Unicode safeguards',async()=
   assert.doesNotMatch(output.module_source,/\bimport\s*\(/);
   assert.equal(await guest('40 + 2','^'),'42');
 });
+
+
+test('line comments end at CR, LF, NEL, LS and PS; source cannot hide a return',async()=>{
+  for(const ending of ['\r','\n','\r\n','\u0085','\u2028','\u2029']){
+    const source='pub fnc main(): int { // return 0;'+ending+' ^ 42; }';
+    const output=compile(source);
+    const mod=await import('data:text/javascript;charset=utf-8,'+
+      encodeURIComponent(output.module_source));
+    const result=await (await mod.create_tenant({tenant:'line-end',generation:1})).on_message();
+    assert.equal(result.value,'42','line-ending '+JSON.stringify(ending));
+  }
+});
+
+test('operators in comments remain inert across every source line separator',()=>{
+  for(const ending of ['\r','\n','\u0085','\u2028','\u2029']){
+    const source='pub fnc main(): int { // ^^ <<< >>> << >>'+ending+' return 5; }';
+    assert.equal(compile(source).guest_abi,'atto.js.browser.subset.v1');
+  }
+});
+
+test('raw source bidi, NUL, ESC, DEL and lone surrogates still fail closed',()=>{
+  for(const ch of ['\0','\x1b','\x7f','\u202e','\ud800','\udc00']){
+    assert.throws(()=>compile('pub fnc main(): int { //'+ch+'\n ^ 42; }'),
+      error=>error instanceof TranspileError,ch.codePointAt(0)?.toString(16));
+  }
+});
