@@ -73,6 +73,9 @@ export function transpile_result_int_parse_tokens(toks) {
       if(eat(':'))expect('int');
       expect('=');
     }
+    // trap on an already-Result operand is a semantic identity. Do not
+    // install a JS catch or introduce a second Result layer.
+    eat('trap');
     expect('int');expect('.');expect('parse');expect('(');
     const passed=toks[i++];
     if(passed!==arg)
@@ -92,11 +95,17 @@ export function transpile_result_int_parse_tokens(toks) {
   const returnMatch=eat('return');
   expect('match');
   // One typed subject evaluated exactly once; not an arbitrary expression.
+  const trappedSubject=eat('trap');
   let direct=false;
   if (eat('int')) {
     direct=true;expect('.');expect('parse');
     if(functionName!==null)fail('E_UNSUPPORTED_RESULT_SYNTAX');
   } else {
+    // The only admitted trapped call here returns Result<int,Error>.
+    // No host function, scalar, unknown callable or arbitrary effect may
+    // silently acquire the trap capability.
+    if(trappedSubject && (functionName===null || peek()!==functionName))
+      fail('E_TRAP_UNSUPPORTED');
     const callee=name();
     if(callee!==functionName)fail('E_UNBOUND');
   }
