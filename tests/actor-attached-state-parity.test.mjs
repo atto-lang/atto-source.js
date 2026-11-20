@@ -80,3 +80,42 @@ test('checked overflow aborts actor incarnation before publishing partial state'
   await assert.rejects(actor.on_route(message(0)),/E_ACTOR_RETIRED/);
   await assert.rejects(actor.on_drain(),/E_ACTOR_RETIRED/);
 });
+
+test('a fatal checked overflow retires only the failing instance; new instances initialize independently',async()=>{
+  const original=read('pass','inline_counter');
+  const overflowSource=original.replace('s.count = 0;','s.count = 9223372036854775807;');
+  const failed=await build(overflowSource);
+  const sibling=await build(original);
+  await failed.on_message();
+  await sibling.on_message();
+  await assert.rejects(failed.on_drain(),error=>{
+    assert.equal(error.message,'E_GUEST_PANIC_1');
+    assert.equal(error.actor_failure?.actor_id,1);
+    assert.equal(error.actor_failure?.kind,'panic');
+    return true;
+  });
+  await assert.rejects(failed.on_drain(),/E_ACTOR_RETIRED/);
+  await assert.rejects(failed.on_route(message(0)),/E_ACTOR_RETIRED/);
+  assert.equal((await sibling.on_drain()).stdout,'1\\n');
+  const restarted=await build(original);
+  await restarted.on_message();
+  assert.equal((await restarted.on_drain()).stdout,'1\\n',
+    'fresh guest instance starts from its source-owned initializer');
+});
+
+test('a pending admitted turn cannot be bypassed by forged route; malformed wire stays rejected',async()=>{
+  const actor=await build(read('pass','inline_counter'));
+  await actor.on_message();
+  for(const forged of [
+    {...message(1),actor_id:2},
+    {...message(1),wire_type:'control'},
+    {...message(1),buffer:new ArrayBuffer(3)}
+  ]) {
+    await assert.rejects(actor.on_route(forged),/E_ADMISSION_PENDING/);
+  }
+  assert.equal((await actor.on_drain()).stdout,'1\\n');
+  await assert.rejects(actor.on_route({...message(1),actor_id:2}),/E_ACTOR_REF/);
+  await assert.rejects(actor.on_route({...message(1),wire_type:'control'}),/E_ROUTE_WIRE/);
+  await assert.rejects(actor.on_route({...message(1),buffer:new ArrayBuffer(3)}),/E_ROUTE_WIRE/);
+  await assert.rejects(actor.on_message(),/E_MAIN_ALREADY_CALLED/);
+});
