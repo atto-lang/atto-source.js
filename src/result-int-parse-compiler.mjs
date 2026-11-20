@@ -84,7 +84,8 @@ export function transpile_result_int_parse_tokens(toks) {
   const literal=parse_args();
   expect('over');
   const arms = {};
-  for (let n=0; n<2 && peek()==='on'; n++) {
+  for (let n=0; peek()==='on'; n++) {
+    if(n>=3)fail('E_MATCH_DUPLICATE');
     expect('on');
     const tag=toks[i++];
     if (tag!=='Ok' && tag!=='Err') fail('E_MATCH');
