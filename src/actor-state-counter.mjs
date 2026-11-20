@@ -20,7 +20,11 @@ export function compile_actor_state_counter(tokens, fail) {
     const negative = take('-');
     const token = tokens[i++];
     if (!/^[0-9]+$/.test(token ?? '')) fail('E_ACTOR_STATE_SYNTAX');
-    const n = BigInt(token);
+    // Bound parsing cost before constructing arbitrary-precision values.
+    // Leading zeros remain valid; only the significant digits determine range.
+    const digits = token.replace(/^0+/, '') || '0';
+    if (digits.length > 19) fail('E_INT_OVERFLOW');
+    const n = BigInt(digits);
     if (n > MAX + BigInt(negative)) fail('E_INT_OVERFLOW');
     return negative ? -n : n;
   };
@@ -99,7 +103,11 @@ export function compile_actor_state_counter(tokens, fail) {
   const lines = [
     '// Checked Atto scalar sealed-state Worker profile; no source evaluation.',
     'const MAX=9223372036854775807n,MIN=-9223372036854775808n;',
-    'export async function create_tenant({tenant,generation}){',
+    'export async function create_tenant({tenant,generation}={}){',
+    ' if(typeof tenant!=="string"||tenant.length===0||tenant.length>128',
+    '    ||tenant.trim()!==tenant)throw new Error("E_TENANT_ID");',
+    ' if(!Number.isSafeInteger(generation)||generation<=0)',
+    '    throw new Error("E_TENANT_GENERATION");',
     ' let started=false,retired=false,draining=false;',
     ` let count=${initial}n;`,
     ' const pending=[];',
