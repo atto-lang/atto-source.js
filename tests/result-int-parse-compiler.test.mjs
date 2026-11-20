@@ -233,8 +233,9 @@ test('nominal on-is Result: deterministic hostile and boundary source corpus',as
       'different Result guest code for '+JSON.stringify(value));
     const decimal=/^[+-]?[0-9]+$/.test(value);
     const n=decimal ? BigInt(value) : null;
-    const expected=n!==null&&n>=-9223372036854775808n&&
-      n<=9223372036854775807n ? String(n) : '9';
+    const expected=n!==null&&value.length<=1024&&
+      n>=-9223372036854775808n&&n<=9223372036854775807n
+      ? String(n) : '9';
     assert.equal(await execute(newer),expected,
       'wrong checked Result branch for '+JSON.stringify(value));
   }
