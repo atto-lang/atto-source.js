@@ -38,7 +38,7 @@ test('reject ill-typed, nonexhaustive and unsupported effects without JS artifac
   for(const [src,code] of [
     [base.replace('on Err() -> 0','on Err() -> 0, on Err() -> 1'),'E_MATCH_DUPLICATE'],
     [base.replace(', on Err() -> 0',''),'E_MATCH_NONEXHAUSTIVE'],
-    [base.replace('int.parse(text)?','int.parse(42)?'),'E_UNSUPPORTED_RESULT_SYNTAX'],
+    [base.replace('int.parse(text)?','int.parse(42)?'),'E_TYPE'],
     [base.replace('return Ok(parsed)','return Err(parsed)'),'E_UNSUPPORTED_RESULT_SYNTAX'],
     [base.replace('on Ok(value) -> value','on Ok(value) -> missing'),'E_UNBOUND'],
     [base.replace('on Err() -> 0','on Err() -> trap 1'),'E_TYPE']
