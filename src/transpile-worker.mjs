@@ -104,8 +104,13 @@ export function transpile_to_worker(source) {
     throw new TranspileError('E_UNSUPPORTED_CONTINUOUS_PIPE');
   reject_unsupported_mutex_constructor(tokens);
   // Sealed actor-state programs must not fall back to mutable actor-field code.
-  if(tokens[0]==='define'&&tokens.includes('handle_state'))
-    return compile_actor_state_counter(tokens, code=>{throw new TranspileError(code);});
+  if(tokens[0]==='define'&&tokens.includes('handle_state')) {
+    // The legacy sealed-state parser expects '-' then '>' separately;
+    // Result/match requires the maximal-munch '->' token. Normalize only
+    // for this dedicated grammar, after source security checks.
+    const stateTokens=tokens.flatMap(token=>token==='->'?['-','>']:[token]);
+    return compile_actor_state_counter(stateTokens, code=>{throw new TranspileError(code);});
+  }
   if(tokens[0]==='define')return transpile_actor_tokens(tokens);
   if(tokens.includes('Result')||tokens.includes('match')||tokens.includes('parse')) {
     try {return transpile_result_int_parse_tokens(tokens);}
