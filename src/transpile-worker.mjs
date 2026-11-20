@@ -15,7 +15,7 @@ function tokenize(source) {
     const tail = source.slice(i);
     // A line comment ends at *any* recognized source line separator, not
     // just LF. Otherwise CR/U+2028 source can be hidden from the parser.
-    const match = /^(?:\s+|\/\/[^\r\n\u0085\u2028\u2029]*|\/\*[\s\S]*?\*\/)/.exec(tail);
+    const match = /^(?:[\s\u0085]+|\/\/[^\r\n\u0085\u2028\u2029]*|\/\*[\s\S]*?\*\/)/.exec(tail);
     if (match) { i += match[0].length; continue; }
     // Maximal-munch disambiguation: ^ returns, ^^ bitwise XOR;
     // <<< and >>> shift, whereas << and >> are typed I/O, not shifts.
