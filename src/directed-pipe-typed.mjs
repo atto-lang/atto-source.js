@@ -77,16 +77,20 @@ export function check_unicast_pipe_plans(plans) {
   if (!Array.isArray(plans)) reject('E_PIPE_PLANS');
   const length=Object.getOwnPropertyDescriptor(plans,'length')?.value;
   if (!Number.isSafeInteger(length)||length>64)reject('E_PIPE_PLAN_LIMIT');
-  const edges=new Set(),outputs=new Set();
+  const edges=new Set(),outputs=new Set(),inputs=new Set();
   for(let i=0;i<length;i++) {
     const plan=own(plans,String(i));
     if (!branded.has(plan)) reject('E_PIPE_PLAN_CAPABILITY');
     for(const edge of plan.dataEdges) {
       const source=JSON.stringify([plan.tenant,edge.source]);
-      const pair=JSON.stringify([source,edge.sink]);
+      const sink=JSON.stringify([plan.tenant,edge.sink]);
+      const pair=JSON.stringify([source,sink]);
       if (edges.has(pair)) reject('E_PIPE_DUPLICATE_EDGE');
       if (outputs.has(source)) reject('E_PIPE_OUTPUT_OCCUPIED');
-      edges.add(pair);outputs.add(source);
+      // Unicast means one writer per input as well as one reader per output.
+      // Explicit fan-in needs a checked merge adapter, never an implicit join.
+      if (inputs.has(sink)) reject('E_PIPE_INPUT_OCCUPIED');
+      edges.add(pair);outputs.add(source);inputs.add(sink);
     }
   }
   return true;
