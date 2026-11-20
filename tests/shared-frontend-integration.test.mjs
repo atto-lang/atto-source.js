@@ -114,3 +114,12 @@ test('excess generic closing angles cannot swallow typed I/O admission',()=>{
   rejects('pub fnc main(): int { val lock = new Mutex<Option<int>>(0); return 0; }',
     'E_LOCK_UNSUPPORTED');
 });
+
+test('source, raw-token, and expression nesting budgets reject before guest creation',()=>{
+  rejects('pub fnc main(): int { //'+ 'x'.repeat(65536)+'\n ^ 0; }',
+    'E_SOURCE_LIMIT');
+  rejects('pub fnc main(): int { ^ '+Array(4200).fill('1').join('+')+'; }',
+    'E_TOKEN_LIMIT');
+  rejects('pub fnc main(): int { ^ '+'('.repeat(65)+'1'+')'.repeat(65)+'; }',
+    'E_NESTING_LIMIT');
+});
