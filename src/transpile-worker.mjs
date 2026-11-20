@@ -49,8 +49,14 @@ export function transpile_to_worker(source) {
     throw new TranspileError('E_BIDI_CONTROL');
   const tokens=tokenize(source);
   if(tokens[0]==='define')return transpile_actor_tokens(tokens);
-  if(tokens.includes('Result')||tokens.includes('match')||tokens.includes('parse'))
-    return transpile_result_int_parse_tokens(tokens);
+  if(tokens.includes('Result')||tokens.includes('match')||tokens.includes('parse')) {
+    try { return transpile_result_int_parse_tokens(tokens); }
+    catch (error) {
+      // Preserve the backend's stable diagnostic class and code contract.
+      if(typeof error?.code==='string') throw new TranspileError(error.code);
+      throw error;
+    }
+  }
   let i=0;
   const peek=()=>tokens[i];
   const expect=token=>{if(tokens[i++]!==token)throw new TranspileError('E_UNSUPPORTED_SYNTAX');};
