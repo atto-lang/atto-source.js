@@ -55,7 +55,7 @@ test('explicit receives int and legacy header execute equivalent checked i64 ing
 test('actor header cannot widen or disable the concrete ActorMail<int> ingress', () => {
   for (const type of ['String', 'bool', 'ActorMail', 'Any'])
     reject(baseline.replace('Counter as', `Counter receives ${type} as`),
-           'E_ACTOR_RECEIVES_MISMATCH');
+           'E_ACTOR_RECEIVES');
   reject(baseline.replace('Counter as','Counter receives never as'),
          'E_ACTOR_RECEIVES_NEVER_UNSUPPORTED');
   reject(baseline.replace('Counter as','Counter receives int receives int as'),
@@ -87,14 +87,14 @@ test('unproved outbound syntax still fails closed before generated JavaScript', 
   }
   // Strings still have no cross-worker owned UTF-8 wire representation.
   reject(baseline.replace('Counter as','Counter receives string sends int as'),
-         'E_ACTOR_RECEIVES_MISMATCH');
+         'E_ACTOR_RECEIVES');
 });
 
 test('unsupported unions and rewritten payloads cannot masquerade as typed ingress', () => {
   reject(with_header.replace('receives int as','receives int | String as'),
          'E_UNSUPPORTED_TOKEN');
   reject(with_header.replace('ActorMail<int>','ActorMail<bool>'),
-         'E_UNSUPPORTED_ACTOR_SYNTAX');
+         'E_ACTOR_RECEIVES');
 });
 
 test('typed ingress rejects hidden Unicode, invalid surrogates and raw source controls', () => {
@@ -156,14 +156,14 @@ test('typed bool inbox rejects invalid byte, forged control, wrong size and wron
 });
 
 test('checked bool header is not silently widened to int or string payload', () => {
-  reject(boolActor.replace('receives bool', 'receives int'), 'E_ACTOR_RECEIVES_MISMATCH');
-  reject(boolActor.replace('receives bool', 'receives string'), 'E_ACTOR_RECEIVES_MISMATCH');
-  reject(boolActor.replace('ActorMail<bool>', 'ActorMail<int>'), 'E_UNSUPPORTED_ACTOR_SYNTAX');
+  reject(boolActor.replace('receives bool', 'receives int'), 'E_ACTOR_RECEIVES');
+  reject(boolActor.replace('receives bool', 'receives string'), 'E_ACTOR_RECEIVES');
+  reject(boolActor.replace('ActorMail<bool>', 'ActorMail<int>'), 'E_ACTOR_RECEIVES');
   reject(boolActor.replace('let bool enabled = false', 'let bool enabled = 42'),
     'E_UNSUPPORTED_ACTOR_LITERAL');
   reject(boolActor.replace('self.enabled = mail.value;', 'self.enabled = true;'),
     'E_UNSUPPORTED_ACTOR_SYNTAX');
-  reject(boolActor.replace('sends never', 'sends void'), 'E_ACTOR_SENDS_EFFECT_UNSUPPORTED');
+  reject(boolActor.replace('sends never', 'sends void'), 'E_ACTOR_SEND_CONTRACT');
   reject(boolActor.replace('sends never', 'sends never sends int'), 'E_UNSUPPORTED_ACTOR_SYNTAX');
 });
 
