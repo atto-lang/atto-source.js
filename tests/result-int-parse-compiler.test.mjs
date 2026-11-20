@@ -169,3 +169,18 @@ test('on is patterns reject arbitrary extractors, wrong families, and unchecked 
     assert.throws(()=>transpile(bad),e=>e.code===code,
       'nominal ADT code must fail without a generated guest: '+bad);
 });
+
+test('nominal on-is Result patterns preserve checked braced match and guard semantics',async()=>{
+  const old='pub fnc main(): int { match int.parse("-00042") over '+
+    'on Ok(n) -> { if n eq -42 then return 42; else return 0; fi } '+
+    'on Err() -> { return 0; } end }';
+  const newer=old.replace('on Ok(n)','on is Ok<n>')
+    .replace('on Err()','on is Err<error>');
+  assert.equal(transpile(newer).module_source,transpile(old).module_source);
+  assert.equal(await execute(newer),'42');
+  assert.equal(await execute(newer.replace('n eq -42','n eq -41')),'0');
+  assert.throws(()=>transpile(newer.replace('if n eq','if missing eq')),
+    e=>e.code==='E_UNBOUND');
+  assert.throws(()=>transpile(newer.replace('on is Err<error> -> { return 0; }','')),
+    e=>e.code==='E_MATCH_NONEXHAUSTIVE');
+});
