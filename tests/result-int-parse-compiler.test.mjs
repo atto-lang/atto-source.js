@@ -338,3 +338,56 @@ test('unlowered ordinary throw and raise effects cannot masquerade as Result tra
     assert.throws(()=>transpile(sourceText),e=>e.code==='E_TRAP_UNSUPPORTED');
   }
 });
+
+
+test('canonical trap! compiles to the same single Result layer as migration trap',async()=>{
+  for(const [input,expected] of [['42','42'],['invalid','7']]){
+    const ordinary=source(input,'7');
+    const direct=ordinary.replace('val parsed = int.parse(text)?; return Ok(parsed);',
+      'return int.parse(text);');
+    const pairs=[
+      [ordinary,ordinary.replace('match parse_id(','match trap!parse_id(')],
+      [ordinary,ordinary.replace('match parse_id(','match trap! parse_id(')],
+      [ordinary,ordinary.replace('val parsed = int.parse(text)?;',
+        'val parsed = trap! int.parse(text)?;')],
+      [direct,direct.replace('return int.parse(text);','return trap! int.parse(text);')]
+    ];
+    for(const [baseline,canonical] of pairs){
+      assert.notEqual(canonical,baseline);
+      const plain=transpile(baseline),bang=transpile(canonical);
+      assert.equal(bang.guest_abi,plain.guest_abi);
+      assert.equal(bang.module_source,plain.module_source,
+        'trap! on already-Result must not double-wrap, catch host faults, or re-evaluate');
+      assert.equal(await execute(canonical),expected);
+    }
+  }
+  const direct='pub fnc main(): int { return match int.parse("invalid") over '+
+    'on Ok(value) -> value, on Err() -> 7 end; }';
+  const bang=direct.replace('match int.parse(','match trap! int.parse(');
+  assert.equal(transpile(bang).module_source,transpile(direct).module_source);
+  assert.equal(await execute(bang),'7');
+});
+
+test('bang syntax rejects unproved exceptional effects and operator boundary confusion',async()=>{
+  const base='pub fnc main(): int { return match trap! int.parse("42") over '+
+    'on Ok(value) -> value, on Err() -> 7 end; }';
+  for(const [fragment,code] of [
+    ['trap! host','E_TRAP_UNSUPPORTED'],
+    ['trap! trap! int.parse','E_TRAP_UNSUPPORTED'],
+    ['trap! throw! Error','E_TRAP_UNSUPPORTED'],
+    ['trap! raise! Error','E_TRAP_UNSUPPORTED'],
+    ['trap! panic! Error','E_TRAP_UNSUPPORTED'],
+    ['trap ! int.parse','E_UNSUPPORTED_TOKEN'],
+    ['trap!= int.parse','E_UNSUPPORTED_TOKEN'],
+    ['trap!eq int.parse','E_UNSUPPORTED_TOKEN']
+  ]) {
+    const bad=base.replace('trap! int.parse',fragment);
+    assert.throws(()=>transpile(bad),e=>e.code===code,
+      'unsupported spelling must not emit a guest artifact: '+fragment);
+  }
+  const data='pub fnc main(): int { return match int.parse('+
+    JSON.stringify('trap! throw! raise! panic!')+') over '+
+    'on Ok(value) -> value, on Err() -> 7 end; }';
+  assert.equal(await execute(data),'7','string payload is never relexed as effects');
+  assert.equal(await execute(base.replace('match trap!', 'match /* trap! throw! */ trap!')),'42');
+});
