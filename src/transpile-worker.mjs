@@ -142,7 +142,13 @@ export function transpile_to_worker(source) {
     const stateTokens=tokens.flatMap(token=>token==='->'?['-','>']:[token]);
     return compile_actor_state_counter(stateTokens, code=>{throw new TranspileError(code);});
   }
-  if(tokens[0]==='define')return transpile_actor_tokens(tokens);
+  if(tokens[0]==='define') {
+    // The shared lexer admits | for sealed state callbacks, but the regular
+    // ActorMail parser does not support type unions; preserve the existing
+    // E_UNSUPPORTED_TOKEN diagnostic instead of misclassifying its grammar.
+    if(tokens.includes('|'))throw new TranspileError('E_UNSUPPORTED_TOKEN');
+    return transpile_actor_tokens(tokens);
+  }
   if(tokens.includes('Result')||tokens.includes('match')||tokens.includes('parse')) {
     try {return transpile_result_int_parse_tokens(tokens);}
     catch(error) {
