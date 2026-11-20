@@ -61,13 +61,31 @@ test('actor header cannot widen or disable the concrete ActorMail<int> ingress',
          'E_UNSUPPORTED_ACTOR_SYNTAX');
 });
 
-test('unproved sends/emits effect headers fail closed before JavaScript generation', () => {
+test('empty outbound effect satisfies typed sends bounds without granting host I/O', async () => {
   for (const header of ['Counter', 'Counter receives int']) {
-    const with_sends = baseline.replace('Counter as', `${header} sends int as`);
-    const with_emits = baseline.replace('Counter as', `${header} emits int as`);
-    reject(with_sends, 'E_ACTOR_SENDS_EFFECT_UNSUPPORTED');
-    reject(with_emits, 'E_ACTOR_EMITS_EFFECT_UNSUPPORTED');
+    for (const effect of ['int', 'bool', 'never']) {
+      const source = baseline
+        .replace('Counter as', `${header} sends ${effect} as`)
+        .replace('receive(ActorMail<int>', 'susp receive(ActorMail<int>')
+        .replace('pub fnc main()', 'pub susp fnc main()');
+      const actor = await instantiate(source);
+      assert.deepEqual(await actor.on_route(route(40)),
+        {value:'delivered',stdout:'40\\n',actors:1});
+    }
   }
+});
+
+test('unproved outbound syntax still fails closed before generated JavaScript', () => {
+  for (const header of ['Counter', 'Counter receives int']) {
+    const mk = clause => baseline.replace('Counter as', `${header} ${clause} as`);
+    for (const unknown of ['String', 'Any', 'SomeActor'])
+      reject(mk(`sends ${unknown}`), 'E_ACTOR_SENDS_EFFECT_UNSUPPORTED');
+    reject(mk('emits int'), 'E_ACTOR_EMITS_EFFECT_UNSUPPORTED');
+    reject(mk('sends int sends int'), 'E_UNSUPPORTED_ACTOR_SYNTAX');
+  }
+  // Strings still have no cross-worker owned UTF-8 wire representation.
+  reject(baseline.replace('Counter as','Counter receives string sends int as'),
+         'E_ACTOR_RECEIVES_MISMATCH');
 });
 
 test('unsupported unions and rewritten payloads cannot masquerade as typed ingress', () => {
