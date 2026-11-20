@@ -69,6 +69,7 @@ test('empty outbound effect satisfies typed sends bounds without granting host I
         .replace('receive(ActorMail<int>', 'susp receive(ActorMail<int>')
         .replace('pub fnc main()', 'pub susp fnc main()');
       const actor = await instantiate(source);
+      assert.deepEqual(await actor.on_message(), {value:'0',stdout:'',actors:1});
       assert.deepEqual(await actor.on_route(route(40)),
         {value:'delivered',stdout:'40\n',actors:1});
     }
