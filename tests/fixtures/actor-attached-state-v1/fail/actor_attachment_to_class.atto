@@ -1,0 +1,4 @@
+// TARGET REJECT: owner kind must be actor, never class
+define class Counter as end
+define state on actor Counter as { let int count: 0; }
+pub fnc main(): int { return 0; }
