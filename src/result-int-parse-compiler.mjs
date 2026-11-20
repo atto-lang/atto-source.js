@@ -45,6 +45,9 @@ export function transpile_result_int_parse_tokens(toks) {
   let i=0;
   const peek=()=>toks[i];
   const eat=(token)=>peek()===token ? (i++,true) : false;
+  // Canonical bang spelling; bare trap is a migration alias.
+  // Both are identity lowering ONLY on the statically proven Result subset.
+  const eat_trap=()=>eat('trap!')||eat('trap');
   const expect=(token)=>{if(!eat(token))fail('E_UNSUPPORTED_RESULT_SYNTAX');};
   const name=()=>id(toks[i++]);
   const parse_args=()=>{
@@ -75,7 +78,7 @@ export function transpile_result_int_parse_tokens(toks) {
     }
     // trap on an already-Result operand is a semantic identity. Do not
     // install a JS catch or introduce a second Result layer.
-    eat('trap');
+    eat_trap();
     expect('int');expect('.');expect('parse');expect('(');
     const passed=toks[i++];
     if(passed!==arg)
@@ -95,7 +98,7 @@ export function transpile_result_int_parse_tokens(toks) {
   const returnMatch=eat('return');
   expect('match');
   // One typed subject evaluated exactly once; not an arbitrary expression.
-  const trappedSubject=eat('trap');
+  const trappedSubject=eat_trap();
   let direct=false;
   if (eat('int')) {
     direct=true;expect('.');expect('parse');
