@@ -123,3 +123,49 @@ test('Atto Error is nominal, identity-preserving and has no host stack',async()=
   const propagated=first; // A caller must retain the same original Err handle.
   assert.strictEqual(propagated.error,first.error);
 });
+
+test('nominal on is Result patterns compile to byte-identical trusted JS guests',async()=>{
+  const old=source('42','7');
+  const next=old.replace('on Ok(value)','on is Ok<value>')
+    .replace('on Err()','on is Err<error>');
+  const oldGuest=transpile(old),isGuest=transpile(next);
+  assert.equal(oldGuest.guest_abi,'atto.js.browser.result-int-parse.v1');
+  assert.equal(isGuest.guest_abi,oldGuest.guest_abi);
+  assert.equal(isGuest.module_source,oldGuest.module_source,
+    'is-ADT constructor binders must not alter generated guest instructions');
+  for(const [value,expected] of [
+    ['42','42'],['+42','42'],['bad','7'],
+    ['9223372036854775808','7']
+  ]) {
+    const before=source(value,'7');
+    const after=before.replace('on Ok(value)','on is Ok<value>')
+      .replace('on Err()','on is Err<error>');
+    assert.equal(await execute(before),expected);
+    assert.equal(await execute(after),expected);
+  }
+  const discard=next.replace('Ok<value> -> value','Ok<_> -> 5');
+  assert.equal(await execute(discard),'5');
+  assert.equal(await execute(discard.replace('"42"','"invalid"')),'7');
+  const errWildcard=next.replace('Err<error>','Err<_>');
+  assert.equal(await execute(errWildcard.replace('"42"','"invalid"')),'7');
+});
+test('on is patterns reject arbitrary extractors, wrong families, and unchecked payloads',()=>{
+  const old=source('42','7');
+  const canonical=old.replace('on Ok(value)','on is Ok<value>')
+    .replace('on Err()','on is Err<error>');
+  const negatives=[
+    [canonical.replace('Ok<value>','Some<value>'),'E_TYPE'],
+    [canonical.replace('Ok<value>','None'),'E_TYPE'],
+    [canonical.replace('Ok<value>','ArbitraryExtractor<value>'),'E_PATTERN'],
+    [canonical.replace('Ok<value>','Ok'),'E_ARITY'],
+    [canonical.replace('Ok<value>','Ok<>'),'E_UNSUPPORTED_RESULT_SYNTAX'],
+    [canonical.replace('Ok<value>','Ok<Some<value>>'),'E_UNSUPPORTED_RESULT_SYNTAX'],
+    [canonical.replace('Ok<value>','Ok<left,right>'),'E_UNSUPPORTED_RESULT_SYNTAX'],
+    [canonical.replace('Err<error>','Err()'),'E_ARITY'],
+    [canonical.replace('on is Err<error> -> 7','on Err() -> 7, on is Err<error> -> 8'),'E_MATCH_DUPLICATE'],
+    [canonical.replace('Ok<value> -> value','Ok<_> -> _'),'E_UNBOUND'],
+  ];
+  for(const [bad,code] of negatives)
+    assert.throws(()=>transpile(bad),e=>e.code===code,
+      'nominal ADT code must fail without a generated guest: '+bad);
+});
