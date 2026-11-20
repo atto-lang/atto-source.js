@@ -55,3 +55,11 @@ test('result module per-tenant main call gate, no shared returned Error object',
   assert.equal((await b.on_message()).value,'9');
   await assert.rejects(a.on_message(),/E_MAIN_ALREADY_CALLED/);
 });
+
+test('direct builtin match and escaped-source injection remain typed data',async()=>{
+  const direct='pub fnc main(): int { return match int.parse("42") over on Ok(value) -> value, on Err() -> 0 end; }';
+  assert.equal(await execute(direct),'42');
+  // Escaping through the string token must never splice a JS statement.
+  assert.equal(await execute(source('"); process.exit(77); ("','7')),'7');
+  assert.equal(await execute(source('4\\u00002','7')),'7');
+});
