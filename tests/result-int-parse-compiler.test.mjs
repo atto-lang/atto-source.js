@@ -245,19 +245,25 @@ test('nominal on-is Result: deterministic hostile and boundary source corpus',as
 test('trap on an existing Result preserves the exact generated guest and Ok/Err layers',async()=>{
   for(const [input,expected] of [['42','42'],['invalid','7']]) {
     const plain=source(input,'7');
-    const forms=[
-      plain.replace('return match parse_id(', 'return match trap parse_id('),
-      plain.replace('val parsed = int.parse(text)?;', 'val parsed = trap int.parse(text)?;'),
-      plain.replace('val parsed = int.parse(text)?; return Ok(parsed);',
-        'return trap int.parse(text);'),
+    // Compare each trapped spelling to its structurally identical untrapped
+    // source, not to an unrelated Result-producing return strategy.
+    const directlyReturned=plain.replace(
+      'val parsed = int.parse(text)?; return Ok(parsed);',
+      'return int.parse(text);');
+    assert.notEqual(directlyReturned,plain,'direct-return baseline must exist');
+    const pairs=[
+      [plain,plain.replace('return match parse_id(', 'return match trap parse_id(')],
+      [plain,plain.replace('val parsed = int.parse(text)?;', 'val parsed = trap int.parse(text)?;')],
+      [directlyReturned,directlyReturned.replace('return int.parse(text);','return trap int.parse(text);')],
     ];
-    for(const trapped of forms){
-      assert.notEqual(trapped,plain,'fixture must contain the trap spelling');
-      const baseline=transpile(plain);
+    for(const [untrapped,trapped] of pairs){
+      assert.notEqual(trapped,untrapped,'fixture must contain the trap spelling');
+      const baseline=transpile(untrapped);
       const candidate=transpile(trapped);
       assert.equal(candidate.guest_abi,baseline.guest_abi);
       assert.equal(candidate.module_source,baseline.module_source,
-        'already-Result trap must not allocate a new Result or install a host catch');
+        'Result-valued trap must preserve the same IR/ESM and avoid host catches');
+      assert.equal(await execute(untrapped),expected);
       assert.equal(await execute(trapped),expected);
     }
   }
