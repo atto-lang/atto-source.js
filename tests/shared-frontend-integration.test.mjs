@@ -91,3 +91,12 @@ test('raw control and line separator rules precede every subcompiler',()=>{
     assert.throws(()=>transpile_to_worker('//'+ch+'\n'+scalar),
       e=>e instanceof TranspileError);
 });
+
+test('nested generic-closer expansion respects total lexer token budget',()=>{
+  // Raw 4096-token budget alone is not enough: maximal-munch >>> expands to
+  // three > tokens in type contexts. This source stays below raw token limit.
+  const input='pub fnc main(): int { return '+
+    'Result<'.repeat(1400)+'int'+'>>>'.repeat(466)+'>>'+'; }';
+  assert.ok(new TextEncoder().encode(input).byteLength < 64*1024);
+  rejects(input,'E_TOKEN_LIMIT');
+});
