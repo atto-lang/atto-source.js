@@ -123,3 +123,18 @@ test('supplemental spec edge suite runs real multi-argument and i64 ESM guests',
     await assert.rejects(access(join(dir,name+'.mjs')),{code:'ENOENT'});
   }
 }));
+
+
+test('task/sync/yield cannot be function, parameter or val names in pure pipeline lowering',()=>{
+  for(const name of ['sync','task','yield']) {
+    const samples=[
+      'fnc '+name+'(int x): int -> x; pub fnc main(): int -> 42 |> '+name+';',
+      'fnc f(int '+name+'): int -> 42; pub fnc main(): int -> f(1);',
+      'pub fnc main(): int { val '+name+' = 42; return '+name+'; }'
+    ];
+    for(const source of samples)
+      assert.throws(()=>compileFunctionalPipelineSource(source),
+        e=>e instanceof FunctionalPipelineSourceError&&e.code==='E_NAME',
+        name+': pure guest must reject reserved callable/binding');
+  }
+});
