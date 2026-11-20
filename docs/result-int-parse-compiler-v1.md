@@ -21,3 +21,9 @@ the proven grammar fails closed. Spec candidate atto-spec #124, shared
 conformance #68, tracker #20. Tests transpile real Atto source into JS
 module code and execute it; only exact-head successful CI can certify
 this new candidate. No public /play binary or release pin is changed.
+
+## Byte-exact canonical guest conformance targets
+
+`tests/fixtures/trap-result-v1/parse-id-ok.atto` and `parse-id-invalid.atto` are copied unchanged from [atto-platform-conformance #68](https://github.com/atto-lang/atto-platform-conformance/pull/68) at source commit `e1164c269fc61726ff58a05003d2311a3f7d1f31`. The local test checks the exact original Git **blob** SHAs (`41b7dfd0…`, `3a43c445…`), transpiles the unchanged source with this compiler, imports the generated module as executable JavaScript, and checks each target exit outcome in two distinct tenant-scoped, one-shot guest instances.
+
+A separate isolated V8 validation of the PR code at head `3437f9b68f63da304f6b4984160a518ccad688b0` executed 26 focused pass/reject/edge cases and both canonical byte-exact source fixtures successfully. It used a minimal TextEncoder polyfill in the test isolate and did **not** execute Node Workers or GitHub Actions. This local verification must not be entered as a certified multi-backend CI receipt. Real exact-head Node suite and security audit remain mandatory.
