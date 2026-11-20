@@ -207,7 +207,7 @@ export function transpile_result_int_parse_tokens(toks) {
     // This validates the trusted Worker adapter contract, not host
     // authorization. Real TenantVM admission must still bind identity,
     // capability ceiling, epoch, and revocation at its host boundary.
-    ' if(typeof tenant!=="string"||!tenant.trim()||tenant.length>128||',
+    ' if(typeof tenant!=="string"||tenant.length===0||tenant.length>128||tenant.trim()!==tenant||',
     '    !Number.isSafeInteger(generation)||generation<1||generation>2147483647)',
     "  throw new Error('E_TENANT_BINDING');",
     ' let executed=false;',
