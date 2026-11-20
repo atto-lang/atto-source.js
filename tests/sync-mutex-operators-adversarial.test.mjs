@@ -43,7 +43,7 @@ test('bare discarded inline task remains forbidden',()=>{
   for(const body of ['sync task {}; return 42;',
     'sync task<int>{return 42;}; return 42;',
     'do sync task {}; sync task {}; return 42;'])
-    reject(body,'E_TASK_DISCARD_REQUIRES_DO');
+    reject(body,'E_SYNTAX');
 });
 test('nested generics disambiguate closers and channel reads',()=>{
   for(const type of ['Mutex<int>','Mutex<Option<int>>',

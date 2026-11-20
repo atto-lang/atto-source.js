@@ -180,12 +180,12 @@ export function transpile_to_worker(source) {
     if(peek()===';')i++;
     else if(!['return','^','do'].includes(peek())) {
       if(peek()==='sync'&&tokens[i+1]==='task')
-        throw new TranspileError('E_TASK_DISCARD_REQUIRES_DO');
+        throw new TranspileError('E_SYNTAX');
       throw new TranspileError('E_UNSUPPORTED_SYNTAX');
     }
   }
   if(peek()==='sync'&&tokens[i+1]==='task')
-    throw new TranspileError('E_TASK_DISCARD_REQUIRES_DO');
+    throw new TranspileError('E_SYNTAX');
   if(peek()==='^')i++;else expect('return');
   const ast=parse_expression();
   if(result_type(ast)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
