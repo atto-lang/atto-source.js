@@ -81,3 +81,32 @@ matching the stricter `atto-source.js#71` admission check. The standalone
 Result compiler must not silently weaken this policy if merged before the
 integration branch. Positive/negative tenant probes run as generated-guest
 tests; host authentication and TenantVM security remain separate obligations.
+
+
+### Canonical exceptional bang spelling (2026-11-20)
+
+The owner-selected new spelling is `trap! operand`; the bare `trap operand`
+remains migration-compatible while spec and formatter PRs are reconciled.
+This **restricted Result<int,Error>** compiler now recognizes both spellings,
+including adjacent `trap!parse_id(...)`, but ONLY for statically proven
+`int.parse(text)` or local `parse_id(string)` operands that already return
+`Result<int,Error>`. Canonical and migration spellings lower to exactly
+the **same generated JavaScript** as the equivalent expression with no trap,
+preserving the original Ok/Err handle and one operand evaluation. A new
+source-compiled-guest test compares byte-identical output for success and
+Err branches.
+
+`throw!`, `raise!`, `panic!`, nested `trap!` and unknown trapped
+host callables remain unsupported; no JavaScript catch-all is introduced.
+The lexical boundary refuses whitespace-separated `trap !`, `trap!=`,
+`trap!eq` and unrelated identifier bangs. Quoted strings and comments
+are not exceptional source operations.
+
+This work is **complementary, not a duplicate** of
+[JS syntax PR #73](https://github.com/atto-lang/atto-source.js/pull/73):
+#73 currently adds fail-closed admission to the *separate*
+`src/compiler.mjs` scalar and `src/program-v2.mjs` compilers.
+This proposal adds the narrow semantically proven Result-aware
+`transpile_to_worker` path to #38 and the integrated #71 frontend.
+No one of these PRs establishes full throw/raise/panic/actor CONTROL parity,
+untrusted TenantVM isolation or exact-head Node 22 CI.
