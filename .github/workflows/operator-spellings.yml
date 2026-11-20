@@ -1,0 +1,48 @@
+name: Atto JS operator reconciliation tests
+on:
+  push:
+    paths:
+      - 'src/transpile-worker.mjs'
+      - 'tests/scalar-xor-contract.test.mjs'
+      - 'tests/transpile-worker.test.mjs'
+      - 'docs/scalar-xor-compatibility-v1.md'
+      - '.github/workflows/operator-spellings.yml'
+  pull_request:
+    paths:
+      - 'src/transpile-worker.mjs'
+      - 'tests/scalar-xor-contract.test.mjs'
+      - 'tests/transpile-worker.test.mjs'
+      - 'docs/scalar-xor-compatibility-v1.md'
+      - '.github/workflows/operator-spellings.yml'
+permissions:
+  contents: read
+jobs:
+  trusted-js-scalar-operators:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact checked-out source revision
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --exit-code HEAD --
+          test -z "$(git ls-files --others --exclude-standard)"
+          printf "head=%s\ntree=%s\n" "$EXPECTED_HEAD" "$(git rev-parse 'HEAD^{tree}')"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Check compiler and operator-test syntax
+        run: |
+          node --check src/transpile-worker.mjs
+          node --check tests/scalar-xor-contract.test.mjs
+      - name: Execute generated ESM guest and negative operator cases
+        run: node --test tests/scalar-xor-contract.test.mjs tests/transpile-worker.test.mjs
+      - name: Execute whole canonical target Node suite
+        run: npm test
