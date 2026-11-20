@@ -64,7 +64,11 @@ export function transpile_result_int_parse_tokens(toks) {
     expect('Result');expect('<');expect('int');expect(',');expect('Error');expect('>');
     expect('{');expect('val');
     const local=name();expect('=');
-    expect('int');expect('.');expect('parse');expect('(');expect(arg);expect(')');
+    expect('int');expect('.');expect('parse');expect('(');
+    const passed=toks[i++];
+    if(passed!==arg)
+      fail(/^[0-9]+$/.test(passed??'') || (passed??'').startsWith('"') ? 'E_TYPE' : 'E_UNBOUND');
+    expect(')');
     expect('?');expect(';');
     expect('return');expect('Ok');expect('(');expect(local);expect(')');
     expect(';');expect('}');
