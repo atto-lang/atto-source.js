@@ -19,6 +19,17 @@ function tokenize(source) {
     // just LF. Otherwise CR/U+2028 source can be hidden from the parser.
     const match = /^(?:[\s\u0085]+|\/\/[^\r\n\u0085\u2028\u2029]*|\/\*[\s\S]*?\*\/)/.exec(tail);
     if (match) { i += match[0].length; continue; }
+    // Only the four exceptional-control words may consume a contiguous bang.
+    // Never widen arbitrary identifiers to name!; preserve != / !eq boundaries.
+    // Full effects stay fail-closed in this trusted checked-Result subset.
+    const bang=/^(?:trap|throw|raise|panic)!/.exec(tail);
+    if(bang && tail[bang[0].length]!=='=' &&
+        !/^eq(?![A-Za-z_0-9])/.test(tail.slice(bang[0].length))) {
+      tokens.push(bang[0]);
+      if(tokens.length>MAX_TOKENS)throw new TranspileError('E_TOKEN_LIMIT');
+      i+=bang[0].length;
+      continue;
+    }
     // Maximal-munch disambiguation: ^ returns, ^^ bitwise XOR;
     // <<< and >>> shift, whereas << and >> are typed I/O, not shifts.
     const token = /^(?:"(?:\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})|[^"\\\x00-\x1f])*"|->|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|<<<|>>>|<<|>>|\^\^|[(){}:;,+*\-.=<>?^|])/.exec(tail);
