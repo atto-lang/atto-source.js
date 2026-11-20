@@ -1,0 +1,7 @@
+# Private JS CI destinations explicitly approved for source transfers.
+# No repositories are approved by this file.
+# Exact owner/repo + immutable numeric repository ID entries must be independently
+# reviewed and activated only after incident-resume + carrier-governance gates.
+#
+# REVIEW-ONLY CANDIDATE (NOT AUTHORIZED):
+# fiducia-cloud-test/gleam-client-consumer 1323680970
