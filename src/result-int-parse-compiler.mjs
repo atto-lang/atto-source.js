@@ -88,7 +88,9 @@ export function transpile_result_int_parse_tokens(toks) {
   }
   eat('pub');
   expect('fnc');expect('main');expect('(');expect(')');expect(':');
-  expect('int');expect('{');expect('return');expect('match');
+  expect('int');expect('{');
+  const returnMatch=eat('return');
+  expect('match');
   // One typed subject evaluated exactly once; not an arbitrary expression.
   let direct=false;
   if (eat('int')) {
@@ -112,21 +114,52 @@ export function transpile_result_int_parse_tokens(toks) {
     if(peek()!==')')bind=name();
     expect(')');
     expect('->');
-    let expression=null;
-    let negative=eat('-');
-    if (/^[0-9]+$/.test(peek()??'')) expression=int_value(toks[i++],negative).toString()+'n';
-    else {
-      if(negative || tag!=='Ok' || !bind)fail('E_TYPE');
-      const ident=name();
-      if(ident!==bind || ident==='_')fail('E_UNBOUND');
-      expression='subject.value';
+    let expression;
+    if(!returnMatch) {
+      // Checked, total statement match profile: a return in every arm,
+      // or a single i64 equality guard with two explicit returns.
+      expect('{');
+      if(eat('if')) {
+        if(tag!=='Ok' || !bind || bind==='_')fail('E_TYPE');
+        const lhs=name();
+        if(lhs!==bind)fail('E_UNBOUND');
+        expect('eq');
+        const minusGuard=eat('-');
+        const cmp=int_value(toks[i++],minusGuard).toString()+'n';
+        expect('then');expect('return');
+        const minusYes=eat('-');
+        const yes=int_value(toks[i++],minusYes).toString()+'n';
+        expect(';');expect('else');expect('return');
+        const minusNo=eat('-');
+        const no=int_value(toks[i++],minusNo).toString()+'n';
+        expect(';');expect('fi');
+        expression='(subject.value==='+cmp+'?'+yes+':'+no+')';
+      } else {
+        expect('return');
+        const minus=eat('-');
+        expression=int_value(toks[i++],minus).toString()+'n';
+        expect(';');
+      }
+      expect('}');
+    } else {
+      const negative=eat('-');
+      if(/^[0-9]+$/.test(peek()??'')) expression=int_value(toks[i++],negative).toString()+'n';
+      else {
+        if(negative || tag!=='Ok' || !bind)fail('E_TYPE');
+        const ident=name();
+        if(ident!==bind || ident==='_')fail('E_UNBOUND');
+        expression='subject.value';
+      }
     }
     arms[tag]=expression;
     eat(',');
   }
   if(!Object.hasOwn(arms,'Ok') || !Object.hasOwn(arms,'Err'))
     fail('E_MATCH_NONEXHAUSTIVE');
-  expect('end');expect(';');expect('}');
+  expect('end');
+  if(returnMatch)expect(';');
+  else eat(';');
+  expect('}');
   if(i!==toks.length)fail('E_TRAILING_SOURCE');
   const encoded=JSON.stringify(literal); // never splice raw Atto source into JS
   const generated=[

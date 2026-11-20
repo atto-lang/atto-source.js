@@ -86,3 +86,19 @@ test('type/return shape cannot be silently coerced to Result',()=>{
       e.code==='E_UNSUPPORTED_RESULT_SYNTAX' || e.code==='E_TYPE');
   }
 });
+
+
+test('checked braced match lowers a typed i64 guard, not arbitrary guest expressions',async()=>{
+  const good='pub fnc main(): int { match int.parse("-00042") over '+
+    'on Ok(n) -> { if n eq -42 then return 42; else return 0; fi } '+
+    'on Err() -> { return 0; } end }';
+  assert.equal(await execute(good),'42');
+  assert.equal(await execute(good.replace('n eq -42','n eq -41')),'0');
+  assert.throws(()=>transpile(good.replace('if n eq','if missing eq')), e=>e.code==='E_UNBOUND');
+  assert.throws(()=>transpile(good.replace('return 42;','42;')), e=>e.code==='E_UNSUPPORTED_RESULT_SYNTAX');
+  const unsafe=good.replace('on Err() -> { return 0; }',
+    'on Err(e) -> { if e eq 0 then return 42; else return 0; fi }');
+  assert.throws(()=>transpile(unsafe),e=>e.code==='E_TYPE');
+  const nonexhaustive=good.replace('on Err() -> { return 0; }','');
+  assert.throws(()=>transpile(nonexhaustive),e=>e.code==='E_MATCH_NONEXHAUSTIVE');
+});
