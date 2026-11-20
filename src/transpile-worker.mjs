@@ -27,6 +27,27 @@ function tokenize(source) {
   }
   return tokens;
 }
+// Nested generic closers are not typed I/O shift/read operations.
+function normalize_generic_closers(tokens) {
+  const out=[];
+  const nominal=new Set(['task','Mutex','Option','Future','Result','Map','Channel']);
+  let depth=0;
+  for(const token of tokens) {
+    if(token==='<') {
+      if(depth>0||nominal.has(out[out.length-1]))depth++;
+      out.push(token);
+    } else if(token==='>'&&depth>0) {
+      depth--;
+      out.push(token);
+    } else if((token==='>>'||token==='>>>')&&depth>0) {
+      for(let j=0;j<token.length;j++)out.push('>');
+      depth=Math.max(0,depth-token.length);
+    } else {
+      out.push(token);
+    }
+  }
+  return out;
+}
 export function transpile_to_worker(source) {
   if (typeof source !== 'string' || new TextEncoder().encode(source).byteLength > MAX_SOURCE) throw new TranspileError('E_SOURCE_LIMIT');
   // Raw terminal controls and NUL must not be hidden in comments or
@@ -50,7 +71,7 @@ export function transpile_to_worker(source) {
   // Trojan Source controls can reorder displayed source invisibly.
   if (/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(source))
     throw new TranspileError('E_BIDI_CONTROL');
-  const tokens=tokenize(source);
+  const tokens=normalize_generic_closers(tokenize(source));
   // Read/write shorthands need typed capability and suspension lowering. This
   // narrow arithmetic guest must not reinterpret them as integer shifts.
   if(tokens.includes('<<')||tokens.includes('>>'))

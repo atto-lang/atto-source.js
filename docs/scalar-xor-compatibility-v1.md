@@ -43,3 +43,8 @@ npm test
 ```
 
 Verify the exact checkout HEAD/tree, real executed job steps, immutable source blobs and independent review. A V8 in-memory model with a substitute ASCII byte-count function, if run, is **not** Node 22 test evidence. No native AOT, protected TenantVM, generalized actor, Math.pow or cross-backend parity is claimed. Keep this PR Draft pending execution and integration review.
+
+Nested generic type closers `>>` or `>>>` are parsed as individual type
+delimiters in recognized generic contexts; outside, `>>` remains typed
+channel read, unsupported here. The distinction is needed for nominal
+resource constructors from JS PR #43 without silently admitting I/O.

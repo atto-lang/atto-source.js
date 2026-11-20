@@ -152,3 +152,18 @@ test('deterministic 64-bit XOR and shift property corpus executes emitted guest 
     }
   }
 });
+
+test('nested generics do not spuriously trigger channel-read admission',()=>{
+  for(const input of [
+    'pub fnc main(): int { return Mutex<Option<int>>(0); }',
+    'pub fnc main(): int { return Mutex<Option<Future<int>>>(0); }',
+    'pub fnc main(): int { return Future<Option<int>>; }'
+  ]) {
+    assert.throws(()=>transpile_to_worker(input),
+      e=>e instanceof TranspileError&&e.code!=='E_IO_UNSUPPORTED');
+  }
+  assert.throws(()=>transpile_to_worker('pub fnc main(): int { return 8 >> 2; }'),
+    e=>e.code==='E_IO_UNSUPPORTED');
+  assert.throws(()=>transpile_to_worker('pub fnc main(): int { return 8 << 2; }'),
+    e=>e.code==='E_IO_UNSUPPORTED');
+});
