@@ -17,7 +17,7 @@ export class FunctionalPipelineSourceError extends Error {
 }
 const deny = code => { throw new FunctionalPipelineSourceError(code); };
 function tokenize(src) {
-  if (typeof src !== 'string' || Buffer.byteLength(src, 'utf8') > MAX_SOURCE || !/^[\x09\x0a\x0d\x20-\x7e]*$/.test(src)) deny('E_SOURCE');
+  if (typeof src !== 'string' || new TextEncoder().encode(src).length > MAX_SOURCE || !/^[\x09\x0a\x0d\x20-\x7e]*$/.test(src)) deny('E_SOURCE');
   const tokens=[]; let i=0;
   while (i<src.length) {
     if (/\s/.test(src[i])) { i++; continue; }
