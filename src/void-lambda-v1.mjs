@@ -8,17 +8,18 @@ const RESERVED = new Set(['void', 'int', 'string', 'return', 'fnc', 'const', 'pu
 const MAX_I64 = (1n << 63n) - 1n;
 
 export class VoidLambdaProfileError extends Error {
-  constructor(message, token) {
-    super('error: LAMBDA_VOID_PROFILE: ' + message +
+  constructor(code, message, token) {
+    super('error: ' + code + ': ' + message +
       (token ? ' at ' + token.line + ':' + token.col : ''));
     this.name = 'VoidLambdaProfileError';
+    this.code = code;
   }
 }
 
 export function compileVoidLambdaDirect(tokens) {
-  const fail = (message, at) => { throw new VoidLambdaProfileError(message, at || tokens[i]); };
+  const fail = (message, at, code = 'E_SYNTAX') => { throw new VoidLambdaProfileError(code, message, at || tokens[i]); };
   if (!Array.isArray(tokens) || tokens.length > MAX_TOKENS || tokens.length < 20) {
-    throw new VoidLambdaProfileError('source outside bounded direct-lambda profile');
+    throw new VoidLambdaProfileError('E_UNSUPPORTED', 'source outside bounded direct-lambda profile');
   }
   let i = 0;
   const peek = () => tokens[i] || tokens[tokens.length - 1];
@@ -36,12 +37,12 @@ export function compileVoidLambdaDirect(tokens) {
     const t = peek();
     if (take('int')) return 'int';
     if (take('string')) return 'string';
-    fail('void lambda arguments must be int or string', t);
+    fail('void lambda arguments must be int or string', t, 'E_TYPE');
   };
   const integer = () => {
     const t = peek();
     if (t.kind !== 'int' || !/^[0-9]+(?:_[0-9]+)*$/.test(t.value))
-      fail('expected int literal', t);
+      fail('expected int literal', t, 'E_TYPE');
     i++;
     const n = BigInt(t.value.replaceAll('_', ''));
     if (n > MAX_I64) fail('int literal outside signed-i64 range', t);
@@ -50,7 +51,7 @@ export function compileVoidLambdaDirect(tokens) {
   const string = () => {
     const t = peek();
     if (t.kind !== 'string' || !t.value || typeof t.value.raw !== 'string')
-      fail('expected plain quoted string literal', t);
+      fail('expected plain quoted string literal', t, 'E_TYPE');
     // Narrow, literal-only subset: no escapes, templates, or host interpolation.
     // JSON.stringify below guarantees emitted code does not inherit source JS.
     if (!/^"[A-Za-z0-9 _.-]{0,128}"$/.test(t.value.raw))
@@ -83,7 +84,7 @@ export function compileVoidLambdaDirect(tokens) {
         ptype = type();
         pname = identifier();
       }
-      if (parameters.some(p => p.name === pname)) fail('duplicate lambda parameter ' + pname);
+      if (parameters.some(p => p.name === pname)) fail('duplicate lambda parameter ' + pname, peek(), 'E_DUPLICATE');
       parameters.push({name: pname, type: ptype});
     } while (take(','));
   }
@@ -97,6 +98,7 @@ export function compileVoidLambdaDirect(tokens) {
   }
   expect('{');
   expect('return');
+  if (!is(';')) fail('void lambda must not return a value', peek(), 'E_TYPE');
   expect(';');
   const bodyClose = peek();
   expect('}');
@@ -111,13 +113,13 @@ export function compileVoidLambdaDirect(tokens) {
     do {
       if (argumentsList.length >= MAX_PARAMS) fail('argument limit');
       const wanted = parameters[argumentsList.length]?.type;
-      if (!wanted) fail('argument arity mismatch');
+      if (!wanted) fail('argument arity mismatch', peek(), 'E_ARITY');
       argumentsList.push(wanted === 'int' ? integer() : string());
     } while (take(','));
   }
   expect(')');
   expect(';');
-  if (argumentsList.length !== parameters.length) fail('argument arity mismatch');
+  if (argumentsList.length !== parameters.length) fail('argument arity mismatch', peek(), 'E_ARITY');
   expect('return');
   const result = integer();
   expect(';');
