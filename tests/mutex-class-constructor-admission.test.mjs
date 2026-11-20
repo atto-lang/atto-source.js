@@ -21,7 +21,7 @@ for (const [name,code,diagnostic] of [
 
 test('comments and unrelated type uses do not spoof a constructor',()=>{
   const reference='pub fnc main(): int { return 42; }';
-  const withComments='// Mutex<int>(0) is invalid but this is a comment.\\n'+reference;
+  const withComments='// Mutex<int>(0) is invalid but this is a comment.\n'+reference;
   assert.equal(transpile_to_worker(reference).module_source,
     transpile_to_worker(withComments).module_source);
   assert.equal(typeof transpile_to_worker(reference).module_source,'string');
