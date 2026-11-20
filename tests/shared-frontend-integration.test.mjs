@@ -123,3 +123,40 @@ test('source, raw-token, and expression nesting budgets reject before guest crea
   rejects('pub fnc main(): int { ^ '+'('.repeat(65)+'1'+')'.repeat(65)+'; }',
     'E_NESTING_LIMIT');
 });
+
+test('all five trusted guest profiles enforce bounded tenant bindings',async()=>{
+  const scalar='pub fnc main(): int { ^ 42; }';
+  const boolActor='define actor Counter receives bool sends never as '+
+    'let bool total = false; receive(ActorMail<bool> mail): void {'+
+    'self.total = mail.value; stdio.println(self.total); return; } end '+
+    'pub fnc main(): int { val counter = spawn Counter(); ^ 0; }';
+  const intActor='define actor Counter as let int total = 0; '+
+    'receive(ActorMail<int> mail): void { self.total = self.total + mail.value; '+
+    'stdio.println(self.total); return; } end '+
+    'pub fnc main(): int { val counter = spawn Counter(); ^ 0; }';
+  const result='pub fnc main(): int { return match int.parse("42") over '+
+    'on Ok(value) -> value, on Err() -> 0 end; }';
+  const guarded=fixture('./fixtures/actor-attached-state-v1/pass/inline_counter.atto');
+  const invalid=[
+    {},{tenant:' ',generation:1},{tenant:' x',generation:1},
+    {tenant:'x'.repeat(129),generation:1},{tenant:'x',generation:0},
+    {tenant:'x',generation:1.5},{tenant:'x',generation:2147483648},
+    {tenant:'x',generation:Number.MAX_SAFE_INTEGER}
+  ];
+  for(const source of [scalar,boolActor,intActor,result,guarded]){
+    const artifact=transpile_to_worker(source);
+    const module=await import('data:text/javascript;charset=utf-8,'+
+      encodeURIComponent(artifact.module_source));
+    for(const params of invalid){
+      await assert.rejects(module.create_tenant(params),/E_TENANT_/,
+        'invalid tenant binding '+JSON.stringify(params));
+    }
+    for(const params of [
+      {tenant:'x',generation:1},
+      {tenant:'x'.repeat(128),generation:2147483647}
+    ]){
+      const guest=await module.create_tenant(params);
+      assert.equal(typeof guest.on_message,'function');
+    }
+  }
+});
