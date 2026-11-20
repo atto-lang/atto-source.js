@@ -323,7 +323,7 @@ export function compile(source) {
   // Never reinterpret an unsupported lambda as a scalar expression. The
   // dedicated closed-call v1 profile is validated before any JS emission;
   // all other | source remains fail-closed until typed closure lowering.
-  if (source.includes('|')) {
+  if (typeof source === 'string' && source.includes('|')) {
     const tokens = lex(source);
     if (tokens.some(t => t.value === '|')) {
       rejectExecutionDomains(tokens, (message, token) => {
