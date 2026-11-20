@@ -71,3 +71,13 @@ not widen this syntax into a trusted host bridge. Follow the normative
 `atto-spec/language/trap-result-v1.md` and conformance PR #68. The upcoming
 merge into JS integration PR #71 must include the new tests and re-run every
 competing frontend profile on its final exact head.
+
+
+### Tenant identifier parity with the integrated JS frontend
+
+The candidate Result guest now rejects empty, whitespace-padded, or overlong
+tenant identifiers, and noninteger, nonpositive or out-of-range generations,
+matching the stricter `atto-source.js#71` admission check. The standalone
+Result compiler must not silently weaken this policy if merged before the
+integration branch. Positive/negative tenant probes run as generated-guest
+tests; host authentication and TenantVM security remain separate obligations.
