@@ -85,8 +85,12 @@ test('cross-expression output occupancy requires explicit fanout',()=>{
  const a=plan_directed_pipe([producer,consumer],'pipe');
  const b=plan_directed_pipe([producer,sink],'pipe');
  fail(()=>check_unicast_pipe_plans([a,b]),'E_PIPE_OUTPUT_OCCUPIED');
- const c=plan_directed_pipe([{...producer,id:'other'},sink],'pipe');
- assert.equal(check_unicast_pipe_plans([a,c]),true);
+ const c=plan_directed_pipe([{...producer,id:'other'},consumer],'pipe');
+ fail(()=>check_unicast_pipe_plans([a,c]),'E_PIPE_INPUT_OCCUPIED');
+ const reverse=plan_directed_pipe([consumer,{...producer,id:'third'}],'rpipe');
+ fail(()=>check_unicast_pipe_plans([a,reverse]),'E_PIPE_INPUT_OCCUPIED');
+ const independent=plan_directed_pipe([{...producer,id:'other'},sink],'pipe');
+ assert.equal(check_unicast_pipe_plans([a,independent]),true);
 });
 test('forged plan cannot pass as compiler-generated capability',()=>{
  fail(()=>check_unicast_pipe_plans([{tenant:'tenant_a',dataEdges:[]}]),'E_PIPE_PLAN_CAPABILITY');
