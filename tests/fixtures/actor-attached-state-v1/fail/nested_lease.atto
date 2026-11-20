@@ -1,0 +1,11 @@
+// TARGET REJECT: nested critical scopes or mode upgrades are forbidden
+define actor Counter as
+  state { let int count: 0; }
+  on_start(): void using state.write, state.read {
+    self.handle_state(critical-write |s| -> {
+      self.handle_state(critical-read |t| -> t.count);
+      s.count = 4;
+    });
+  }
+end
+pub fnc main(): int { return 0; }
