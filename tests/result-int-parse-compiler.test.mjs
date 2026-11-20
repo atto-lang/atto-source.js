@@ -240,3 +240,44 @@ test('nominal on-is Result: deterministic hostile and boundary source corpus',as
       'wrong checked Result branch for '+JSON.stringify(value));
   }
 });
+
+
+test('trap on an existing Result preserves the exact generated guest and Ok/Err layers',async()=>{
+  for(const [input,expected] of [['42','42'],['invalid','7']]) {
+    const plain=source(input,'7');
+    const forms=[
+      plain.replace('return match parse_id(', 'return match trap parse_id('),
+      plain.replace('val parsed = int.parse(text)?;', 'val parsed = trap int.parse(text)?;'),
+      plain.replace('val parsed = int.parse(text)?; return Ok(parsed);',
+        'return trap int.parse(text);'),
+    ];
+    for(const trapped of forms){
+      assert.notEqual(trapped,plain,'fixture must contain the trap spelling');
+      const baseline=transpile(plain);
+      const candidate=transpile(trapped);
+      assert.equal(candidate.guest_abi,baseline.guest_abi);
+      assert.equal(candidate.module_source,baseline.module_source,
+        'already-Result trap must not allocate a new Result or install a host catch');
+      assert.equal(await execute(trapped),expected);
+    }
+  }
+  const direct='pub fnc main(): int { return match int.parse("invalid") over '+
+    'on Ok(value) -> value, on Err() -> 7 end; }';
+  const trapped=direct.replace('match int.parse(', 'match trap int.parse(');
+  assert.equal(transpile(trapped).module_source,transpile(direct).module_source);
+  assert.equal(await execute(trapped),'7');
+});
+
+test('trap denies untyped calls, arbitrary scalar operands, and nested trapping',()=>{
+  const plain=source('42');
+  const malformed=[
+    [plain.replace('match parse_id(', 'match trap host('),'E_TRAP_UNSUPPORTED'],
+    [plain.replace('match parse_id(', 'match trap trap parse_id('),'E_TRAP_UNSUPPORTED'],
+    [plain.replace('match parse_id(', 'match trap 42('),'E_TRAP_UNSUPPORTED']
+  ];
+  for(const [src,code] of malformed)
+    assert.throws(()=>transpile(src),e=>e.code===code,
+      'no generated module may be returned for an unsupported trapped operand');
+  const scalar='pub fnc main(): int { return trap 42; }';
+  assert.throws(()=>transpile(scalar),e=>e.code==='E_UNSUPPORTED_EXPRESSION');
+});
