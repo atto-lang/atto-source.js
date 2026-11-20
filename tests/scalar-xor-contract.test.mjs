@@ -82,10 +82,8 @@ test('unsupported power, bool and other bitwise constructs fail closed',()=>{
 test('trivia cannot invent operators, preserved raw Unicode safeguards',async()=>{
   const src='// ^^ ^ <<< >>> << >> are comments\\n'+
     'pub fnc main(): int { /* ^^ <<< */ ^ 12 ^^ 10; }';
-  // The actual input uses a source newline, not a literal \\n sequence.
-  const source=src.replace('comments\\\\n','comments\\n');
-  const output=compile(source);
+  const output=compile(src);
   assert.equal(output.guest_abi,'atto.js.browser.subset.v1');
-  assert.doesNotMatch(output.module_source,/\\bimport\\s*\\(/);
+  assert.doesNotMatch(output.module_source,/\bimport\s*\(/);
   assert.equal(await guest('40 + 2','^'),'42');
 });
