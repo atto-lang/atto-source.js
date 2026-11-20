@@ -15,7 +15,8 @@ function tokenize(source) {
     const tail = source.slice(i);
     const match = /^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)/.exec(tail);
     if (match) { i += match[0].length; continue; }
-    const token = /^(?:[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;+*\-.=<>])/.exec(tail);
+    // Boolean ^^ is a distinct language operator, not a second bitwise caret.
+    const token = /^(?:[A-Za-z_][A-Za-z_0-9]*|[0-9]+|\^\^|[(){}:;+*\-.=<>^])/.exec(tail);
     if (!token) throw new TranspileError('E_UNSUPPORTED_TOKEN');
     tokens.push(token[0]);
     if (tokens.length > MAX_TOKENS) throw new TranspileError('E_TOKEN_LIMIT');
@@ -48,6 +49,9 @@ export function transpile_to_worker(source) {
     throw new TranspileError('E_BIDI_CONTROL');
   const tokens=tokenize(source);
   if(tokens[0]==='define')return transpile_actor_tokens(tokens);
+  // AttoLang ^^ is eager Boolean XOR, not removed syntax. This backend has
+  // no typed Boolean expression lowering; deny it with a backend-specific code.
+  if(tokens.includes('^^'))throw new TranspileError('E_UNSUPPORTED_BOOL_XOR');
   let i=0;
   const peek=()=>tokens[i];
   const expect=token=>{if(tokens[i++]!==token)throw new TranspileError('E_UNSUPPORTED_SYNTAX');};
@@ -67,7 +71,9 @@ export function transpile_to_worker(source) {
       if(value>INT_MAX)throw new TranspileError('E_INT_OVERFLOW');
       left={value};
     } else throw new TranspileError('E_UNSUPPORTED_EXPRESSION');
-    const precedence={'+':1,'-':1,'*':2};
+    // Spec candidate: integer bitwise XOR binds below + and * and is left-associative.
+    // Our closed int-only scalar grammar cannot coerce booleans into bitwise values.
+    const precedence={'^':0,'+':1,'-':1,'*':2};
     while(Object.hasOwn(precedence,peek()) && precedence[peek()]>=min_prec){
       const op=tokens[i++];
       const right=parse_expression(precedence[op]+1,depth+1);
