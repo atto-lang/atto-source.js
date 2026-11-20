@@ -100,3 +100,17 @@ test('nested generic-closer expansion respects total lexer token budget',()=>{
   assert.ok(new TextEncoder().encode(input).byteLength < 64*1024);
   rejects(input,'E_TOKEN_LIMIT');
 });
+
+test('excess generic closing angles cannot swallow typed I/O admission',()=>{
+  // A one-level type generic is closed by the first > of >>>. The remaining
+  // >> must be diagnosed as I/O without a granted readable capability.
+  rejects('pub fnc main(): int { return Result<int>>> 5; }',
+    'E_IO_UNSUPPORTED');
+  rejects('pub fnc main(): int { return Mutex<int>>> 2; }',
+    'E_IO_UNSUPPORTED');
+  // A genuine two-level type may consume two closing angle tokens.
+  rejects('pub fnc main(): int { val lock = Mutex<Option<int>>(0); return 0; }',
+    'E_NEW_REQUIRED');
+  rejects('pub fnc main(): int { val lock = new Mutex<Option<int>>(0); return 0; }',
+    'E_LOCK_UNSUPPORTED');
+});
