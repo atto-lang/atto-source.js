@@ -14,11 +14,11 @@ test('compiles to independently instantiable worker handler',async()=>{
 });
 test('parentheses, negative signed range, and checked math',async()=>{
   const mod=await load('fnc main(): int { return -(2 + 5) * (3 - 1); }');
-  assert.equal((await (await mod.create_tenant({})).on_message()).value,'-14');
+  assert.equal((await (await mod.create_tenant({tenant:'scalar-test',generation:1})).on_message()).value,'-14');
   const min=await load('pub fnc main(): int { return -9223372036854775808; }');
-  assert.equal((await (await min.create_tenant({})).on_message()).value,'-9223372036854775808');
+  assert.equal((await (await min.create_tenant({tenant:'scalar-test',generation:1})).on_message()).value,'-9223372036854775808');
   const overflow=await load('pub fnc main(): int { return 9223372036854775807 + 1; }');
-  await assert.rejects((await overflow.create_tenant({})).on_message(),/E_GUEST_PANIC_1/);
+  await assert.rejects((await overflow.create_tenant({tenant:'scalar-test',generation:1})).on_message(),/E_GUEST_PANIC_1/);
 });
 test('does not compile unsupported statements or injection',()=>{
   for(const src of ['pub fnc main(): int { return 0; } ;',
