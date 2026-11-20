@@ -63,3 +63,26 @@ test('direct builtin match and escaped-source injection remain typed data',async
   assert.equal(await execute(source('"); process.exit(77); ("','7')),'7');
   assert.equal(await execute(source('4\\u00002','7')),'7');
 });
+
+test('typed local Result and direct Result return execute without widening',async()=>{
+  const variants=[
+    'val parsed: int = int.parse(text)?; return Ok(parsed);',
+    'return int.parse(text);'
+  ];
+  for(const body of variants) {
+    for(const [value,expected] of [['42','42'],['invalid','7']]) {
+      const program='fnc parse_id(string text): Result<int,Error> {'+body+'}\n'+
+        'pub fnc main(): int { return match parse_id('+JSON.stringify(value)+') over on Ok(value) -> value, on Err() -> 7 end; }';
+      assert.equal(await execute(program),expected);
+    }
+  }
+});
+test('type/return shape cannot be silently coerced to Result',()=>{
+  for(const bad of [
+    source('42').replace('val parsed =', 'val parsed: string ='),
+    source('42').replace('val parsed = int.parse(text)?; return Ok(parsed);','return int.parse(text)?;')
+  ]) {
+    assert.throws(()=>transpile(bad),e=>
+      e.code==='E_UNSUPPORTED_RESULT_SYNTAX' || e.code==='E_TYPE');
+  }
+});

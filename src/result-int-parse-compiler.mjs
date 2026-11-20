@@ -53,7 +53,7 @@ export function transpile_result_int_parse_tokens(toks) {
     expect(')');
     return str;
   };
-  let functionName=null;
+  let functionName=null, directFunctionReturn=false;
   if (peek()==='pub' && toks[i+1]==='fnc' && toks[i+2]!=='main') i++;
   if (peek()==='fnc' && toks[i+1]!=='main') {
     expect('fnc');
@@ -62,16 +62,29 @@ export function transpile_result_int_parse_tokens(toks) {
     const arg=name();
     expect(')');expect(':');
     expect('Result');expect('<');expect('int');expect(',');expect('Error');expect('>');
-    expect('{');expect('val');
-    const local=name();expect('=');
+    expect('{');
+    let local=null;
+    if(eat('return')) {
+      // Preserve typed Results, no new Ok wrapper, no ? returning an int.
+      directFunctionReturn=true;
+    } else {
+      expect('val');
+      local=name();
+      if(eat(':'))expect('int');
+      expect('=');
+    }
     expect('int');expect('.');expect('parse');expect('(');
     const passed=toks[i++];
     if(passed!==arg)
       fail(/^[0-9]+$/.test(passed??'') || (passed??'').startsWith('"') ? 'E_TYPE' : 'E_UNBOUND');
     expect(')');
-    expect('?');expect(';');
-    expect('return');expect('Ok');expect('(');expect(local);expect(')');
-    expect(';');expect('}');
+    if(directFunctionReturn) {
+      expect(';');expect('}');
+    } else {
+      expect('?');expect(';');
+      expect('return');expect('Ok');expect('(');expect(local);expect(')');
+      expect(';');expect('}');
+    }
   }
   eat('pub');
   expect('fnc');expect('main');expect('(');expect(')');expect(':');
@@ -143,7 +156,9 @@ export function transpile_result_int_parse_tokens(toks) {
     '  const parse_id=(text)=>{',
     '   const result=int_parse(text);',
     '   if(result.tag===1)return result; // ? preserves original Err',
-    '   return Object.freeze({tag:0,value:result.value});',
+    directFunctionReturn
+      ? '   return result; // same original Ok/Err handle'
+      : '   return Object.freeze({tag:0,value:result.value});',
     '  };',
     '  const subject='+(direct?'int_parse(':'parse_id(')+encoded+');',
     '  const result=subject.tag===0?('+arms.Ok+'):('+arms.Err+');',
