@@ -131,3 +131,39 @@ test('raw source bidi, NUL, ESC, DEL and lone surrogates still fail closed',()=>
       error=>error instanceof TranspileError,ch.codePointAt(0)?.toString(16));
   }
 });
+
+test('deterministic 64-bit XOR and shift property corpus executes emitted guest ESM',async()=>{
+  let seed=0x53747a21;
+  const next=()=>{
+    seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+    return seed;
+  };
+  const signed=()=>BigInt.asIntN(64,(BigInt(next())<<32n)|BigInt(next()));
+  for(let i=0;i<64;i++){
+    const a=signed(),b=signed(),count=BigInt.asIntN(64,BigInt(next()));
+    const cases=[
+      [`(${a}) ^^ (${b})`,BigInt.asIntN(64,a^b)],
+      [`(${a}) <<< (${count})`,BigInt.asIntN(64,a << (count&63n))],
+      [`(${a}) >>> (${count})`,BigInt.asIntN(64,BigInt.asUintN(64,a) >> (count&63n))]
+    ];
+    for(const [expr,expected] of cases){
+      assert.equal(await guest(expr,'^'),String(expected),
+        'iteration '+i+' source '+expr);
+    }
+  }
+});
+
+test('nested generics do not spuriously trigger channel-read admission',()=>{
+  for(const input of [
+    'pub fnc main(): int { return Mutex<Option<int>>(0); }',
+    'pub fnc main(): int { return Mutex<Option<Future<int>>>(0); }',
+    'pub fnc main(): int { return Future<Option<int>>; }'
+  ]) {
+    assert.throws(()=>transpile_to_worker(input),
+      e=>e instanceof TranspileError&&e.code!=='E_IO_UNSUPPORTED');
+  }
+  assert.throws(()=>transpile_to_worker('pub fnc main(): int { return 8 >> 2; }'),
+    e=>e.code==='E_IO_UNSUPPORTED');
+  assert.throws(()=>transpile_to_worker('pub fnc main(): int { return 8 << 2; }'),
+    e=>e.code==='E_IO_UNSUPPORTED');
+});

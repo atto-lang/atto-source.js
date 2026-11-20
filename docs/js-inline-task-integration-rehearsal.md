@@ -13,3 +13,6 @@ running all five existing targeted test files together.
 This is NOT a merge, a full Node 22 test run, a production security admission,
 or independently verified conformance. Private source stays exclusively
 inside the original private GitHub repository.
+
+Operator conformance regression tests refreshed from draft PR #46 exact
+head `7de00dbff1ac6ff8fab0994e2ff745f77ae38042`, including generic-close/channel-read disambiguation.
