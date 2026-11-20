@@ -1,0 +1,6 @@
+// TARGET REJECT: exactly one schema per actor
+define actor Counter as
+  state { let int count: 0; }
+end
+define state on actor Counter as { let int other: 0; }
+pub fnc main(): int { return 0; }
