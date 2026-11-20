@@ -106,7 +106,7 @@ export function compile_actor_state_counter(tokens, fail) {
     'export async function create_tenant({tenant,generation}={}){',
     ' if(typeof tenant!=="string"||tenant.length===0||tenant.length>128',
     '    ||tenant.trim()!==tenant)throw new Error("E_TENANT_ID");',
-    ' if(!Number.isSafeInteger(generation)||generation<=0)',
+    ' if(!Number.isSafeInteger(generation)||generation<=0||generation>2147483647)',
     '    throw new Error("E_TENANT_GENERATION");',
     ' let started=false,retired=false,draining=false;',
     ` let count=${initial}n;`,
