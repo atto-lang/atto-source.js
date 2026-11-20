@@ -101,3 +101,67 @@ test('typed ingress rejects hidden Unicode, invalid surrogates and raw source co
   reject(with_header + '// invalid UTF-16:' + String.fromCharCode(0xd800), 'E_INVALID_UTF16');
   reject(with_header + '// NUL:' + String.fromCharCode(0), 'E_RAW_SOURCE_CONTROL');
 });
+
+
+// Second independent compiled JavaScript actor DATA profile: a strict bool
+// inbox, no JS eval, no dynamic callbacks, and no outbound app send sites.
+const boolActor = String.raw`
+define actor Flag receives bool sends never as
+  let bool enabled = false;
+  susp receive(ActorMail<bool> mail): void {
+    self.enabled = mail.value;
+    stdio.println(self.enabled);
+    return;
+  }
+end
+pub susp fnc main(): int {
+  val flag = spawn Flag();
+  return 0;
+}
+`;
+const boolRoute = n => ({actor_id:1,wire_type:'bool',buffer:Uint8Array.of(n).buffer});
+
+test('typed bool ingress executes generated JS for false, true and never-outbound effect', async () => {
+  for (const source of [
+    boolActor,
+    boolActor.replace('receives bool sends never', 'receives bool sends int'),
+    boolActor.replace('receives bool sends never', 'sends never'),
+    boolActor.replace('receives bool sends never', ''),
+  ]) {
+    const actor = await instantiate(source);
+    assert.deepEqual(await actor.on_message(), {value:'0',stdout:'',actors:1});
+    assert.deepEqual(await actor.on_route(boolRoute(1)),
+      {value:'delivered',stdout:'true\n',actors:1});
+    assert.deepEqual(await actor.on_route(boolRoute(0)),
+      {value:'delivered',stdout:'false\n',actors:1});
+  }
+});
+
+test('typed bool inbox rejects invalid byte, forged control, wrong size and wrong scalar encoding', async () => {
+  const actor = await instantiate(boolActor);
+  await actor.on_message();
+  for (const bad of [
+    boolRoute(2), boolRoute(255),
+    {...boolRoute(1), wire_type:'control'},
+    {...boolRoute(1), wire_type:'i64'},
+    {...boolRoute(1),buffer:new ArrayBuffer(8)},
+    {...boolRoute(1),buffer:new ArrayBuffer(0)},
+    {...boolRoute(1),actor_id:2},
+  ]) {
+    await assert.rejects(actor.on_route(bad), /E_ROUTE_WIRE|E_ACTOR_REF/);
+  }
+  assert.equal((await actor.on_route(boolRoute(1))).stdout, 'true\n',
+    'invalid DATA must not poison or mutate valid bool state');
+});
+
+test('checked bool header is not silently widened to int or string payload', () => {
+  reject(boolActor.replace('receives bool', 'receives int'), 'E_ACTOR_RECEIVES_MISMATCH');
+  reject(boolActor.replace('receives bool', 'receives string'), 'E_ACTOR_RECEIVES_MISMATCH');
+  reject(boolActor.replace('ActorMail<bool>', 'ActorMail<int>'), 'E_UNSUPPORTED_ACTOR_SYNTAX');
+  reject(boolActor.replace('let bool enabled = false', 'let bool enabled = 42'),
+    'E_UNSUPPORTED_ACTOR_LITERAL');
+  reject(boolActor.replace('self.enabled = mail.value;', 'self.enabled = true;'),
+    'E_UNSUPPORTED_ACTOR_SYNTAX');
+  reject(boolActor.replace('sends never', 'sends void'), 'E_ACTOR_SENDS_EFFECT_UNSUPPORTED');
+  reject(boolActor.replace('sends never', 'sends never sends int'), 'E_UNSUPPORTED_ACTOR_SYNTAX');
+});
