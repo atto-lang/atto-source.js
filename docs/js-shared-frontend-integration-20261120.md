@@ -62,3 +62,14 @@ JavaScript exception is caught, no actor privilege is added, and all other
 `trap` effects remain unsupported. The existing Node 22 integration workflow
 must execute on the final exact integration SHA, not only on #38's head.
 At the time of this update, there is no matching exact-head stepful CI receipt.
+
+## Result branch tenant admission reconciliation
+
+The standalone Result PR #38 has now adopted the same strict
+`tenant.trim() === tenant` identifier rule used by this integration branch.
+The earlier note about needing to preserve a *difference* between their
+policies is historical: both source modules now share identical Git blob
+identity, including the Result-aware trap paths and tenant admission guard.
+Only the integrated frontend's other actor, Mutex and operator changes remain
+separately audited. No CI/guest parity is claimed until exact-head stepful
+tests execute.
