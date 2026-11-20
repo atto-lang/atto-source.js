@@ -23,15 +23,54 @@ function tokenize(source) {
   let i=0;
   while (i < source.length) {
     const tail = source.slice(i);
-    const match = /^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)/.exec(tail);
+    const match = /^(?:[\s\u0085]+|\/\/[^\r\n\u0085\u2028\u2029]*|\/\*[\s\S]*?\*\/)/.exec(tail);
     if (match) { i += match[0].length; continue; }
-    const token = /^(?:[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;+*\-.=<>])/.exec(tail);
+    const token = /^(?:[A-Za-z_][A-Za-z_0-9]*|[0-9]+|<<<|>>>|<<|>>|\^\^|[(){}:;+*\-.=<>^])/.exec(tail);
     if (!token) throw new TranspileError('E_UNSUPPORTED_TOKEN');
     tokens.push(token[0]);
     if (tokens.length > MAX_TOKENS) throw new TranspileError('E_TOKEN_LIMIT');
     i += token[0].length;
   }
   return tokens;
+}
+function reject_unsupported_mutex_constructor(tokens) {
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] !== 'Mutex' || tokens[i + 1] !== '<') continue;
+    let depth = 0, end = -1;
+    for (let j = i + 1; j < tokens.length; j++) {
+      if (tokens[j] === '<') depth++;
+      if (tokens[j] === '>') {
+        depth--;
+        if (depth === 0) { end = j; break; }
+        if (depth < 0) break;
+      }
+    }
+    if (end < 0 || tokens[end + 1] !== '(') continue; // type, not constructor
+    if (tokens[i - 1] !== 'new') throw new TranspileError('E_NEW_REQUIRED');
+    throw new TranspileError('E_LOCK_UNSUPPORTED');
+  }
+}
+// In type contexts `>>` closes two nested generic arguments; outside
+// them it remains an I/O operator. Preserve maximal-munch shifts in values.
+function normalize_generic_closers(tokens) {
+  const out=[];
+  const nominal=new Set(['task','Mutex','Option','Future','Result','Map','Channel']);
+  let depth=0;
+  for(const token of tokens) {
+    if(token==='<') {
+      if(depth>0||nominal.has(out[out.length-1]))depth++;
+      out.push(token);
+    } else if(token==='>'&&depth>0) {
+      depth--;
+      out.push(token);
+    } else if((token==='>>'||token==='>>>')&&depth>0) {
+      for(let j=0;j<token.length;j++)out.push('>');
+      depth=Math.max(0,depth-token.length);
+    } else {
+      out.push(token);
+    }
+  }
+  return out;
 }
 export function transpile_to_worker(source) {
   if (typeof source !== 'string' || new TextEncoder().encode(source).byteLength > MAX_SOURCE) throw new TranspileError('E_SOURCE_LIMIT');
@@ -56,7 +95,10 @@ export function transpile_to_worker(source) {
   // Trojan Source controls can reorder displayed source invisibly.
   if (/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(source))
     throw new TranspileError('E_BIDI_CONTROL');
-  const tokens=tokenize(source);
+  const tokens=normalize_generic_closers(tokenize(source));
+  if(tokens.includes('<<')||tokens.includes('>>'))
+    throw new TranspileError('E_IO_UNSUPPORTED');
+  reject_unsupported_mutex_constructor(tokens);
   if(tokens[0]==='define')return transpile_actor_tokens(tokens);
   let i=0;
   const peek=()=>tokens[i];
@@ -87,7 +129,7 @@ export function transpile_to_worker(source) {
       }
       expect('{');
       let body=null;
-      if(peek()==='return'){
+      if(peek()==='return'||peek()==='^'){
         i++;
         // Bare return exits a void inline body; return expr produces T.
         if(peek()===';')i++;
@@ -106,7 +148,7 @@ export function transpile_to_worker(source) {
     else if(peek()==='-'){
       i++;
       if(/^\d+$/.test(peek()??'') && checked_decimal(peek(),INT_MAX+1n)===INT_MAX+1n) {left={value:INT_MIN};i++;}
-      else {const arg=parse_expression(3,depth+1);
+      else {const arg=parse_expression(4,depth+1);
         if(result_type(arg)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
         left={op:'neg',arg};}
     }
@@ -114,7 +156,7 @@ export function transpile_to_worker(source) {
       const value=checked_decimal(tokens[i++]);
       left={value};
     } else throw new TranspileError('E_UNSUPPORTED_EXPRESSION');
-    const precedence={'+':1,'-':1,'*':2};
+    const precedence={'^^':0,'<<<':1,'>>>':1,'+':2,'-':2,'*':3};
     while(Object.hasOwn(precedence,peek()) && precedence[peek()]>=min_prec){
       if(result_type(left)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
       const op=tokens[i++];
@@ -136,7 +178,7 @@ export function transpile_to_worker(source) {
     if(item.payload_type!=='void')throw new TranspileError('E_TASK_RETURN_TYPE');
     preludes.push(item);
     if(peek()===';')i++;
-    else if(!['return','do'].includes(peek())) {
+    else if(!['return','^','do'].includes(peek())) {
       if(peek()==='sync'&&tokens[i+1]==='task')
         throw new TranspileError('E_TASK_DISCARD_REQUIRES_DO');
       throw new TranspileError('E_UNSUPPORTED_SYNTAX');
@@ -144,7 +186,7 @@ export function transpile_to_worker(source) {
   }
   if(peek()==='sync'&&tokens[i+1]==='task')
     throw new TranspileError('E_TASK_DISCARD_REQUIRES_DO');
-  expect('return');
+  if(peek()==='^')i++;else expect('return');
   const ast=parse_expression();
   if(result_type(ast)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
   expect(';');expect('}');
@@ -154,8 +196,14 @@ export function transpile_to_worker(source) {
       return node.body===null?'(()=>{})()':'(()=>{return '+emit(node.body)+';})()';
     if(Object.hasOwn(node,'value'))return `${node.value}n`;
     if(node.op==='neg')return `checked(-(${emit(node.arg)}))`;
+    const left=emit(node.left),right=emit(node.right);
+    // BigInt.asIntN preserves signed 64-bit *bit patterns*: shifts do not
+    // raise arithmetic-overflow traps, unlike +, -, and *.
+    if(node.op==='<<<')return `BigInt.asIntN(64, (${left}) << ((${right}) & 63n))`;
+    if(node.op==='>>>')return `BigInt.asIntN(64, BigInt.asUintN(64, (${left})) >> ((${right}) & 63n))`;
+    if(node.op==='^^')return `checked((${left}) ^ (${right}))`;
     const op=node.op;
-    return `checked((${emit(node.left)}) ${op} (${emit(node.right)}))`;
+    return `checked((${left}) ${op} (${right}))`;
   };
   const prelude_code=preludes.map(node=>'  '+emit(node)+';\n').join('');
   const code=`// Generated by AttoLang JS subset backend; no eval or source passthrough.\n`+
@@ -220,7 +268,8 @@ function transpile_actor_tokens(tokens) {
   expect('int');expect('{');expect('val');
   identifier(); // The local actor binding is not exposed to JavaScript.
   expect('=');expect('spawn');expect(actor);expect('(');expect(')');
-  expect(';');expect('return');
+  expect(';');
+  if(peek()==='^')i++;else expect('return');
   const main_value=literal();
   expect(';');expect('}');
   if(i!==tokens.length)throw new TranspileError('E_TRAILING_SOURCE');
