@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {transpile_to_worker, TranspileError} from '../src/transpile-worker.mjs';
 
 // Exact subset: one statically typed ActorMail<int> and a trusted JS i64 route.
@@ -164,4 +165,16 @@ test('checked bool header is not silently widened to int or string payload', () 
     'E_UNSUPPORTED_ACTOR_SYNTAX');
   reject(boolActor.replace('sends never', 'sends void'), 'E_ACTOR_SENDS_EFFECT_UNSUPPORTED');
   reject(boolActor.replace('sends never', 'sends never sends int'), 'E_UNSUPPORTED_ACTOR_SYNTAX');
+});
+
+
+test('canonical cross-compiler bool/never .atto fixture generates and executes JS guest', async () => {
+  const exactSource=readFileSync(new URL('./fixtures/actor-bool-never-parity-v1.atto',
+                                            import.meta.url),'utf8');
+  assert.equal(exactSource.trim(),boolActor.trim(),
+    'compiler checks same .atto bytes pinned in all parity repositories');
+  const actor=await instantiate(exactSource);
+  assert.deepEqual(await actor.on_message(),{value:'0',stdout:'',actors:1});
+  assert.equal((await actor.on_route(boolRoute(1))).stdout,'true\n');
+  assert.equal((await actor.on_route(boolRoute(0))).stdout,'false\n');
 });
