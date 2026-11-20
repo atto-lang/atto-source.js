@@ -1,0 +1,8 @@
+// TARGET REJECT: state view cannot escape by return, closure or storage
+define actor Counter as
+  state { let int count: 0; }
+  get_state(): infer using state.read {
+    return self.handle_state(critical-read |s| -> s);
+  }
+end
+pub fnc main(): int { return 0; }
