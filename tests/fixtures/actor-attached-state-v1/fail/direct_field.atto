@@ -1,0 +1,6 @@
+// TARGET REJECT: sealed state not accessible through self.count
+define actor Counter as
+  state { let int count: 0; }
+  on_start(): void using state.write { self.count = 4; }
+end
+pub fnc main(): int { return 0; }
