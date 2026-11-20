@@ -102,3 +102,24 @@ test('checked braced match lowers a typed i64 guard, not arbitrary guest express
   const nonexhaustive=good.replace('on Err() -> { return 0; }','');
   assert.throws(()=>transpile(nonexhaustive),e=>e.code==='E_MATCH_NONEXHAUSTIVE');
 });
+
+
+test('Atto Error is nominal, identity-preserving and has no host stack',async()=>{
+  const {module_source}=transpile(source('bad','7'));
+  // Test-only named export; production guest module does not expose its parser.
+  const probe=await import('data:text/javascript;charset=utf-8,'+
+    encodeURIComponent(module_source+'\nexport { int_parse };'));
+  const first=probe.int_parse('bad'), second=probe.int_parse('bad');
+  assert.equal(first.tag,1);
+  assert.equal(first.error.message,'invalid integer');
+  assert.equal(first.error.stack,undefined);
+  assert.equal(Object.hasOwn(first.error,'stack'),false);
+  assert.equal(first.error instanceof Error,false);
+  assert.equal(first.error.constructor.name,'AttoError');
+  assert.equal(Object.isFrozen(first),true);
+  assert.equal(Object.isFrozen(first.error),true);
+  assert.equal(Object.isFrozen(Object.getPrototypeOf(first.error)),true);
+  assert.notStrictEqual(first.error,second.error);
+  const propagated=first; // A caller must retain the same original Err handle.
+  assert.strictEqual(propagated.error,first.error);
+});

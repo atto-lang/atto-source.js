@@ -165,9 +165,13 @@ export function transpile_result_int_parse_tokens(toks) {
   const generated=[
     '// Typed Result<int,Error> compiled Atto JS Worker subset.',
     'const MAX=9223372036854775807n,MIN=-9223372036854775808n;',
+    // A guest Error is nominal and reference-identical but must never capture
+    // a host JavaScript stack or inherit mutable cross-tenant prototype state.
+    'class AttoError { constructor(message) { this.message=message; Object.freeze(this); } }',
+    'Object.freeze(AttoError.prototype); Object.freeze(AttoError);',
     'function int_parse(text){',
     ' const bytes=new TextEncoder().encode(text);',
-    " const err=()=>Object.freeze({tag:1,error:Object.freeze(new Error('invalid integer'))});",
+    " const err=()=>Object.freeze({tag:1,error:new AttoError('invalid integer')});",
     ' if(bytes.length===0||bytes.length>1024)return err();',
     ' let at=0,negative=false;',
     " if(bytes[0]===45||bytes[0]===43){negative=bytes[0]===45;at=1;}",
