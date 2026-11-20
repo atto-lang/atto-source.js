@@ -56,7 +56,7 @@ export function transpile_to_worker(source) {
   // Every admitted inline body has a statically proven non-suspending scalar type.
   const result_type=node=>node?.kind==='inline_task'?node.payload_type:'int';
   let inline_count=0;
-  const parse_expression=(min_prec=0,depth=0)=>{
+  const parse_expression=(min_prec=0,depth=0,discard_inline=false)=>{
     if(depth>=MAX_DEPTH)throw new TranspileError('E_NESTING_LIMIT');
     let left;
     if(peek()==='('){i++;left=parse_expression(0,depth+1);expect(')');}
@@ -68,6 +68,9 @@ export function transpile_to_worker(source) {
       let declared=null;
       if(peek()==='<'){
         i++;declared=tokens[i++];
+        // A do-sync task is a void-only statement, never a discarded T.
+        if(discard_inline&&declared!=='void')
+          throw new TranspileError('E_TASK_RETURN_TYPE');
         if(declared!=='int'&&declared!=='void')
           throw new TranspileError('E_TASK_UNSUPPORTED');
         expect('>');
@@ -75,9 +78,14 @@ export function transpile_to_worker(source) {
       expect('{');
       let body=null;
       if(peek()==='return'){
-        i++;body=parse_expression(0,depth+1);
-        if(result_type(body)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
-        expect(';');
+        i++;
+        // Bare return exits a void inline body; return expr produces T.
+        if(peek()===';')i++;
+        else{
+          body=parse_expression(0,depth+1);
+          if(result_type(body)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
+          expect(';');
+        }
       }
       expect('}');
       const actual=body===null?'void':'int';
@@ -114,8 +122,9 @@ export function transpile_to_worker(source) {
   while(peek()==='do'){
     i++;
     if(peek()!=='sync')throw new TranspileError('E_TASK_UNSUPPORTED');
-    const item=parse_expression();
+    const item=parse_expression(0,0,true);
     if(item.kind!=='inline_task')throw new TranspileError('E_TASK_UNSUPPORTED');
+    if(item.payload_type!=='void')throw new TranspileError('E_TASK_RETURN_TYPE');
     preludes.push(item);
     if(peek()===';')i++;
     else if(!['return','do'].includes(peek())) {

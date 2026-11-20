@@ -20,12 +20,12 @@ test('typed and inferred sync task execute as inline scalar expressions',async()
   ])assert.equal(await execute(main(body)),want,body);
 });
 
-test('empty and value-bearing do sync task statements run inline and discard only after evaluation',async()=>{
-  assert.equal(await execute(main('do sync task {}; do sync task<void> {} do sync task { return 13 * 3; }; return 42;')),'42');
-  assert.equal(await execute(main('do sync task<int> { return 4 + 2; }; return 42;')),'42');
-  const {module_source}=transpile_to_worker(main('do sync task<int> { return 40; }; return sync task<int> { return 42; };'));
+test('void-only do sync task statements execute inline with no independent scheduling',async()=>{
+  assert.equal(await execute(main('do sync task {}; do sync task<void> {} do sync task { return; }; return 42;')),'42');
+  assert.equal(await execute(main('do sync task<void> { return; }; return 42;')),'42');
+  const {module_source}=transpile_to_worker(main('do sync task<void> { return; }; return sync task<int> { return 42; };'));
   assert.doesNotMatch(module_source,/TaskSpawn|TaskJoin|new Worker|new Promise|worker_threads/);
-  assert.match(module_source,/\(\(\)=>\{return 40n;\}\)\(\)/);
+  assert.match(module_source,/\(\(\)=>\{\}\)\(\)/);
 });
 
 test('do required for discard, but return sync task produces value',async()=>{
@@ -46,10 +46,36 @@ test('do required for discard, but return sync task produces value',async()=>{
   }
 });
 
-test('discarded inline work still traps before following parent return',async()=>{
-  const {module_source}=transpile_to_worker(main('do sync task { return 9223372036854775807 + 1; }; return 1;'));
+test('checked arithmetic in a value-producing inline task still traps',async()=>{
+  const {module_source}=transpile_to_worker(main('return sync task<int> { return 9223372036854775807 + 1; };'));
   const mod=await import('data:text/javascript,'+encodeURIComponent(module_source));
   await assert.rejects((await mod.create_tenant({})).on_message(),/E_GUEST_PANIC_1/);
+});
+
+test('do sync task is void-only even if the value could otherwise be discarded',()=>{
+  for(const statement of [
+    'do sync task<int> { return 42; };',
+    'do sync task<int> {};',
+    'do sync task<bool> {};',
+    'do sync task<Future<int>> { return 42; };',
+    'do sync task { return 42; };',
+    'do sync task<void> { return 42; };',
+    'do sync task { return sync task<int> { return 42; }; };',
+    'do sync task /* comment */ < int > { return 42; };',
+    'do sync task { return 9223372036854775807 + 1; };'
+  ]) {
+    assert.throws(()=>transpile_to_worker(main(statement+' return 0;')),
+      error=>error instanceof TranspileError&&error.code==='E_TASK_RETURN_TYPE',
+      statement);
+  }
+  for(const body of [
+    'do sync task {};',
+    'do sync task<void> {};',
+    'do sync task { return; };',
+    'do sync task<void> { return; };'
+  ]) {
+    assert.doesNotThrow(()=>transpile_to_worker(main(body+' return 42;')),body);
+  }
 });
 
 test('unsupported spawned/suspending/ill-typed task input fails before an artifact',()=>{

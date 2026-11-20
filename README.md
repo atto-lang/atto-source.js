@@ -81,11 +81,14 @@ The checked-i64 browser-worker subset admits pure, nonsuspending
 `sync task<int> { return expression; }` and inferred
 `sync task { return expression; }` expressions, including nesting.
 Empty `sync task {}` has a `void` result and must use
-`do sync task {};` when its value is discarded. All discarded inline
-tasks require the explicit `do` statement marker; a bare `sync task {}`
-statement is rejected with `E_TASK_DISCARD_REQUIRES_DO`. A returned or
-otherwise consumed `sync task<int> { return expression; }` remains a
-value-producing expression. Every supported inline body executes immediately on the caller's
+`do sync task {};` when its value is discarded. The **only** permitted
+payload for `do sync task` is `void`: the explicit
+`do sync task<void> { return; };` and inferred-void
+`do sync task { return; };` are accepted, but `do sync task<int>`
+or `do sync task { return 42; }` reject with `E_TASK_RETURN_TYPE`.
+A bare `sync task {}` statement is rejected with
+`E_TASK_DISCARD_REQUIRES_DO`. To produce a value, consume
+`sync task<int> { return expression; }` as an expression instead. Every supported inline body executes immediately on the caller's
 logical execution path, without a child Future, TaskId, worker dispatch,
 or new cancellation target. Checked-i64 panics in discarded expressions
 are still observed. There is no host-JavaScript passthrough.
