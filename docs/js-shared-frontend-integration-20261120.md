@@ -46,3 +46,19 @@ Known design follow-up: `normalize_generic_closers` is a bounded heuristic for a
 **Actual preflight evidence (NOT CI):** V8 isolate executing compiler-generated JS on current fetched blobs: 384/384 deterministic i64 bitwise property checks; 50/50 tenant-binding admissions/rejections; 10/10 canonical Result guest cases; 13/13 guarded-state positive+negative cases. The *actual checked-in integration-test callbacks*, adapted in memory for Node-specific imports/files and data-URI loading, passed 11/11. Independently computed Git blob SHA-1 matched GitHub for 7/7 audited source/test/workflow/policy files (before the subsequent tenant changes, which have new recorded SHAs above).
 
 **Still blocked:** no authoritative complete exact-tree Node 22 `npm test` execution, no stepful hosted CI evidence for the current PR head, no independently approved private carrier and no attested TenantVM isolation. Do not export private source to another organization solely because a hosted-runner canary becomes available. No branch promotion or merge until the required approval, full CI and independent review.
+
+## November 20: bounded Result-aware trap incorporation
+
+Integration PR #71 now carries the nonduplicative extension from Result PR #38:
+`trap` on statically known `int.parse` / `parse_id` operands of type
+`Result<int,Error>` is erased to the same guest ESM as the untrapped
+expression, preserving the exact original tagged Result/Err identity.
+The stricter integration-only `tenant.trim() === tenant` binding requirement
+is retained; merging feature branch #38 wholesale would regress that check.
+
+The shared integration suite imports the new successful/Err compiled-guest cases
+and negative untyped/nested trap cases. No ordinary source `throw` or host
+JavaScript exception is caught, no actor privilege is added, and all other
+`trap` effects remain unsupported. The existing Node 22 integration workflow
+must execute on the final exact integration SHA, not only on #38's head.
+At the time of this update, there is no matching exact-head stepful CI receipt.
