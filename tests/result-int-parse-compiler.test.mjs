@@ -203,3 +203,39 @@ test('generated Result guest fails closed on invalid tenant identity and epoch',
   assert.equal((await guest.on_message()).value,'42');
   await assert.rejects(guest.on_message(),/E_MAIN_ALREADY_CALLED/);
 });
+
+
+test('nominal on-is Result: deterministic hostile and boundary source corpus',async()=>{
+  const initial=[
+    '0','-0','+0','-9223372036854775808','9223372036854775807',
+    '9223372036854775808','-9223372036854775809','+','-','','00',
+    '4_2','42 ', '4\\0'+'2','é','٤٢','0'.repeat(1024),'0'.repeat(1025)
+  ];
+  let seed=0xA77015;
+  const alphabet='0123456789+-_ xé';
+  const random=()=>{
+    seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+    return seed;
+  };
+  const cases=[...initial];
+  for(let i=0;i<110;i++){
+    const count=random()%72;
+    let value='';
+    for(let j=0;j<count;j++)value+=alphabet[random()%alphabet.length];
+    cases.push(value);
+  }
+  for(const value of cases){
+    const old='pub fnc main(): int { return match int.parse('+
+      JSON.stringify(value)+') over on Ok(value) -> value, on Err() -> 9 end; }';
+    const newer=old.replace('on Ok(value)','on is Ok<value>')
+      .replace('on Err()','on is Err<error>');
+    assert.equal(transpile(newer).module_source,transpile(old).module_source,
+      'different Result guest code for '+JSON.stringify(value));
+    const decimal=/^[+-]?[0-9]+$/.test(value);
+    const n=decimal ? BigInt(value) : null;
+    const expected=n!==null&&n>=-9223372036854775808n&&
+      n<=9223372036854775807n ? String(n) : '9';
+    assert.equal(await execute(newer),expected,
+      'wrong checked Result branch for '+JSON.stringify(value));
+  }
+});
