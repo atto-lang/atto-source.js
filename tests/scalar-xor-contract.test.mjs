@@ -2,62 +2,90 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {transpile_to_worker,TranspileError} from '../src/transpile-worker.mjs';
 
-// Backend execution evidence for the *trusted, int-only* Atto JS subset.
-// This does not attest to general Boolean, native AOT, or TenantVM support.
-const guest = async expression => {
-  const source = 'pub fnc main(): int { return ' + expression + '; }';
-  const output = transpile_to_worker(source);
+// Trusted checked-i64 JS *guest execution* only. No proof of general Atto
+// syntax, full actor lowering, Math.pow, Boolean operations or TenantVM isolation.
+const compile = source => transpile_to_worker(source);
+const guest = async (expression,returnForm='return') => {
+  const source='pub fnc main(): int { '+returnForm+' '+expression+'; }';
+  const output=compile(source);
   assert.equal(output.trusted,true);
-  const module = await import('data:text/javascript;charset=utf-8,' +
+  const mod=await import('data:text/javascript;charset=utf-8,'+
     encodeURIComponent(output.module_source));
-  return (await (await module.create_tenant({tenant:'test',generation:1}))
+  return (await (await mod.create_tenant({tenant:'test',generation:1}))
     .on_message()).value;
 };
 
-test('BW-003 integer XOR executes checked-i64 guest output',async()=>{
-  assert.equal(await guest('12 ^ 10'),'6');
-  assert.equal(await guest('12 ^ 10 ^ 3'),'5');
-  assert.equal(await guest('12 ^ (10 ^ 3)'),'5');
+test('caret return shorthand is the same operation as return, not XOR or exponentiation',async()=>{
+  for (const expr of ['5','40 + 2','-(2 + 5)','12 ^^ 10','8 <<< 2']) {
+    assert.equal(await guest(expr,'^'),await guest(expr,'return'),expr);
+  }
+  assert.equal(await guest('5','^'),'5');
+  assert.equal(await guest('40 + 2','^'),'42');
 });
 
-test('XOR has lower precedence than addition and multiplication',async()=>{
-  assert.equal(await guest('1 + 2 ^ 3'),'0');
-  assert.equal(await guest('1 ^ 2 + 3'),'4');
-  assert.equal(await guest('1 * 2 ^ 3 + 1'),'6');
-  assert.equal(await guest('2 ^ 3 * 4'),'14');
+test('typed integer ^^ is bitwise XOR, not Boolean XOR or power',async()=>{
+  assert.equal(await guest('12 ^^ 10'),'6');
+  assert.equal(await guest('12 ^^ 10 ^^ 3'),'5');
+  assert.equal(await guest('12 ^^ (10 ^^ 3)'),'5');
+  assert.equal(await guest('2 ^^ 3'),'1');
 });
 
-test('XOR preserves signed i64 two-complement patterns',async()=>{
-  assert.equal(await guest('-1 ^ 0'),'-1');
-  assert.equal(await guest('-1 ^ 9223372036854775807'),'-9223372036854775808');
-  assert.equal(await guest('-9223372036854775808 ^ -1'),'9223372036854775807');
+test('^^ precedence is below shifts, addition and multiplication',async()=>{
+  assert.equal(await guest('1 + 2 ^^ 3'),'0');
+  assert.equal(await guest('1 ^^ 2 + 3'),'4');
+  assert.equal(await guest('1 * 2 ^^ 3 + 1'),'6');
+  assert.equal(await guest('2 ^^ 3 * 4'),'14');
+  assert.equal(await guest('8 >>> 2 ^^ 1'),'3');
 });
 
-test('Boolean XOR remains a separate unsupported backend feature, not a removed operator',()=>{
-  for(const expression of ['true ^^ false','12 ^^ 10','1 + (2 ^^ 3)']){
-    assert.throws(
-      ()=>transpile_to_worker('pub fnc main(): int { return '+expression+'; }'),
-      error=>error instanceof TranspileError && error.code==='E_UNSUPPORTED_BOOL_XOR',
-      expression
-    );
+test('signed i64 bitwise XOR preserves bit patterns',async()=>{
+  assert.equal(await guest('-1 ^^ 0'),'-1');
+  assert.equal(await guest('-1 ^^ 9223372036854775807'),'-9223372036854775808');
+  assert.equal(await guest('-9223372036854775808 ^^ -1'),'9223372036854775807');
+});
+
+test('<<< is 64-bit left shift, >>> is unsigned-bit logical right shift',async()=>{
+  assert.equal(await guest('8 <<< 2'),'32');
+  assert.equal(await guest('-1 >>> 1'),'9223372036854775807');
+  assert.equal(await guest('-8 >>> 1'),'9223372036854775804');
+  assert.equal(await guest('1 <<< 64'),'1');
+  assert.equal(await guest('1 <<< -1'),'-9223372036854775808');
+  assert.equal(await guest('(1 <<< 63) >>> 63'),'1');
+  assert.equal(await guest('1 + 2 <<< 3'),'24');
+  assert.equal(await guest('1 <<< 2 + 3'),'32');
+  assert.equal(await guest('1 <<< 63'),'-9223372036854775808');
+});
+
+test('return ^ and infix ^^ cannot be conflated by lexer or emitter',async()=>{
+  assert.equal(await guest('12 ^^ 10','^'),'6');
+  assert.equal(await guest('(12 ^^ 10) <<< 1','^'),'12');
+  assert.throws(()=>compile('pub fnc main(): int { return 12 ^ 10; }'),
+    error=>error instanceof TranspileError && error.code==='E_UNSUPPORTED_SYNTAX');
+  assert.throws(()=>compile('pub fnc main(): int { ^ ^ 5; }'),
+    error=>error instanceof TranspileError);
+});
+
+test('<< and >> are I/O protocols, not integer shifts',()=>{
+  for(const expr of ['8 << 2','8 >> 2','8 <<< 2 >> 1']){
+    assert.throws(()=>compile('pub fnc main(): int { return '+expr+'; }'),
+      error=>error instanceof TranspileError&&error.code==='E_IO_UNSUPPORTED',expr);
   }
 });
 
-test('comments do not trigger Boolean XOR admission; no source escape',async()=>{
-  const src='// ^^ in a comment is inert\n' +
-    'pub fnc main(): int { /* ^ and ^^ */ return 12 ^ 10; }';
-  const compiled=transpile_to_worker(src);
-  assert.equal(compiled.guest_abi,'atto.js.browser.subset.v1');
-  assert.equal(await guest('40 + 2'),'42');
-  assert.doesNotMatch(compiled.module_source,/\bimport\s*\(/);
+test('unsupported power, bool and other bitwise constructs fail closed',()=>{
+  for(const expr of ['Math.pow(2,3)','2 ** 3','2 % 3','1 & 3','~1','true ^^ false']){
+    assert.throws(()=>compile('pub fnc main(): int { return '+expr+'; }'),
+      error=>error instanceof TranspileError,expr);
+  }
 });
 
-test('not-yet-lowered syntax stays fail-closed',()=>{
-  for(const expression of ['12 % 10','^ 42','12 & 10','~12']){
-    assert.throws(
-      ()=>transpile_to_worker('pub fnc main(): int { return '+expression+'; }'),
-      error=>error instanceof TranspileError,
-      expression
-    );
-  }
+test('trivia cannot invent operators, preserved raw Unicode safeguards',async()=>{
+  const src='// ^^ ^ <<< >>> << >> are comments\\n'+
+    'pub fnc main(): int { /* ^^ <<< */ ^ 12 ^^ 10; }';
+  // The actual input uses a source newline, not a literal \\n sequence.
+  const source=src.replace('comments\\\\n','comments\\n');
+  const output=compile(source);
+  assert.equal(output.guest_abi,'atto.js.browser.subset.v1');
+  assert.doesNotMatch(output.module_source,/\\bimport\\s*\\(/);
+  assert.equal(await guest('40 + 2','^'),'42');
 });
