@@ -1,0 +1,3 @@
+// TARGET REJECT: cannot attach state to an unresolved actor
+define state on actor MissingActor as { let int count: 0; }
+pub fnc main(): int { return 0; }
