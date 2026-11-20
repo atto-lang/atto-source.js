@@ -96,10 +96,10 @@ test('a fatal checked overflow retires only the failing instance; new instances 
   });
   await assert.rejects(failed.on_drain(),/E_ACTOR_RETIRED/);
   await assert.rejects(failed.on_route(message(0)),/E_ACTOR_RETIRED/);
-  assert.equal((await sibling.on_drain()).stdout,'1\\n');
+  assert.equal((await sibling.on_drain()).stdout,'1\n');
   const restarted=await build(original);
   await restarted.on_message();
-  assert.equal((await restarted.on_drain()).stdout,'1\\n',
+  assert.equal((await restarted.on_drain()).stdout,'1\n',
     'fresh guest instance starts from its source-owned initializer');
 });
 
@@ -113,7 +113,7 @@ test('a pending admitted turn cannot be bypassed by forged route; malformed wire
   ]) {
     await assert.rejects(actor.on_route(forged),/E_ADMISSION_PENDING/);
   }
-  assert.equal((await actor.on_drain()).stdout,'1\\n');
+  assert.equal((await actor.on_drain()).stdout,'1\n');
   await assert.rejects(actor.on_route({...message(1),actor_id:2}),/E_ACTOR_REF/);
   await assert.rejects(actor.on_route({...message(1),wire_type:'control'}),/E_ROUTE_WIRE/);
   await assert.rejects(actor.on_route({...message(1),buffer:new ArrayBuffer(3)}),/E_ROUTE_WIRE/);
@@ -147,8 +147,8 @@ test('actor creation rejects malformed tenant handles and incarnation generation
   const b=await module.create_tenant({tenant:'tenantA',generation:2});
   await a.on_message();
   await b.on_message();
-  assert.equal((await a.on_drain()).stdout,'1\\n');
-  assert.equal((await b.on_drain()).stdout,'1\\n',
+  assert.equal((await a.on_drain()).stdout,'1\n');
+  assert.equal((await b.on_drain()).stdout,'1\n',
     'one new incarnation must never reuse stale actor state');
 });
 
