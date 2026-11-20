@@ -64,7 +64,8 @@ for (const {name,sha,code} of cases) {
     assert.equal(output, compile(source), 'byte-deterministic emitted JavaScript');
     assert.equal(check(source), true);
     assert.throws(() => compileToIR(source), /error:/, 'scalar-v1 IR remains fail-closed');
-    assert.doesNotMatch(output, /(?:eval\\s*\\(|new Function|process\\.exit|globalThis\\.)/);
+    for (const forbidden of ['eval(', 'new Function', 'process.exit', 'globalThis.'])
+      assert.equal(output.includes(forbidden), false, 'guest output must not embed host escape: ' + forbidden);
     const guest = await import('data:text/javascript;charset=utf-8,' + encodeURIComponent(output));
     assert.equal(guest.main(), 42n, 'actual guest must return signed i64 42');
   });
