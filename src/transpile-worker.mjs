@@ -16,6 +16,17 @@ function tokenize(source) {
     const tail = source.slice(i);
     const match = /^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)/.exec(tail);
     if (match) { i += match[0].length; continue; }
+    // Only the four exceptional-control words may consume a contiguous bang.
+    // Never widen arbitrary identifiers to name!; preserve != / !eq boundaries.
+    // Full effects stay fail-closed in this trusted checked-Result subset.
+    const bang=/^(?:trap|throw|raise|panic)!/.exec(tail);
+    if(bang && tail[bang[0].length]!=='=' &&
+        !/^eq(?![A-Za-z_0-9])/.test(tail.slice(bang[0].length))) {
+      tokens.push(bang[0]);
+      if(tokens.length>MAX_TOKENS)throw new TranspileError('E_TOKEN_LIMIT');
+      i+=bang[0].length;
+      continue;
+    }
     const token = /^(?:"(?:\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})|[^"\\\x00-\x1f])*"|->|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;,+*\-.=<>?])/.exec(tail);
     if (!token) throw new TranspileError('E_UNSUPPORTED_TOKEN');
     tokens.push(token[0]);
