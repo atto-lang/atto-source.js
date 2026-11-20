@@ -59,7 +59,7 @@ test('actor header cannot widen or disable the concrete ActorMail<int> ingress',
   reject(baseline.replace('Counter as','Counter receives never as'),
          'E_ACTOR_RECEIVES_NEVER_UNSUPPORTED');
   reject(baseline.replace('Counter as','Counter receives int receives int as'),
-         'E_UNSUPPORTED_ACTOR_SYNTAX');
+         'E_ACTOR_CONTRACT');
 });
 
 test('empty outbound effect satisfies typed sends bounds without granting host I/O', async () => {
@@ -83,7 +83,7 @@ test('unproved outbound syntax still fails closed before generated JavaScript', 
     for (const unknown of ['String', 'Any', 'SomeActor'])
       reject(mk(`sends ${unknown}`), 'E_ACTOR_SENDS_EFFECT_UNSUPPORTED');
     reject(mk('emits int'), 'E_ACTOR_EMITS_EFFECT_UNSUPPORTED');
-    reject(mk('sends int sends int'), 'E_UNSUPPORTED_ACTOR_SYNTAX');
+    reject(mk('sends int sends int'), 'E_ACTOR_CONTRACT');
   }
   // Strings still have no cross-worker owned UTF-8 wire representation.
   reject(baseline.replace('Counter as','Counter receives string sends int as'),
@@ -164,7 +164,7 @@ test('checked bool header is not silently widened to int or string payload', () 
   reject(boolActor.replace('self.enabled = mail.value;', 'self.enabled = true;'),
     'E_UNSUPPORTED_ACTOR_SYNTAX');
   reject(boolActor.replace('sends never', 'sends void'), 'E_ACTOR_SEND_CONTRACT');
-  reject(boolActor.replace('sends never', 'sends never sends int'), 'E_UNSUPPORTED_ACTOR_SYNTAX');
+  reject(boolActor.replace('sends never', 'sends never sends int'), 'E_ACTOR_CONTRACT');
 });
 
 
