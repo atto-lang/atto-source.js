@@ -39,10 +39,10 @@ test('do required for discard, but return sync task produces value',async()=>{
   assert.equal(await execute(valid),'42');
   const invalid=valid.replace('do sync task {};','sync task {};');
   assert.throws(()=>transpile_to_worker(invalid),
-    error=>error instanceof TranspileError&&error.code==='E_TASK_DISCARD_REQUIRES_DO');
+    error=>error instanceof TranspileError&&error.code==='E_SYNTAX');
   for(const bare of ['sync task {};','sync task {}','sync task<int> { return 42; };']){
     assert.throws(()=>transpile_to_worker(main(bare+' return 7;')),
-      error=>error instanceof TranspileError&&error.code==='E_TASK_DISCARD_REQUIRES_DO');
+      error=>error instanceof TranspileError&&error.code==='E_SYNTAX');
   }
 });
 

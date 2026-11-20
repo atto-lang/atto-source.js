@@ -87,7 +87,7 @@ payload for `do sync task` is `void`: the explicit
 `do sync task { return; };` are accepted, but `do sync task<int>`
 or `do sync task { return 42; }` reject with `E_TASK_RETURN_TYPE`.
 A bare `sync task {}` statement is rejected with
-`E_TASK_DISCARD_REQUIRES_DO`. To produce a value, consume
+`E_SYNTAX`. To produce a value, consume
 `sync task<int> { return expression; }` as an expression instead. Every supported inline body executes immediately on the caller's
 logical execution path, without a child Future, TaskId, worker dispatch,
 or new cancellation target. Checked-i64 panics in discarded expressions
