@@ -36,3 +36,38 @@ The candidate compiler now admits `match int.parse(text) over ... end` with exha
 
 ### Host stack trace hardening
 The generated guest no longer constructs native JavaScript `Error` instances for ordinary `int.parse` failures, because JS Error construction can capture host stacks. Instead it creates a new frozen nominal `AttoError` with only the constant `message`, a frozen prototype, and reference identity. Distinct `Err` values receive distinct Error objects; `?` returns the original tagged record on early exit. Host stack traces must never be guest-visible unless explicitly requested through a separately specified, authorized `capture_trace` API. Tests inspect the generated parser via a test-only export; the production module does not export its internal parser. These checks do not certify full untrusted TenantVM isolation.
+
+
+## Bounded `trap` on an existing Result (2026-11-20)
+
+This same compiler now admits the **already-Result identity rule** only for
+the statically known `int.parse(text)` call and the locally declared
+`parse_id(string): Result<int,Error>` call. These compile:
+
+```atto
+val parsed = trap int.parse(text)?;
+return trap int.parse(text);
+return match trap parse_id("42") over
+  on Ok(value) -> value,
+  on Err() -> 0
+end;
+```
+
+Because each operand is already `Result<int,Error>`, `trap` does **not** add
+another Result/Option layer, create a new Ok/Err, reallocate Error, or introduce
+a JavaScript `try/catch`. Lowering deliberately emits **byte-identical ESM**
+to the corresponding accepted expression without `trap`; the evaluation is
+performed exactly once and the existing `Err` handle survives a `?` exit.
+Tests execute successful and failing generated guests and assert identical
+emitted module source. Unknown/host callables and nested/ill-typed trap
+expressions fail closed with `E_TRAP_UNSUPPORTED` or the existing type/syntax
+diagnostic; no guest artifact is emitted.
+
+This is **NOT** a general `trap` implementation. Source `throw`, typed
+Error joining, nested Result/Option, `raise`, `panic`, cleanup, suspension
+and ordinary-exception capture remain **UNSUPPORTED** here. In particular,
+do not interpret arbitrary JavaScript exceptions as Atto Error values, and do
+not widen this syntax into a trusted host bridge. Follow the normative
+`atto-spec/language/trap-result-v1.md` and conformance PR #68. The upcoming
+merge into JS integration PR #71 must include the new tests and re-run every
+competing frontend profile on its final exact head.
