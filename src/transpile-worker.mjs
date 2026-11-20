@@ -8,6 +8,16 @@ const INT_MIN = -9223372036854775808n;
 export class TranspileError extends Error {
   constructor(code) { super(code); this.name = 'TranspileError'; this.code = code; }
 }
+// Bound decimal work before creating BigInt. Long padded zeros are safe:
+// only the significant suffix is converted after signed-i64 range checking.
+function checked_decimal(token, ceiling=INT_MAX) {
+  const significant=token.replace(/^0+/, '') || '0';
+  const bound=ceiling.toString();
+  if(significant.length>bound.length||
+     (significant.length===bound.length && significant>bound))
+    throw new TranspileError('E_INT_OVERFLOW');
+  return BigInt(significant);
+}
 function tokenize(source) {
   const tokens = [];
   let i=0;
@@ -95,14 +105,13 @@ export function transpile_to_worker(source) {
     }
     else if(peek()==='-'){
       i++;
-      if(/^\d+$/.test(peek()??'') && BigInt(peek())===INT_MAX+1n) {left={value:INT_MIN};i++;}
+      if(/^\d+$/.test(peek()??'') && checked_decimal(peek(),INT_MAX+1n)===INT_MAX+1n) {left={value:INT_MIN};i++;}
       else {const arg=parse_expression(3,depth+1);
         if(result_type(arg)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
         left={op:'neg',arg};}
     }
     else if(/^\d+$/.test(peek()??'')){
-      const value=BigInt(tokens[i++]);
-      if(value>INT_MAX)throw new TranspileError('E_INT_OVERFLOW');
+      const value=checked_decimal(tokens[i++]);
       left={value};
     } else throw new TranspileError('E_UNSUPPORTED_EXPRESSION');
     const precedence={'+':1,'-':1,'*':2};

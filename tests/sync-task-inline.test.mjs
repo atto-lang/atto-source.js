@@ -115,3 +115,50 @@ test('token keyword boundary ignores comment text; sync is reserved in other sou
   ].join('\n');
   assert.throws(()=>parseStructuralProjectionSource(source),StructuralSourceError);
 });
+
+test('inline integer admission bounds BigInt work before conversion',async()=>{
+  for(const text of ['0'.repeat(16000)+'42','0'.repeat(16000)]) {
+    assert.equal(await execute(main('return sync task<int> { return '+text+'; };')),
+      text.endsWith('42')?'42':'0');
+  }
+  for(const number of [
+    '9'.repeat(16000),'1'+'0'.repeat(16000),
+    '9223372036854775808','0'.repeat(15000)+'9223372036854775808'
+  ]) {
+    assert.throws(()=>transpile_to_worker(main(
+      'return sync task<int> { return '+number+'; };')),
+      error=>error instanceof TranspileError&&error.code==='E_INT_OVERFLOW');
+  }
+  assert.equal(await execute(main('return sync task<int> {return -'+
+    '0'.repeat(1000)+'9223372036854775808;};')),'-9223372036854775808');
+  assert.throws(()=>transpile_to_worker(main('return -'+
+    '0'.repeat(1000)+'9223372036854775809;')),
+    error=>error instanceof TranspileError&&error.code==='E_INT_OVERFLOW');
+});
+
+test('inline task fail-closed syntax, nesting and budget limits',()=>{
+  for(const body of [
+    'do sync /* note */ task < int > { return 42; }; return 0;',
+    'do sync task<void> { return 42; }; return 0;',
+    'do sync task { return 9223372036854775807+1; }; return 0;',
+    'do sync task<Future<int>> {}; return 0;',
+    'do sync task { await task<int>{return 1;}; }; return 0;',
+    'sync task{}; return 0;',
+    'do sync task<void> { val x = 1; }; return 0;',
+    'do sync task<void> { return; return; }; return 0;',
+    'do sync task<void> { return; }; return sync task<void> {};'
+  ])assert.throws(()=>transpile_to_worker(main(body)),TranspileError,body);
+  const deep=Array.from({length:70},()=> 'sync task<int> {return ').join('')+
+    '42'+Array.from({length:70},()=>';}').join('');
+  assert.throws(()=>transpile_to_worker(main('return '+deep+';')),
+    error=>error instanceof TranspileError&&error.code==='E_NESTING_LIMIT');
+  const many=Array.from({length:65},()=> 'do sync task<void> {};').join(' ');
+  assert.throws(()=>transpile_to_worker(main(many+' return 42;')),
+    error=>error instanceof TranspileError&&error.code==='E_TASK_LIMIT');
+  for(const tail of ['\u202e','\u0000','\u001b']) {
+    assert.throws(()=>transpile_to_worker('// hostile'+tail+'\n'+main(
+      'do sync task {}; return 42;')),TranspileError);
+  }
+  assert.throws(()=>transpile_to_worker(main(
+    'return sync task<int> {return 42;}; import("host")')),TranspileError);
+});

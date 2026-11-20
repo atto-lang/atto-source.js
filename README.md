@@ -99,3 +99,9 @@ cancellation safepoints and arbitrary side effects remain unsupported and
 fail closed before generating a guest module. Web Workers are not a secure
 TenantVM. See `tests/sync-task-inline.test.mjs` and the normative target in
 atto-spec #129; host tests alone do not certify cross-backend conformance.
+
+The inline-task scanner checks the significant decimal digits against the
+signed-i64 bounds **before** invoking BigInt, including negative-minimum
+literals with long leading-zero padding. Source bytes, token count, expression
+nesting, and task count are bounded. This admission check does not implement
+cancellation or make JavaScript Workers into a secure TenantVM.
