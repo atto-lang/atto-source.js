@@ -1,26 +1,45 @@
-# AttoLang scalar XOR: legacy JS migration reconciliation
+# AttoLang operator spellings — JS subset and legacy reconciliation
 
-**Scope:** the explicitly trusted, signed-i64 *single `main(): int`* source-to-Worker-ESM subset in `src/transpile-worker.mjs`.
-**Status:** experimental backend implementation against a *proposed* normative language contract. Not general compiler, Boolean expression, multi-tenant isolation, or all-backend conformance.
+**Resolution (2026-11-20):** `^ expression;` is return shorthand, never exponentiation or XOR. `^^` is typed integer bitwise XOR; `<<<` and `>>>` are integer shifts; `<<` and `>>` are read/write operators. Exponentiation is an explicit `Math.pow(base, exponent)` API call, not an operator.
 
-## Source contradiction
+## Semantic source of truth
 
-- Legacy `ores-truffle-oreslang/oreslang-source.js#218` called `^` and `^^` **removed operators**, while separately implementing `--atto-scalar-v1` over `src/atto-scalar-v1.mjs`.
-- Merged legacy JS `#230` reserved both source operators in both scalar frontends in favor of `Integer.bitXor(a,b)` and `Xor(a,b)`.
-- Merged legacy JS `#217` had *already* provided `--atto-scalar-v1` / `compileAttoScalarV1` inside `program-v2.mjs`. Avoid introducing those two competing compiler front doors here.
-- Canonical `atto-lang/atto-spec#93` corrects the accidental language-wide ban. Merged `atto-spec#87` proposes typed `int ^ int -> int` and distinguishes `bool ^^ bool -> bool`. The bitwise contract remains **proposed**, with cross-backend execution parity pending.
+This implementation tracks the user-selected grammar documented in the companion `atto-spec` operator-spelling reconciliation. That specification remains a **proposed** normative contract until reviewed; implementation evidence is per-backend, not proof of full language parity.
 
-## This backend's deliberately narrow resolution
+| Form | Intent | Present trusted `transpile_to_worker` subset |
+| --- | --- | --- |
+| `return 5;` and `^ 5;` | Same callable return | Both compiled |
+| `12 ^^ 10` | int bitwise XOR, result 6 | Compiled to checked signed-i64 BigInt XOR |
+| `8 <<< 2` | left shift, result 32 | Compiled with signed 64-bit wrap |
+| `-1 >>> 1` | logical right shift, result 9223372036854775807 | Compiled with unsigned intermediate / signed output |
+| `stream >> val item` and `sink << value` | Trait-checked read/write | `E_IO_UNSUPPORTED` in this numeric guest |
+| `Math.pow(2, 3)` | Explicit exponentiation API | Fail-closed: general Math API not linked |
+| `12 ^ 10` | Invalid infix use of return marker | Rejected |
+| `true ^^ false` | No implicit bool-to-int XOR | Rejected by the int-only backend |
 
-- Accept infix `^` **only** in the already int-only trusted scalar subset. Lower to BigInt XOR under existing signed-i64 checked emission; preserve left-to-right evaluation and precedence below addition/multiplication.
-- Recognize contiguous `^^` as the separate Boolean XOR operator but reject it with `E_UNSUPPORTED_BOOL_XOR` because this frontend cannot type-check or lower Boolean expressions. This does **not** mean AttoLang removed the operator.
-- Keep `%`, unimplemented `&`, `|`, shifts, leading-caret return shorthand and all broader expressions fail-closed. No new token grammar for actor receivers, no untrusted JS sandbox, no claims about Java/LLVM native guest execution.
-- Do not port either legacy `--atto-scalar-v1` implementation. The existing canonical `transpile_to_worker` entry point remains the only admitted scalar/actor host pathway for this subset.
+Shift-count masking to the low six bits is the **proposed** bitwise v1 policy and needs cross-backend approval. Shifts preserve the 64-bit result bit pattern; only checked arithmetic `+`, `-`, `*` traps on signed overflow in this restricted compiler.
 
-## Proof obligations and overlap
+## Source contradictions and disposition
 
-`node --test tests/scalar-xor-contract.test.mjs tests/transpile-worker.test.mjs`, followed by `npm test` on a **clean exact PR head** with Node 22+. The tests exercise generated ESM guest modules and negative frontend admission, not protected process isolation. Confirm executed steps, immutable HEAD/tree, and independent reviews before merge.
+- Legacy `ores-truffle-oreslang/oreslang-source.js#218` used the same `--atto-scalar-v1` front door as merged legacy `#217` with different implementation paths. Neither duplicate frontend is copied into the Atto target.
+- Legacy merged JS `#230` reserves both `^` and `^^`, replacing them with named functions, which contradicts this newly selected syntax.
+- Earlier `atto-spec#87` described `a ^ b` as integer XOR while `atto-spec#6` proposed `^^` as Boolean XOR. The corrected spec distinguishes **statement-leading return** from **typed int `^^`**; #6 requires an explicit separate Boolean-operator reconciliation. This PR does not silently redefine Boolean semantics in the backend.
 
-`atto-source.js#31`, `#38`, `#42` and `#43` also edit `src/transpile-worker.mjs`. Their actor/Result/Mutex changes are **semantically separate** but share the file; rebase/integrate and re-run the combined executable suite rather than force-merge. `#41` adds an independent functional compiler and CLI and should not be overwritten.
+## Implementation and safety boundary
 
-**Source-only migration:** no legacy private-source blobs or whole Git trees were transferred. This implementation follows the publicly stated semantic contract and existing canonical code.
+The compiler admits only a single checked signed-i64 `main(): int` expression (or its existing restricted actor form) and emits a trusted Worker ESM module. Lexing uses maximal-munch `^^`, `<<<`, `>>>`, `<<`, `>>` to avoid accidental reinterpretation. Both return spellings normalize at the **statement parser**, not by preprocessing string replacement. No code text is spliced into generated JS; unsupported syntax remains fail-closed.
+
+The `<<`/`>>` design applies to streams, channels and any statically verified readable/writable interface or trait, subject to capability, effect and lifecycle constraints. The JS numeric subset **does not execute** these I/O operators. `Math.pow` type/rounding/overflow rules require the separate standard Math contract, so no guessed integer or floating-point semantics are implemented here.
+
+`atto-source.js#31`, `#38`, `#42` and `#43` overlap the target compiler file. Merge/rebase deliberately without discarding their unique actor, Result or Mutex work; `#41` is an independent functional-source CLI.
+
+## Verification and publication
+
+Focused Node 22 execution on the exact PR SHA is required:
+
+```sh
+node --test tests/scalar-xor-contract.test.mjs tests/transpile-worker.test.mjs
+npm test
+```
+
+Verify the exact checkout HEAD/tree, real executed job steps, immutable source blobs and independent review. A V8 in-memory model with a substitute ASCII byte-count function, if run, is **not** Node 22 test evidence. No native AOT, protected TenantVM, generalized actor, Math.pow or cross-backend parity is claimed. Keep this PR Draft pending execution and integration review.
