@@ -80,7 +80,7 @@ test('unsupported power, bool and other bitwise constructs fail closed',()=>{
 });
 
 test('trivia cannot invent operators, preserved raw Unicode safeguards',async()=>{
-  const src='// ^^ ^ <<< >>> << >> are comments\\n'+
+  const src='// ^^ ^ <<< >>> << >> are comments\n'+
     'pub fnc main(): int { /* ^^ <<< */ ^ 12 ^^ 10; }';
   const output=compile(src);
   assert.equal(output.guest_abi,'atto.js.browser.subset.v1');
