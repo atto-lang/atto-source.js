@@ -26,3 +26,23 @@
 **Still NOT_EXECUTED:** full-branch Node 22 `npm test`, GitHub-hosted stepful CI, true TenantVM sandbox/intra-process isolation, source-tree SHA-verified combined checkout, and independent security review. Keep this integration branch and PR Draft, do not merge source feature PRs, and do not export to another private organization without the independently approved `.github/private-ci-approved-repositories.txt` entry.
 
 Known design follow-up: `normalize_generic_closers` is a bounded heuristic for a fixed set of nominal generic names, **not** a complete type parser for arbitrary user-defined nested generics. Conformance and formatter alignment are separate from this trusted JS preview, and Boolean `^^` conflict in `atto-spec#6` remains subject to explicit spec review.
+
+## Post-integration security audit — November 20, 2026
+
+**Current pinned compiler bytes (Git blobs):**
+- `src/transpile-worker.mjs` — `f0b4b638bad65ce4608bfe04f9f3b0738ceb5858`.
+- `src/result-int-parse-compiler.mjs` — `01a6fd4e2830008c0a79bd1b7e4287c234c97cce`.
+- `src/actor-state-counter.mjs` — `b4f2ed782e205810dbaeef83025ea5db52dad26c`.
+- `tests/shared-frontend-integration.test.mjs` — `0ea81be64459568b539a5efe538993a3ad157879`.
+- Private transfer policy `.github/private-ci-approved-repositories.txt` — `e861197f825e7f4c3587dd377d099f3eb3c862fe`, exactly copied from protected `main`.
+
+**Additional security fixes since candidate creation:**
+1. The old integration baseline was missing `.github/private-ci-approved-repositories.txt` although protected `main` has an explicit empty carrier allowlist. Restored the **exact main Git blob** and pinned its SHA in the integration workflow. This does not grant source export.
+2. On generic close, excess `>>` previously disappeared into split `>` tokens. Now the normalizer consumes only the open generic depth and preserves any remaining `>>` for `E_IO_UNSUPPORTED`. Added source-level regression.
+3. After raw-token admission, generic closer expansion must still satisfy the 4,096-token cap. Added expanded-generic test.
+4. All **five supported trusted-JS guest profiles** now check nonempty, trimmed, bounded tenant ID strings and positive safe generation epochs at most 2,147,483,647. Scalar, integer actor and Boolean actor previously accepted `create_tenant({})`; Result accepted whitespace-padded IDs; sealed state admitted oversized epochs. Negative and valid-boundary regression tests are committed. **This checks the shape of a binding only. Host-side TenantVM identity authentication, capability ceilings and revocation remain separate required controls.**
+5. Added explicit source-byte, raw-token and AST-nesting budget tests.
+
+**Actual preflight evidence (NOT CI):** V8 isolate executing compiler-generated JS on current fetched blobs: 384/384 deterministic i64 bitwise property checks; 50/50 tenant-binding admissions/rejections; 10/10 canonical Result guest cases; 13/13 guarded-state positive+negative cases. The *actual checked-in integration-test callbacks*, adapted in memory for Node-specific imports/files and data-URI loading, passed 11/11. Independently computed Git blob SHA-1 matched GitHub for 7/7 audited source/test/workflow/policy files (before the subsequent tenant changes, which have new recorded SHAs above).
+
+**Still blocked:** no authoritative complete exact-tree Node 22 `npm test` execution, no stepful hosted CI evidence for the current PR head, no independently approved private carrier and no attested TenantVM isolation. Do not export private source to another organization solely because a hosted-runner canary becomes available. No branch promotion or merge until the required approval, full CI and independent review.
