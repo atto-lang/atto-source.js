@@ -203,9 +203,15 @@ export function transpile_result_int_parse_tokens(toks) {
     ' }',
     ' return Object.freeze({tag:0,value:negative?n:-n});',
     '}',
-    'export async function create_tenant({tenant,generation}){',
+    'export async function create_tenant({tenant,generation}={}){',
+    // This validates the trusted Worker adapter contract, not host
+    // authorization. Real TenantVM admission must still bind identity,
+    // capability ceiling, epoch, and revocation at its host boundary.
+    ' if(typeof tenant!=="string"||!tenant.trim()||tenant.length>128||',
+    '    !Number.isSafeInteger(generation)||generation<1||generation>2147483647)',
+    "  throw new Error('E_TENANT_BINDING');",
     ' let executed=false;',
-    ' return {async on_message(){',
+    ' return Object.freeze({async on_message(){',
     "  if(executed)throw new Error('E_MAIN_ALREADY_CALLED');executed=true;",
     '  const parse_id=(text)=>{',
     '   const result=int_parse(text);',
@@ -217,7 +223,7 @@ export function transpile_result_int_parse_tokens(toks) {
     '  const subject='+(direct?'int_parse(':'parse_id(')+encoded+');',
     '  const result=subject.tag===0?('+arms.Ok+'):('+arms.Err+');',
     "  return {value:String(result),stdout:'',actors:0};",
-    ' }};',
+    ' }});',
     '}',''
   ].join('\n');
   return {backend:'js',trusted:true,guest_abi:'atto.js.browser.result-int-parse.v1',module_source:generated};
