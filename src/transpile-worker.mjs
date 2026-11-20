@@ -47,6 +47,9 @@ function normalize_generic_closers(tokens) {
     } else {
       out.push(token);
     }
+    // Expanding maximal-munch nested generic closers must never defeat the
+    // 4096-token admission budget enforced by the raw lexer.
+    if(out.length>MAX_TOKENS)throw new TranspileError('E_TOKEN_LIMIT');
   }
   return out;
 }
