@@ -1,0 +1,5 @@
+pub fnc main() -> int {
+    const v = |int foo, foo: string| -> { return; };
+    v(5, "ok");
+    return 42;
+}
