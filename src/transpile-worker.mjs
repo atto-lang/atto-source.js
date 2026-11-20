@@ -150,7 +150,7 @@ function transpile_actor_tokens(tokens) {
       throw new TranspileError('E_ACTOR_SENDS_EFFECT_UNSUPPORTED');
   }
   if(peek()==='sends'||peek()==='receives')
-    throw new TranspileError('E_UNSUPPORTED_ACTOR_SYNTAX');
+    throw new TranspileError('E_ACTOR_CONTRACT');
   if(peek()==='emits')throw new TranspileError('E_ACTOR_EMITS_EFFECT_UNSUPPORTED');
   expect('as');
   // Independent trusted-JS boolean mailbox profile. This is generated JS
