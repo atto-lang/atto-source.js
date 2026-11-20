@@ -47,6 +47,11 @@ export function transpile_to_worker(source) {
   if (/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(source))
     throw new TranspileError('E_BIDI_CONTROL');
   const tokens=tokenize(source);
+  // Continuous actor/channel/stream pipelines have no executable guest ABI in
+  // this JS subset. Lex first so comments cannot accidentally authorize or
+  // reject a program; preserve |> as the separate functional operator.
+  if(tokens.includes('pipe') || tokens.includes('rpipe'))
+    throw new TranspileError('E_UNSUPPORTED_CONTINUOUS_PIPE');
   if(tokens[0]==='define')return transpile_actor_tokens(tokens);
   let i=0;
   const peek=()=>tokens[i];
