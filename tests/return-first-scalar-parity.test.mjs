@@ -12,6 +12,8 @@ const sources=[
   'int • main() { return 42; }',
   'fnc int <- main() begin return 42; end',
   'int•main(){return 42;}',
+  'int <- main() return 42; end',
+  'fnc int • main() return 42; end',
 ];
 
 test('return-first int scalar and program-v2 emit byte-identical ESM',()=>{

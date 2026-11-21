@@ -2,7 +2,7 @@
 
 This change admits only **concrete `int`** return-first scalar callables
 (`fnc int <- name(...)` and `int • name(...)`, optional `begin/end` or
-brace body) into the existing scalar-v1 and program-v2 parser paths.
+brace body or bare `return...; end`) into the existing scalar-v1 and program-v2 parser paths.
 
 Both forms lower to the **same existing validated IR and emitted ESM** as
 `fnc name(...): int`. Do not infer broad functional/actor/effect support,

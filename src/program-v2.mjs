@@ -485,9 +485,9 @@ class Parser {
     const returnType=returnFirst?'int':this.eat('void')?'void':this.valueType();
     const braced=this.eat('{');
     const began=!braced&&returnFirst&&this.eat('begin');
-    if(!braced&&!began&&!arrow)
+    if(!braced&&!began&&!arrow&&!returnFirst)
       fail('expected { or begin for return-first function body',this.peek());
-    if(!braced&&!began){if(!this.eat('as'))this.eat('::');}
+    if(!braced&&!began&&!returnFirst){if(!this.eat('as'))this.eat('::');}
     const terminator=braced?'}':'end';
     let body=null;
     if(returnType==='void'){

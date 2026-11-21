@@ -186,9 +186,9 @@ class Parser {
       if(!returnFirst){if(!arrow)this.expect(':');this.expect('int');}
       const braced=this.match('{');
       const began=!braced&&returnFirst&&this.match('begin');
-      if(!braced&&!began&&!arrow)
+      if(!braced&&!began&&!arrow&&!returnFirst)
         throw new CompileError('expected { or begin for return-first function body',this.peek());
-      if(!braced&&!began){if(!this.match('as'))this.match('::');}
+      if(!braced&&!began&&!returnFirst){if(!this.match('as'))this.match('::');}
       this.expect('return');
       const body=this.expr();this.expect(';');this.expect(braced?'}':'end');
       functions.push({name,params,body,pub});
