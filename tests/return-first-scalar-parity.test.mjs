@@ -45,7 +45,7 @@ test('shared Atto conformance return-first int guest variants preserve observabl
       compileScalar(source),compileProgramV2(source),compileAttoScalarV1(source)]){
       // The generated guest has an ordinary ESM named export. The VM harness
       // calls its internal _f1 after removing only that export declaration.
-      const executable=compiled.replace(/^export \\{[^\\n]*\\};\\n?/gm,'');
+      const executable=compiled.replace(/^export \{[^\n]*\};\n?/gm,'');
       assert.equal(runInNewContext(executable+'\n_f1()'),42n,declaration);
     }
   }
