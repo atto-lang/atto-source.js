@@ -49,6 +49,35 @@ test('legacy std/core is a source-only alias and not an ESM/node import',async()
   assert.equal(checkCoreLinkedProgram(old,core),true);
 });
 
+test('canonical atto.core numeric imports resolve the same validated ESM unit as legacy aliases',async()=>{
+  const [app,core]=await paths();
+  const expected=compileCoreLinkedProgram(app,core);
+  for(const moduleName of ['atto.core/numeric','atto.core/numeric.atto']) {
+    const canonical=app.replace('from "core"','from "'+moduleName+'"');
+    assert.equal(compileCoreLinkedProgram(canonical,core),expected);
+    assert.equal(checkCoreLinkedProgram(canonical,core),true);
+    const exports=await load(compileCoreLinkedProgram(canonical,core));
+    assert.equal(exports.bounded(99n),10n);
+    assert.equal(exports.compose(14n),14n);
+  }
+});
+
+test('canonical atto core import is closed to shadowing, traversal and upward libraries',async()=>{
+  const [app,core]=await paths();
+  for(const badName of [
+    'atto.core/../std/fs', 'atto.core/numerical',
+    'atto.core/numeric.atto/../../x', 'atto.core',
+    'atto.alloc/byte_region', 'atto.std/fs', 'atto.runtime.actor',
+    'https://example.invalid/atto.core/numeric', './atto.core/numeric'
+  ]) {
+    const bad=app.replace('from "core"','from "'+badName+'"');
+    assert.throws(()=>compileCoreLinkedProgram(bad,core),/error:/,badName);
+  }
+  assert.throws(()=>compileCoreLinkedProgram(
+    app.replace('from "core"','from "atto.core/numeric"')+
+    '\\nimport module injected from "atto.std/fs";',core),/error:/);
+});
+
 test('core-only linkage forbids host APIs, duplicate imports and wrong declarations',async()=>{
   const [,core]=await paths();
   for(const code of [
