@@ -75,7 +75,7 @@ test('canonical atto core import is closed to shadowing, traversal and upward li
   }
   assert.throws(()=>compileCoreLinkedProgram(
     app.replace('from "core"','from "atto.core/numeric"')+
-    '\\nimport module injected from "atto.std/fs";',core),/error:/);
+    '\nimport module injected from "atto.std/fs";',core),/error:/);
 });
 
 test('core-only linkage forbids host APIs, duplicate imports and wrong declarations',async()=>{
