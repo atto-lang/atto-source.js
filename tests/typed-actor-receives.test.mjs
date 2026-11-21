@@ -178,3 +178,31 @@ test('canonical cross-compiler bool/never .atto fixture generates and executes J
   assert.equal((await actor.on_route(boolRoute(1))).stdout,'true\n');
   assert.equal((await actor.on_route(boolRoute(0))).stdout,'false\n');
 });
+
+test('checked-i64 panic terminates only the failed generated actor, with one terminal receipt', async () => {
+  const failed = await instantiate(with_header);
+  const sibling = await instantiate(with_header);
+  await failed.on_message();
+  await sibling.on_message();
+  assert.equal((await failed.on_route(route(9223372036854775807n))).stdout,
+    '9223372036854775807\n');
+  const first = await failed.on_route(route(1)).then(
+    () => { throw new Error('overflow unexpectedly accepted'); },
+    error => error
+  );
+  assert.equal(first.message, 'E_GUEST_PANIC_1');
+  assert.deepEqual(first.actor_failure, {
+    kind:'panic',actor_id:1,parent_id:0,actor_type:'Counter',reason:'E_GUEST_PANIC_1'
+  });
+  for (const packet of [route(0), route(1), {...route(1), wire_type:'control'}]) {
+    const subsequent = await failed.on_route(packet).then(
+      () => { throw new Error('terminated actor accepted message'); },
+      error => error
+    );
+    assert.equal(subsequent.message, 'E_ACTOR_TERMINATED');
+    assert.equal(subsequent.actor_failure, undefined,
+      'an already-terminated actor cannot emit another failure receipt');
+  }
+  assert.equal((await sibling.on_route(route(41))).stdout, '41\n',
+    'failure must not terminate an independent actor instance');
+});
