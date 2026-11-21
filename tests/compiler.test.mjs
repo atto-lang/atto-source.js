@@ -56,6 +56,41 @@ test('inverted classes fail closed before JS lowering',()=>{
  assert.doesNotThrow(()=>compile(ordinary));
 });
 
+test('hybrid actor heap needs nominal ownership lowering; JS scalar backend fails closed',()=>{
+ const rejected=[
+  'define class Node as int value end',
+  'define pub class Node as int value end',
+  'pub define actor HeapGraphProbe as receive(int m) { } end',
+  'define module M as define actor A as end pub fnc main(): int { return 7; } end',
+  'pub fnc main(): int { return new Node(7); }'
+ ];
+ for(const source of rejected) {
+   assert.throws(()=>compile(source),/E_ACTOR_MEMORY_GUEST_UNSUPPORTED/,source);
+   assert.throws(()=>compileToIR(source),/E_ACTOR_MEMORY_GUEST_UNSUPPORTED/,source);
+ }
+ // Inert comment text must not become an active heap declaration.
+ assert.doesNotThrow(()=>compile('pub fnc main(): int { return 7; } // define class Node as'));
+ assert.doesNotThrow(()=>compile('pub fnc main(): int { return 7; } /* new Node(7) */'));
+ // Inverted-class rejection retains its more specific existing diagnostic.
+ assert.throws(()=>compile('define inverted class Particle as x: int; end'),
+   /inverted class requires checked bracket-row/);
+});
+
+test('CLI never publishes guest JS for rejected actor heap .atto source',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'atto-js-hybrid-heap-reject-'));
+ const source=join(dir,'actor.atto');
+ const output=join(dir,'actor.mjs');
+ try {
+   await writeFile(source,'define class Node as int value end\\ndefine actor A as end');
+   const run=spawnSync(process.execPath,[cli,source,'--out='+output],{encoding:'utf8'});
+   assert.notEqual(run.status,0);
+   assert.match(run.stderr,/E_ACTOR_MEMORY_GUEST_UNSUPPORTED/);
+   await assert.rejects(readFile(output),{code:'ENOENT'});
+ } finally {
+   await rm(dir,{recursive:true,force:true});
+ }
+});
+
 test('fail-closed: unsupported language features and syntax',()=>{
  const invalid=[
   'pub fnc main(): int { return 1 / 2; }',
