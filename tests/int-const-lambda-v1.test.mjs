@@ -38,6 +38,7 @@ test('invalid lambda heads, arity, scopes, capture and types fail closed', () =>
     ['pub fnc main(): int { val runtime = 41; const fnc v = |_| : int -> runtime; return v(41); }', 'E_CONST'],
     [local('|int x, int x| : int -> x;', 'return v(3, 4);'), 'E_DUPLICATE'],
     [local('|bool x| : int -> x;', 'return v(true);'), 'E_TYPE'],
+    [local('|_| : int -> _;'), 'E_CONST'],
     [local('|int x| : int -> x + 1;', 'return v(true);'), 'E_TYPE'],
     [local('|int x| : int -> x + 1;', 'return v(9223372036854775808);'), 'E_TYPE'],
     [local('|int x| : int -> x + 1;', 'return other(41);'), 'E_CONST'],
