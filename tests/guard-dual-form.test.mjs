@@ -78,5 +78,8 @@ test('bad guard exits, types and delimiters fail closed at compile time',()=>{
     'pub fnc main():int { guard true else return 0; fi return 42; }',
     'pub fnc main():int { guard 17 else return 0; end return 42; }',
     'pub fnc main():int { guard true return 0; return 42; }',
+    'pub fnc main():int { guard true else throw Error("bad"); end return 42; }',
+    'pub fnc main():int { loop { guard false { break; } return 42; } return 0; }',
+    'pub fnc main():int { loop { guard false else continue; end return 42; } return 0; }',
   ]) assert.throws(()=>compileProgramV2(source),/error: program v2:/,source);
 });
