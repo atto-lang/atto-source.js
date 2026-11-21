@@ -75,6 +75,7 @@ export function compileIntConstLambdaDirect(tokens) {
       body = {kind:'literal',value:number()};
     } else if (peek().kind === 'id') {
       const identifier = name();
+      if (identifier === '_') fail('E_CONST', 'discarded parameter cannot be read');
       const index = params.findIndex(p => p.name === identifier);
       if (index < 0) fail('E_CONST', 'closed const fnc cannot capture external names');
       if (params[index].type === 'bool') fail('E_TYPE', 'bool value cannot be returned as int');
