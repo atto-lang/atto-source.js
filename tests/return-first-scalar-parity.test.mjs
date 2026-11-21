@@ -204,3 +204,34 @@ test('name-first void colon-arrow lowers only through the supported v2 pure-void
     assert.throws(()=>compileScalar(src),CompileError,src);
   }
 });
+
+test('checked standalone pure-void call executes all 8 canonical guest forms',()=>{
+  const headers=[
+    'fnc reset()->void{}',
+    'fnc reset():void{}',
+    'fnc reset():void -> {}',
+    'fnc void <- reset() {}',
+    'void <- reset() {}',
+    'void <- reset() end',
+    'void <- reset() begin end',
+    'fnc void <- reset() begin end',
+  ];
+  for(const header of headers){
+    const generated=compileProgramV2(header+'\npub fnc main()->int{reset();return 0;}');
+    const guest=generated.replace(/^export \{[^\n]*\};\n?/gm,'');
+    assert.equal(runInNewContext(guest+'\n_f1()'),0n,header);
+    assert.ok(generated.includes('_f0();'),header);
+  }
+});
+test('standalone calls fail closed for discarded values, arity and fallthrough',()=>{
+  const negatives=[
+    'fnc value():int{return 7;} pub fnc main()->int{value();return 0;}',
+    'fnc reset():void{} pub fnc main()->int{reset(1);return 0;}',
+    'fnc reset():void{} pub fnc main()->int{reset();}',
+    'fnc reset():void{} pub fnc main()->int{return reset();}',
+    'fnc reset():void{} pub fnc main()->int{reset()+1;return 0;}',
+    'fnc reset():void{} pub fnc main()->int{return 0;reset();}',
+  ];
+  for(const source of negatives)
+    assert.throws(()=>compileProgramV2(source),/^error: program (?:v2|IR): /,source);
+});
