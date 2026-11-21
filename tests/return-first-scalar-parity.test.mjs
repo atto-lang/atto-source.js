@@ -60,6 +60,62 @@ test('parameterized return-first int has the same direct-call result',()=>{
   }
 });
 
+
+test('return-first infer proves int before lowering and executes canonical guest variants',()=>{
+  const declarations=[
+    'fnc infer <- calculate_other(){return 42;}',
+    'infer <- calculate_other() return 42; end',
+    'infer • calculate_other() begin return 42; end',
+    'fnc infer • calculate_other(){return 42;}',
+    'infer <- calculate_other() {return 42;}',
+    'fnc infer <- calculate_other() begin return 42; end',
+  ];
+  const legacy='fnc calculate_other():int{return 42;}\npub fnc main() -> int {return calculate_other();}';
+  const baseline=[compileScalar(legacy),compileProgramV2(legacy),compileAttoScalarV1(legacy)];
+  for(const declaration of declarations){
+    const source=declaration+'\npub fnc main() -> int {return calculate_other();}';
+    const generated=[compileScalar(source),compileProgramV2(source),compileAttoScalarV1(source)];
+    for(let i=0;i<generated.length;i++){
+      assert.equal(generated[i],baseline[i],declaration);
+      const executable=generated[i].replace(/^export \{[^\n]*\};\n?/gm,'');
+      assert.equal(runInNewContext(executable+'\n_f1()'),42n,declaration);
+    }
+  }
+});
+
+test('program-v2 supports pure void return-first functions without inventing effects',()=>{
+  const variants=[
+    'fnc void <- reset() {}',
+    'void <- reset() begin end',
+    'void <- reset() end',
+    'fnc void • reset() return; end',
+  ];
+  const baseline=compileProgramV2('fnc reset():void{}');
+  for(const source of variants){
+    const generated=compileProgramV2(source);
+    assert.equal(generated,baseline,source);
+    assert.equal(runInNewContext(generated+'\n_f0()'),undefined,source);
+    assert.throws(()=>compileScalar(source),CompileError,source);
+    assert.throws(()=>compileAttoScalarV1(source),ProgramCompileError,source);
+  }
+});
+
+test('inference, void value returns, and duplicate identities fail closed',()=>{
+  for(const source of [
+    'fnc infer <- f(){return other();}',
+    'fnc infer <- f(){return true;}',
+    'fnc infer <- f(){return z;}',
+  ]){
+    assert.throws(()=>compileScalar(source),CompileError,source);
+    assert.throws(()=>compileProgramV2(source),
+      e=>e instanceof ProgramCompileError&&/INFER_UNSUPPORTED/.test(e.message),source);
+  }
+  assert.throws(()=>compileProgramV2('fnc void <- f(){return 42;}'),
+    e=>e instanceof ProgramCompileError&&/RETURN_VOID_VALUE/.test(e.message));
+  assert.throws(()=>compileProgramV2(
+    'infer <- f(){return 42;} fnc f():int{return 1;}'),
+    e=>e instanceof ProgramCompileError&&/duplicate/.test(e.message));
+});
 test('no implicit type coercion, redundant annotation or unsupported arrow',()=>{
   const invalid=[
     'fnc int ← main(){return 42;}',

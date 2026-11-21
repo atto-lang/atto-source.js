@@ -23,3 +23,18 @@ GraalVM, LLVM, Wasm or .NET.
 This PR is **stacked on exceptional keyword PR #73** to avoid conflicting
 same-file lexer patches; the separate draft lambda PR #76 also touches the
 scalar frontend, and its implementation must be reconciled before any merge.
+
+## Bounded extension: void and proven int inference
+
+The program-v2 compiler also accepts return-first `void` for empty or bare
+`return;` pure functions, with no side effect statement lowering. The scalar
+compiler continues to reject void. Both scalar and program-v2 now accept
+`infer <- f(...) {return ...;}` only when the returned expression is
+provably an int literal, typed int parameter, or a pure `+`, `-`, `*`
+composition; unknown calls, booleans, effects and ambiguous inference
+fail closed with `INFER_UNSUPPORTED`. Infer is **not** an implicit int cast.
+
+This supports shared int return-first/infer fixture declarations but does not
+pass all shared void fixtures, whose `main` uses effectful call statements not
+implemented in the bounded program-v2 parser. Actual source-compiled guest
+results must be distinguished from source-free/type-only CI checks.

@@ -457,10 +457,11 @@ class Parser {
   functions(moduleName, declaredPub=false) {
     const pub = declaredPub || this.eat('pub'), start=this.peek();
     const fnc=this.eat('fnc'),routine=!fnc&&this.eat('routine');
-    const returnFirst=this.peek().value==='int' &&
+    const requestedReturnType=this.peek().value;
+    const returnFirst=['int','void','infer'].includes(requestedReturnType) &&
       ['<-','•'].includes(this.tokens[this.i+1]?.value);
     if(!fnc&&!routine&&!returnFirst)fail('unsupported declaration',start);
-    if(returnFirst){this.expect('int');this.i++;}
+    if(returnFirst){this.i+=2;}
     const kind=routine?'routine':'fnc',name=this.name();
     // The program-v2 ESM slice has no once-only, reachability-scoped
     // startup state machine. Never emit init as a normal callable/export.
@@ -482,7 +483,7 @@ class Parser {
     // pure void functions may fall through. No general effect lowering yet.
     const arrow=returnFirst?false:this.eat('->');
     if(!returnFirst&&!arrow)this.expect(':');
-    const returnType=returnFirst?'int':this.eat('void')?'void':this.valueType();
+    let returnType=returnFirst?requestedReturnType:this.eat('void')?'void':this.valueType();
     const braced=this.eat('{');
     const began=!braced&&returnFirst&&this.eat('begin');
     if(!braced&&!began&&!arrow&&!returnFirst)
@@ -504,6 +505,23 @@ class Parser {
       body=this.lowerStatements(statements,null);
       if(!body)fail('RETURN_EXPLICIT_REQUIRED: int function requires a return on every path');
       this.checkExpandedBudget(body);
+      if(returnType==='infer'){
+        // Infer only from statically evidenced int scalar operations here.
+        // Calls, effects and conditional alternatives are not sufficiently
+        // typed in this slice; reject them instead of assuming int.
+        function provenInt(node){
+          if(node.kind==='int')return true;
+          if(node.kind==='variable')
+            return params.some((name,index)=>name===node.name&&paramTypes[index]==='int');
+          if(node.kind==='neg')return provenInt(node.inner);
+          if(node.kind==='binary'&&['+','*','-'].includes(node.op))
+            return provenInt(node.left)&&provenInt(node.right);
+          return false;
+        }
+        if(!provenInt(body))
+          fail('INFER_UNSUPPORTED: return-first infer requires provably int pure expression',this.peek());
+        returnType='int';
+      }
     }
     this.expect(terminator);
     // Exporting a routine as a module object property would make a
@@ -653,7 +671,7 @@ class Parser {
           continue;
         }
         if(this.peek().value==='fnc'||this.peek().value==='routine'||
-           (this.peek().value==='int'&&['<-','•'].includes(this.tokens[this.i+1]?.value))){
+           (['int','void','infer'].includes(this.peek().value)&&['<-','•'].includes(this.tokens[this.i+1]?.value))){
           if(functions.length+generators.length>=512)fail('declaration budget exceeded',this.peek());
           functions.push(this.functions(null,declarationPub));
           continue;

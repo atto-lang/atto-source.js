@@ -170,10 +170,11 @@ class Parser {
       const at=this.peek();
       // Canonical return-first int callables lower through the existing IR.
       const fnc=this.match('fnc'),routine=!fnc&&this.match('routine');
-      const returnFirst=this.peek().value==='int' &&
+      const requestedReturnType=this.peek().value;
+      const returnFirst=['int','infer'].includes(requestedReturnType) &&
         ['<-','•'].includes(this.ts[this.pos+1]?.value);
       if(!fnc&&!routine&&!returnFirst)throw new CompileError('unsupported declaration',at);
-      if(returnFirst){this.expect('int');this.pos++;}
+      if(returnFirst){this.pos+=2;}
       const name=this.id();this.expect('(');const params=[];
       if(!this.match(')')){
         do{if(params.length>=128)throw new CompileError('parameter limit');this.expect('int');const v=this.id();if(params.includes(v))throw new CompileError('duplicate parameter '+v);params.push(v);}while(this.match(','));
@@ -191,6 +192,20 @@ class Parser {
       if(!braced&&!began&&!returnFirst){if(!this.match('as'))this.match('::');}
       this.expect('return');
       const body=this.expr();this.expect(';');this.expect(braced?'}':'end');
+      if(returnFirst&&requestedReturnType==='infer'){
+        // Infer is a static type proof, not a covert conversion to int.
+        // Unsupported effects, calls or non-scalar expressions are rejected.
+        function provenInt(node) {
+          if(node.kind==='int')return true;
+          if(node.kind==='var')return params.includes(node.name);
+          if(node.kind==='neg')return provenInt(node.inner);
+          if(node.kind==='binary'&&['+','-','*'].includes(node.op))
+            return provenInt(node.left)&&provenInt(node.right);
+          return false;
+        }
+        if(!provenInt(body))
+          throw new CompileError('INFER_UNSUPPORTED: return-first infer requires pure int scalar expression',at);
+      }
       functions.push({name,params,body,pub});
     }
     if(module)this.expect('end');
