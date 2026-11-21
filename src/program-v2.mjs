@@ -13,7 +13,7 @@ const CLASS_METHOD_RESERVED=new Set([
   'default','new','class','export','import','null','this','super','extends','static',
   'constructor','prototype','__proto__','define','pub','as','end','self','int',
   'void','return','mut','private','actor','fnc','routine','bool','Symbol','let',
-  'val','const','if','fi','then','else','await','task','spawn','module','trait',
+  'val','const','if','fi','then','else','guard','await','task','spawn','module','trait',
   'interface','type','rt','gen','generator','async','suspend','suspends','yield',
   'Iterator','AsyncIterator'
 ]);
@@ -26,7 +26,7 @@ const GENERATOR_RESERVED=new Set([
   'recover','finally','end','fi','if','do','else','then','new','spawn','stop','done',
   'await','rt','async','suspend','suspends','critical','gen','generator','nlex','trap',
   'actor','isoactor','def','fnc','routine','while','for','of','loop','block','break',
-  'continue','yield','super','elseif','elif','switch','match','matches','is','default',
+  'continue','yield','guard','super','elseif','elif','switch','match','matches','is','default',
   'eq','neq','nb','select','readch','writech','cb','shared','untrusted','type','types',
   'typeof','interface','trait','struct','impl','abstract','void','static','pub','private',
   'return','defer','val','const','let','mut','borrow','self','true','false','null','obj',
@@ -515,6 +515,30 @@ class Parser {
         const body=this.expression();
         this.expect(';');
         statements.push({kind:'return',body});
+      } else if(this.eat('guard')) {
+        // Guard's predicate must be a bool. Reuse the typed IR's conditional
+        // checker and evaluate each comma-separated predicate at most once,
+        // short-circuiting from left to right on the first failure.
+        let condition=this.expression();
+        while(this.eat(',')) {
+          const next=this.expression();
+          condition={kind:'if',condition,yes:next,no:{kind:'bool',value:false}};
+        }
+        let failure;
+        if(this.eat('{')){
+          failure=this.statementSequence(['}'],depth+1);
+          this.expect('}');
+          // A braced guard inside an outer if may be followed by the outer
+          // else; do not consume it here. A duplicate standalone else will
+          // remain an ordinary enclosing syntax error.
+        }else if(this.eat('else')){
+          failure=this.statementSequence(['end'],depth+1);
+          this.expect('end');
+        }else fail("E_GUARD: expected '{ ... }' or 'else ... end'",this.peek());
+        if(!this.returnsOnAllPaths(failure))
+          fail('E_GUARD: every failure branch must terminate',this.peek());
+        statements.push({kind:'branch',condition:{kind:'not',inner:condition},
+          yes:failure,no:[]});
       } else if(this.eat('if')) {
         const condition=this.expression();
         // Canonical statement-only `if`; retain old ; do syntax.
