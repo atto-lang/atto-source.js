@@ -279,3 +279,41 @@ test('canonical negative return-first fixtures expose stable Atto error codes',(
     assert.equal(error.code,code,source);
   }
 });
+
+test('infer after a checked direct pure-void sequence preserves static int proof',()=>{
+  const cases=[
+    'fnc trace():void{} pub fnc main()->infer{trace();return 42;}',
+    'fnc trace():void{} pub fnc main():infer -> {trace();trace();return 42;}',
+    'fnc trace(int value):void{} pub fnc main()->infer{trace(value:21);return 42;}',
+  ];
+  for(const source of cases){
+    const ir=compileToProgramIRV2(source);
+    assert.equal(ir.functions.at(-1).returnType??'int','int');
+    assert.equal(ir.functions.at(-1).body.kind,'seqVoidCall');
+    const generated=compileProgramV2(source);
+    assert.equal(runInNewContext(generated.replace(/^export \{[^\n]*\};\n?/gm,'')+
+      '\n_f1()'),42n,source);
+  }
+});
+test('infer still fails closed for nonvoid effects and unproven return values',()=>{
+  const invalid=[
+    'fnc trace():int{return 1;} pub fnc main()->infer{trace();return 42;}',
+    'fnc trace():void{} pub fnc main()->infer{trace();return trace();}',
+    'fnc trace():void{} pub fnc main()->infer{trace();return true;}',
+    'fnc trace():void{} pub fnc main()->infer{trace();}',
+  ];
+  for(const source of invalid)
+    assert.throws(()=>compileProgramV2(source),/^error: program (?:v2|IR): /,source);
+});
+test('conditional pure-void calls run only on the selected branch',()=>{
+  const source='fnc trace():void{} pub fnc main(bool flag)->int{'+
+    'if flag then trace(); fi return 42;}';
+  const code=compileProgramV2(source);
+  const needle='function _f0(){\nreturn;\n}';
+  assert.ok(code.includes(needle));
+  const instrumented=code.replace(needle,'function _f0(){\n__effects.push(1);return;\n}');
+  const body=instrumented.replace(/^export \{[^\n]*\};\n?/gm,'');
+  const count=runInNewContext('const __effects=[];\n'+body+
+    '\n(()=>{_f1(true);_f1(false);return __effects.length;})()');
+  assert.equal(count,1);
+});
