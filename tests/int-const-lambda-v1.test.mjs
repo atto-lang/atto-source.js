@@ -49,9 +49,23 @@ test('invalid lambda heads, arity, scopes, capture and types fail closed', () =>
     [local('|x| : int -> x + 1;', 'return v(true);'), 'E_TYPE'],
     [moduleScope('|int x| : int -> x + 1;', 'return v();'), 'E_ARITY'],
     ['const fnc v = _ : int -> 5; pub fnc main(): int { return v(41); }', 'E_SYNTAX'],
+    ['pub fnc main(): int { val v = fnc(int x) -> x + 1; return 0; }', 'E_SYNTAX'],
+    ['pub fnc main(): int { val v = (int x) -> x + 1; return 0; }', 'E_SYNTAX'],
   ];
   for (const [source, code] of cases)
     assert.throws(() => compile(source), {code}, source);
+});
+
+
+test('comments containing legacy lambda heads do not activate unpiped syntax rejection', () => {
+  const legal = [
+    '// val v = fnc(int x) -> x + 1;\\n',
+    '// val v = (int x) -> x + 1;\\n'
+  ];
+  for (const prefix of legal) {
+    const source = prefix.replaceAll('\\n', '\n') + 'pub fnc main(): int { return 40 + 2; }';
+    assert.doesNotThrow(() => compile(source), 'lexer must ignore commented-out heads');
+  }
 });
 
 test('compiled scalar guest traps signed i64 overflow rather than wrapping', async () => {
