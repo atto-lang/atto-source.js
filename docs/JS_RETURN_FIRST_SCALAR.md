@@ -4,6 +4,8 @@ This change admits only **concrete `int`** return-first scalar callables
 (`fnc int <- name(...)` and `int • name(...)`, optional `begin/end` or
 brace body or bare `return...; end`) into the existing scalar-v1 and program-v2 parser paths.
 
+The restricted return-first `end` body also accepts one trailing `;`, or a final `.` only at end-of-source. Braced declarations, repeated punctuation, and `end.` followed by another declaration remain invalid; this matches the bounded native LLVM/.NET header admission without introducing a general statement grammar.
+
 Both forms lower to the **same existing validated IR and emitted ESM** as
 `fnc name(...): int`. Do not infer broad functional/actor/effect support,
 arbitrary source parsing, or runtime tenant isolation. No unchecked conversion
