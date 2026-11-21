@@ -29,6 +29,28 @@ test('return-first int scalar and program-v2 emit byte-identical ESM',()=>{
   }
 });
 
+test('shared Atto conformance return-first int guest variants preserve observable exit 42',()=>{
+  // Identical declaration bodies to atto-platform-conformance PR #83
+  // fixtures int_{fnc,bare}_return_first_{brace,begin,end}.atto.
+  const declarations=[
+    'fnc int <- calculate(int x) begin return x * 2; end',
+    'int <- calculate(int x) { return x * 2; }',
+    'int <- calculate(int x) return x * 2; end',
+    'int <- calculate(int x) begin return x * 2; end',
+    'fnc int <- calculate(int x) { return x * 2; }',
+  ];
+  for(const declaration of declarations){
+    const source=declaration+'\npub fnc main() -> int { return calculate(21); }\n';
+    for(const compiled of [
+      compileScalar(source),compileProgramV2(source),compileAttoScalarV1(source)]){
+      // The generated guest has an ordinary ESM named export. The VM harness
+      // calls its internal _f1 after removing only that export declaration.
+      const executable=compiled.replace(/^export \\{[^\\n]*\\};\\n?/gm,'');
+      assert.equal(runInNewContext(executable+'\n_f1()'),42n,declaration);
+    }
+  }
+});
+
 test('parameterized return-first int has the same direct-call result',()=>{
   const legacy='fnc double(int x):int{return x+x;}';
   for(const header of ['fnc int <- double(int x)','int • double(int x)']){
