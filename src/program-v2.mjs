@@ -481,9 +481,11 @@ class Parser {
     }
     // Bound source-level control flow to explicitly returning value functions;
     // pure void functions may fall through. No general effect lowering yet.
-    const arrow=returnFirst?false:this.eat('->');
+    let arrow=returnFirst?false:this.eat('->');
     if(!returnFirst&&!arrow)this.expect(':');
-    let returnType=returnFirst?requestedReturnType:this.eat('void')?'void':this.valueType();
+    let returnType=returnFirst?requestedReturnType:this.eat('void')?'void':this.eat('infer')?'infer':this.valueType();
+    // Post-type arrow is part of the canonical name-first header.
+    if(!returnFirst&&!arrow)arrow=this.eat('->');
     const braced=this.eat('{');
     const began=!braced&&returnFirst&&this.eat('begin');
     if(!braced&&!began&&!arrow&&!returnFirst)
