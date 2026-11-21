@@ -21,6 +21,12 @@ function validateSourceText(src) {
     if (code===0) throw new CompileError('NUL in source');
     if (code===0x1b || code===0x7f)
       throw new CompileError('terminal control in source at UTF-16 offset '+i);
+    // Preserve canonical Trojan Source admission from current main, including
+    // comments and strings; older branch versions must not drop this guard.
+    if (code===0x061c || code===0x200e || code===0x200f ||
+        (code>=0x202a && code<=0x202e) ||
+        (code>=0x2066 && code<=0x2069))
+      throw new CompileError('bidirectional Unicode control in source');
     if (code>=0xd800 && code<=0xdbff) {
       const lo=src.charCodeAt(i+1);
       if (!(lo>=0xdc00 && lo<=0xdfff)) throw new CompileError('invalid UTF-16 in source');
