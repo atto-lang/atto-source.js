@@ -18,3 +18,49 @@ test('comments and identifier substrings are not exceptional control',()=>{
   assert.doesNotThrow(()=>compileScalar(source));
   assert.doesNotThrow(()=>compileProgramV2(source));
 });
+
+
+test('all canonical exceptional-bang spellings are rejected in both unlowered JS source frontends',()=>{
+  // Source-only lex/admission target from atto-spec #146. A rejection means
+  // safe unimplemented behavior, never a compiled guest parity PASS.
+  const positive=[
+    'trap! parse_id("42")','trap!parse_id("42")',
+    'throw! Error("bad")','raise! Error("bad")',
+    'panic! Error("bad")','throw!Error("bad")'
+  ];
+  for(const expr of positive){
+    const source='fnc main():int{return '+expr+';}';
+    for(const compile of [compileScalar,compileProgramV2])
+      assert.throws(()=>compile(source),/EXCEPTION_BANG_BACKEND_UNSUPPORTED/,
+        'unlowered guest effect admitted: '+expr);
+  }
+});
+
+test('non-exceptional bang collisions cannot trigger an exceptional-control denial',()=>{
+  // These are intentionally NOT required to compile in restricted scalar JS.
+  // They must only avoid an incorrectly interpreted exceptional keyword.
+  const negative=[
+    'trap parse_id("42")','throw Error("bad")',
+    'raise Error("bad")','panic Error("bad")',
+    'trap !ready','trap!=next','trap!eq next',
+    'trapped! parse_id()','copy! owned'
+  ];
+  for(const expr of negative){
+    const source='fnc main():int{return '+expr+';}';
+    for(const compile of [compileScalar,compileProgramV2]){
+      try{compile(source);}
+      catch(e){assert.doesNotMatch(String(e),/EXCEPTION_BANG_BACKEND_UNSUPPORTED/,
+        'comparison/identifier was misread as exceptional control: '+expr);}
+    }
+  }
+});
+
+test('quoted and commented exception spellings do not change executable JS guest admission',()=>{
+  const samples=[
+    'fnc main():int{return 42;} // trap! throw! raise! panic!',
+    'fnc main():int{/* trap! throw! raise! panic! */return 42;}'
+  ];
+  for(const source of samples)
+    for(const compile of [compileScalar,compileProgramV2])
+      assert.doesNotThrow(()=>compile(source),'comment changed guest: '+source);
+});
