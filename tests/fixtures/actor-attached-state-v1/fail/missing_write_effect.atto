@@ -1,0 +1,8 @@
+// TARGET REJECT: using state.write is required for an exclusive guard
+define actor Counter as
+  state { let int count: 0; }
+  on_start(): void {
+    self.handle_state(critical-write |s| -> { s.count = 4; });
+  }
+end
+pub fnc main(): int { return 0; }

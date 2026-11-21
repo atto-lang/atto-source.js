@@ -1,0 +1,162 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {transpile_to_worker,TranspileError} from '../src/transpile-worker.mjs';
+
+// Executes actual generated ESM only within the trusted JS subset. These
+// tests do not certify TenantVM isolation, native AOT, or other backends.
+const fixture=(name)=>readFileSync(new URL(name,import.meta.url),'utf8');
+const build=async source=>{
+  const artifact=transpile_to_worker(source);
+  assert.equal(artifact.trusted,true);
+  const mod=await import('data:text/javascript;charset=utf-8,'+
+    encodeURIComponent(artifact.module_source));
+  return mod.create_tenant({tenant:'interop',generation:1});
+};
+const message=(value,wire_type='i64')=>{
+  const buffer=new ArrayBuffer(wire_type==='i64'?8:1);
+  const view=new DataView(buffer);
+  if(wire_type==='i64')view.setBigInt64(0,BigInt(value),true);
+  else view.setUint8(0,Number(value));
+  return {actor_id:1,wire_type,buffer};
+};
+const rejects=(source,code)=>assert.throws(()=>transpile_to_worker(source),
+  e=>e instanceof TranspileError&&e.code===code);
+
+test('Result match arrow and caret return coexist with bitwise operators',async()=>{
+  const original=fixture('./fixtures/trap-result-v1/parse-id-ok.atto');
+  for(const source of [original,original.replace('return match','^ match')]){
+    const guest=await build(source);
+    assert.equal((await guest.on_message()).value,'42');
+    await assert.rejects(guest.on_message(),/E_MAIN_ALREADY_CALLED/);
+  }
+  const invalid=original.replace('parse_id("42")','parse_id("invalid")')
+    .replace('return match','^ match');
+  assert.equal((await(await build(invalid)).on_message()).value,'0');
+});
+
+test('Result string tokens containing angle and caret operators remain literal data',async()=>{
+  const source=fixture('./fixtures/trap-result-v1/parse-id-ok.atto')
+    .replace('parse_id("42")','parse_id("<<< >>> ^^ << >> ^")');
+  const guest=await build(source);
+  assert.equal((await guest.on_message()).value,'0');
+});
+
+test('sealed inline actor state and Result arrows retain separate grammars',async()=>{
+  const original=fixture('./fixtures/actor-attached-state-v1/pass/inline_counter.atto');
+  for(const source of [original,original.replace('return 0;','^ 0;')]){
+    const actor=await build(source);
+    assert.equal((await actor.on_message()).value,'0');
+    await assert.rejects(actor.on_route(message(2)),/E_ADMISSION_PENDING/);
+    assert.equal((await actor.on_drain()).stdout,'1\n');
+    assert.equal((await actor.on_route(message(2))).stdout,'3\n');
+    await assert.rejects(actor.on_route({...message(2),wire_type:'control'}),/E_ROUTE_WIRE/);
+    await actor.on_stop();
+    await assert.rejects(actor.on_route(message(1)),/E_ACTOR_RETIRED/);
+  }
+});
+
+test('typed Boolean actor and caret main cannot elevate DATA to CONTROL',async()=>{
+  const src='define actor Counter receives bool sends never as '+
+    'let bool total = false; receive(ActorMail<bool> mail): void {'+
+    'self.total = mail.value; stdio.println(self.total); return; } end '+
+    'pub fnc main(): int { val counter = spawn Counter(); ^ 0; }';
+  const actor=await build(src);
+  assert.equal((await actor.on_message()).value,'0');
+  assert.equal((await actor.on_route(message(1,'bool'))).stdout,'true\n');
+  await assert.rejects(actor.on_route({...message(0,'bool'),wire_type:'control'}),/E_ROUTE_WIRE/);
+});
+
+test('nested Mutex generic closer cannot be mistaken for stream read',()=>{
+  const base='pub fnc main(): int { val item = ';
+  rejects(base+'Mutex<Option<int>>(0); return 0; }','E_NEW_REQUIRED');
+  rejects(base+'new Mutex<Option<int>>(0); return 0; }','E_LOCK_UNSUPPORTED');
+  rejects('pub fnc main(): int { return 8 >> 2; }','E_IO_UNSUPPORTED');
+  rejects('pub fnc main(): int { return 8 << 2; }','E_IO_UNSUPPORTED');
+});
+
+test('single caret is statement return, not an infix or power operator',async()=>{
+  const guest=await build('pub fnc main(): int { ^ 12 ^^ 10; }');
+  assert.equal((await guest.on_message()).value,'6');
+  rejects('pub fnc main(): int { return 12 ^ 10; }','E_UNSUPPORTED_SYNTAX');
+  rejects('pub fnc main(): int { ^; }','E_UNSUPPORTED_EXPRESSION');
+  rejects('pub fnc main(): int { return (^ 5); }','E_UNSUPPORTED_EXPRESSION');
+});
+
+test('raw control and line separator rules precede every subcompiler',()=>{
+  const scalar='pub fnc main(): int { ^ 42; }';
+  for(const ending of ['\r','\n','\u0085','\u2028','\u2029'])
+    assert.equal(transpile_to_worker('// ^ >> <<<'+ending+scalar).trusted,true);
+  for(const ch of ['\0','\x1b','\x7f','\u202e','\ud800'])
+    assert.throws(()=>transpile_to_worker('//'+ch+'\n'+scalar),
+      e=>e instanceof TranspileError);
+});
+
+test('nested generic-closer expansion respects total lexer token budget',()=>{
+  // Raw 4096-token budget alone is not enough: maximal-munch >>> expands to
+  // three > tokens in type contexts. This source stays below raw token limit.
+  const input='pub fnc main(): int { return '+
+    'Result<'.repeat(1400)+'int'+'>>>'.repeat(466)+'>>'+'; }';
+  assert.ok(new TextEncoder().encode(input).byteLength < 64*1024);
+  rejects(input,'E_TOKEN_LIMIT');
+});
+
+test('excess generic closing angles cannot swallow typed I/O admission',()=>{
+  // A one-level type generic is closed by the first > of >>>. The remaining
+  // >> must be diagnosed as I/O without a granted readable capability.
+  rejects('pub fnc main(): int { return Result<int>>> 5; }',
+    'E_IO_UNSUPPORTED');
+  rejects('pub fnc main(): int { return Mutex<int>>> 2; }',
+    'E_IO_UNSUPPORTED');
+  // A genuine two-level type may consume two closing angle tokens.
+  rejects('pub fnc main(): int { val lock = Mutex<Option<int>>(0); return 0; }',
+    'E_NEW_REQUIRED');
+  rejects('pub fnc main(): int { val lock = new Mutex<Option<int>>(0); return 0; }',
+    'E_LOCK_UNSUPPORTED');
+});
+
+test('source, raw-token, and expression nesting budgets reject before guest creation',()=>{
+  rejects('pub fnc main(): int { //'+ 'x'.repeat(65536)+'\n ^ 0; }',
+    'E_SOURCE_LIMIT');
+  rejects('pub fnc main(): int { ^ '+Array(4200).fill('1').join('+')+'; }',
+    'E_TOKEN_LIMIT');
+  rejects('pub fnc main(): int { ^ '+'('.repeat(65)+'1'+')'.repeat(65)+'; }',
+    'E_NESTING_LIMIT');
+});
+
+test('all five trusted guest profiles enforce bounded tenant bindings',async()=>{
+  const scalar='pub fnc main(): int { ^ 42; }';
+  const boolActor='define actor Counter receives bool sends never as '+
+    'let bool total = false; receive(ActorMail<bool> mail): void {'+
+    'self.total = mail.value; stdio.println(self.total); return; } end '+
+    'pub fnc main(): int { val counter = spawn Counter(); ^ 0; }';
+  const intActor='define actor Counter as let int total = 0; '+
+    'receive(ActorMail<int> mail): void { self.total = self.total + mail.value; '+
+    'stdio.println(self.total); return; } end '+
+    'pub fnc main(): int { val counter = spawn Counter(); ^ 0; }';
+  const result='pub fnc main(): int { return match int.parse("42") over '+
+    'on Ok(value) -> value, on Err() -> 0 end; }';
+  const guarded=fixture('./fixtures/actor-attached-state-v1/pass/inline_counter.atto');
+  const invalid=[
+    {},{tenant:' ',generation:1},{tenant:' x',generation:1},
+    {tenant:'x'.repeat(129),generation:1},{tenant:'x',generation:0},
+    {tenant:'x',generation:1.5},{tenant:'x',generation:2147483648},
+    {tenant:'x',generation:Number.MAX_SAFE_INTEGER}
+  ];
+  for(const source of [scalar,boolActor,intActor,result,guarded]){
+    const artifact=transpile_to_worker(source);
+    const module=await import('data:text/javascript;charset=utf-8,'+
+      encodeURIComponent(artifact.module_source));
+    for(const params of invalid){
+      await assert.rejects(module.create_tenant(params),/E_TENANT_/,
+        'invalid tenant binding '+JSON.stringify(params));
+    }
+    for(const params of [
+      {tenant:'x',generation:1},
+      {tenant:'x'.repeat(128),generation:2147483647}
+    ]){
+      const guest=await module.create_tenant(params);
+      assert.equal(typeof guest.on_message,'function');
+    }
+  }
+});

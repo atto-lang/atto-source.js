@@ -1,0 +1,9 @@
+// TARGET REJECT: uninitialized protected field read on successful activation
+define actor Counter as
+  state { let int count; }
+  receive(ActorMail<int> mail): void using state.read {
+    val observed = self.handle_state(critical-read |s| -> s.count);
+    stdio.println(observed);
+  }
+end
+pub fnc main(): int { val counter = spawn Counter(); counter.send(1); return 0; }

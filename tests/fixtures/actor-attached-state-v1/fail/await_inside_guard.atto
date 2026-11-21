@@ -1,0 +1,11 @@
+// TARGET REJECT: suspension inside a state guard (irrespective of effect)
+define actor Counter as
+  state { let int count: 0; }
+  susp on_start(): void using state.write {
+    self.handle_state(critical-write |s| -> {
+      s.count = 1;
+      await read_next_message();
+    });
+  }
+end
+pub fnc main(): int { return 0; }
