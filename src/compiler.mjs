@@ -100,7 +100,8 @@ function lex(src) {
       }
       while(i<literal.end)advance();
       add(literal.kind,literal,loc);
-    }else if(src.startsWith('->',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
+    }else if(src.startsWith('->',i)||src.startsWith('<-',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
+    else if(src[i]==='•'){add('sym','•',loc);advance();}
     else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
     else if(src[i]==='^')throw new CompileError(src.startsWith('^^',i)?"'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)":"'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",loc);
     else if('(){}[]:,;+-*/=.'.includes(src[i])){add('sym',src[i],loc);advance();}
@@ -167,7 +168,12 @@ class Parser {
       if(pub){this.match('define');}
       else if(this.match('define')){pub=this.match('pub');}
       const at=this.peek();
-      if(!this.match('fnc')&&!this.match('routine'))throw new CompileError('unsupported declaration',at);
+      // Canonical return-first int callables lower through the existing IR.
+      const fnc=this.match('fnc'),routine=!fnc&&this.match('routine');
+      const returnFirst=this.peek().value==='int' &&
+        ['<-','•'].includes(this.ts[this.pos+1]?.value);
+      if(!fnc&&!routine&&!returnFirst)throw new CompileError('unsupported declaration',at);
+      if(returnFirst){this.expect('int');this.pos++;}
       const name=this.id();this.expect('(');const params=[];
       if(!this.match(')')){
         do{if(params.length>=128)throw new CompileError('parameter limit');this.expect('int');const v=this.id();if(params.includes(v))throw new CompileError('duplicate parameter '+v);params.push(v);}while(this.match(','));
@@ -176,12 +182,13 @@ class Parser {
       // The bootstrap parser only supports int functions with a single
       // return expression. Support canonical arrow/end spellings without
       // pretending to support arbitrary statement bodies or async functions.
-      const arrow=this.match('->');
-      if(!arrow)this.expect(':');
-      this.expect('int');
+      const arrow=returnFirst?false:this.match('->');
+      if(!returnFirst){if(!arrow)this.expect(':');this.expect('int');}
       const braced=this.match('{');
-      if(!braced&&!arrow)throw new CompileError('expected { for colon function body',this.peek());
-      if(!braced){if(!this.match('as'))this.match('::');}
+      const began=!braced&&returnFirst&&this.match('begin');
+      if(!braced&&!began&&!arrow)
+        throw new CompileError('expected { or begin for return-first function body',this.peek());
+      if(!braced&&!began){if(!this.match('as'))this.match('::');}
       this.expect('return');
       const body=this.expr();this.expect(';');this.expect(braced?'}':'end');
       functions.push({name,params,body,pub});

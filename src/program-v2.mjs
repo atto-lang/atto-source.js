@@ -226,8 +226,10 @@ function tokenize(source) {
       emit('int',number,start);
     } else if (['<=','>=','==','!='].some(op=>source.startsWith(op,pos))) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
-    } else if (source.startsWith('->',pos) || source.startsWith('::',pos)) {
+    } else if (source.startsWith('->',pos) || source.startsWith('<-',pos) || source.startsWith('::',pos)) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
+    } else if (c==='•') {
+      emit('sym',c,start); advance();
     } else if (c==='%') {
       fail("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",start);
     } else if (c==='^') {
@@ -454,8 +456,12 @@ class Parser {
 
   functions(moduleName, declaredPub=false) {
     const pub = declaredPub || this.eat('pub'), start=this.peek();
-    if (!this.eat('fnc') && !this.eat('routine')) fail('unsupported declaration',start);
-    const kind = this.tokens[this.i-1].value, name = this.name();
+    const fnc=this.eat('fnc'),routine=!fnc&&this.eat('routine');
+    const returnFirst=this.peek().value==='int' &&
+      ['<-','•'].includes(this.tokens[this.i+1]?.value);
+    if(!fnc&&!routine&&!returnFirst)fail('unsupported declaration',start);
+    if(returnFirst){this.expect('int');this.i++;}
+    const kind=routine?'routine':'fnc',name=this.name();
     // The program-v2 ESM slice has no once-only, reachability-scoped
     // startup state machine. Never emit init as a normal callable/export.
     if(name==='init')fail('init lifecycle requires once-only reachable initialization lowering',start);
@@ -474,12 +480,14 @@ class Parser {
     }
     // Bound source-level control flow to explicitly returning value functions;
     // pure void functions may fall through. No general effect lowering yet.
-    const arrow=this.eat('->');
-    if(!arrow)this.expect(':');
-    const returnType=this.eat('void')?'void':this.valueType();
+    const arrow=returnFirst?false:this.eat('->');
+    if(!returnFirst&&!arrow)this.expect(':');
+    const returnType=returnFirst?'int':this.eat('void')?'void':this.valueType();
     const braced=this.eat('{');
-    if(!braced&&!arrow)fail('expected { for colon function body',this.peek());
-    if(!braced){if(!this.eat('as'))this.eat('::');}
+    const began=!braced&&returnFirst&&this.eat('begin');
+    if(!braced&&!began&&!arrow)
+      fail('expected { or begin for return-first function body',this.peek());
+    if(!braced&&!began){if(!this.eat('as'))this.eat('::');}
     const terminator=braced?'}':'end';
     let body=null;
     if(returnType==='void'){
@@ -644,7 +652,8 @@ class Parser {
           usedClasses.add(cls.name);classes.push(cls);
           continue;
         }
-        if(this.peek().value==='fnc'||this.peek().value==='routine'){
+        if(this.peek().value==='fnc'||this.peek().value==='routine'||
+           (this.peek().value==='int'&&['<-','•'].includes(this.tokens[this.i+1]?.value))){
           if(functions.length+generators.length>=512)fail('declaration budget exceeded',this.peek());
           functions.push(this.functions(null,declarationPub));
           continue;
