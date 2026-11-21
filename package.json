@@ -27,6 +27,7 @@
     "./actor-host.node": "./src/actor-host.node.mjs",
     "./tenant-isolation-policy": "./src/tenant-isolation-policy.mjs",
     "./worker-actor-client": "./src/worker-actor-client.mjs",
+    "./worker-control-loop": "./src/worker-control-loop.mjs",
     "./guest-cooperation-budget": "./src/guest-cooperation-budget.mjs",
     "./freestanding-core": "./src/freestanding-core.mjs",
     "./freestanding-core-link": "./src/freestanding-core-link.mjs",
