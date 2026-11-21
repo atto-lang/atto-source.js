@@ -57,6 +57,7 @@ test('retiring actor fences pending and queued work across same owner new epoch'
   h.loop.admitData('a',1,()=>seen.push('old'));
   assert.equal(h.loop.retireOwner('a',1),true);
   assert.equal(h.loop.complete(old,1),false);
+  assert.equal(h.loop.attachOwner('a',1),false, 'old epoch must not be reused');
   assert.equal(h.loop.attachOwner('a',2),true);
   h.loop.admitData('a',2,()=>seen.push('new'));
   h.drain();
@@ -114,4 +115,14 @@ test('invalid or stale controls fail closed',()=>{
   assert.equal(h.loop.attachOwner('a',1),false);
   assert.equal(h.loop.admitData('a',2,()=>{}),false);
   assert.throws(()=>h.loop.beginSuspension('a',1,null),/invalid suspension/);
+});
+
+test('synchronous postTurn callbacks fail closed instead of running guest code inline',()=>{
+  const seen=[],errors=[];
+  const loop=createWorkerControlLoop({postTurn:fn=>fn(),onTurnError:e=>errors.push(e)});
+  loop.attachOwner('a',1);
+  loop.admitData('a',1,()=>seen.push('guest'));
+  assert.deepEqual(seen,[]);
+  assert.equal(loop.stats.closed,true);
+  assert.match(errors[0].message,/must schedule asynchronously/);
 });
