@@ -326,18 +326,31 @@ export function compile(source) {
   // all other | source remains fail-closed until typed closure lowering.
   // A const fnc without pipes still needs the dedicated parser so it
   // produces an E_SYNTAX denial, never an accidental legacy scalar fallback.
+  // Also detect legacy anonymous fnc(...) and parenthesized (...) ->
+  // lambda heads. Inspect lexer tokens, not matches inside quoted source or
+  // comments, before imposing the canonical E_SYNTAX diagnostic.
+  const possibleLegacyHead = typeof source === 'string' &&
+    (/\bfnc\s*\(/.test(source) ||
+      /=\s*\(\s*(?:int|bool)\s+[A-Za-z_]\w*\s*\)\s*->/.test(source));
   if (typeof source === 'string' &&
-      (source.includes('|') || /\bconst\s+fnc\b/.test(source))) {
+      (source.includes('|') || /\bconst\s+fnc\b/.test(source) || possibleLegacyHead)) {
     const tokens = lex(source);
     const hasConstFnc = tokens.some((t, i) =>
       t.value === 'const' && tokens[i + 1]?.value === 'fnc');
-    if (tokens.some(t => t.value === '|') || hasConstFnc) {
+    const hasUnpipedAnonymous = tokens.some((t, i) =>
+      t.value === '=' && (
+        (tokens[i + 1]?.value === 'fnc' && tokens[i + 2]?.value === '(') ||
+        (tokens[i + 1]?.value === '(' && tokens[i + 2]?.kind === 'id' &&
+          tokens[i + 3]?.kind === 'id' && tokens[i + 4]?.value === ')' &&
+          tokens[i + 5]?.value === '->')
+      ));
+    if (tokens.some(t => t.value === '|') || hasConstFnc || hasUnpipedAnonymous) {
       rejectExecutionDomains(tokens, (message, token) => {
         throw new CompileError(message, token);
       });
       rejectUnloweredInvertedClasses(tokens);
       rejectUnsupportedSelect(tokens);
-      return hasConstFnc
+      return hasConstFnc || hasUnpipedAnonymous
         ? compileIntConstLambdaDirect(tokens)
         : compileVoidLambdaDirect(tokens);
     }
