@@ -183,8 +183,15 @@ class Parser {
       // The bootstrap parser only supports int functions with a single
       // return expression. Support canonical arrow/end spellings without
       // pretending to support arbitrary statement bodies or async functions.
-      const arrow=returnFirst?false:this.match('->');
-      if(!returnFirst){if(!arrow)this.expect(':');this.expect('int');}
+      let arrow=returnFirst?false:this.match('->');
+      let declaredReturnType=requestedReturnType;
+      if(!returnFirst){
+        if(!arrow)this.expect(':');
+        if(this.match('infer'))declaredReturnType='infer';
+        else {this.expect('int');declaredReturnType='int';}
+        // A name-first `: T -> { ... }` header shares the same IR.
+        if(!arrow)arrow=this.match('->');
+      }
       const braced=this.match('{');
       const began=!braced&&returnFirst&&this.match('begin');
       if(!braced&&!began&&!arrow&&!returnFirst)
@@ -198,7 +205,7 @@ class Parser {
         if(this.peek().value===';')this.pos++;
         else if(this.peek().value==='.'&&this.ts[this.pos+1]?.kind==='eof')this.pos++;
       }
-      if(returnFirst&&requestedReturnType==='infer'){
+      if(declaredReturnType==='infer'){
         // Infer is a static type proof, not a covert conversion to int.
         // Unsupported effects, calls or non-scalar expressions are rejected.
         function provenInt(node) {
