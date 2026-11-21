@@ -15,12 +15,16 @@ export function createWorkerControlLoop({
     throw new TypeError('invalid control-loop configuration');
   }
 
-  const owners = new Map(), epochs = new Map(), waiting = new Map(), ready = [], control = [];
+  const owners = new Map(), epochs = new Map(), waiting = new Map(), ticketEntries = new WeakMap();
+  const ready = [], control = [], settled = [];
   const MAX_EPOCH_IDENTITIES = 65536;
   let nextTicket = 1, scheduled = false, executing = false, closed = false;
   let completed = 0, dropped = 0, errors = 0;
   const active = (owner, epoch) => owners.get(owner) === epoch;
-  const validRun = run => typeof run === 'function';
+  // An async function would continue executing off-scheduler after its first await.
+  const validRun = run => typeof run === 'function' &&
+    !['[object AsyncFunction]', '[object AsyncGeneratorFunction]', '[object GeneratorFunction]']
+      .includes(Object.prototype.toString.call(run));
   const backlog = () => ready.length + control.length;
 
   function report(error) {
@@ -28,26 +32,45 @@ export function createWorkerControlLoop({
     try {onTurnError(error);} catch { /* Error observers cannot break the loop. */ }
   }
 
+  function failClosed(error) {
+    if (closed) return;
+    closed = true;
+    owners.clear(); epochs.clear(); waiting.clear(); ready.length = 0;
+    control.length = 0; settled.length = 0;
+    report(error);
+  }
+
+  // Completed I/O is retained within the already reserved waiter quota until
+  // the bounded runnable queue has space. No reactor retry/lost wakeup required.
+  function promoteSettled() {
+    while (!closed && settled.length && ready.length < maxReady) {
+      const entry = settled.shift();
+      if (waiting.get(entry.id) !== entry || !active(entry.owner, entry.epoch)) continue;
+      entry.phase = 'queued';
+      ready.push({owner: entry.owner, epoch: entry.epoch, run: entry.resume,
+        value: entry.value, entry});
+      entry.value = undefined;
+    }
+  }
+
   function schedule() {
     if (scheduled || executing || closed || backlog() === 0) return;
     scheduled = true;
-    let inPostTurn = true;
+    let inPostTurn = true, invoked = false;
     try {postTurn(() => {
+      if (invoked) {failClosed(new TypeError('postTurn invoked callback more than once')); return;}
+      invoked = true;
       // An injected synchronous host callback must never execute a turn
       // within a reactor-completion or admission stack.
       if (inPostTurn) {
-        closed = true;
-        owners.clear(); epochs.clear(); waiting.clear(); ready.length = 0; control.length = 0;
-        report(new TypeError('postTurn must schedule asynchronously'));
+        failClosed(new TypeError('postTurn must schedule asynchronously'));
         return;
       }
       scheduled = false;
       if (!closed) dispatchOne();
     });} catch (error) {
       // A broken host scheduler is fatal; never run queued guest code inline.
-      closed = true;
-      owners.clear(); epochs.clear(); waiting.clear(); ready.length = 0; control.length = 0;
-      report(error);
+      failClosed(error);
     } finally {inPostTurn = false;}
   }
 
@@ -58,7 +81,12 @@ export function createWorkerControlLoop({
       // CONTROL has reserved queue capacity independent of DATA readiness.
       const item = control.length ? control.shift() : ready.shift();
       if (!item) return;
-      if (!active(item.owner, item.epoch)) {dropped++; return;}
+      if (!active(item.owner, item.epoch) ||
+          (item.entry && waiting.get(item.entry.id) !== item.entry)) {
+        dropped++; return;
+      }
+      // The queued completion remains cancellable until this exact dispatch.
+      if (item.entry) waiting.delete(item.entry.id);
       try {
         const result = item.run(item.value);
         // Quanta must not await a JS Promise while claiming an actor turn.
@@ -76,6 +104,7 @@ export function createWorkerControlLoop({
       } catch (error) {report(error);}
     } finally {
       executing = false;
+      promoteSettled();
       schedule();
     }
   }
@@ -111,47 +140,79 @@ export function createWorkerControlLoop({
         throw new TypeError('invalid suspension');
       if (closed || !active(owner, epoch) || waiting.size >= maxSuspended ||
           !Number.isSafeInteger(nextTicket)) return null;
-      const ticket = Object.freeze({owner, epoch, id: nextTicket++});
-      waiting.set(ticket.id, {ticket, resume});
+      const id = nextTicket++;
+      const ticket = Object.freeze({owner, epoch, id});
+      const entry = {id, owner, epoch, resume, phase: 'waiting', value: undefined};
+      waiting.set(id, entry);
+      ticketEntries.set(ticket, entry);
       return ticket;
     },
     // Host-only ticket *object identity* prevents accidental cross-owner
     // completion. Serialized worker frames need a separate authenticated ABI.
     complete(ticket, value) {
       if (closed || !ticket || typeof ticket !== 'object') return false;
-      const entry = waiting.get(ticket.id);
-      if (!entry || entry.ticket !== ticket || !active(ticket.owner, ticket.epoch)) return false;
-      if (ready.length >= maxReady) return false; // retain waiter for backpressure
-      waiting.delete(ticket.id);
-      ready.push({owner: ticket.owner, epoch: ticket.epoch, run: entry.resume, value});
-      schedule();
+      const entry = ticketEntries.get(ticket);
+      if (!entry || waiting.get(entry.id) !== entry || entry.phase !== 'waiting' ||
+          !active(entry.owner, entry.epoch)) return false;
+      if (ready.length >= maxReady || settled.length) {
+        entry.phase = 'staged';
+        entry.value = value;
+        settled.push(entry);
+      } else {
+        entry.phase = 'queued';
+        ready.push({owner: entry.owner, epoch: entry.epoch, run: entry.resume, value, entry});
+        schedule();
+      }
       return true;
     },
     cancel(ticket) {
       if (!ticket || typeof ticket !== 'object') return false;
-      const entry = waiting.get(ticket.id);
-      if (!entry || entry.ticket !== ticket) return false;
-      waiting.delete(ticket.id);
+      const entry = ticketEntries.get(ticket);
+      if (!entry || waiting.get(entry.id) !== entry) return false;
+      waiting.delete(entry.id);
+      if (entry.phase === 'staged') {
+        const index = settled.indexOf(entry);
+        if (index !== -1) settled.splice(index, 1);
+      } else if (entry.phase === 'queued') {
+        const index = ready.findIndex(item => item.entry === entry);
+        if (index !== -1) {ready.splice(index, 1); dropped++;}
+      }
+      entry.value = undefined;
+      promoteSettled();
+      schedule();
       return true;
     },
     retireOwner(owner, epoch) {
       if (!active(owner, epoch)) return false;
       owners.delete(owner);
       for (const [id, entry] of waiting) {
-        if (entry.ticket.owner === owner && entry.ticket.epoch === epoch) waiting.delete(id);
+        if (entry.owner === owner && entry.epoch === epoch) {
+          waiting.delete(id);
+          entry.value = undefined;
+        }
       }
-      // Retained DATA/CONTROL records are generation-checked on dispatch.
+      for (const queue of [ready, control, settled]) {
+        for (let i = queue.length - 1; i >= 0; i--) {
+          if (queue[i].owner === owner && queue[i].epoch === epoch) {
+            queue.splice(i, 1);
+            if (queue !== settled) dropped++;
+          }
+        }
+      }
+      // Retirement refunds ready capacity immediately, not after stale turns run.
       // Pending active guard cleanup is NOT certified by this host-only queue.
+      promoteSettled();
+      schedule();
       return true;
     },
     close() {
       if (closed) return;
       closed = true;
-      owners.clear(); epochs.clear(); waiting.clear(); ready.length = 0; control.length = 0;
+      owners.clear(); epochs.clear(); waiting.clear(); ready.length = 0; control.length = 0; settled.length = 0;
     },
     get stats() {
       return Object.freeze({closed, owners: owners.size, suspended: waiting.size,
-        ready: ready.length, control: control.length, completed, dropped, errors});
+        ready: ready.length, control: control.length, settled: settled.length, completed, dropped, errors});
     }
   });
 }
