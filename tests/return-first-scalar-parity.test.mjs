@@ -14,6 +14,10 @@ const sources=[
   'int•main(){return 42;}',
   'int <- main() return 42; end',
   'fnc int • main() return 42; end',
+  'int <- main() return 42; end;',
+  'fnc int <- main() begin return 42; end;',
+  'int • main() return 42; end.',
+  'fnc int <- main() begin return 42; end.',
 ];
 
 test('return-first int scalar and program-v2 emit byte-identical ESM',()=>{
@@ -136,5 +140,18 @@ test('exception effects stay explicitly unsupported in both source compilers',()
     const src='fnc int <- main() { return '+keyword+' value; }';
     assert.throws(()=>compileScalar(src),/EXCEPTION_BANG_BACKEND_UNSUPPORTED/);
     assert.throws(()=>compileProgramV2(src),/EXCEPTION_BANG_BACKEND_UNSUPPORTED/);
+  }
+});
+
+test('return-first end punctuation is bounded and does not authorize other trailing source',()=>{
+  const invalid=[
+    'fnc int <- main() return 42; end..',
+    'int • main() begin return 42; end;;',
+    'int <- main(){return 42;}.',
+    'int <- main() return 42; end. fnc extra(): int {return 1;}',
+  ];
+  for(const source of invalid){
+    assert.throws(()=>compileScalar(source),CompileError,source);
+    assert.throws(()=>compileProgramV2(source),ProgramCompileError,source);
   }
 });
