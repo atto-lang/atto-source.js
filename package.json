@@ -1,5 +1,5 @@
 {
-  "name": "@oreslang/source-js",
+  "name": "@atto-lang/source-js",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -27,12 +27,14 @@
     "./actor-host.node": "./src/actor-host.node.mjs",
     "./tenant-isolation-policy": "./src/tenant-isolation-policy.mjs",
     "./worker-actor-client": "./src/worker-actor-client.mjs",
+    "./guest-cooperation-budget": "./src/guest-cooperation-budget.mjs",
     "./freestanding-core": "./src/freestanding-core.mjs",
     "./freestanding-core-link": "./src/freestanding-core-link.mjs",
     "./select-runtime": "./src/select-runtime.mjs",
     "./selectable-i64-channel": "./src/selectable-i64-channel.mjs",
     "./selectable-i64-future": "./src/selectable-i64-future.mjs",
-    "./select-continuation-fence": "./src/select-continuation-fence.mjs"
+    "./select-continuation-fence": "./src/select-continuation-fence.mjs",
+    "./structural-runtime": "./src/structural-runtime.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
