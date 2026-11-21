@@ -218,3 +218,24 @@ test('bounded FIFO staged completion burst settles once without lost wakes',()=>
   assert.deepEqual(seen,Array.from({length:32},(_,i)=>i));
   assert.equal(h.loop.stats.suspended,0);
 });
+
+test('async/generator quanta cannot hide behind a forged Symbol.toStringTag',()=>{
+  const h=harness(),seen=[];
+  h.loop.attachOwner('a',1);
+  const asyncTurn=async()=>{seen.push('async body');await Promise.resolve();seen.push('escaped continuation');};
+  const generatorTurn=function*(){seen.push('generator body');};
+  const asyncGenerator=async function*(){seen.push('async generator body');};
+  for(const run of [asyncTurn,generatorTurn,asyncGenerator]){
+    Object.defineProperty(run,Symbol.toStringTag,{value:'Function'});
+    assert.equal(Object.prototype.toString.call(run),'[object Function]',
+      'test must demonstrate the forged tag bypasses the old validator');
+    assert.throws(()=>h.loop.admitData('a',1,run),/invalid continuation/);
+    assert.throws(()=>h.loop.admitControl('a',1,run),/invalid continuation/);
+    assert.throws(()=>h.loop.beginSuspension('a',1,run),/invalid suspension/);
+  }
+  h.drain();
+  assert.deepEqual(seen,[]);
+  assert.equal(h.loop.stats.suspended,0);
+  assert.equal(h.loop.stats.ready,0);
+  assert.equal(h.loop.stats.control,0);
+});
