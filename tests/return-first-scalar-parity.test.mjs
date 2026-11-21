@@ -155,3 +155,52 @@ test('return-first end punctuation is bounded and does not authorize other trail
     assert.throws(()=>compileProgramV2(source),ProgramCompileError,source);
   }
 });
+
+test('canonical name-first colon-arrow and inferred returns execute shared guest fixture shapes',()=>{
+  const baselineInt='fnc calculate(int x):int{return x*2;}\npub fnc main()->int{return calculate(21);}';
+  const baselineInfer='fnc calculate_other():int{return 42;}\npub fnc main()->int{return calculate_other();}';
+  const cases=[
+    ['fnc calculate(int x): int -> {return x*2;}',baselineInt,
+      'pub fnc main()->int{return calculate(21);}'],
+    ['fnc calculate(int x) -> int {return x*2;}',baselineInt,
+      'pub fnc main()->int{return calculate(21);}'],
+    ['fnc calculate_other(): infer -> {return 42;}',baselineInfer,
+      'pub fnc main()->int{return calculate_other();}'],
+    ['fnc calculate_other(): infer {return 42;}',baselineInfer,
+      'pub fnc main()->int{return calculate_other();}'],
+    ['fnc calculate_other() -> infer {return 42;}',baselineInfer,
+      'pub fnc main()->int{return calculate_other();}'],
+  ];
+  for(const [declaration,baseline,main] of cases){
+    const source=declaration+'\n'+main;
+    for(const compiler of [compileScalar,compileProgramV2,compileAttoScalarV1]){
+      const compiled=compiler(source);
+      assert.equal(compiled,compiler(baseline),declaration);
+      const executable=compiled.replace(/^export \{[^\n]*\};\n?/gm,'');
+      assert.equal(runInNewContext(executable+'\n_f1()'),42n,declaration);
+    }
+  }
+});
+test('name-first infer cannot silently infer effects or duplicate a signature',()=>{
+  for(const source of [
+    'fnc f(): infer -> {return missing();}',
+    'fnc f(): infer -> {return true;}',
+    'fnc f(): int -> -> {return 42;}',
+    'fnc f(): infer -> {return 42;} junk',
+    'fnc f(): infer -> {return 42;} fnc f():int{return 1;}',
+  ]){
+    assert.throws(()=>compileScalar(source),CompileError,source);
+    assert.throws(()=>compileProgramV2(source),ProgramCompileError,source);
+  }
+});
+test('name-first void colon-arrow lowers only through the supported v2 pure-void profile',()=>{
+  const legacy=compileProgramV2('fnc reset():void{}');
+  for(const src of [
+    'fnc reset(): void -> {}',
+    'fnc reset() -> void {}',
+    'fnc reset(): void -> {return;}',
+  ]){
+    assert.equal(compileProgramV2(src),legacy,src);
+    assert.throws(()=>compileScalar(src),CompileError,src);
+  }
+});
