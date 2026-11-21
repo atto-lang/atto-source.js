@@ -192,6 +192,12 @@ class Parser {
       if(!braced&&!began&&!returnFirst){if(!this.match('as'))this.match('::');}
       this.expect('return');
       const body=this.expr();this.expect(';');this.expect(braced?'}':'end');
+      // Only return-first end bodies admit one native-compatible suffix.
+      // A final dot cannot act as a separator before another declaration.
+      if(returnFirst&&!braced){
+        if(this.peek().value===';')this.pos++;
+        else if(this.peek().value==='.'&&this.ts[this.pos+1]?.kind==='eof')this.pos++;
+      }
       if(returnFirst&&requestedReturnType==='infer'){
         // Infer is a static type proof, not a covert conversion to int.
         // Unsupported effects, calls or non-scalar expressions are rejected.
