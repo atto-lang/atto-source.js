@@ -513,8 +513,9 @@ class Parser {
       this.checkExpandedBudget(body);
       if(returnType==='infer'){
         // Infer only from statically evidenced int scalar operations here.
-        // Calls, effects and conditional alternatives are not sufficiently
-        // typed in this slice; reject them instead of assuming int.
+        // Value-producing calls, effects and conditional alternatives are not
+        // sufficiently typed in this slice; reject them instead of assuming
+        // int. Checked pure-void sequencing may precede a proven int value.
         function provenInt(node){
           if(node.kind==='int')return true;
           if(node.kind==='variable')
@@ -522,6 +523,10 @@ class Parser {
           if(node.kind==='neg')return provenInt(node.inner);
           if(node.kind==='binary'&&['+','*','-'].includes(node.op))
             return provenInt(node.left)&&provenInt(node.right);
+          // A direct pure-void call cannot determine the return type.
+          // Resolve/validate must separately prove it returns void.
+          if(node.kind==='seqVoidCall')
+            return provenInt(node.value);
           return false;
         }
         if(!provenInt(body))
