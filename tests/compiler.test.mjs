@@ -173,3 +173,31 @@ test('scalar call graph accepts forward DAGs but rejects unconditionally infinit
   'pub fnc main(): int { return a(); } fnc a(): int { return b(); } fnc b(): int { return a(); }'
  ])assert.throws(()=>compile(bad),/error: unconditional recursive call cycle/);
 });
+
+test('JS scalar frontend denies aliased Topic.try_publish before code emission',()=>{
+  for(const source of [
+    'pub fnc main():int { return topic.try_publish(share! event)?; }',
+    'pub fnc main():int { return alias.try_publish(rt share event); }',
+    'pub fnc main():int { return topic /* nested /* x */ y */ . try_publish(share! event); }',
+    'pub fnc main():int { return foo.bar.try_publish(42); }',
+    'pub fnc main():int { return local_topic.try_publish; }'
+  ]){
+    for(const compileFn of [compileToIR,compile])
+      assert.throws(()=>compileFn(source),
+        /Topic\\.try_publish requires checked actor\\/group, share! and Result lowering/,
+        source);
+  }
+});
+
+test('JS typed Topic denial leaves inert text and standalone functions untouched',()=>{
+  const source='pub fnc main():int { return 42; }';
+  for(const inert of [
+    ' // topic.try_publish(share! event)?',
+    ' /* nested /* topic.try_publish(share! event)? */ outer */',
+    ' // topic.try_publish(share! event)?\\u0085',
+    ' /* topic.try_publish(rt share event) */'
+  ]) assert.equal(compile(source+inert),compile(source));
+  const alias='pub fnc try_publish(int x):int { return x; } '+
+    'pub fnc main():int { return try_publish(42); }';
+  assert.equal(typeof compile(alias),'string');
+});
