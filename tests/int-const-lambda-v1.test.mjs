@@ -67,3 +67,28 @@ test('legacy checked path and previously executable typed void lambdas remain di
   const mod = await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(compile(v)));
   assert.equal(mod.main(), 42n);
 });
+
+test('bounded scalar direct-call differential oracles and signed i64 boundaries', async () => {
+  const run = async source => {
+    const js = compile(source);
+    const mod = await import('data:text/javascript;charset=utf-8,' + encodeURIComponent(js));
+    return mod.main();
+  };
+  for (let n = -16; n <= 16; n++) {
+    const offset = (n * 7) % 19;
+    const scalar = local('|int x| : int -> x + ' + offset + ';', 'return v(' + n + ');');
+    assert.equal(await run(scalar), BigInt(n + offset), scalar);
+    const ignored = local('|_, _| : int -> 5;', 'return v(' + n + ', ' + (n % 2 === 0) + ');');
+    assert.equal(await run(ignored), 5n, ignored);
+    const missingArg = local('|_, _| : int -> 5;', 'return v(' + n + ');');
+    assert.throws(() => compile(missingArg), {code:'E_ARITY'}, missingArg);
+  }
+  const min = -(1n << 63n), max = (1n << 63n) - 1n;
+  for (const edge of [min, max]) {
+    assert.equal(await run(local('|int x| : int -> x + 0;', 'return v(' + edge + ');')), edge);
+    const increment = edge === max ? 1n : -1n;
+    const js = compile(local('|int x| : int -> x + ' + increment + ';', 'return v(' + edge + ');'));
+    const mod = await import('data:text/javascript;charset=utf-8,' + encodeURIComponent(js));
+    assert.throws(() => mod.main(), /E_OVERFLOW/);
+  }
+});
