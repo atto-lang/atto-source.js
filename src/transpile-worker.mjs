@@ -16,7 +16,21 @@ function tokenize(source) {
     const tail = source.slice(i);
     const match = /^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)/.exec(tail);
     if (match) { i += match[0].length; continue; }
-    const token = /^(?:[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;+*\-.=<>!])/.exec(tail);
+    // Preserve quoted literals as opaque tokens while scanning for unsupported
+    // Ensemble member calls. The strict guest parser still admits no strings.
+    let token;
+    if (tail[0]==='"' || tail[0]==="'") {
+      const quote=tail[0];let end=1,closed=false;
+      while(end<tail.length) {
+        if(tail[end]==='\\') {end+=2;continue;}
+        if(tail[end]===quote){end++;closed=true;break;}
+        end++;
+      }
+      if(!closed)throw new TranspileError('E_UNSUPPORTED_TOKEN');
+      token=[tail.slice(0,end)];
+    } else {
+      token = /^(?:[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;+*\-.=<>!?])/.exec(tail);
+    }
     if (!token) throw new TranspileError('E_UNSUPPORTED_TOKEN');
     tokens.push(token[0]);
     offsets.push(i);
@@ -60,6 +74,10 @@ export function transpile_to_worker(source) {
 
   for(let i=0;i<tokens.length;i++){
     const current=tokens[i],next=tokens[i+1];
+    // Alias/imported Topic handles need no local actor.group/Topic spelling.
+    // Reject before JS emission; no checked Topic/Result/share! runtime exists.
+    if(current==='.'&&next==='try_publish')
+      throw new TranspileError('E_ACTOR_PUBSUB_UNSUPPORTED');
     // The contextual stop! spelling is only recognized with contiguous '!'.
     // A separated operator stays an unsupported expression, not a rewritten
     // actor STOP request. Neither form has executable graceful-stop lowering.
