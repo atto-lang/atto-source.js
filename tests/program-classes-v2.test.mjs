@@ -165,7 +165,7 @@ test('fnc, mtd, method and bare instance declarations share the checked class me
     '  pub bare():int{return 5;}',
     'end',
     'pub fnc main():int{return new Calculator().twice(21);}'
-  ].join('\\n');
+  ].join('\n');
   const ir=compileToProgramIRV2(source);
   assert.equal(ir.classes.length,1);
   assert.deepEqual(ir.classes[0].methods.map(m=>m.name),
