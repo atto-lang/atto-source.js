@@ -35,12 +35,14 @@ const GENERATOR_RESERVED=new Set([
   'Some','None','Ok','Err','using','requires','serial','critical-read','critical-write','nb-select'
 ]);
 export class ProgramCompileError extends Error {
-  constructor(message, loc) {
+  constructor(message, loc, code=null) {
     super('error: program v2: ' + message + (loc ? ' at ' + loc.line + ':' + loc.col : ''));
     this.name = 'ProgramCompileError';
+    // Stable contract diagnostics are opt-in; preserve legacy messages.
+    this.code=code;
   }
 }
-const fail = (message, loc) => {throw new ProgramCompileError(message, loc);};
+const fail = (message, loc, code=null) => {throw new ProgramCompileError(message, loc, code);};
 
 /**
  * Align source-profile negotiation with Java CheckedI64SourceHeader.
@@ -460,7 +462,7 @@ class Parser {
     const requestedReturnType=this.peek().value;
     const returnFirst=['int','void','infer'].includes(requestedReturnType) &&
       ['<-','•'].includes(this.tokens[this.i+1]?.value);
-    if(!fnc&&!routine&&!returnFirst)fail('unsupported declaration',start);
+    if(!fnc&&!routine&&!returnFirst)fail('unsupported declaration',start,'E_TOPLEVEL');
     if(returnFirst){this.i+=2;}
     const kind=routine?'routine':'fnc',name=this.name();
     // The program-v2 ESM slice has no once-only, reachability-scoped
@@ -486,6 +488,8 @@ class Parser {
     let returnType=returnFirst?requestedReturnType:this.eat('void')?'void':this.eat('infer')?'infer':this.valueType();
     // Post-type arrow is part of the canonical name-first header.
     if(!returnFirst&&!arrow)arrow=this.eat('->');
+    if(returnFirst && ['->',':'].includes(this.peek().value))
+      fail('return-first callable has a duplicate return annotation',this.peek(),'E_RETURN_ANNOTATION');
     const braced=this.eat('{');
     const began=!braced&&returnFirst&&this.eat('begin');
     if(!braced&&!began&&!arrow&&!returnFirst)
@@ -505,7 +509,7 @@ class Parser {
     }else{
       const statements=this.statementSequence([terminator]);
       body=this.lowerStatements(statements,null);
-      if(!body)fail('RETURN_EXPLICIT_REQUIRED: int function requires a return on every path');
+      if(!body)fail('RETURN_EXPLICIT_REQUIRED: int function requires a return on every path',this.peek(),'E_RETURN');
       this.checkExpandedBudget(body);
       if(returnType==='infer'){
         // Infer only from statically evidenced int scalar operations here.
@@ -571,7 +575,7 @@ class Parser {
         statements.push({kind:'voidCall',expr});
       } else fail('unsupported statement in int function',this.peek());
     }
-    if(this.peek().kind==='eof')fail('unterminated function or conditional',this.peek());
+    if(this.peek().kind==='eof')fail('unterminated function or conditional',this.peek(),'E_EOF');
     return statements;
   }
   returnsOnAllPaths(stmts) {
@@ -931,7 +935,7 @@ function resolveProgram(parsed) {
   functions.forEach((fn,i)=>{
     const qualified=(fn.module===null?'@file/':'@module/'+fn.module+'/')+fn.name;
     const slot=qualified+'/'+fn.params.length;
-    if(slots.has(slot)) fail('duplicate caller-visible arity '+slot);
+    if(slots.has(slot)) fail('duplicate caller-visible arity '+slot,null,'E_DUPLICATE');
     if(symbolKinds.has(qualified) && symbolKinds.get(qualified)!==fn.kind)
       fail('fnc and direct-call-only routine cannot share an exported name '+qualified);
     symbolKinds.set(qualified,fn.kind);
