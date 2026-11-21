@@ -35,9 +35,13 @@ const GENERATOR_RESERVED=new Set([
   'Some','None','Ok','Err','using','requires','serial','critical-read','critical-write','nb-select'
 ]);
 export class ProgramIRError extends Error {
-  constructor(detail) {super('error: program IR: '+detail);this.name='ProgramIRError';}
+  constructor(detail, code=null) {
+    super('error: program IR: '+detail);
+    this.name='ProgramIRError';
+    this.code=code;
+  }
 }
-const fail=s=>{throw new ProgramIRError(s);};
+const fail=(s,code=null)=>{throw new ProgramIRError(s,code);};
 function record(v,keys,context) {
   if(v===null || typeof v!=='object' || Array.isArray(v))fail(context+': expected object');
   const proto=Object.getPrototypeOf(v);
@@ -211,7 +215,7 @@ export function validateProgramIRV2(input) {
     if(typed&&returnType==='int'&&paramTypes.every(t=>t==='int'))
       fail('redundant typed metadata on int-only function');
     const slot=(module===null?'@file/':'@module/'+module+'/')+name+'/'+params.length;
-    if(slots.has(slot))fail('duplicate caller-visible method arity '+slot);
+    if(slots.has(slot))fail('duplicate caller-visible method arity '+slot,'E_DUPLICATE');
     const family=slot.slice(0,slot.lastIndexOf('/'));
     if(symbolKinds.has(family)&&symbolKinds.get(family)!==f.kind)
       fail('fnc/routine overload kind conflict '+family);
