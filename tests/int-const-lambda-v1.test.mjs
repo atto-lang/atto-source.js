@@ -24,6 +24,8 @@ test('six scalar const fnc sources compile to real executing ESM guest', async (
   assert.equal(await guest(local('|int x| : int -> x + 1;')), 42n);
   assert.equal(await guest(local('|x: int| : int -> x + 1;')), 42n);
   assert.equal(await guest(moduleScope('|int _| : int -> 5;')), 5n);
+  assert.equal(await guest(local('|_, _| : int -> 5;', 'return v(41, false);')), 5n);
+  assert.equal(await guest(moduleScope('|int _, bool _| : int -> 5;', 'return v(41, false);')), 5n);
   // No reinterpretation through the untyped legacy scalar IR parser.
   assert.throws(() => compileToIR(local('|_| : int -> 5;')), /error:/);
 });
@@ -39,6 +41,8 @@ test('invalid lambda heads, arity, scopes, capture and types fail closed', () =>
     [local('|int x, int x| : int -> x;', 'return v(3, 4);'), 'E_DUPLICATE'],
     [local('|bool x| : int -> x;', 'return v(true);'), 'E_TYPE'],
     [local('|_| : int -> _;'), 'E_CONST'],
+    [local('|_, _| : int -> 5;', 'return v(41);'), 'E_ARITY'],
+    [local('|_, _| : int -> _;', 'return v(41, true);'), 'E_CONST'],
     [local('|int x| : int -> x + 1;', 'return v(true);'), 'E_TYPE'],
     [local('|int x| : int -> x + 1;', 'return v(9223372036854775808);'), 'E_TYPE'],
     [local('|int x| : int -> x + 1;', 'return other(41);'), 'E_CONST'],
