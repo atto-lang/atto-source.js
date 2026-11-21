@@ -22,9 +22,26 @@ export function createWorkerControlLoop({
   let completed = 0, dropped = 0, errors = 0;
   const active = (owner, epoch) => owners.get(owner) === epoch;
   // An async function would continue executing off-scheduler after its first await.
-  const validRun = run => typeof run === 'function' &&
-    !['[object AsyncFunction]', '[object AsyncGeneratorFunction]', '[object GeneratorFunction]']
-      .includes(Object.prototype.toString.call(run));
+  // Symbol.toStringTag can be forged on function objects, so checking only
+  // Object.prototype.toString is insufficient even in the trusted host lane.
+  const excludedCallables = new Set([
+    Object.getPrototypeOf(async function () {}),
+    Object.getPrototypeOf(function* () {}),
+    Object.getPrototypeOf(async function* () {}),
+  ]);
+  const validRun = run => {
+    if (typeof run !== 'function') return false;
+    const tag = Object.prototype.toString.call(run);
+    if (tag === '[object AsyncFunction]' ||
+        tag === '[object AsyncGeneratorFunction]' ||
+        tag === '[object GeneratorFunction]') return false;
+    let proto = Object.getPrototypeOf(run);
+    for (let depth = 0; proto !== null; depth++) {
+      if (excludedCallables.has(proto) || depth >= 32) return false;
+      proto = Object.getPrototypeOf(proto);
+    }
+    return true;
+  };
   const backlog = () => ready.length + control.length;
 
   function report(error) {
