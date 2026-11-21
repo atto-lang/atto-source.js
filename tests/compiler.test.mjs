@@ -184,7 +184,7 @@ test('JS scalar frontend denies aliased Topic.try_publish before code emission',
   ]){
     for(const compileFn of [compileToIR,compile])
       assert.throws(()=>compileFn(source),
-        /Topic\\.try_publish requires checked actor\\/group, share! and Result lowering/,
+        /Topic\.try_publish requires checked actor\/group, share! and Result lowering/,
         source);
   }
 });
@@ -194,7 +194,7 @@ test('JS typed Topic denial leaves inert text and standalone functions untouched
   for(const inert of [
     ' // topic.try_publish(share! event)?',
     ' /* nested /* topic.try_publish(share! event)? */ outer */',
-    ' // topic.try_publish(share! event)?\\u0085',
+    ' // topic.try_publish(share! event)?\u0085',
     ' /* topic.try_publish(rt share event) */'
   ]) assert.equal(compile(source+inert),compile(source));
   const alias='pub fnc try_publish(int x):int { return x; } '+
