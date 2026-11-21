@@ -1,0 +1,39 @@
+<!doctype html><meta charset="utf-8">
+<title>Atto JS browser Worker control-loop host smoke</title>
+<pre id="result">RUNNING</pre>
+<script type="module">
+const output=document.getElementById('result');
+const worker=new Worker(new URL('./fixtures/worker-control-loop-browser-fixture.mjs',import.meta.url),{type:'module'});
+const frames=[];
+let wake;
+worker.addEventListener('message',event=>{frames.push(event.data);wake?.();});
+const next=async kind=>{
+  for(let i=0;i<30;i++){
+    const match=frames.find(frame=>frame.kind===kind);
+    if(match)return match;
+    await new Promise((resolve,reject)=>{
+      const timeout=setTimeout(()=>{wake=null;reject(Error('timeout '+kind));},1000);
+      wake=()=>{clearTimeout(timeout);wake=null;resolve();};
+    });
+  }
+  throw Error('unbounded wait');
+};
+try{
+  await next('ready');
+  worker.postMessage({kind:'complete',value:42});
+  if(!(await next('after')).accepted)throw Error('completion rejected');
+  await next('resumed');
+  if(frames.slice(0,4).map(f=>f.kind).join(',')!=='ready,before,after,resumed')
+    throw Error('inline reactor continuation detected');
+  if(frames.find(f=>f.kind==='resumed').value!==42)throw Error('resume value mismatch');
+  worker.postMessage({kind:'retire'});
+  const stale=await next('retired');
+  if(!stale.retired||stale.stale||!stale.attached)throw Error('generation fence failed');
+  worker.postMessage({kind:'complete',value:43});
+  if((await next('resumed2')).value!==43)throw Error('new epoch did not resume');
+  worker.postMessage({kind:'close'});
+  if(!(await next('closed')).closed)throw Error('close did not revoke');
+  output.textContent='PASS_BROWSER_CONTROL_LOOP';
+}catch(error){output.textContent='FAIL_BROWSER_CONTROL_LOOP: '+String(error);}
+finally{worker.terminate();}
+</script>
