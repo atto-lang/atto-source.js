@@ -181,7 +181,7 @@ test('canonical .atto Topic alias denial is byte-identical to Wasm, .NET and con
   const source=await readFile(resolve('contracts/atto-ensemble-v1/canonical-unlowered-try-publish.atto'),'utf8');
   for(const compileFn of [compileToIR, compile]) {
     assert.throws(()=>compileFn(source),
-      /Topic\\.try_publish requires checked actor\\/group, share! and Result lowering/);
+      /Topic\.try_publish requires checked actor\/group, share! and Result lowering/);
   }
 });
 
