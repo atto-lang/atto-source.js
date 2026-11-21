@@ -262,3 +262,20 @@ test('two pure-void calls remain ordered and are emitted exactly once each',()=>
   const guest=generated.replace(/^export \{[^\n]*\};\n?/gm,'');
   assert.equal(runInNewContext(guest+'\n_f1()'),0n);
 });
+
+test('canonical negative return-first fixtures expose stable Atto error codes',()=>{
+  const cases=[
+    ['E_RETURN_ANNOTATION','fnc int <- calculate(int x) -> int { return x; }\npub fnc main() -> int { return 0; }'],
+    ['E_TOPLEVEL','int < - calculate(int x) { return x; }\npub fnc main() -> int { return 0; }'],
+    ['E_EOF','int <- calculate(int x) begin return x;'],
+    ['E_RETURN','int <- calculate(int x) begin end\npub fnc main() -> int { return 0; }'],
+    ['E_RETURN','int <- calculate(int x) end\npub fnc main() -> int { return 0; }'],
+    ['E_DUPLICATE','fnc calculate(int x) -> int { return x; }\nint <- calculate(int x) begin return x; end\npub fnc main() -> int { return 0; }']
+  ];
+  for(const [code,source] of cases){
+    let error=null;
+    try{compileProgramV2(source);}catch(caught){error=caught;}
+    assert.ok(error!==null,source);
+    assert.equal(error.code,code,source);
+  }
+});
