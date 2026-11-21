@@ -15,8 +15,11 @@ export class CoreLinkError extends Error {
 
 // The directive must be the first non-comment source content. No arbitrary
 // path resolution or transitive package imports are admitted in this profile.
-// Legacy std/core is a source-only alias, not a host runtime import.
-const CORE_DIRECTIVE=/^import[ \t]+module[ \t]+core[ \t]+from[ \t]+"(?:core|std\/core)"[ \t]*;/;
+// Canonical atto.core/numeric is a compiler-owned module name, never a
+// guest filesystem path. Legacy core and std/core remain source-only aliases.
+// This narrow integer compiler still resolves a single logical module "core";
+// it does not admit arbitrary atto.core modules, atto.alloc or atto.std.
+const CORE_DIRECTIVE=/^import[ \t]+module[ \t]+core[ \t]+from[ \t]+"(?:atto\.core\/numeric(?:\.atto)?|core|std\/core)"[ \t]*;/;
 const DIRECTIVE_COUNT=262144;
 function leadingTrivia(source) {
   let i=0;
@@ -52,7 +55,7 @@ export function compileToCoreLinkedIR(applicationSource,coreSource) {
     throw new CoreLinkError('combined source exceeds linker size budget');
   const offset=leadingTrivia(applicationSource);
   const match=CORE_DIRECTIVE.exec(applicationSource.slice(offset));
-  if(!match)throw new CoreLinkError('expected leading import module core from "core";');
+  if(!match)throw new CoreLinkError('expected leading compiler-owned core import (atto.core/numeric);');
   const body=applicationSource.slice(offset+match[0].length);
   if(!body.trim())throw new CoreLinkError('application has no declarations');
 
