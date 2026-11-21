@@ -81,7 +81,7 @@ test('CLI never publishes guest JS for rejected actor heap .atto source',async()
  const source=join(dir,'actor.atto');
  const output=join(dir,'actor.mjs');
  try {
-   await writeFile(source,'define class Node as int value end\\ndefine actor A as end');
+   await writeFile(source,'define class Node as int value end\ndefine actor A as end');
    const run=spawnSync(process.execPath,[cli,source,'--out='+output],{encoding:'utf8'});
    assert.notEqual(run.status,0);
    assert.match(run.stderr,/E_ACTOR_MEMORY_GUEST_UNSUPPORTED/);
