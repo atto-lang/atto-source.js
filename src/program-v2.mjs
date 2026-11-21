@@ -93,7 +93,13 @@ function validateSourceText(source) {
   for(let i=0;i<source.length;i++){
     const unit=source.charCodeAt(i);
     if(unit===0)fail('NUL in source');
-    if(unit===0x1b||unit===0x7f)fail('terminal control in source');
+    if(unit===0x1b||unit===0x7f)
+      fail('terminal control in source at UTF-16 offset '+i);
+    // Source identity must not change visually under Unicode direction controls,
+    // even when the control is hidden in a string or comment.
+    if(unit===0x061c||unit===0x200e||unit===0x200f||
+       (unit>=0x202a&&unit<=0x202e)||(unit>=0x2066&&unit<=0x2069))
+      fail('bidirectional Unicode control in source at UTF-16 offset '+i);
     if(unit>=0xd800&&unit<=0xdbff){
       const lo=source.charCodeAt(i+1);
       if(!(lo>=0xdc00&&lo<=0xdfff))fail('invalid UTF-16 source');

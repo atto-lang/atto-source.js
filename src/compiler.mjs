@@ -19,7 +19,8 @@ function validateSourceText(src) {
   for (let i=0; i<src.length; i++) {
     const code=src.charCodeAt(i);
     if (code===0) throw new CompileError('NUL in source');
-    if (code===0x1b || code===0x7f) throw new CompileError('terminal control in source');
+    if (code===0x1b || code===0x7f)
+      throw new CompileError('terminal control in source at UTF-16 offset '+i);
     if (code>=0xd800 && code<=0xdbff) {
       const lo=src.charCodeAt(i+1);
       if (!(lo>=0xdc00 && lo<=0xdfff)) throw new CompileError('invalid UTF-16 in source');
