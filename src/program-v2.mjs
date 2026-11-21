@@ -562,6 +562,13 @@ class Parser {
         const no=this.eat('else')?this.statementSequence(['fi'],depth+1):[];
         this.expect('fi');
         statements.push({kind:'branch',condition,yes,no});
+       } else if(this.peek().kind==='id'){
+        // Only statically resolved pure-void direct calls are allowed.
+        const expr=this.expression();
+        if(expr.kind!=='call'||expr.qualifier!==null)
+          fail('VOID_STATEMENT_DIRECT_CALL_REQUIRED',this.peek());
+        this.expect(';');
+        statements.push({kind:'voidCall',expr});
       } else fail('unsupported statement in int function',this.peek());
     }
     if(this.peek().kind==='eof')fail('unterminated function or conditional',this.peek());
@@ -582,7 +589,10 @@ class Parser {
           (this.returnsOnAllPaths(stmt.yes||[])&&this.returnsOnAllPaths(stmt.no||[]))))
         fail('unreachable statement after terminating return/if');
       if(stmt.kind==='return')result=stmt.body;
-      else {
+      else if(stmt.kind==='voidCall'){
+        if(result===null)fail('RETURN_EXPLICIT_REQUIRED: void call must precede a value return');
+        result={kind:'seqVoidCall',call:stmt.expr,value:result};
+      }else {
         const yes=this.lowerStatements(stmt.yes,result);
         const no=this.lowerStatements(stmt.no,result);
         if(!yes||!no)fail('RETURN_EXPLICIT_REQUIRED: int function requires return on every if branch');
@@ -611,6 +621,7 @@ class Parser {
         case 'neg':case 'not':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
+        case 'seqVoidCall':add(expr.call);add(expr.value);break;
         case 'newClass':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'methodCall':
           add(expr.receiver);for(const arg of expr.args)add(arg.expr??arg);break;
@@ -970,6 +981,7 @@ function resolveProgram(parsed) {
         return results[expr.name];
       }
       case 'if':return resolvedType(expr.yes,owner);
+      case 'seqVoidCall':return resolvedType(expr.value,owner);
       case 'adtMatch':return resolvedType(expr.arms[0].body,owner);
       default:fail('cannot infer resolved expression type '+expr.kind);
     }
@@ -998,6 +1010,16 @@ function resolveProgram(parsed) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
       case 'int':case 'bool':case 'symbol':return expr;
+      case 'seqVoidCall': {
+        if(expr.call.kind!=='call'||expr.call.qualifier!==null)
+          fail('VOID_STATEMENT_DIRECT_CALL_REQUIRED');
+        const call=resolve(expr.call,owner,depth+1,bindings);
+        if(call.kind!=='call'&&call.kind!=='namedCall')
+          fail('VOID_STATEMENT_DIRECT_CALL_REQUIRED');
+        if((functions[call.target].returnType??'int')!=='void')
+          fail('VOID_STATEMENT_REQUIRES_VOID_RETURN');
+        return {kind:'seqVoidCall',call,value:resolve(expr.value,owner,depth+1,bindings)};
+      }
       case 'newClass': {
         if(owner.ownerKind==='method')
           fail('class construction inside method body unsupported in convergence slice');
@@ -1139,6 +1161,7 @@ function resolveProgram(parsed) {
     } else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
     else if(expr.kind==='binary'||expr.kind==='compare'||expr.kind==='symbolCompare') {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
+    else if(expr.kind==='seqVoidCall'){inspect(expr.call,owner);inspect(expr.value,owner);}
     else if(expr.kind==='neg'||expr.kind==='not') inspect(expr.inner,owner);
     else if(expr.kind==='match'||expr.kind==='adtMatch') {
       inspect(expr.subject,owner);expr.arms.forEach(a=>inspect(a.body,owner));
@@ -1199,6 +1222,9 @@ function emitProgram(program) {
       }
       case 'if':return '(('+emitExpr(expr.condition,depth+1)+')?('+
         emitExpr(expr.yes,depth+1)+'):('+emitExpr(expr.no,depth+1)+'))';
+      case 'seqVoidCall':
+        return '(()=>{'+emitExpr(expr.call,depth+1)+';return '+
+          emitExpr(expr.value,depth+1)+';})()';
       case 'newClass':return 'new _class'+expr.classIndex+'()';
       case 'methodCall': {
         const method=program.classes[expr.classIndex].methods[expr.methodIndex];
@@ -1276,6 +1302,7 @@ function emitProgram(program) {
       case 'binary':case 'compare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
+      case 'seqVoidCall':return usesSymbol(expr.call)||usesSymbol(expr.value);
       case 'neg':case 'not':return usesSymbol(expr.inner);
       case 'match':case 'adtMatch':return usesSymbol(expr.subject)||
         expr.arms.some(arm=>usesSymbol(arm.body));
@@ -1314,6 +1341,7 @@ function emitProgram(program) {
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
       case 'if':return usesPortableRuntime(expr.condition)||
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
+      case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
       case 'neg':case 'not':return usesPortableRuntime(expr.inner);
       case 'match':return usesPortableRuntime(expr.subject)||
         expr.arms.some(arm=>usesPortableRuntime(arm.body));
