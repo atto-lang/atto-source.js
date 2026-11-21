@@ -10,17 +10,22 @@ export class TranspileError extends Error {
 }
 function tokenize(source) {
   const tokens = [];
+  const offsets = [];
   let i=0;
   while (i < source.length) {
     const tail = source.slice(i);
     const match = /^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)/.exec(tail);
     if (match) { i += match[0].length; continue; }
-    const token = /^(?:[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;+*\-.=<>])/.exec(tail);
+    const token = /^(?:[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;+*\-.=<>!])/.exec(tail);
     if (!token) throw new TranspileError('E_UNSUPPORTED_TOKEN');
     tokens.push(token[0]);
+    offsets.push(i);
     if (tokens.length > MAX_TOKENS) throw new TranspileError('E_TOKEN_LIMIT');
     i += token[0].length;
   }
+  // Non-index metadata permits contextual bang adjacency checks without
+  // changing the existing closed-world actor/scalar token stream.
+  Object.defineProperty(tokens,'offsets',{value:offsets});
   return tokens;
 }
 export function transpile_to_worker(source) {
@@ -52,6 +57,22 @@ export function transpile_to_worker(source) {
   // reject a program; preserve |> as the separate functional operator.
   if(tokens.includes('pipe') || tokens.includes('rpipe'))
     throw new TranspileError('E_UNSUPPORTED_CONTINUOUS_PIPE');
+
+  for(let i=0;i<tokens.length;i++){
+    const current=tokens[i],next=tokens[i+1];
+    // The contextual stop! spelling is only recognized with contiguous '!'.
+    // A separated operator stays an unsupported expression, not a rewritten
+    // actor STOP request. Neither form has executable graceful-stop lowering.
+    if(current==='stop'&&next==='!' &&
+       tokens.offsets[i+1]===tokens.offsets[i]+4)
+      throw new TranspileError('E_STOP_BACKEND_UNSUPPORTED');
+    if(current==='.'&&(next==='get_ready'||next==='get_done')&&tokens[i+2]==='(')
+      throw new TranspileError(next==='get_ready'
+        ?'E_UNSUPPORTED_ACTOR_READY_FUTURE'
+        :'E_UNSUPPORTED_ACTOR_DONE_FUTURE');
+    if(current==='.'&&(next==='ready'||next==='done'))
+      throw new TranspileError('E_UNSUPPORTED_ACTOR_LIFECYCLE_PROPERTY');
+  }
   if(tokens[0]==='define')return transpile_actor_tokens(tokens);
   let i=0;
   const peek=()=>tokens[i];
