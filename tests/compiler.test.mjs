@@ -174,6 +174,17 @@ test('scalar call graph accepts forward DAGs but rejects unconditionally infinit
  ])assert.throws(()=>compile(bad),/error: unconditional recursive call cycle/);
 });
 
+test('canonical .atto Topic alias denial is byte-identical to Wasm, .NET and conformance', async()=> {
+  // The same negative fixture is present under this path in Wasm/.NET and
+  // in fixtures/ under atto-platform-conformance. Exact blob:
+  // c562ad380bb283da9ffa26160653c1186ab63462
+  const source=await readFile(resolve('contracts/atto-ensemble-v1/canonical-unlowered-try-publish.atto'),'utf8');
+  for(const compileFn of [compileToIR, compile]) {
+    assert.throws(()=>compileFn(source),
+      /Topic\\.try_publish requires checked actor\\/group, share! and Result lowering/);
+  }
+});
+
 test('JS scalar frontend denies aliased Topic.try_publish before code emission',()=>{
   for(const source of [
     'pub fnc main():int { return topic.try_publish(share! event)?; }',
