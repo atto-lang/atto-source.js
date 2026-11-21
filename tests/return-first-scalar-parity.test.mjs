@@ -122,7 +122,7 @@ test('no implicit type coercion, redundant annotation or unsupported arrow',()=>
     'fnc int <- main():int{return 42;}',
     'fnc int <- main()',
     'int <- main() begin return 42;',  // unterminated block
-    'void <- main(){return;}',
+    'void <- main(){return 42;}',
     'int <- main(){return 42;} trailing',
   ];
   for(const source of invalid){
