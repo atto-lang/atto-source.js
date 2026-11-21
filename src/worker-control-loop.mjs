@@ -15,7 +15,8 @@ export function createWorkerControlLoop({
     throw new TypeError('invalid control-loop configuration');
   }
 
-  const owners = new Map(), waiting = new Map(), ready = [], control = [];
+  const owners = new Map(), epochs = new Map(), waiting = new Map(), ready = [], control = [];
+  const MAX_EPOCH_IDENTITIES = 65536;
   let nextTicket = 1, scheduled = false, executing = false, closed = false;
   let completed = 0, dropped = 0, errors = 0;
   const active = (owner, epoch) => owners.get(owner) === epoch;
@@ -30,15 +31,24 @@ export function createWorkerControlLoop({
   function schedule() {
     if (scheduled || executing || closed || backlog() === 0) return;
     scheduled = true;
+    let inPostTurn = true;
     try {postTurn(() => {
+      // An injected synchronous host callback must never execute a turn
+      // within a reactor-completion or admission stack.
+      if (inPostTurn) {
+        closed = true;
+        owners.clear(); epochs.clear(); waiting.clear(); ready.length = 0; control.length = 0;
+        report(new TypeError('postTurn must schedule asynchronously'));
+        return;
+      }
       scheduled = false;
       if (!closed) dispatchOne();
     });} catch (error) {
       // A broken host scheduler is fatal; never run queued guest code inline.
       closed = true;
-      owners.clear(); waiting.clear(); ready.length = 0; control.length = 0;
+      owners.clear(); epochs.clear(); waiting.clear(); ready.length = 0; control.length = 0;
       report(error);
-    }
+    } finally {inPostTurn = false;}
   }
 
   function dispatchOne() {
@@ -83,8 +93,11 @@ export function createWorkerControlLoop({
   return Object.freeze({
     attachOwner(owner, epoch) {
       if (!validOwner(owner) || !validEpoch(epoch)) throw new TypeError('invalid owner epoch');
-      if (closed || owners.has(owner) || owners.size >= maxOwners) return false;
+      if (closed || owners.has(owner) || owners.size >= maxOwners ||
+          (epochs.has(owner) && epoch <= epochs.get(owner)) ||
+          (!epochs.has(owner) && epochs.size >= MAX_EPOCH_IDENTITIES)) return false;
       owners.set(owner, epoch);
+      epochs.set(owner, epoch);
       return true;
     },
     admitData(owner, epoch, run, value) {
@@ -134,7 +147,7 @@ export function createWorkerControlLoop({
     close() {
       if (closed) return;
       closed = true;
-      owners.clear(); waiting.clear(); ready.length = 0; control.length = 0;
+      owners.clear(); epochs.clear(); waiting.clear(); ready.length = 0; control.length = 0;
     },
     get stats() {
       return Object.freeze({closed, owners: owners.size, suspended: waiting.size,
