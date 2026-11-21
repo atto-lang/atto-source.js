@@ -70,3 +70,21 @@ test('source admission keeps normal Unicode comments and visible escapes inert',
     assert.doesNotThrow(() => compileToProgramIRV2(source));
   }
 });
+
+
+test('scalar and program-v2 reject visually deceptive Unicode source line separators', () => {
+  for (const cp of [0x0085, 0x2028, 0x2029]) {
+    const sep = String.fromCodePoint(cp);
+    for (const source of [
+      '/* café 😀 '+sep+' */ '+base,
+      '// misleading '+sep+'\n'+base,
+      base+' // '+sep,
+      'pub fnc main(): int { val s = "text'+sep+'"; return 42; }',
+    ]) {
+      const pos = source.indexOf(sep);
+      const expected = new RegExp('Unicode line separator in source at UTF-16 offset '+pos+'$');
+      assert.throws(() => compile(source), expected);
+      assert.throws(() => compileToProgramIRV2(source), expected);
+    }
+  }
+});

@@ -28,6 +28,10 @@ function validateSourceText(src) {
         (code>=0x202a && code<=0x202e) ||
         (code>=0x2066 && code<=0x2069))
       throw new CompileError('bidirectional Unicode control in source');
+    // Unicode next-line/line-separator/paragraph-separator characters can
+    // make source views disagree about statement and comment boundaries.
+    if (code===0x0085 || code===0x2028 || code===0x2029)
+      throw new CompileError('Unicode line separator in source at UTF-16 offset '+i);
     if (code>=0xd800 && code<=0xdbff) {
       const lo=src.charCodeAt(i+1);
       if (!(lo>=0xdc00 && lo<=0xdfff)) throw new CompileError('invalid UTF-16 in source');
