@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {runInNewContext} from 'node:vm';
 import {compile as compileScalar,CompileError} from '../src/compiler.mjs';
-import {compileProgramV2,compileAttoScalarV1,ProgramCompileError} from '../src/program-v2.mjs';
+import {compileProgramV2,compileAttoScalarV1,compileToProgramIRV2,ProgramCompileError} from '../src/program-v2.mjs';
+import {validateProgramIRV2,ProgramIRError} from '../src/program-ir-v2.mjs';
 
 const legacy='fnc main(): int { return 42; }';
 const sources=[
@@ -234,4 +235,30 @@ test('standalone calls fail closed for discarded values, arity and fallthrough',
   ];
   for(const source of negatives)
     assert.throws(()=>compileProgramV2(source),/^error: program (?:v2|IR): /,source);
+});
+
+test('validated void-call sequence IR rejects forged effects, wrong return types, and extra fields',()=>{
+  const source='fnc reset():void{} pub fnc main()->int{reset();return 0;}';
+  const ir=compileToProgramIRV2(source);
+  assert.equal(validateProgramIRV2(ir).functions[1].body.kind,'seqVoidCall');
+  assert.throws(()=>compileAttoScalarV1(source),ProgramCompileError);
+  const mutations=[
+    ir=>{ir.functions[1].body.call={kind:'int',value:'1'};},
+    ir=>{ir.functions[1].body.call.target=1;},
+    ir=>{ir.functions[1].body.call.args=[{kind:'int',value:'1'}];},
+    ir=>{ir.functions[1].body.value={kind:'bool',value:true};},
+    ir=>{ir.functions[1].body.extra='untrusted';},
+  ];
+  for(const mutate of mutations){
+    const forged=JSON.parse(JSON.stringify(ir));
+    mutate(forged);
+    assert.throws(()=>validateProgramIRV2(forged),ProgramIRError);
+  }
+});
+test('two pure-void calls remain ordered and are emitted exactly once each',()=>{
+  const source='fnc reset():void{} pub fnc main()->int{reset();reset();return 0;}';
+  const generated=compileProgramV2(source);
+  assert.equal((generated.match(/_f0\(\);/g)||[]).length,2);
+  const guest=generated.replace(/^export \{[^\n]*\};\n?/gm,'');
+  assert.equal(runInNewContext(guest+'\n_f1()'),0n);
 });
