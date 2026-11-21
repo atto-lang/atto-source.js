@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {transpile_to_worker, TranspileError} from '../src/transpile-worker.mjs';
 
 // Exact subset: one statically typed ActorMail<int> and a trusted JS i64 route.
@@ -180,8 +181,16 @@ test('canonical cross-compiler bool/never .atto fixture generates and executes J
 });
 
 test('checked-i64 panic terminates only the failed generated actor, with one terminal receipt', async () => {
-  const failed = await instantiate(with_header);
-  const sibling = await instantiate(with_header);
+  // The exact Git blob is shared with platform conformance and the HDL
+  // fail-closed test; no handwritten test-only variation of the source.
+  const guestSource=readFileSync(new URL('./fixtures/atto-theater-v1/checked-i64-terminal.atto',
+                                          import.meta.url),'utf8');
+  const gitBlob=createHash('sha1')
+    .update('blob '+Buffer.byteLength(guestSource,'utf8')+'\\0')
+    .update(guestSource,'utf8').digest('hex');
+  assert.equal(gitBlob,'8a981a3545e0307387af83b0fc306c012d52f831');
+  const failed = await instantiate(guestSource);
+  const sibling = await instantiate(guestSource);
   await failed.on_message();
   await sibling.on_message();
   assert.equal((await failed.on_route(route(9223372036854775807n))).stdout,
