@@ -215,3 +215,31 @@ test('checked-i64 panic terminates only the failed generated actor, with one ter
   assert.equal((await sibling.on_route(route(41))).stdout, '41\n',
     'failure must not terminate an independent actor instance');
 });
+
+test('canonical cross-backend Ensemble share! try_publish fixture fails closed before JS guest emission', () => {
+  const source=readFileSync(new URL(
+    './fixtures/atto-ensemble-v1/canonical-unlowered-try-publish.atto',
+    import.meta.url),'utf8');
+  const sha=createHash('sha1')
+    .update('blob '+Buffer.byteLength(source,'utf8')+String.fromCharCode(0))
+    .update(source,'utf8').digest('hex');
+  assert.equal(sha,'c562ad380bb283da9ffa26160653c1186ab63462',
+    'pin the exact LLVM/.NET/Wasm/HDL/JS/conformance AttoLang source blob');
+  for(const candidate of [
+    source,
+    'val r = imported_topic.try_publish(share! event)?;',
+    'val r = topic?.try_publish(share! event)?;',
+    'val r = topic /* trivia */ . try_publish(share!event)?;',
+    'val f = topic.try_publish;',
+  ]) reject(candidate,'E_ACTOR_PUBSUB_UNSUPPORTED');
+  // Quoted strings and comments may mention a topic without granting a
+  // capability or invoking a parser fallback.
+  for(const candidate of [
+    baseline+' // topic.try_publish(share! event)?\n',
+    baseline+' /* topic.try_publish(share!event)? */',
+  ]) assert.doesNotThrow(()=>transpile_to_worker(candidate));
+  assert.throws(()=>transpile_to_worker(
+    'pub fnc main(): int { return 42; } "topic.try_publish(share! event)?"'),
+    e=>e instanceof TranspileError&&e.code==='E_TRAILING_SOURCE',
+    'quoted text is opaque and cannot trigger the pubsub gate');
+});
