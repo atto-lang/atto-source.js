@@ -2,6 +2,7 @@ import {createScalarIR, validateScalarIR} from './scalar-ir.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
 import {scanStringLiteral} from './string-literal-syntax.mjs';
 import {compileVoidLambdaDirect} from './void-lambda-v1.mjs';
+import {compileIntConstLambdaDirect} from './int-const-lambda-v1.mjs';
 /** Experimental fail-closed Oreslang scalar-to-ESM compiler. */
 const MAX_BYTES = 262144;
 const I64_MAX = (1n << 63n) - 1n;
@@ -323,15 +324,22 @@ export function compile(source) {
   // Never reinterpret an unsupported lambda as a scalar expression. The
   // dedicated closed-call v1 profile is validated before any JS emission;
   // all other | source remains fail-closed until typed closure lowering.
-  if (typeof source === 'string' && source.includes('|')) {
+  // A const fnc without pipes still needs the dedicated parser so it
+  // produces an E_SYNTAX denial, never an accidental legacy scalar fallback.
+  if (typeof source === 'string' &&
+      (source.includes('|') || /\bconst\s+fnc\b/.test(source))) {
     const tokens = lex(source);
-    if (tokens.some(t => t.value === '|')) {
+    const hasConstFnc = tokens.some((t, i) =>
+      t.value === 'const' && tokens[i + 1]?.value === 'fnc');
+    if (tokens.some(t => t.value === '|') || hasConstFnc) {
       rejectExecutionDomains(tokens, (message, token) => {
         throw new CompileError(message, token);
       });
       rejectUnloweredInvertedClasses(tokens);
       rejectUnsupportedSelect(tokens);
-      return compileVoidLambdaDirect(tokens);
+      return hasConstFnc
+        ? compileIntConstLambdaDirect(tokens)
+        : compileVoidLambdaDirect(tokens);
     }
   }
   return compileIR(compileToIR(source));
