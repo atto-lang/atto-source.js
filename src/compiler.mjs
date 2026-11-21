@@ -78,6 +78,11 @@ function lex(src) {
     const loc={line,col};
     if(/[A-Za-z_]/.test(src[i])){
       let s='';while(i<src.length&&/[A-Za-z0-9_]/.test(src[i])){s+=src[i];advance();}
+      // Stage-0 JS scalar has no guest Error/Result unwind channel.
+      // Deny bang effects before they can look like host JS exceptions.
+      if(['trap','throw','raise','panic'].includes(s) && src[i]==='!' &&
+         src[i+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(src.slice(i)))
+        throw new CompileError('EXCEPTION_BANG_BACKEND_UNSUPPORTED: typed guest effects and Result lowering required',loc);
       add('id',s,loc);
     }else if(/[0-9]/.test(src[i])){
       let s='';while(i<src.length&&/[0-9_]/.test(src[i])){s+=src[i];advance();}
