@@ -34,7 +34,7 @@ export function requireSupportedTenantWorkerIsolation(options = {}) {
   if (typeof untrusted !== 'boolean')
     throw new TypeError('untrusted must be a boolean');
   if (untrusted)
-    throw new Error('untrusted tenant requires a verified TenantVM execution boundary');
+    throw new Error('untrusted tenant requires a separately verified OS sandbox / TenantVM execution boundary');
   if (isolation === 'trusted-worker') return;
   if (typeof isolation !== 'string')
     throw new TypeError('tenant isolation mode must be a string');
