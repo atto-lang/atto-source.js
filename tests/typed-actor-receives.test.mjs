@@ -186,7 +186,7 @@ test('checked-i64 panic terminates only the failed generated actor, with one ter
   const guestSource=readFileSync(new URL('./fixtures/atto-theater-v1/checked-i64-terminal.atto',
                                           import.meta.url),'utf8');
   const gitBlob=createHash('sha1')
-    .update('blob '+Buffer.byteLength(guestSource,'utf8')+'\\0')
+    .update('blob '+Buffer.byteLength(guestSource,'utf8')+String.fromCharCode(0))
     .update(guestSource,'utf8').digest('hex');
   assert.equal(gitBlob,'8a981a3545e0307387af83b0fc306c012d52f831');
   const failed = await instantiate(guestSource);
