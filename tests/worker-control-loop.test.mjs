@@ -72,14 +72,20 @@ test('CONTROL capacity reserved independently of ready queue; wait quota bounded
   assert.equal(h.loop.admitData('a',1,()=>{}),false);
   assert.equal(h.loop.admitControl('a',1,()=>{}),true);
   assert.equal(h.loop.admitControl('a',1,()=>{}),false);
-  const t=h.loop.beginSuspension('a',1,()=>{});
+  const resumed=[];
+  const t=h.loop.beginSuspension('a',1,n=>resumed.push(n));
   assert.ok(t);
   assert.equal(h.loop.beginSuspension('a',1,()=>{}),null);
-  assert.equal(h.loop.complete(t,1),false, 'full ready queue retains waiter');
+  assert.equal(h.loop.complete(t,1),true, 'completed ticket safely buffered');
+  assert.equal(h.loop.complete(t,99),false, 'settlement is exactly once');
+  assert.equal(h.loop.stats.settled,1);
   h.step(); // CONTROL
-  h.step(); // DATA
-  assert.equal(h.loop.complete(t,1),true);
-  h.drain(); assert.equal(h.loop.stats.suspended,0);
+  assert.equal(h.loop.stats.settled,1);
+  h.step(); // DATA frees one slot and promotes buffered completion
+  assert.equal(h.loop.stats.settled,0);
+  h.drain();
+  assert.deepEqual(resumed,[1]);
+  assert.equal(h.loop.stats.suspended,0);
 });
 
 test('close revokes every waiter and drops scheduled turns',()=>{
@@ -125,4 +131,90 @@ test('synchronous postTurn callbacks fail closed instead of running guest code i
   assert.deepEqual(seen,[]);
   assert.equal(loop.stats.closed,true);
   assert.match(errors[0].message,/must schedule asynchronously/);
+});
+
+test('opaque ticket lookup ignores forged getters and proxy aliases',()=>{
+  const h=harness();h.loop.attachOwner('a',1);
+  const ticket=h.loop.beginSuspension('a',1,()=>{});
+  const evil=new Proxy(ticket,{get(){throw Error('getter must not run');}});
+  assert.equal(h.loop.complete(evil,2),false);
+  assert.equal(h.loop.cancel(evil),false);
+  assert.equal(h.loop.cancel({get id(){throw Error('forged id');}}),false);
+  assert.equal(h.loop.cancel(ticket),true);
+});
+
+test('queued and buffered completions are cancellable before dispatch',()=>{
+  const h=harness({maxReady:1,maxSuspended:3}),seen=[];
+  h.loop.attachOwner('a',1);
+  const a=h.loop.beginSuspension('a',1,n=>seen.push('a'+n));
+  const b=h.loop.beginSuspension('a',1,n=>seen.push('b'+n));
+  assert.equal(h.loop.complete(a,1),true);
+  assert.equal(h.loop.complete(b,2),true);
+  assert.equal(h.loop.stats.ready,1);
+  assert.equal(h.loop.stats.settled,1);
+  assert.equal(h.loop.cancel(a),true);
+  assert.equal(h.loop.stats.settled,0);
+  assert.equal(h.loop.stats.ready,1);
+  assert.equal(h.loop.cancel(b),true);
+  h.drain();
+  assert.deepEqual(seen,[]);
+  assert.equal(h.loop.stats.suspended,0);
+});
+
+test('retirement refunds capacity and promotes another owner staged completion',()=>{
+  const h=harness({maxReady:1,maxControl:1,maxSuspended:2}),seen=[];
+  h.loop.attachOwner('old',1);h.loop.attachOwner('new',1);
+  assert.equal(h.loop.admitData('old',1,()=>seen.push('stale')),true);
+  assert.equal(h.loop.admitControl('old',1,()=>seen.push('stale-control')),true);
+  const pending=h.loop.beginSuspension('new',1,n=>seen.push('resume:'+n));
+  assert.equal(h.loop.complete(pending,42),true);
+  assert.equal(h.loop.stats.settled,1);
+  assert.equal(h.loop.retireOwner('old',1),true);
+  assert.equal(h.loop.stats.ready,1);
+  assert.equal(h.loop.stats.control,0);
+  assert.equal(h.loop.stats.settled,0);
+  h.drain();
+  assert.deepEqual(seen,['resume:42']);
+  assert.equal(h.loop.stats.dropped,2);
+});
+
+test('a malicious host invoking postTurn callback twice cannot run two turns',()=>{
+  const h=harness(),seen=[];
+  h.loop.attachOwner('a',1);
+  h.loop.admitData('a',1,()=>seen.push(1));
+  h.loop.admitData('a',1,()=>seen.push(2));
+  const twice=h.scheduled[0];
+  h.step();
+  twice();
+  h.drain();
+  assert.deepEqual(seen,[1]);
+  assert.equal(h.loop.stats.closed,true);
+  assert.match(h.errors[0].message,/more than once/);
+});
+
+test('async and generator callables are rejected before executing',()=>{
+  const h=harness(),seen=[];
+  h.loop.attachOwner('a',1);
+  assert.throws(()=>h.loop.admitData('a',1,async()=>seen.push('async')), /invalid continuation/);
+  assert.throws(()=>h.loop.beginSuspension('a',1,async()=>seen.push('async')), /invalid suspension/);
+  assert.throws(()=>h.loop.admitControl('a',1,function*(){seen.push('generator');}), /invalid continuation/);
+  h.drain();
+  assert.deepEqual(seen,[]);
+});
+
+test('bounded FIFO staged completion burst settles once without lost wakes',()=>{
+  const h=harness({maxReady:2,maxSuspended:32}),seen=[];
+  h.loop.attachOwner('a',1);
+  for(let i=0;i<32;i++){
+    const ticket=h.loop.beginSuspension('a',1,n=>seen.push(n));
+    assert.ok(ticket);
+    assert.equal(h.loop.complete(ticket,i),true);
+    assert.equal(h.loop.complete(ticket,i+100),false);
+  }
+  assert.equal(h.loop.beginSuspension('a',1,()=>{}),null);
+  assert.equal(h.loop.stats.ready,2);
+  assert.equal(h.loop.stats.settled,30);
+  h.drain();
+  assert.deepEqual(seen,Array.from({length:32},(_,i)=>i));
+  assert.equal(h.loop.stats.suspended,0);
 });
