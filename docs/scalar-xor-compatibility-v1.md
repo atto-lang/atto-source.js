@@ -17,7 +17,7 @@ This implementation tracks the user-selected grammar documented in the companion
 | `12 ^ 10` | Invalid infix use of return marker | Rejected |
 | `true ^^ false` | No implicit bool-to-int XOR | Rejected by the int-only backend |
 
-Shift-count masking to the low six bits is the **proposed** bitwise v1 policy and needs cross-backend approval. Shifts preserve the 64-bit result bit pattern; only checked arithmetic `+`, `-`, `*` traps on signed overflow in this restricted compiler.
+**Accepted shift policy ([atto-spec #151](https://github.com/atto-lang/atto-spec/pull/151))**: distances must be 0..63, inclusive; masking to the low six bits is **forbidden**. This restricted compiler returns `E_SHIFT_DISTANCE` (no emitted ESM guest) for invalid literal distances and emits a `checked_shift` guard for computed distances. That guard raises `E_GUEST_SHIFT_DISTANCE` rather than silently using JavaScript BigInt modulo behavior. Valid shifts preserve signed 64-bit bit patterns; checked arithmetic `+`, `-`, `*` still independently traps on signed overflow. These changes are authored but do NOT establish exact-head Node, worker isolation, or cross-backend guest parity.
 
 ## Source contradictions and disposition
 
