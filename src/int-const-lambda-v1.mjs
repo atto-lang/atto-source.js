@@ -63,7 +63,7 @@ export function compileIntConstLambdaDirect(tokens) {
           n = name();
           if (take(':')) type = scalarType();
         }
-        // Each underscore is a distinct discarded slot, never a named binding.
+        // Each underscore is an independent discarded slot, never a binding.
         if (n !== '_' && params.some(p => p.name === n)) fail('E_DUPLICATE', 'duplicate lambda parameter');
         params.push({name:n,type});
       } while (take(','));
