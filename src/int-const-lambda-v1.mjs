@@ -100,7 +100,18 @@ export function compileIntConstLambdaDirect(tokens) {
     parseMainHeader();
   } else {
     parseMainHeader();
-    if (has('val') || has('let')) fail('E_CONST', 'runtime captures unsupported in closed const fnc profile');
+    if (has('val') || has('let')) {
+      // A legacy anonymous function head is a syntax error, NOT a runtime
+      // capture. Keep canonical diagnostics stable for mandatory |...|.
+      const startsUnpiped = tokens[i + 2]?.value === '=' &&
+        ((tokens[i + 3]?.value === 'fnc' && tokens[i + 4]?.value === '(') ||
+          (tokens[i + 3]?.value === '(' && tokens[i + 4]?.kind === 'id' &&
+            tokens[i + 5]?.kind === 'id' && tokens[i + 6]?.value === ')' &&
+            tokens[i + 7]?.value === '->'));
+      if (startsUnpiped)
+        fail('E_SYNTAX', 'anonymous function expressions require |...| parameter delimiters');
+      fail('E_CONST', 'runtime captures unsupported in closed const fnc profile');
+    }
     binding = parseHead();
   }
   expect('return');
