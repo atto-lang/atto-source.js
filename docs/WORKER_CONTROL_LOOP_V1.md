@@ -26,11 +26,11 @@ The portable contract is **logical continuation scheduling**, not an imposed OS 
 - `beginSuspension(owner, epoch, resume)` reserves a bounded, opaque **host-local** ticket.
 - Reactor/I/O completion calls `complete(ticket, value)`; that call only enqueues a future continuation and never invokes it inline.
 - `admitData` and `admitControl` enqueue synchronous continuation quanta. CONTROL has an independent reserved queue with priority over DATA, each dispatch executes at most one quantum, and the default `postTurn` yields to the JS host event loop.
-- `cancel(ticket)`, `retireOwner(owner, epoch)` and `close()` fence stale completions and queued work. Reusing an owner requires a different epoch.
+- `cancel(ticket)`, `retireOwner(owner, epoch)` and `close()` fence stale completions and queued work. Reusing an owner requires a strictly larger epoch. To avoid unbounded tombstone memory, the host loop caps its lifetime owner-identity history at 65,536 identities and rejects additional identities when that ceiling is reached.
 - Capacities for owners, suspended tickets, ready work, and CONTROL are separate and bounded. A full ready queue retains the waiting ticket so callers can retry completion instead of silently discarding it.
 - A Promise-returning quantum is rejected and observed, not awaited while claiming the scheduler lane; compiler lowering must split at suspension points.
 
-`postTurn` is a **trusted asynchronous host scheduler hook**. Callers must never inject a synchronous callback executor or expose host continuations to arbitrary tenant code. The ticket is checked by object identity, **not serializable authority**: wire protocols crossing Worker ports must validate their own owner, epoch, ticket, capability and limits before dispatching to this module. There is no implicit guest import or network permission.
+`postTurn` is a **trusted asynchronous host scheduler hook**; a synchronously invoked callback triggers terminal fail-closed shutdown rather than executing guest code inside admission. Callers must never inject a synchronous callback executor or expose host continuations to arbitrary tenant code. The ticket is checked by object identity, **not serializable authority**: wire protocols crossing Worker ports must validate their own owner, epoch, ticket, capability and limits before dispatching to this module. There is no implicit guest import or network permission.
 
 ## Still needed before the requested mutex example runs
 
@@ -48,4 +48,4 @@ The portable contract is **logical continuation scheduling**, not an imposed OS 
 - Existing JS Worker endpoint/host adapters retain their current serial handlers and mailbox protections; this isolated scheduler module does not rewrite those lanes or claim integration with compiled Atto guests.
 - Java OresScheduler, OresVM/NIO and LLVM native reactor prototypes remain separately owned. Do not replace them with JS threads or count host-only queue tests as compiler/runtime parity.
 
-Focused host tests: `node --test tests/worker-control-loop.test.mjs`. Run the full Node test suite and real browser/Node guest E2E in CI. No CI result or compiled guest execution is claimed by this document.
+Focused host tests: `node --test tests/worker-control-loop.test.mjs tests/worker-control-loop-node.test.mjs`. The second suite executes a genuine Node `worker_threads` Worker. `npm run test:browser` now also runs `scripts/browser-worker-control-loop-smoke.mjs`, which creates an actual Chromium module Worker. As of this draft, the local Node 22.16.0 tests pass **10/10** with source/test blob identity verified; the new Chromium harness has **not executed its page successfully** because the local browser denied localhost navigation (`net::ERR_BLOCKED_BY_ADMINISTRATOR`). The full backend suite, exact-head Actions tests, Wasm guest and compiler source tests remain **NOT EXECUTED**. Do not report browser or compiler parity.
