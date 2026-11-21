@@ -66,8 +66,13 @@ test('<<< is 64-bit left shift, >>> is unsigned-bit logical right shift',async()
   assert.equal(await guest('8 <<< 2'),'32');
   assert.equal(await guest('-1 >>> 1'),'9223372036854775807');
   assert.equal(await guest('-8 >>> 1'),'9223372036854775804');
-  assert.equal(await guest('1 <<< 64'),'1');
-  assert.equal(await guest('1 <<< -1'),'-9223372036854775808');
+  // Invalid distances must NOT wrap to the low six bits.
+  for (const expr of ['1 <<< 64','1 <<< -1','1 >>> 65','1 >>> -1']) {
+    assert.throws(() => compile('pub fnc main(): int { return '+expr+'; }'),
+      error => error instanceof TranspileError && error.code === 'E_SHIFT_DISTANCE', expr);
+  }
+  await assert.rejects(guest('1 <<< (63 + 1)'), /E_GUEST_SHIFT_DISTANCE/);
+  await assert.rejects(guest('1 >>> (0 - 1)'), /E_GUEST_SHIFT_DISTANCE/);
   assert.equal(await guest('(1 <<< 63) >>> 63'),'1');
   assert.equal(await guest('1 + 2 <<< 3'),'24');
   assert.equal(await guest('1 <<< 2 + 3'),'32');
@@ -140,11 +145,11 @@ test('deterministic 64-bit XOR and shift property corpus executes emitted guest 
   };
   const signed=()=>BigInt.asIntN(64,(BigInt(next())<<32n)|BigInt(next()));
   for(let i=0;i<64;i++){
-    const a=signed(),b=signed(),count=BigInt.asIntN(64,BigInt(next()));
+    const a=signed(),b=signed(),count=BigInt(next() & 63);
     const cases=[
       [`(${a}) ^^ (${b})`,BigInt.asIntN(64,a^b)],
-      [`(${a}) <<< (${count})`,BigInt.asIntN(64,a << (count&63n))],
-      [`(${a}) >>> (${count})`,BigInt.asIntN(64,BigInt.asUintN(64,a) >> (count&63n))]
+      [`(${a}) <<< (${count})`,BigInt.asIntN(64,a << count)],
+      [`(${a}) >>> (${count})`,BigInt.asIntN(64,BigInt.asUintN(64,a) >> count)]
     ];
     for(const [expr,expected] of cases){
       assert.equal(await guest(expr,'^'),String(expected),
