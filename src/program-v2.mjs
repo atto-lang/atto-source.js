@@ -524,6 +524,12 @@ class Parser {
       }
     }
     this.expect(terminator);
+    // Match native restricted return-first `end;` and final `end.` spellings.
+    // A dot is a terminal marker, not permission to concatenate declarations.
+    if(returnFirst&&!braced){
+      if(this.peek().value===';')this.i++;
+      else if(this.peek().value==='.'&&this.tokens[this.i+1]?.kind==='eof')this.i++;
+    }
     // Exporting a routine as a module object property would make a
     // direct-call-only routine first class. Leave this for runtime/ABI design.
     if (pub && kind === 'routine') fail('public routine cannot be exported');
