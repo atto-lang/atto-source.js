@@ -401,6 +401,16 @@ export function validateProgramIRV2(input) {
         return {kind:'if',condition:node(expr.condition,owner,depth+1,'bool',active),
           yes:node(expr.yes,owner,depth+1,expected,active),
           no:node(expr.no,owner,depth+1,expected,active)};
+      case 'seqVoidCall': {
+        record(expr,['kind','call','value'],'void-call sequence');
+        const effectKind=expr.call&&typeof expr.call==='object'&&
+          Object.getOwnPropertyDescriptor(expr.call,'kind')?.value;
+        if(effectKind!=='call'&&effectKind!=='namedCall')
+          fail('void-call sequence requires a direct call');
+        return {kind:'seqVoidCall',
+          call:node(expr.call,owner,depth+1,'void',active),
+          value:node(expr.value,owner,depth+1,expected,active)};
+      }
       case 'call': {
         record(expr,['kind','target','args'],'call');
         if(!Number.isSafeInteger(expr.target)||Object.is(expr.target,-0)||expr.target<0||expr.target>=headers.length)
