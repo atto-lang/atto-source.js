@@ -536,7 +536,7 @@ class Parser {
           this.expect('end');
         }else fail("E_GUARD: expected '{ ... }' or 'else ... end'",this.peek());
         if(!this.returnsOnAllPaths(failure))
-          fail('E_GUARD: every failure branch must terminate',this.peek());
+          fail('E_GUARD: every failure path must explicitly return from the function',this.peek());
         statements.push({kind:'branch',condition:{kind:'not',inner:condition},
           yes:failure,no:[]});
       } else if(this.eat('if')) {
