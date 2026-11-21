@@ -11,11 +11,11 @@ This is an experimental **pure integer source subset** feature, stacked on PR #2
 ## Executable example
 
 ```ores
-import module core from "core";
+import module core from "atto.core/numeric";
 pub fnc bounded(int value): int {return core.clamp_int(value,0,10);}
 ```
 
-Provide a **trusted, explicit exact source** for `core`. The bootstrap accepts only this first non-comment import; legacy `"std/core"` is an alias accepted for source compatibility, never a Node or browser module path. It resolves `core.min_int`, `core.max_int`, and `core.clamp_int` at build time against the supplied source, applies the normal program-v2 arity/visibility and checked-i64 rules, and emits one ESM artifact with **no runtime imports**.
+Provide a **trusted, explicit exact source** for `core`. The bootstrap accepts only this first non-comment import, using closed canonical names `"atto.core/numeric"` or `"atto.core/numeric.atto"`. Legacy `"core"` and `"std/core"` are source-only aliases for the **same** compiler-owned integer subset, never Node or browser module paths. The local import binding must still be named `core`; the generic canonical module resolver is not implemented. It resolves `core.min_int`, `core.max_int`, and `core.clamp_int` at build time against the supplied source, applies the normal program-v2 arity/visibility and checked-i64 rules, and emits one ESM artifact with **no runtime imports**.
 
 The shipped test fixture is the unmodified authoritative `oreslang-source.java/stdlib/core.ores` blob at Git SHA `d2cd9b8e0cd3e3bb3ee6a5f9cebf9ab3312c44f4`. Production builds must pin and authenticate their input sources separately: this bootstrap API does not prove source authenticity and must not compile arbitrary untrusted input inside a production browser.
 
@@ -49,3 +49,7 @@ That command requires a **real Chrome module** with Node 22+ CDP support, and it
 - The core source and entire linked program are parsed and type-admitted before emitting JS. `core` is independently validated as a pure module, and the linked program has no host imports in this dialect.
 - Link-time concatenation is a **temporary parser bridge**. It changes source line positions and accepts exactly one explicit static import; package resolution, source maps, namespace imports, canonical typed-IR linking, full provenance checks and multi-module compilation are outstanding.
 - The **canonical frontend** should eventually produce typed IR with library-tier/effect metadata and authenticated dependency closure, reused across Java/GraalVM, LLVM, WASM and JS. The target-profile closure verifier is not yet a source compiler or signature verifier.
+
+## AttoLang parity checkpoint (2026-11-21)
+
+The canonical `atto.core/numeric` import aliases are accepted by the constrained JS static core linker, aligned with LLVM's compiler-owned numeric module candidate. Source-only aliases never grant `atto.alloc`, `atto.std` or `atto.runtime.actor` capabilities. New positive tests require the same checked-i64 ESM output as legacy aliases; negative tests reject shadowing, traversal, unknown canonical modules, and upward-tier import attempts. Source-organization Actions and real Node/browser runs are **NOT_EXECUTED** at this checkpoint; this change does not establish general `.atto` frontend support, allocator support or freestanding no-GC.
