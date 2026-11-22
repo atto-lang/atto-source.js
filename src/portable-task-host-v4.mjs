@@ -55,7 +55,7 @@ export function createPortableTaskArenaHostV4({
      api.task_capacity_v4()!==16)
     throw new Error('E_V4_CAPACITY');
   const active=new Map(),capacity=16;
-  let closed=false,started=0,turns=0,resumes=0,cleanups=0,peak=0;
+  let closed=false,started=0,turns=0,resumes=0,cleanups=0,peak=0,liveFrames=0;
   let errors=0;
 
   function settle(task,error,value) {
@@ -74,7 +74,7 @@ export function createPortableTaskArenaHostV4({
         try{
           const status=api.task_drop_v4(task.handle,task.ownerId,task.epoch);
           if(status!==READY)throw new Error('E_V4_DROP_STATUS');
-          cleanups++;
+          cleanups++;liveFrames--;
         }catch(e){
           cause??=e;
           // A guest with a failed destructor is not safe to reuse.
@@ -118,7 +118,7 @@ export function createPortableTaskArenaHostV4({
       if(handle===FULL)throw new Error('E_V4_FRAME_QUOTA');
       if(!positive(handle))throw new Error('E_V4_START_STATUS');
       task.handle=handle;
-      started++;peak=Math.max(peak,active.size);
+      started++;liveFrames++;peak=Math.max(peak,liveFrames);
       queueResume(task);
     }catch(error){settle(task,error);}
   }
@@ -179,7 +179,7 @@ export function createPortableTaskArenaHostV4({
   return Object.freeze({
     version:PORTABLE_TASK_V4,capacity,spawn,close,
     get stats(){return Object.freeze({
-      closed,live:active.size,started,turns,resumes,cleanups,peak,errors
+      closed,live:active.size,liveFrames,started,turns,resumes,cleanups,peak,errors
     });}
   });
 }
