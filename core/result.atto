@@ -1,7 +1,7 @@
-// JS freestanding compiler: independently owned concrete scalar Result ABI.
+// JS freestanding compiler: independently owned namespace core Result ABI.
 // Stage-1 supports Result<int,int> only. No dynamic duck typing, host Either,
 // callback effects, auto-unboxing of Err, or arbitrary recursive ADTs.
-define module core as
+namespace core;
   pub fnc result_ok_if_nonnegative(int value): Result<int, int> {
     if value < 0; do return Err(value); fi
     return Ok(value);
@@ -27,4 +27,3 @@ define module core as
     fi
     return None;
   }
-end
