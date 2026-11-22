@@ -54,3 +54,19 @@ The `.atto` policy and fixture are source-only. The backend has not proven
 parse/typecheck, linked import, real guest execution, AOT, an OS spawn,
 stream/cancellation lifecycle or exact-head CI for this change. Mark each as
 **NOT EXECUTED / NOT VERIFIED**, not as full `std.process` parity.
+
+## Lowercase public module name (2026-11-22)
+
+The module is declared `define module process as`, and guest code imports
+`import module process from "std/process";`, or explicitly
+`import module process from "atto.std/process";`. Member calls use lowercase
+`process.spawn(...)`. Public types such as `Command` and `ExitStatus`
+stay PascalCase. A compiler with a global `process` intrinsic must make
+the explicitly imported module win lexical lookup while exposing the host
+intrinsic under a separate, unshadowed path (Java uses `std.process`).
+The module must not recursively resolve `process.spawn` to itself.
+
+**Target contract only, not executed backend support:** this draft is still
+pure admission source until its local resolver, guest compiled fixtures and
+authorized host bridge are implemented and verified.
+
