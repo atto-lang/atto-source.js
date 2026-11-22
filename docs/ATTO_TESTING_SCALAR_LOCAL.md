@@ -21,7 +21,8 @@ its own `.atto` library snapshot and validates an exact byte mirror; it
 rejects forged paths, duplicate imported names, unknown exports and alias
 collisions. Selected functions are private guest helpers and are not
 implicitly published as ESM exports. The dedicated imported-source guest
-suite and negative tests are `tests/testing-scalar-import.test.mjs`.
+suite and negative tests are `tests/testing-scalar-import.test.mjs`
+(21 imported-guest truth-table cases, plus fail-closed negatives).
 This is not arbitrary filesystem import resolution, a package graph linker
 or a general implementation of `import module`.
 
