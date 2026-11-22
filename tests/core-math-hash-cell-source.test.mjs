@@ -4,7 +4,7 @@ import {readFile,lstat} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {compileOwnedCoreMath,compileFreestandingCore} from '../src/freestanding-core.mjs';
 const SHA={
-  "math": "aec5ab486e1103be07872886de0a6df7b7897d8c",
+  "math": "845379a28b68e4674aed7d94489a18725ca16144",
   "hash": "1f836230d8d976ab0a70c918c6fa48b8731bbc13",
   "cell": "793677194d81a0aa1347ad6737b78ac507b078af"
 };
@@ -52,7 +52,7 @@ test('actual pure math .atto transpiles into checked ES module and executes',asy
 test('new math compilation gate does not widen core or admit hash/host modules',async()=>{
  const math=(await load('math')).toString('utf8');
  for(const source of [
-  math.replace('define module math','define module hash'),
+  math.replace('use namespace atto.core.math;','use namespace atto.core.hash;'),
   'import module fs from "std/fs"; '+math,
   'define module math as pub fnc x(): int { return process.exit(0); } end'
  ]) assert.throws(()=>compileOwnedCoreMath(source),/error:/);
