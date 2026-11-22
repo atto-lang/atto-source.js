@@ -93,7 +93,7 @@ test('every constructed sum is a sealed data-only ABI value', async () => {
     assert.equal(Object.isFrozen(item), true);
     assert.deepEqual(Reflect.ownKeys(item).sort(), ['kind', 'value']);
     assert.equal(typeof item.kind, 'string');
-    assert.equal(item.kind === 'None' ? item.value : typeof item.value === 'bigint', true);
+    assert.equal(item.kind === 'None' ? item.value === null : typeof item.value === 'bigint', true);
   }
   const poison = Object.freeze(Object.defineProperties(Object.create(null), {
     kind: {value: 'Some', enumerable: true},
