@@ -73,8 +73,10 @@ for(const [name,module,scope,kind,ownership,canonicalOverride] of names){
   registry.set(name,Object.freeze({name,canonical:canonicalOverride??module+'/'+name,scope,kind,ownership}));
 }
 const protectedNames=new Set([
-  'Option','Result','Some','None','Ok','Err','Array','FixedArray',
-  'List','FixedList','Vector','Slice','Tuple','Map','Set','ReadLoan','WriteLoan'
+  ...[...registry.values()]
+    .filter(binding=>binding.scope!=='explicit')
+    .map(binding=>binding.name),
+  'FixedList','Vector','ReadLoan','WriteLoan'
 ]);
 
 const arities = Object.freeze({
