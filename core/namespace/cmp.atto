@@ -6,9 +6,12 @@ pub fnc compare_int(int left, int right): int {
   return 0;
 }
 pub fnc compare_bool(bool left, bool right): int {
-  if left == right; do return 0; fi
-  if left; do return 1; fi
-  return -1;
+  if left; do
+    if right; do return 0; fi
+    return 1;
+  fi
+  if right; do return -1; fi
+  return 0;
 }
 pub fnc min_int(int left, int right): int {
   if left <= right; do return left; fi

@@ -9,13 +9,21 @@ pub fnc valid_range(int start, int count, int total): bool {
   return count <= total - start;
 }
 pub fnc next_index_or_negative_one(int start, int count, int used, int total): int {
-  if valid_range(start, count, total) == false; do return -1; fi
+  if start < 0; do return -1; fi
+  if count < 0; do return -1; fi
+  if total < 0; do return -1; fi
+  if start > total; do return -1; fi
+  if count > total - start; do return -1; fi
   if used < 0; do return -1; fi
   if used >= count; do return -1; fi
   return start + used;
 }
 pub fnc next_back_index_or_negative_one(int start, int count, int used, int total): int {
-  if valid_range(start, count, total) == false; do return -1; fi
+  if start < 0; do return -1; fi
+  if count < 0; do return -1; fi
+  if total < 0; do return -1; fi
+  if start > total; do return -1; fi
+  if count > total - start; do return -1; fi
   if used < 0; do return -1; fi
   if used >= count; do return -1; fi
   return start + (count - 1 - used);

@@ -43,6 +43,9 @@ test('iter namespace has bounded forward/backward cursors and exhaustion',async(
   assert.equal(guest.next_back_index_or_negative_one(1n,2n,0n,3n),2n);
   assert.equal(guest.next_index_or_negative_one(1n,2n,2n,3n),-1n);
   assert.equal(guest.next_index_or_negative_one((1n<<63n)-1n,2n,3n,3n),-1n);
+  assert.equal(guest.next_index_or_negative_one(0n,2n,1n,(1n<<63n)-1n),1n);
+  assert.equal(guest.next_back_index_or_negative_one(0n,2n,1n,2n),0n);
+  assert.equal(guest.next_back_index_or_negative_one(0n,2n,2n,2n),-1n);
 });
 
 test('cmp namespace is total for signed-i64 boundaries without subtraction',async()=>{
@@ -52,6 +55,9 @@ test('cmp namespace is total for signed-i64 boundaries without subtraction',asyn
   assert.equal(guest.compare_int(max,min),1n);
   assert.equal(guest.compare_int(max,max),0n);
   assert.equal(guest.compare_bool(false,true),-1n);
+  assert.equal(guest.compare_bool(true,false),1n);
+  assert.equal(guest.compare_bool(false,false),0n);
+  assert.equal(guest.compare_bool(true,true),0n);
   assert.equal(guest.min_int(max,min),min);
   assert.equal(guest.max_int(min,max),max);
   assert.throws(()=>guest.min_int(1,2n),/BigInt/);
