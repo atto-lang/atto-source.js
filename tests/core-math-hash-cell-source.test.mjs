@@ -199,7 +199,7 @@ test('production typed compiler executes compiler-owned Atto Cell policy as pure
  assert.equal(cell.readers_after_release(0n,false),-1n);
  assert.equal(cell.readers_after_release(1n,true),-1n);
  assert.throws(()=>cell.can_owner_read(1,false),/BigInt/);
- assert.throws(()=>cell.can_owner_write(1n,0),/boolean/);
+ assert.throws(()=>cell.can_owner_write(1n,0),/bool/);
  assert.equal(cell.issue_loan,undefined);
  // The module is a policy library, NOT live Cell<T>/RefCell<T> borrowing.
 });
