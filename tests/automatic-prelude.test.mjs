@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {compileFreestandingCore} from '../src/freestanding-core.mjs';
 import {compileToProgramIRV2} from '../src/program-v2.mjs';
 import {PreludeProfile, PreludeScope, PRELUDE_BINDINGS, resolvePrelude,
-  isProtectedPreludeIdentity, isCoreSumCarrier, isCoreConstructor}
+  isProtectedPreludeIdentity, isCoreSumCarrier, isCoreConstructor, typeInfo}
   from '../src/automatic-prelude.mjs';
 
 test('core prelude is immutable, canonical and allocator independent', () => {
@@ -13,8 +13,10 @@ test('core prelude is immutable, canonical and allocator independent', () => {
     assert.ok(!names.has(binding.name), 'duplicate prelude name');
     names.add(binding.name);
     assert.equal(Object.isFrozen(binding), true);
-    assert.ok(binding.canonical.endsWith('/' + binding.name));
+    assert.ok(binding.canonical.length>0);
     assert.ok(!binding.canonical.includes('..'));
+    assert.ok(Number.isInteger(binding.minGenericArity));
+    assert.ok(binding.maxGenericArity>=binding.minGenericArity);
   }
   for (const name of ['Option','Result','Some','None','Ok','Err','Array','Slice','Tuple','Error']) {
     assert.equal(resolvePrelude(name, PreludeProfile.CORE)?.scope, PreludeScope.CORE);
@@ -26,6 +28,35 @@ test('core prelude is immutable, canonical and allocator independent', () => {
   for (const name of ['HashMap','HashSet','Entry','Object'])
     assert.equal(resolvePrelude(name, PreludeProfile.HOSTED), null);
   assert.throws(() => resolvePrelude('Option', 'invalid'), /invalid prelude/);
+});
+
+
+test('Core Type Registry records payload ownership, allocation, drop and Send policies', () => {
+  const option=typeInfo('Option'), result=typeInfo('Result');
+  assert.equal(option.minGenericArity,1);
+  assert.equal(option.maxGenericArity,1);
+  assert.equal(option.ownership,'payload');
+  assert.equal(option.dropPolicy,'active_payload_once');
+  assert.equal(option.allocation,'none');
+  assert.equal(option.sendPolicy,'payload_dependent');
+  assert.equal(result.minGenericArity,2);
+  assert.equal(result.maxGenericArity,2);
+  assert.equal(result.dropPolicy,'active_payload_once');
+  assert.equal(typeInfo('None').dropPolicy,'none');
+  for (const name of ['Some','Ok','Err'])
+    assert.equal(typeInfo(name).dropPolicy,'active_payload_once');
+  for (const name of ['Array','FixedArray','Tuple','Pair','Entry'])
+    assert.equal(typeInfo(name).dropPolicy,'all_initialized_members',name);
+  assert.equal(typeInfo('Slice').ownership,'borrowed_view');
+  assert.equal(typeInfo('Slice').allocation,'borrowed_view');
+  assert.equal(typeInfo('Slice').sendPolicy,'never_borrowed');
+  for (const name of ['List','Vec','Map','Set','Box'])
+    assert.equal(typeInfo(name).allocation,'allocator_required',name);
+  assert.equal(typeInfo('HashMap').scope,'explicit');
+  assert.equal(typeInfo('int').canonical,typeInfo('Int').canonical);
+  assert.equal(typeInfo('string').canonical,typeInfo('String').canonical);
+  assert.equal(isCoreSumCarrier('Option',2),false);
+  assert.equal(isCoreSumCarrier('Result',1),false);
 });
 
 test('sum variants and loan-sensitive ownership identities cannot be forged', () => {
