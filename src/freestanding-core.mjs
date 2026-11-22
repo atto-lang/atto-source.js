@@ -11,9 +11,18 @@ export class FreestandingCoreError extends Error {
 
 export function compileFreestandingCore(source) {
   const ir=compileToProgramIRV2(source);
-  if(ir.sourceNamespace!==null || ir.modules.length!==1 || ir.modules[0]!=='core' ||
-     !ir.functions.length || ir.functions.some(f=>f.module!=='core'||f.kind!=='fnc'))
-    throw new FreestandingCoreError('requires one core module with pure integer functions only');
+  // A namespace is a file-level identity, not a runtime module. Core libraries
+  // may therefore export functions directly from `namespace core;` without
+  // manufacturing a `core` object. Keep legacy `define module core` working.
+  const moduleCore = ir.sourceNamespace === null &&
+    ir.modules.length === 1 && ir.modules[0] === 'core';
+  const namespaceCore = ir.sourceNamespace === 'core' && ir.modules.length === 0;
+  if ((!moduleCore && !namespaceCore) || !ir.functions.length ||
+      ir.functions.some(f => f.kind !== 'fnc' ||
+        f.module !== (moduleCore ? 'core' : null)) ||
+      (ir.classes?.length ?? 0) !== 0 || (ir.generators?.length ?? 0) !== 0)
+    throw new FreestandingCoreError(
+      'requires one core module or namespace core with source-only functions');
   // The validated program-v2 dialect has no imports, host access, FFI,
   // allocations, clocks, networking, OS handles, dynamic loaders or reflection.
   // This is a deliberately narrow *source-effect* admission proof, not a
