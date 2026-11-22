@@ -22,7 +22,12 @@ test('backend-owned Atto source bytes are SHA-pinned and free of host imports',a
    assert.equal(gitBlob(bytes),want,name);
    const source=new TextDecoder('utf-8',{fatal:true}).decode(bytes);
    assert.ok(!source.includes('\0')&&!source.startsWith('\uFEFF'));
-   assert.match(source,new RegExp('define module '+name+' as'));
+   if(name==='math') {
+     assert.match(source,/^use namespace atto\.core\.math;$/m);
+     assert.doesNotMatch(source,/define\s+(?:pub\s+)?module\s+math\b/);
+   } else {
+     assert.match(source,new RegExp('define module '+name+' as'));
+   }
    assert.doesNotMatch(source,/java:|dotnet:|import module/);
  }
 });
