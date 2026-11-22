@@ -24,11 +24,11 @@ define module cell as
   pub fnc valid_loan_state(int readers, bool writer_active): bool {
     if readers < 0; do return false; fi
     if readers > 65535; do return false; fi
-    if writer_active && readers != 0; do return false; else return true; fi
+    if writer_active and readers != 0; do return false; else return true; fi
   }
   pub fnc can_owner_read(int readers, bool writer_active): bool {
     // Saturation forbids another loan, not reads by the existing owner.
-    return valid_loan_state(readers, writer_active) && !writer_active;
+    return valid_loan_state(readers, writer_active) and !writer_active;
   }
   pub fnc can_owner_write(int readers, bool writer_active): bool {
     return can_borrow_write(readers, writer_active);
