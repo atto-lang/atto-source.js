@@ -88,3 +88,17 @@ test('scalar and program-v2 reject visually deceptive Unicode source line separa
     }
   }
 });
+
+test('merged overlap regressions from #108 preserve first-invalid precedence and UTF-16 offsets', () => {
+  const cases = [
+    {source: '\x7f\0', offset: 0},
+    {source: '\x1b\0', offset: 0},
+    {source: '/* 😀 */\x1b', offset: 8},
+    {source: '"inside\x7f"', offset: 7},
+  ];
+  for (const {source, offset} of cases) {
+    const expected = new RegExp('terminal control in source at UTF-16 offset ' + offset + '$');
+    assert.throws(() => compile(source), expected);
+    assert.throws(() => compileToProgramIRV2(source), expected);
+  }
+});
