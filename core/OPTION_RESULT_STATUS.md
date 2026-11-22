@@ -1,11 +1,12 @@
 # Atto JavaScript freestanding Option/Result source
 
 **Concrete working target only:** `Option<int>` and `Result<int,int>` in independently
-compiled pure `core` modules. These are real `.atto` sources, not JS helpers.
-The deliberate `define module core` name is required by
-`compileFreestandingCore`: the two files are compiled **separately**, and
-are not a single composed module or automatically installed as `core/option`
-and `core/result` imports.
+compiled pure file-scoped `namespace core;` sources. These are real `.atto` sources, not JS helpers.
+`compileFreestandingCore` now accepts the namespace-owned, module-free files
+and preserves legacy `define module core` for existing consumers. The files
+compile **separately** and export public functions directly (no runtime
+namespace object), and are not automatically installed as `core/option`
+and `core/result` imports. Namespace metadata never grants import authority.
 
 `core/option.atto` offers `option_if_positive`, `option_is_some`,
 `option_unwrap_or`, `option_map_add` and `option_to_result`.
@@ -21,7 +22,7 @@ and `core/result` imports.
 - No generic `map`/`and_then` callbacks, `map_err`, nested `transpose`,
   affine-owner transfer, `?` propagation or composed library imports in
   this stage. **Fail closed** for unsupported types or effects.
-- Actual guest ESM compilation and runtime execution are covered by
+- Guest ESM compilation and runtime execution are specified by
   `tests/core-option-result-source.test.mjs`. Its presence is not proof
   of current-head CI execution. NativeAOT/Wasmtime parity is not claimed.
 
