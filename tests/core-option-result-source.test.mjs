@@ -8,7 +8,9 @@ const moduleFrom = async (relative) => {
   const esm = compileFreestandingCore(source);
   assert.doesNotMatch(esm, /^\s*import\b/m);
   const exported = await import('data:text/javascript,' + encodeURIComponent(esm));
-  return exported.core;
+  // Namespace functions export as bare public ESM names; legacy module
+  // sources retain the .core export. Neither path grants ambient host imports.
+  return exported.core ?? exported;
 };
 
 test('Atto source Option<int> keeps Some(0) distinct from None', async () => {
@@ -104,4 +106,24 @@ test('every constructed sum is a sealed data-only ABI value', async () => {
     kind: 'Err', value: 1n, extra: 1n
   }));
   assert.throws(() => result.result_map_add(badErr, 2n), /TypeError|tagged value/);
+});
+
+test('freestanding namespace admission is strict and does not widen module privileges', async () => {
+  const optionSource = await readFile(new URL('../core/option.atto', import.meta.url), 'utf8');
+  const resultSource = await readFile(new URL('../core/result.atto', import.meta.url), 'utf8');
+  assert.match(optionSource, /\bnamespace core;/);
+  assert.match(resultSource, /\bnamespace core;/);
+  for (const source of [optionSource, resultSource]) {
+    const esm = compileFreestandingCore(source);
+    assert.doesNotMatch(esm, /^\s*import\b/m);
+    assert.doesNotMatch(esm, /export \{ [^\n]+ as "core"/);
+  }
+  for (const source of [
+    'namespace std; pub fnc leak(): int { return 42; }',
+    'namespace core; define module core as pub fnc f(): int { return 42; } end',
+    'namespace core; pub fnc leak(): int { return process.exit(0); }',
+    'namespace core; pub fnc wrong(): Option<int> { return Err(5); }',
+    'namespace core; pub fnc wrong(): Result<int,int> { return Some(5); }',
+    'namespace core; define class Host as end pub fnc f(): int { return 42; }'
+  ]) assert.throws(() => compileFreestandingCore(source), /error:/);
 });
