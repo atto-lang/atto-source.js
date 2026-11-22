@@ -67,6 +67,9 @@ test('sum variants and loan-sensitive ownership identities cannot be forged', ()
     assert.equal(isCoreConstructor(name), true);
     assert.equal(isProtectedPreludeIdentity(name), true);
   }
+  assert.equal(isProtectedPreludeIdentity('int'),true);
+  assert.equal(isProtectedPreludeIdentity('From'),true);
+  assert.equal(isProtectedPreludeIdentity('HashMap'),false);
   assert.equal(isCoreConstructor('Map'), false);
   assert.equal(isCoreSumCarrier('Option',1), true);
   assert.equal(isCoreSumCarrier('Option',2), false);
