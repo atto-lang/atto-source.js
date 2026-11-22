@@ -7,7 +7,7 @@ import {compileToProgramIRV2} from '../src/program-v2.mjs';
 const SHA={
   "math": "845379a28b68e4674aed7d94489a18725ca16144",
   "hash": "1f836230d8d976ab0a70c918c6fa48b8731bbc13",
-  "cell": "793677194d81a0aa1347ad6737b78ac507b078af"
+  "cell": "01e75c747dce25c0b76629e186e54d9889593a78"
 };
 const gitBlob=bytes=>createHash('sha1')
   .update(Buffer.from('blob '+bytes.length+'\0'))
