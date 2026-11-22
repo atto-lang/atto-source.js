@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {compileFreestandingCore} from '../src/freestanding-core.mjs';
+import {compileToProgramIRV2} from '../src/program-v2.mjs';
 import {PreludeProfile, PreludeScope, PRELUDE_BINDINGS, resolvePrelude,
   isProtectedPreludeIdentity, isCoreSumCarrier, isCoreConstructor}
   from '../src/automatic-prelude.mjs';
@@ -63,4 +64,16 @@ test('real compiled scalar core Option/Result modules remain admitted', () => {
 test('unsupported affine borrow syntax must not compile as a host fallback', () => {
   assert.throws(() => compileFreestandingCore(
     'define module core as pub fnc escape(borrow Option<Box> v): Box { return v.unwrap(); } end'));
+});
+
+test('every program-v2 declaration path protects the implicit prelude', () => {
+  for (const source of [
+    'pub fnc Map(): int { return 42; }',
+    'define class Map as end',
+    'generator* Map(): Iterator<int> { yield 42; }',
+    'define module Result as end'
+  ]) {
+    assert.throws(() => compileToProgramIRV2(source), /E_PRELUDE_SPOOF/,
+      'expected protected-name rejection before guest output: '+source);
+  }
 });
