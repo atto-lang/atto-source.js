@@ -72,6 +72,7 @@ export function createWorkerCompletionCapabilitiesV1({loop,owner,epoch,maxPendin
       // If the scheduler was retired, invalidate the grant regardless.
       const admitted=loop.complete(record.pending,frame.value);
       active.delete(frame.ticket);
+      byGrant.delete(record.grant); // do not retain the settled resume closure
       if(admitted)accepted++;else rejected++;
       return admitted;
     } catch {
@@ -82,6 +83,7 @@ export function createWorkerCompletionCapabilitiesV1({loop,owner,epoch,maxPendin
     const record=grant&&typeof grant==='object'?byGrant.get(grant):undefined;
     if(closed||!record||active.get(grant.ticket)!==record)return false;
     active.delete(grant.ticket);
+    byGrant.delete(record.grant);
     return loop.cancel(record.pending);
   }
   function bindPort(port) {
@@ -100,7 +102,10 @@ export function createWorkerCompletionCapabilitiesV1({loop,owner,epoch,maxPendin
       boundPort.removeEventListener('message',boundHandler);
       boundPort=null;boundHandler=null;
     }
-    for(const record of active.values())loop.cancel(record.pending);
+    for(const record of active.values()) {
+      loop.cancel(record.pending);
+      byGrant.delete(record.grant);
+    }
     active.clear();
     loop.retireOwner(owner,epoch);
     return true;
