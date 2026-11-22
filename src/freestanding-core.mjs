@@ -21,6 +21,19 @@ export function compileFreestandingCore(source) {
   return compileProgramIRV2(ir);
 }
 
+// Additive closed-world math-only module gate. Does not silently admit
+// hash loops, dynamic Cell<T>, imported modules or host capabilities.
+// Existing compileFreestandingCore(core) remains byte-for-byte unchanged.
+export function compileOwnedCoreMath(source) {
+  const ir=compileToProgramIRV2(source);
+  if(ir.sourceNamespace!==null || ir.modules.length!==1 || ir.modules[0]!=='math' ||
+     !ir.functions.length || ir.functions.some(f=>f.module!=='math'||f.kind!=='fnc'))
+    throw new FreestandingCoreError('math requires one pure math module only');
+  // The existing validated IR checker/generator enforces checked i64 and
+  // static calls; no host-injected Math object or dynamic JS import.
+  return compileProgramIRV2(ir);
+}
+
 export function checkFreestandingCore(source) {
   compileFreestandingCore(source);
   return true;

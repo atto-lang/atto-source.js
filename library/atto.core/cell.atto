@@ -1,0 +1,22 @@
+// JS backend-local pure Cell admission policy, NOT interior mutability.
+// No cell state object, borrow capability, worker lock or shared pointer.
+define module cell as
+  pub fnc can_borrow_read(int readers, bool writer_active): bool {
+    if writer_active; do return false; fi
+    if readers < 0; do return false; fi
+    if readers > 65535; do return false; else return true; fi
+  }
+  pub fnc can_borrow_write(int readers, bool writer_active): bool {
+    if writer_active; do return false; fi
+    if readers != 0; do return false; else return true; fi
+  }
+  pub fnc readers_after_acquire(int readers, bool writer_active): int {
+    if !can_borrow_read(readers, writer_active); do return -1; fi
+    if readers == 65535; do return -1; else return readers + 1; fi
+  }
+  pub fnc readers_after_release(int readers, bool writer_active): int {
+    if writer_active; do return -1; fi
+    if readers <= 0; do return -1; fi
+    if readers > 65535; do return -1; else return readers - 1; fi
+  }
+end
