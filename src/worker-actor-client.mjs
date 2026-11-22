@@ -8,9 +8,17 @@ const errorText = error => {
 };
 const DEFAULT_MAX_PENDING_BYTES=32*1024*1024;
 const MAX_CONFIGURED_PENDING_BYTES=256*1024*1024;
+// The current JS Worker adapter creates one Worker per actor and cannot
+// guarantee pool-size elastic turns, pinned/dedicated carriers or spawn policy.
+// Deny unknown scheduling authority BEFORE constructing a Worker rather than
+// silently dropping the option and claiming source-level scheduling parity.
 const UNSUPPORTED_PLACEMENT_KEYS = Object.freeze([
   'placement','cpuAffinity','maxParallelTurns',
-  'accelerator','gpuDeviceId','maxGpuInFlight'
+  'accelerator','gpuDeviceId','maxGpuInFlight',
+  'maxParallelism','max_parallelism','minParallelism','min_parallelism',
+  'poolSize','pool_size','pool','threadPool','threadPolicy',
+  'affinity','threadAffinity','pinnedWorker','dedicatedWorker',
+  'schedule','actor_schedule','actorSchedule'
 ]);
 
 export function rejectUnsupportedWorkerPlacement(options) {
@@ -19,7 +27,7 @@ export function rejectUnsupportedWorkerPlacement(options) {
   for (const key of UNSUPPORTED_PLACEMENT_KEYS) {
     if (Object.prototype.hasOwnProperty.call(options,key)) {
       throw new TypeError(
-        'JavaScript Worker backend cannot guarantee CPU/GPU placement: ' + key);
+        'JavaScript Worker backend cannot guarantee CPU/GPU placement or elastic actor scheduling: ' + key);
     }
   }
 }
