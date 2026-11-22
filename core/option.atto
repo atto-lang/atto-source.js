@@ -1,8 +1,8 @@
-// JS freestanding compiler: independently owned concrete scalar Option ABI.
+// JS freestanding compiler: independently owned namespace core Option ABI.
 // Stage-1 supports Option<int> only. This is genuine Atto source, not JS code.
 // Generic T/U callbacks, affine owners and cross-module linking are not yet
 // admitted in this compiler's restricted freestanding-core dialect.
-define module core as
+namespace core;
   pub fnc option_if_positive(int value): Option<int> {
     if value > 0; do return Some(value); fi
     return None;
@@ -25,4 +25,3 @@ define module core as
     fi
     return Err(error);
   }
-end
