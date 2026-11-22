@@ -41,6 +41,8 @@ test('actual pure math .atto transpiles into checked ES module and executes',asy
  assert.equal(math.signum_int(-17n),-1n);
  assert.equal(math.signum_int(0n),0n);
  assert.equal(math.signum_int(17n),1n);
+ assert.equal(math.signum_int(-(1n<<63n)),-1n);
+ assert.equal(math.signum_int((1n<<63n)-1n),1n);
  assert.equal(math.contains_closed_int(5n,1n,5n),true);
  assert.equal(math.contains_closed_int(6n,1n,5n),false);
  assert.equal(math.contains_closed_int(5n,8n,4n),false);
@@ -55,6 +57,20 @@ test('new math compilation gate does not widen core or admit hash/host modules',
   'define module math as pub fnc x(): int { return process.exit(0); } end'
  ]) assert.throws(()=>compileOwnedCoreMath(source),/error:/);
  assert.throws(()=>compileFreestandingCore(math),/requires one core module/);
+ assert.throws(()=>compileOwnedCoreMath(
+   math.replace('use namespace atto.core.math;',
+                'use namespace atto.core.hash;')),/math requires only public top-level/);
+ assert.throws(()=>compileOwnedCoreMath(
+   math.replace('use namespace atto.core.math;',
+                'use namespace atto.core.math; use namespace atto.core.math;')),/error:/);
+ assert.throws(()=>compileOwnedCoreMath(
+   math.replace('use namespace atto.core.math;',
+                'use default namespace;')),/error:/);
+ assert.throws(()=>compileOwnedCoreMath(
+   'pub fnc value(): int { return 42; } '+math),/error:/);
+ assert.throws(()=>compileOwnedCoreMath(
+   math.replace('use namespace atto.core.math;',
+                'import * as math from pkg "atto.core.math";')),/error:/);
 });
 test('source-free hash and borrow-policy golden reference are not guest execution',()=>{
  const step=(s,b)=>{
