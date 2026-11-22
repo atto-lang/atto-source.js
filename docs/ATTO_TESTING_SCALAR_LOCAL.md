@@ -35,10 +35,11 @@ Node and compare guest-returned signed-i64 BigInts.
 node --test tests/testing-scalar-atto-guest.test.mjs
 ```
 
-This is a candidate integration. No executed exact-head CI is claimed
-without a real, stepful job. The JS compiler has not been proven to
-resolve the implicit `std/testing_scalar` import from this file; source
-concatenation in the host test is not a substitute for importer wiring.
+This is a candidate import implementation. The compiler now has a bounded
+`std/testing_scalar` resolver, but no executed exact-head CI result proves
+it runs successfully. The earlier source-concatenation tests are retained
+as separate regression coverage; they do not replace the real imported
+source tests and cannot certify general package linking.
 There is no `TestOutcome`, `TestCase`, `TestSuite`, guest `ORES_TEST`
 receipt emitter, property runner, actor scheduler control or AOT image
 parity in this milestone. Java's richer outcome-based API is **not**
