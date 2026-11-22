@@ -54,7 +54,10 @@ test('Core Type Registry records payload ownership, allocation, drop and Send po
     assert.equal(typeInfo(name).allocation,'allocator_required',name);
   assert.equal(typeInfo('HashMap').scope,'explicit');
   assert.equal(typeInfo('int').canonical,typeInfo('Int').canonical);
-  assert.equal(typeInfo('string').canonical,typeInfo('String').canonical);
+  assert.notEqual(typeInfo('string').canonical,typeInfo('String').canonical);
+  assert.equal(typeInfo('String').allocation,'allocator_required');
+  assert.equal(typeInfo('String').ownership,'owned');
+  assert.equal(typeInfo('String').loweringStatus,'contract_only');
   assert.equal(isCoreSumCarrier('Option',2),false);
   assert.equal(isCoreSumCarrier('Result',1),false);
 });
