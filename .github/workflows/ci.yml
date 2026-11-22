@@ -30,6 +30,8 @@ jobs:
           node-version: '22'
       - name: Execute pinned Java/LLVM canonical scalar source through JS ESM
         run: npm run test:atto-canonical
+      - name: Compile and execute JS-owned .atto testing helpers in generated ESM
+        run: node --test tests/testing-scalar-atto-guest.test.mjs
       - name: Execute checked-i64 guest differential suite
         run: node --test tests/checked-i64-arithmetic-differential.test.mjs tests/checked-i64-remainder-parity.test.mjs
       - name: Execute canonical conditional semantics and negative IR cases
