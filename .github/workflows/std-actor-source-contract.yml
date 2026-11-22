@@ -7,6 +7,9 @@ on:
       - 'tests/actor-stdlib-source.test.mjs'
       - 'tests/actor-future-source.test.mjs'
       - 'tests/actor-namespace-source-contract.test.mjs'
+      - 'tests/core-future-ownership.test.mjs'
+      - 'src/core-future-ownership.mjs'
+      - 'src/compiler.mjs'
       - '.github/workflows/std-actor-source-contract.yml'
   workflow_dispatch:
 
@@ -47,6 +50,8 @@ jobs:
           set -euo pipefail
           node --version
           node --test tests/actor-stdlib-source.test.mjs tests/actor-future-source.test.mjs tests/actor-namespace-source-contract.test.mjs
+      - name: Run actual JS compiler-core affine Future negative tests (no actor guest)
+        run: node --test tests/core-future-ownership.test.mjs
       - name: Keep compiler and runtime parity UNVERIFIED
         shell: bash
         run: |
