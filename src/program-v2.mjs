@@ -1,6 +1,6 @@
 import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
-import {isCoreConstructor} from './automatic-prelude.mjs';
+import {isCoreConstructor,isProtectedPreludeIdentity} from './automatic-prelude.mjs';
 /**
  * Experimental Oreslang program-to-ESM v2 slice:
  * flat runtime modules, private/public functions, qualified calls, integer matches.
@@ -455,6 +455,8 @@ class Parser {
     // The program-v2 ESM slice has no once-only, reachability-scoped
     // startup state machine. Never emit init as a normal callable/export.
     if(name==='init')fail('init lifecycle requires once-only reachable initialization lowering',start);
+    if(isProtectedPreludeIdentity(name))
+      fail('E_PRELUDE_SPOOF: cannot define compiler-owned core name '+name,start);
     // Xor(a, b) is a builtin; a user function could never be called by that name.
     if(name==='Xor')fail("'Xor' is a reserved builtin name",start);
     this.expect('(');
@@ -647,8 +649,8 @@ class Parser {
         }
         if(declarationPub)fail('public define is only supported for classes/functions in program-v2',this.peek());
         this.expect('module');const name=this.name();
-        if(name==='Option'||name==='Result'||name==='Symbol'||name==='Integer')
-          fail('reserved portable intrinsic module name '+name);
+        if(isProtectedPreludeIdentity(name)||name==='Symbol'||name==='Integer')
+          fail('E_PRELUDE_SPOOF: reserved portable intrinsic module name '+name);
         if(usedModules.has(name)||usedClasses.has(name))fail('duplicate module/class name '+name);
         usedModules.add(name);this.eat('as');modules.push(name);
         let count=0;
