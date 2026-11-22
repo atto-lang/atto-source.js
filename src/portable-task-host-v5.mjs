@@ -154,6 +154,12 @@ export function createPortableTaskHostV5({
   function cancel(task) {
     if(task.finished||task.cancelRequested)return false;
     task.cancelRequested=true;
+    if(task.grant){
+      // Revoke the bearer *synchronously*, before CONTROL gets scheduled:
+      // a racing external message can no longer claim the ticket.
+      task.capabilities.cancel(task.grant);
+      task.grant=null;task.pendingKey=null;
+    }
     // Revocation must not wait behind an unbounded stalled completion.
     // Queued CONTROL callbacks run before DATA; if the scheduler is closed
     // or its reserved CONTROL quota is exhausted, direct destroy is safe:
@@ -172,6 +178,8 @@ export function createPortableTaskHostV5({
        typeof onPending!=='function')throw TypeError('E_V5_IDENTITY');
     if(active.has(owner)||active.size>=capacity)
       throw Error('E_V5_FRAME_QUOTA');
+    if([...active.values()].some(task=>task.ownerId===ownerId))
+      throw Error('E_V5_OWNER_ID_COLLISION');
     const capabilities=createWorkerCompletionCapabilitiesV1({
       loop,owner,epoch,maxPending:1
     }); // attaches this owner to the scheduler with its own epoch fence
