@@ -9,7 +9,7 @@ const SHA={
   "cell": "793677194d81a0aa1347ad6737b78ac507b078af"
 };
 const gitBlob=bytes=>createHash('sha1')
-  .update(Buffer.from('blob '+bytes.length+'\\0'))
+  .update(Buffer.from('blob '+bytes.length+'\0'))
   .update(bytes).digest('hex');
 const load=name=>readFile(new URL('../library/atto.core/'+name+'.atto',import.meta.url));
 test('backend-owned Atto source bytes are SHA-pinned and free of host imports',async()=>{
@@ -20,7 +20,7 @@ test('backend-owned Atto source bytes are SHA-pinned and free of host imports',a
    const bytes=await load(name);
    assert.equal(gitBlob(bytes),want,name);
    const source=new TextDecoder('utf-8',{fatal:true}).decode(bytes);
-   assert.ok(!source.includes('\\0')&&!source.startsWith('\\uFEFF'));
+   assert.ok(!source.includes('\0')&&!source.startsWith('\uFEFF'));
    assert.match(source,new RegExp('define module '+name+' as'));
    assert.doesNotMatch(source,/java:|dotnet:|import module/);
  }
@@ -28,7 +28,7 @@ test('backend-owned Atto source bytes are SHA-pinned and free of host imports',a
 test('actual pure math .atto transpiles into checked ES module and executes',async()=>{
  const source=await load('math');
  const esm=compileOwnedCoreMath(source.toString('utf8'));
- assert.doesNotMatch(esm,/\\b(?:process|require|fetch|eval|Worker|window|document)\\b/);
+ assert.doesNotMatch(esm,/\b(?:process|require|fetch|eval|Worker|window|document)\b/);
  const {math}=await import('data:text/javascript,'+encodeURIComponent(esm));
  assert.equal(Object.isFrozen(math),true);
  for(const [a,b,lo,hi] of [
