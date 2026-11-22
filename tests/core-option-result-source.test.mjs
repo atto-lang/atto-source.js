@@ -6,7 +6,7 @@ import {compileFreestandingCore} from '../src/freestanding-core.mjs';
 const moduleFrom = async (relative) => {
   const source = await readFile(new URL(relative, import.meta.url), 'utf8');
   const esm = compileFreestandingCore(source);
-  assert.doesNotMatch(esm, /^\\s*import\\b/m);
+  assert.doesNotMatch(esm, /^\s*import\b/m);
   const exported = await import('data:text/javascript,' + encodeURIComponent(esm));
   return exported.core;
 };
