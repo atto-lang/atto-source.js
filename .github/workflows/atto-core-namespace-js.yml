@@ -1,0 +1,40 @@
+name: Atto JS namespace scalar core guest
+on:
+  pull_request:
+    paths:
+      - 'src/program-v2.mjs'
+      - 'src/core-namespace.mjs'
+      - 'core/namespace/**'
+      - 'tests/core-namespace-scalar.test.mjs'
+      - '.github/workflows/atto-core-namespace-js.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compiled-guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Check exact-source tree
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --quiet
+          git diff --cached --quiet
+          test -z "$(git ls-files --others --exclude-standard)"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Compile and actually execute namespace-source ESM guest
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test tests/core-namespace-scalar.test.mjs
+          echo "ATTO_JS_CORE_NAMESPACE_GUEST_EXECUTED=TRUE"
