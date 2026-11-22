@@ -54,7 +54,7 @@ test('real compiled scalar core Option/Result modules remain admitted', () => {
     const source=readFileSync(file,'utf8');
     const compiled=compileFreestandingCore(source);
     assert.ok(compiled.length>100);
-    assert.doesNotMatch(compiled,/^\\s*import\\b/m);
+    assert.doesNotMatch(compiled,/^\s*import\b/m);
   }
   // This test validates compilation only; existing suite separately executes
   // the actual generated guest ESM and checks the scalar tagged-value ABI.
