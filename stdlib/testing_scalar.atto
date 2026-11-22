@@ -1,7 +1,7 @@
 // JavaScript backend-local AttoLang scalar test assertions, M0.
 // Public behavior matches the LLVM scalar status contract: 0 pass, 1 fail.
-// This is a compiler-local .atto source module CANDIDATE, not yet wired
-// into implicit std/testing imports or a full TestSuite/ORESTEST runner.
+// This module is linked only by the compiler's bounded std/testing_scalar
+// resolver; full TestSuite/ORESTEST and arbitrary imports remain unsupported.
 pub fnc equal_int(int actual, int expected): int {
   return actual == expected ? 0 : 1;
 }
