@@ -603,7 +603,18 @@ class Parser {
     // Oreslang's flat source namespace is compile-time package metadata,
     // not a runtime module/object. It must occur only once at file start.
     let namespace = null;
-    if (this.eat('namespace')) {
+    // Canonical Atto syntax: file namespace is metadata, not a module or
+    // runtime object. Retain legacy 'namespace foo;' as parser compatibility.
+    if (this.eat('use')) {
+      this.expect('namespace');
+      namespace = this.name();
+      let segments=1;
+      while(this.eat('.')) {
+        if(++segments>8)fail('namespace component budget exceeded',this.peek());
+        namespace+='.'+this.name();
+      }
+      this.expect(';');
+    } else if (this.eat('namespace')) {
       namespace = this.name();
       this.expect(';');
     }

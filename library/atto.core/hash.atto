@@ -1,0 +1,24 @@
+// JS backend-local Atto hash step. SOURCE_ONLY: JS program-v2 has no
+// checked general while-loop lowering; never replace with host Math/hash.
+// Deterministic noncryptographic polynomial fold, invalid=-1.
+define module hash as
+  pub fnc initial_state(): int { return 17; }
+  pub fnc step_byte(int state, int byte): int {
+    if state < 0 || state >= 1000000007; do return -1; fi
+    if byte < 0 || byte > 255; do return -1; fi
+    let int value = state * 31 + byte;
+    while value >= 1000000007 {
+      value = value - 1000000007;
+    }
+    return value;
+  }
+  pub fnc two_bytes(int first, int second): int {
+    let int next = step_byte(initial_state(), first);
+    if next < 0; do return -1; fi
+    return step_byte(next, second);
+  }
+  pub fnc from_bool(bool b): int {
+    if b; do return step_byte(initial_state(), 1); fi
+    return step_byte(initial_state(), 0);
+  }
+end

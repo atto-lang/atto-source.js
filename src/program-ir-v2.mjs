@@ -131,7 +131,21 @@ export function validateProgramIRV2(input) {
   record(input,programKeys,'program');
   if(input.schemaVersion!==PROGRAM_IR_VERSION||input.dialect!==PROGRAM_IR_DIALECT||
      input.integerModel!==PROGRAM_IR_INT_MODEL)fail('unsupported IR version/dialect/model');
-  const namespace=input.sourceNamespace===null?null:ident(input.sourceNamespace,'file namespace');
+  // File namespaces may be dotted static source identities. Validate each
+  // component rather than treating a dotted value as a JS property path.
+  // A namespace is never a runtime object or an import capability.
+  const namespace=input.sourceNamespace===null?null:(()=>{
+    const s=input.sourceNamespace;
+    if(typeof s!=='string'||s.length>128)fail('file namespace exceeds 128 characters');
+    const parts=s.split('.');
+    if(parts.length<1||parts.length>8)fail('file namespace component budget');
+    for(const part of parts) {
+      ident(part,'file namespace component');
+      if(part==='__proto__'||part==='prototype'||part==='constructor')
+        fail('file namespace reserved component');
+    }
+    return s;
+  })();
   const seenModules=new Set(),moduleNames=sequence(input.modules,512,'modules').map(m=>{
     const name=ident(m,'module name');
     if(seenModules.has(name))fail('duplicate module '+name);

@@ -1,0 +1,18 @@
+// JS backend-owned native Atto math (signed checked-i64 source subset).
+// This file is compiled to generated ESM by compileOwnedCoreMath.
+use namespace atto.core.math;
+  pub fnc min_int(int a, int b): int {
+    if a < b; do return a; else return b; fi
+  }
+  pub fnc max_int(int a, int b): int {
+    if a > b; do return a; else return b; fi
+  }
+  pub fnc signum_int(int n): int {
+    if n < 0; do return -1; fi
+    if n > 0; do return 1; else return 0; fi
+  }
+  pub fnc contains_closed_int(int n, int lower, int upper): bool {
+    if lower > upper; do return false; fi
+    if n < lower; do return false; fi
+    if n > upper; do return false; else return true; fi
+  }
