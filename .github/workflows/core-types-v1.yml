@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'core/types.atto'
+      - 'src/program-v2.mjs'
+      - 'tests/core-types-compiled-guest.test.mjs'
       - 'tests/core-types-source.test.mjs'
       - 'tests/core-types-matrix-source.test.mjs'
       - 'tests/fixtures/core-types-v1/**'
@@ -38,3 +40,25 @@ jobs:
       - name: Preserve evidence boundary
         if: always()
         run: echo 'This workflow runs a strict source-model oracle only; it neither compiles Atto nor proves NativeAOT/Wasm/JIT guest execution.' >> "$GITHUB_STEP_SUMMARY"
+  compiled-js-guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Verify exact head; compile real Atto source and execute generated ESM
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          node --test tests/core-types-compiled-guest.test.mjs
+          echo 'CORE_TYPES_JS_GUEST=EXECUTED_EMITTED_ESM'
+      - name: Disclosure
+        if: always()
+        run: echo 'Compiler-generated Node ESM only; this is not NativeAOT, Wasm, or general namespace package linking.' >> "$GITHUB_STEP_SUMMARY"

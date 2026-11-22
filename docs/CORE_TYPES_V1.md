@@ -11,3 +11,7 @@ Guest acceptance target: link `tests/fixtures/core-types-v1/edge-positive.atto` 
 ## Namespace-only core source
 
 Canonical `use namespace types;` file header plus public top-level functions; no `define module` wrapper. Consumers still explicitly import the symbols. Compiler parse, namespace source identity, static imports, and executed linked guests require separate proofs. Until the current PR compiles and runs, namespace guest parity remains NOT_EXECUTED.
+
+## Native JavaScript compiled guest gate
+
+The production program-v2 source parser accepts the file-scoped `use namespace types;` header as metadata and `&&`/`||` as lazy boolean aliases. It emits the independently owned `core/types.atto` as real ESM exports, without inventing an import/linker or rewriting source to a module wrapper. `tests/core-types-compiled-guest.test.mjs` imports the actual generated ESM and validates 13 exports, widths, signed-i64 endpoints, more than 208 boundary function calls, invalid host values and malformed source forms. This is compiler-emitted **JS guest** evidence only when the test actually runs. The existing eight imported-file negative fixtures still require a verified multi-file linker before they can be counted as correct compiler diagnostic parity. No NativeAOT, Wasm or external package resolution is asserted.
