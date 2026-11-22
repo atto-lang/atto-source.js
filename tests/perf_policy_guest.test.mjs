@@ -8,7 +8,7 @@ import {compileFreestandingCore} from '../src/freestanding-core.mjs';
 const load=async()=>{
   const source=await readFile(new URL('../core/perf_policy.atto',import.meta.url),'utf8');
   const esm=compileFreestandingCore(source);
-  assert.doesNotMatch(esm,/^\\s*import\\s/m);
+  assert.doesNotMatch(esm,/^\s*import\s/m);
   const runtime=await import('data:text/javascript,'+encodeURIComponent(esm));
   return runtime.core;
 };
