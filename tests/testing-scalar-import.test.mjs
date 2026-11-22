@@ -19,16 +19,21 @@ const vectors=[
   ['ne-fail','not_equal_int(42,42)','not_equal_int',1n],
   ['gt','greater_than_int(42,41)','greater_than_int',0n],
   ['gt-equal','greater_than_int(42,42)','greater_than_int',1n],
+  ['gt-below','greater_than_int(41,42)','greater_than_int',1n],
   ['lt','less_than_int(41,42)','less_than_int',0n],
   ['lt-equal','less_than_int(42,42)','less_than_int',1n],
+  ['lt-above','less_than_int(43,42)','less_than_int',1n],
   ['lower','in_range_int(40,40,42)','in_range_int',0n],
   ['upper','in_range_int(42,40,42)','in_range_int',0n],
+  ['middle','in_range_int(41,40,42)','in_range_int',0n],
+  ['below','in_range_int(39,40,42)','in_range_int',1n],
   ['outside','in_range_int(43,40,42)','in_range_int',1n],
   ['inverted','in_range_int(41,42,40)','in_range_int',1n],
   ['min','in_range_int(-9223372036854775808,-9223372036854775808,9223372036854775807)','in_range_int',0n],
   ['max','in_range_int(9223372036854775807,-9223372036854775808,9223372036854775807)','in_range_int',0n],
   ['combine-ok','combine_status(0,0)','combine_status',0n],
   ['combine-fail','combine_status(0,1)','combine_status',1n],
+  ['combine-two-fail','combine_status(1,1)','combine_status',1n],
 ];
 for(const [id,call,fn,expected] of vectors){
   test('compiler-imported .atto JS guest '+id,async()=>{
