@@ -148,6 +148,8 @@ test('compiler refuses std/time imports and the full class module until supporte
   // A host timer adapter must NEVER be mistaken for a compiler-imported guest.
   const source=await readFile(new URL('../stdlib/std/time.atto',import.meta.url),'utf8');
   assert.match(source,/define module time as/);
+  assert.match(source,/define pub class Duration as/);
+  assert.match(source,/pub fnc manual_clock\(/);
   assert.throws(()=>compile(source),/error:/);
   assert.throws(()=>compile('import module time from "std/time"; pub fnc main(): int { return time.seconds(1); }'),/error:/);
   assert.match(compile('pub fnc main(): int { return 42; }'),/export/);
