@@ -37,7 +37,8 @@
     "./select-continuation-fence": "./src/select-continuation-fence.mjs",
     "./structural-runtime": "./src/structural-runtime.mjs",
     "./wasm-jspi-control-bridge-v1": "./src/wasm-jspi-control-bridge-v1.mjs",
-    "./portable-task-host-v3": "./src/portable-task-host-v3.mjs"
+    "./portable-task-host-v3": "./src/portable-task-host-v3.mjs",
+    "./worker-completion-capability-v1": "./src/worker-completion-capability-v1.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
