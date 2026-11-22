@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile,lstat} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
-import {compileOwnedCoreMath,compileFreestandingCore} from '../src/freestanding-core.mjs';
+import {compileOwnedCoreMath,compileOwnedCoreCellPolicy,compileFreestandingCore} from '../src/freestanding-core.mjs';
 import {compileToProgramIRV2} from '../src/program-v2.mjs';
 const SHA={
   "math": "845379a28b68e4674aed7d94489a18725ca16144",
   "hash": "1f836230d8d976ab0a70c918c6fa48b8731bbc13",
-  "cell": "ae54f28baee13675a71088251b41dd8182f60084"
+  "cell": "ef1e84dbab1bb476d6ac55bf1802331660879732"
 };
 const gitBlob=bytes=>createHash('sha1')
   .update(Buffer.from('blob '+bytes.length+'\0'))
@@ -165,4 +165,62 @@ test('core/cell saturated read admission rejects overflow but retains owner read
     assert.equal(ownerRead(n,w),read);
   }
   assert.ok(!source.includes('pub fnc issue_loan('));
+});
+
+
+test('production typed compiler executes compiler-owned Atto Cell policy as pure frozen ESM',async()=>{
+ const source=(await load('cell')).toString('utf8');
+ const esm=compileOwnedCoreCellPolicy(source);
+ assert.doesNotMatch(esm,/\\b(?:process|require|fetch|eval|Worker|window|document)\\b/);
+ const {cell}=await import('data:text/javascript,'+encodeURIComponent(esm));
+ assert.equal(Object.isFrozen(cell),true);
+ const cases=[
+  // readers, writer, can-acquire-read, owner-read, write/move/suspend, valid
+  [0n,false,true,true,true,true],
+  [1n,false,true,true,false,true],
+  [65534n,false,true,true,false,true],
+  [65535n,false,false,true,false,true],
+  [65536n,false,false,false,false,false],
+  [-1n,false,false,false,false,false],
+  [0n,true,false,false,false,true],
+  [1n,true,false,false,false,false]
+ ];
+ for(const [readers,writer,acquire,read,write,valid] of cases){
+   assert.equal(cell.can_borrow_read(readers,writer),acquire);
+   assert.equal(cell.can_owner_read(readers,writer),read);
+   assert.equal(cell.can_owner_write(readers,writer),write);
+   assert.equal(cell.can_move_owner(readers,writer),write);
+   assert.equal(cell.can_suspend_unpinned(readers,writer),write);
+   assert.equal(cell.valid_loan_state(readers,writer),valid);
+ }
+ assert.equal(cell.readers_after_acquire(65534n,false),65535n);
+ assert.equal(cell.readers_after_acquire(65535n,false),-1n);
+ assert.equal(cell.readers_after_release(65535n,false),65534n);
+ assert.equal(cell.readers_after_release(0n,false),-1n);
+ assert.equal(cell.readers_after_release(1n,true),-1n);
+ assert.throws(()=>cell.can_owner_read(1,false),/BigInt/);
+ assert.throws(()=>cell.can_owner_write(1n,0),/boolean/);
+ assert.equal(cell.issue_loan,undefined);
+ // The module is a policy library, NOT live Cell<T>/RefCell<T> borrowing.
+});
+
+test('compiled Cell policy export cannot be confused with untrusted incomplete modules',async()=>{
+ const source=(await load('cell')).toString('utf8');
+ for(const mutation of [
+  source.replace('define module cell as','define module other as'),
+  source.replace('pub fnc can_borrow_read','fnc can_borrow_read'),
+  source.replace('pub fnc can_borrow_read','pub fnc issue_loan'),
+  source.replace('can_borrow_read(int readers, bool writer_active): bool',
+                 'can_borrow_read(int readers, int writer_active): bool'),
+  source.replace('can_move_owner(int readers, bool writer_active): bool',
+                 'can_move_owner(int readers, bool writer_active): int'),
+  source+'pub fnc hidden():int{return 42;}',
+  'import module os from "std/env"; '+source,
+  'use namespace atto.core.cell; '+source
+ ]) {
+  assert.notEqual(mutation,source);
+  assert.throws(()=>compileOwnedCoreCellPolicy(mutation),/error:/);
+ }
+ assert.throws(()=>compileOwnedCoreMath(source),/error:/);
+ assert.throws(()=>compileFreestandingCore(source),/error:/);
 });
