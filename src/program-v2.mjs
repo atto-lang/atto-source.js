@@ -603,7 +603,12 @@ class Parser {
     // Oreslang's flat source namespace is compile-time package metadata,
     // not a runtime module/object. It must occur only once at file start.
     let namespace = null;
-    if (this.eat('namespace')) {
+    // Atto's canonical file-scoped form is "use namespace name;".
+    // The established "namespace name;" spelling remains compatible.
+    // A namespace is metadata, never implicit module import authority.
+    const canonicalUse = this.eat('use');
+    if (canonicalUse) this.expect('namespace');
+    if (canonicalUse || this.eat('namespace')) {
       namespace = this.name();
       this.expect(';');
     }

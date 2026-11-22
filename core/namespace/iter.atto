@@ -1,0 +1,22 @@
+// JS backend-owned core namespace: scalar cursors, no heap/borrow ABI.
+// Exhaustion sentinel -1 is named explicitly, never mistaken for Option<int>.
+use namespace iter;
+pub fnc valid_range(int start, int count, int total): bool {
+  if start < 0; do return false; fi
+  if count < 0; do return false; fi
+  if total < 0; do return false; fi
+  if start > total; do return false; fi
+  return count <= total - start;
+}
+pub fnc next_index_or_negative_one(int start, int count, int used, int total): int {
+  if valid_range(start, count, total) == false; do return -1; fi
+  if used < 0; do return -1; fi
+  if used >= count; do return -1; fi
+  return start + used;
+}
+pub fnc next_back_index_or_negative_one(int start, int count, int used, int total): int {
+  if valid_range(start, count, total) == false; do return -1; fi
+  if used < 0; do return -1; fi
+  if used >= count; do return -1; fi
+  return start + (count - 1 - used);
+}
