@@ -17,9 +17,13 @@ export function createWorkerControlLoop({
 
   const owners = new Map(), epochs = new Map(), waiting = new Map(), ticketEntries = new WeakMap();
   const ready = [], control = [], settled = [];
+  // One coalesced scheduling hint per active owner. This is trusted host-only
+  // authority, not a guest-exposed TaskId or forced native-thread preemption.
+  const cooperatePending = new Map();
   const MAX_EPOCH_IDENTITIES = 65536;
   let nextTicket = 1, scheduled = false, executing = false, closed = false;
   let completed = 0, dropped = 0, errors = 0;
+  let cooperateRequests = 0, cooperateDeferrals = 0, cooperateCoalesced = 0;
   const active = (owner, epoch) => owners.get(owner) === epoch;
   // An async function would continue executing off-scheduler after its first await.
   // Symbol.toStringTag can be forged on function objects, so checking only
@@ -52,7 +56,7 @@ export function createWorkerControlLoop({
   function failClosed(error) {
     if (closed) return;
     closed = true;
-    owners.clear(); epochs.clear(); waiting.clear(); ready.length = 0;
+    owners.clear(); epochs.clear(); waiting.clear(); cooperatePending.clear(); ready.length = 0;
     control.length = 0; settled.length = 0;
     report(error);
   }
@@ -96,11 +100,21 @@ export function createWorkerControlLoop({
     executing = true;
     try {
       // CONTROL has reserved queue capacity independent of DATA readiness.
-      const item = control.length ? control.shift() : ready.shift();
+      const isControl = control.length > 0;
+      const item = isControl ? control.shift() : ready.shift();
       if (!item) return;
       if (!active(item.owner, item.epoch) ||
           (item.entry && waiting.get(item.entry.id) !== item.entry)) {
         dropped++; return;
+      }
+      // A control message must never be delayed by a fairness hint. A DATA
+      // item may move to the tail once, but no extra ticket or active turn is
+      // fabricated; a stale or cancelled waiter remains fenced until dispatch.
+      if (!isControl && cooperatePending.get(item.owner) === item.epoch) {
+        cooperatePending.delete(item.owner);
+        ready.push(item);
+        cooperateDeferrals++;
+        return;
       }
       // The queued completion remains cancellable until this exact dispatch.
       if (item.entry) waiting.delete(item.entry.id);
@@ -152,6 +166,16 @@ export function createWorkerControlLoop({
     admitControl(owner, epoch, run, value) {
       return enqueue(control, maxControl, owner, epoch, run, value);
     },
+    requestCooperate(owner, epoch) {
+      if (!validOwner(owner) || !validEpoch(epoch))
+        throw new TypeError('invalid cooperation identity');
+      if (closed || !active(owner,epoch)) return false;
+      // No wakeup, unbounded queue insertion, cross-owner scheduler ticket,
+      // or forced yield in an active synchronous/critical guest quantum.
+      if (cooperatePending.get(owner) === epoch) cooperateCoalesced++;
+      else {cooperatePending.set(owner,epoch);cooperateRequests++;}
+      return true;
+    },
     beginSuspension(owner, epoch, resume) {
       if (!validOwner(owner) || !validEpoch(epoch) || !validRun(resume))
         throw new TypeError('invalid suspension');
@@ -202,6 +226,7 @@ export function createWorkerControlLoop({
     retireOwner(owner, epoch) {
       if (!active(owner, epoch)) return false;
       owners.delete(owner);
+      cooperatePending.delete(owner);
       for (const [id, entry] of waiting) {
         if (entry.owner === owner && entry.epoch === epoch) {
           waiting.delete(id);
@@ -225,11 +250,13 @@ export function createWorkerControlLoop({
     close() {
       if (closed) return;
       closed = true;
-      owners.clear(); epochs.clear(); waiting.clear(); ready.length = 0; control.length = 0; settled.length = 0;
+      owners.clear(); epochs.clear(); waiting.clear(); cooperatePending.clear(); ready.length = 0; control.length = 0; settled.length = 0;
     },
     get stats() {
       return Object.freeze({closed, owners: owners.size, suspended: waiting.size,
-        ready: ready.length, control: control.length, settled: settled.length, completed, dropped, errors});
+        ready: ready.length, control: control.length, settled: settled.length, completed, dropped, errors,
+        cooperatePending: cooperatePending.size, cooperateRequests, cooperateDeferrals,
+        cooperateCoalesced});
     }
   });
 }
