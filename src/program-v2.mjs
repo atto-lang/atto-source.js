@@ -335,6 +335,8 @@ class Parser {
   }
   classDeclaration(pub) {
     const name=this.classIdentifier();
+    if(isProtectedPreludeIdentity(name))
+      fail('E_PRELUDE_SPOOF: cannot define compiler-owned core class '+name,this.peek());
     this.expect('as');
     const methods=[],slots=new Set();
     while(!this.eat('end')) {
@@ -408,6 +410,8 @@ class Parser {
     if(mode!=='sync')
       fail(mode+' gen* requires the JS async continuation/cleanup ABI and is not implemented yet',start);
     const name=this.generatorIdentifier();
+    if(isProtectedPreludeIdentity(name))
+      fail('E_PRELUDE_SPOOF: cannot define compiler-owned core generator '+name,start);
     this.expect('(');
     const params=[],paramTypes=[];
     if(!this.eat(')')){
