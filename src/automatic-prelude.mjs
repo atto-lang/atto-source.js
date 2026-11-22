@@ -104,8 +104,7 @@ for(const binding of registry.values()){
     binding.kind==='trait'?'not_applicable':
     binding.ownership==='copy'?'always':'payload_dependent';
   const loweringStatus=sumTypes.has(binding.name)?'js_scalar_adt_subset':
-    binding.name==='String'?'legacy_or_contract_string_view':
-    scalarNames.has(binding.name)?'js_scalar_intrinsic':'contract_only';
+    (scalarNames.has(binding.name) && binding.ownership==='copy')?'js_scalar_intrinsic':'contract_only';
   TYPE_REGISTRY.set(binding.name,Object.freeze({...binding,minGenericArity,maxGenericArity,
     allocation,dropPolicy,sendPolicy,loweringStatus}));
 }
