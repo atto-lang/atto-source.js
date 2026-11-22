@@ -1,6 +1,7 @@
 // Host-neutral freestanding entrypoint for the verified pure integer core subset.
 // Importing this module must never load Node, OS, filesystem or Worker adapters.
 import {compileToProgramIRV2,compileProgramIRV2} from './program-v2.mjs';
+import {isProtectedPreludeIdentity} from './automatic-prelude.mjs';
 
 export class FreestandingCoreError extends Error {
   constructor(message) {
@@ -11,6 +12,11 @@ export class FreestandingCoreError extends Error {
 
 export function compileFreestandingCore(source) {
   const ir=compileToProgramIRV2(source);
+  // Guard the same compiler-owned ADT/collection names as Java and Rust.
+  // This does not grant any new allocation, borrowing or generic lowering.
+  if (ir.functions.some(f => isProtectedPreludeIdentity(f.name))) {
+    throw new FreestandingCoreError('E_PRELUDE_SPOOF: source function cannot replace compiler-owned prelude identity');
+  }
   // A namespace is a file-level identity, not a runtime module. Core libraries
   // may therefore export functions directly from `namespace core;` without
   // manufacturing a `core` object. Keep legacy `define module core` working.
