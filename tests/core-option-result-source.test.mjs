@@ -54,3 +54,54 @@ test('nominal sum tags, i64 boundaries and host capabilities remain sealed', asy
     'define module core as pub fnc bogus(): Option<int> { return Some(true); } end'
   ]) assert.throws(() => compileFreestandingCore(source), /error:/);
 });
+
+test('bounded scalar domain agrees with nominal Option and Result truth tables', async () => {
+  const option = await moduleFrom('../core/option.atto');
+  const result = await moduleFrom('../core/result.atto');
+  for (let value = -128n; value <= 128n; value++) {
+    const maybe = option.option_if_positive(value);
+    const mapped = option.option_map_add(maybe, 7n);
+    assert.equal(mapped.kind, value > 0n ? 'Some' : 'None');
+    assert.equal(option.option_unwrap_or(mapped, 91n), value > 0n ? value + 7n : 91n);
+    const converted = option.option_to_result(maybe, -18n);
+    assert.equal(converted.kind, value > 0n ? 'Ok' : 'Err');
+    assert.equal(converted.value, value > 0n ? value : -18n);
+
+    const checked = result.result_ok_if_nonnegative(value);
+    const shifted = result.result_map_add(checked, -3n);
+    assert.equal(shifted.kind, value >= 0n ? 'Ok' : 'Err');
+    assert.equal(shifted.value, value >= 0n ? value - 3n : value);
+    assert.equal(result.result_unwrap_or(shifted, 90n), value >= 0n ? value - 3n : 90n);
+    assert.equal(result.result_error_or(shifted, 90n), value < 0n ? value : 90n);
+    assert.equal(result.result_to_option(checked).kind, value >= 0n ? 'Some' : 'None');
+  }
+});
+
+test('every constructed sum is a sealed data-only ABI value', async () => {
+  const option = await moduleFrom('../core/option.atto');
+  const result = await moduleFrom('../core/result.atto');
+  const values = [
+    option.option_if_positive(1n),
+    option.option_if_positive(-1n),
+    result.result_ok_if_nonnegative(0n),
+    result.result_ok_if_nonnegative(-1n),
+    option.option_map_add(option.option_if_positive(1n), 7n),
+    result.result_map_add(result.result_ok_if_nonnegative(-1n), 7n)
+  ];
+  for (const item of values) {
+    assert.equal(Object.getPrototypeOf(item), null);
+    assert.equal(Object.isFrozen(item), true);
+    assert.deepEqual(Reflect.ownKeys(item).sort(), ['kind', 'value']);
+    assert.equal(typeof item.kind, 'string');
+    assert.equal(item.kind === 'None' ? item.value : typeof item.value === 'bigint', true);
+  }
+  const poison = Object.freeze(Object.defineProperties(Object.create(null), {
+    kind: {value: 'Some', enumerable: true},
+    value: {get() { throw Error('poison must not execute'); }, enumerable: true}
+  }));
+  assert.throws(() => option.option_map_add(poison, 2n), /TypeError|tagged value/);
+  const badErr = Object.freeze(Object.assign(Object.create(null), {
+    kind: 'Err', value: 1n, extra: 1n
+  }));
+  assert.throws(() => result.result_map_add(badErr, 2n), /TypeError|tagged value/);
+});
