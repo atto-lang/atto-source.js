@@ -136,3 +136,15 @@ test('borrow-aware core Cell owner predicates are source-only, never guest autho
   assert.ok(!cell.includes('pub fnc issue_loan('));
   // This is only a source/policy reference check, NOT a compiled guest test.
 });
+
+
+test('real JS compiler denies unproven Cell<T> borrowing or module promotion',async()=>{
+  const cell=(await load('cell')).toString('utf8');
+  // Both code paths invoke production compileToProgramIRV2, not a regex
+  // pretending to be a compiler. No owned mutable-cell ESM may be emitted.
+  assert.throws(()=>compileOwnedCoreMath(cell),/error:/);
+  assert.throws(()=>compileFreestandingCore(cell),/error:/);
+  const illegal='use namespace atto.core.cell; '+
+    'import module x from "std/thread"; pub fnc main():int{return 42;}';
+  assert.throws(()=>compileToProgramIRV2(illegal),/error:/);
+});
