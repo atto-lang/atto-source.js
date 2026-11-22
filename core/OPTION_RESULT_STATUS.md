@@ -28,3 +28,25 @@ and `core/result` imports. Namespace metadata never grants import authority.
 
 This backend intentionally differs in source shape from Java/Graal and LLVM.
 Public semantics for admitted concrete specializations must match.
+
+## Borrow/affine parity admission boundary
+
+This freestanding JS profile has **concrete immutable scalar** Option/Result
+values, not generic `Borrow<T>` ownership or move-only class payloads.
+Its `option_is_some` / `result_is_ok` queries can be repeated for
+`Option<int>` and `Result<int,int>` without consuming those Copy-only
+tagged values. The new source test checks that behavior against **actual
+compiler-produced ESM** when Node CI executes.
+
+New negative compiler tests insist that `borrow Option<T>`,
+`borrow! value`, `take! value`, generic `Option<T>` and
+`Option<Box>` are all **rejected**, rather than converted into unsound
+host-side owner copies or accepted through a dynamic fallback. A syntax
+rejection proves only unsupported capability, **not** correct affine
+borrow checking. Promote borrow-safe generic support only after a typed
+loan/provenance checker, native guest execution and explicit copy/move/drop
+tests exist. This compiler and its source `.atto` modules stay independent
+from Java/Rust/LLVM implementations. Until then these eight borrow
+API/affine cases must remain unsupported *candidates*, not certified
+parity passes. Source-org workflow failures with no actual runner steps
+are NOT_EXECUTED.
