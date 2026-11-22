@@ -1,6 +1,6 @@
 // JS backend-owned native Atto math (signed checked-i64 source subset).
 // This file is compiled to generated ESM by compileOwnedCoreMath.
-define module math as
+use namespace atto.core.math;
   pub fnc min_int(int a, int b): int {
     if a < b; do return a; else return b; fi
   }
@@ -16,4 +16,3 @@ define module math as
     if n < lower; do return false; fi
     if n > upper; do return false; else return true; fi
   }
-end
