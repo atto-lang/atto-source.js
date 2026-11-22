@@ -15,6 +15,16 @@ scalar semantics are compatible with the LLVM M0 status contract:
 - Every function is pure and requires no heap, filesystem, scheduler or
   host test-runner callback.
 
+Compiler-owned imports now have a deliberately narrow browser-safe entry:
+`import fnc in_range_int from "std/testing_scalar";`. The compiler embeds
+its own `.atto` library snapshot and validates an exact byte mirror; it
+rejects forged paths, duplicate imported names, unknown exports and alias
+collisions. Selected functions are private guest helpers and are not
+implicitly published as ESM exports. The dedicated imported-source guest
+suite and negative tests are `tests/testing-scalar-import.test.mjs`.
+This is not arbitrary filesystem import resolution, a package graph linker
+or a general implementation of `import module`.
+
 The source-linked JS guest test, `tests/testing-scalar-atto-guest.test.mjs`,
 reads the actual compiler-local `.atto` file, appends a deliberately small
 `main()` function and compiles the combined Atto source with
