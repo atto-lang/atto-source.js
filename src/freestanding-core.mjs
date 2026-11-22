@@ -27,7 +27,8 @@ export function compileFreestandingCore(source) {
 export function compileOwnedCoreMath(source) {
   const ir=compileToProgramIRV2(source);
   if(ir.sourceNamespace!=='atto.core.math' || ir.modules.length!==0 ||
-     !ir.functions.length || ir.functions.some(f=>f.module!==null||f.kind!=='fnc'||!f.pub) ||
+     !ir.functions.length || !ir.functions.some(f=>f.pub) ||
+     ir.functions.some(f=>f.module!==null||f.kind!=='fnc') ||
      (ir.classes?.length??0) || (ir.generators?.length??0) ||
      (ir.fileExports?.length??0))
     throw new FreestandingCoreError('math requires only public top-level functions in use namespace atto.core.math');
