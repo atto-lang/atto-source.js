@@ -33,3 +33,8 @@ The general parser and validator now accept bounded dotted file namespace
 headers in the canonical `use namespace a.b.c;` spelling. Repeated or late
 headers and package-less import statements remain rejected. This is not
 yet the full `import * as ... from pkg` conformance implementation.
+
+The namespaced JS math adapter permits private top-level helpers while
+requiring at least one public exported function. Validated symbol visibility
+and arity are preserved by the checked typed IR; the ESM exports only public
+members. Namespace metadata remains static and never imports a package.
