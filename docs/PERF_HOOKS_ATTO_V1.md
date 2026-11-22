@@ -53,3 +53,24 @@ runner steps, positive/negative compiled guest fixtures, disabled-path
 allocation/clock evidence, overflow/ownership tests and a linked program-
 specific strict AOT artifact (or closed Wasm module). Use the shared
 versioned contract but keep library source independently maintained.
+
+
+## Namespace-first option
+
+The backend now also owns `core/perf_policy_namespace.atto`, which declares
+`namespace perf;` and defines the five pure policy functions directly at file
+scope rather than wrapping them in `define module core`.
+`tests/perf_policy_namespace_guest.test.mjs` compiles the actual namespace
+source with `compileProgramV2`, the module form with
+`compileFreestandingCore`, and requires identical function bodies,
+observable results, and negative source-capability checks. This makes
+namespaces a first-class *alternative source organization* rather than
+requiring every core/alloc/std library to be a runtime module.
+
+The current JS backend accepts a flat single-identifier namespace; it does
+**not** implement arbitrary dotted namespace headers or verified external
+namespace imports. A namespace is file metadata, not a runtime object or
+a granted host capability. The module variant remains for the existing
+freestanding-core linker until that compiler's namespace support is proven.
+Do not advertise namespace import/linker or AOT parity until the executable
+test runs on the exact source head with nonempty CI steps.
