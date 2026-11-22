@@ -7,3 +7,7 @@ The public `types` module supplies `int_value_bits=64`, `bool_value_bits=1`, `by
 `void` is valueless, not `Unit`. First-class `Unit`, opaque compiler-minted `TypeId`, `TypeInfo<T>` static metadata and checked scalar lowering require independently audited compiler work and are not claimed by this library slice.
 
 Guest acceptance target: link `tests/fixtures/core-types-v1/edge-positive.atto` against this actual module and execute exit 0; reject `void-value-negative.atto` before emission. Record toolchain/target and exact head with nonzero CI steps. **NOT_EXECUTED:** no guest or AOT proof for this PR; unsupported targets must report unsupported explicitly.
+
+## Namespace-only core source
+
+Canonical `use namespace types;` file header plus public top-level functions; no `define module` wrapper. Consumers still explicitly import the symbols. Compiler parse, namespace source identity, static imports, and executed linked guests require separate proofs. Until the current PR compiles and runs, namespace guest parity remains NOT_EXECUTED.
