@@ -239,3 +239,75 @@ test('async/generator quanta cannot hide behind a forged Symbol.toStringTag',()=
   assert.equal(h.loop.stats.ready,0);
   assert.equal(h.loop.stats.control,0);
 });
+
+
+test('coalesced TaskCooperateRequest defers one DATA quantum, never a CONTROL turn',()=>{
+  const h=harness(),seen=[];
+  assert.equal(h.loop.attachOwner('cooperating',1),true);
+  assert.equal(h.loop.attachOwner('other',1),true);
+  assert.equal(h.loop.admitData('cooperating',1,()=>seen.push('cooperating')),true);
+  assert.equal(h.loop.admitData('other',1,()=>seen.push('other')),true);
+  assert.equal(h.loop.requestCooperate('cooperating',1),true);
+  assert.equal(h.loop.requestCooperate('cooperating',1),true);
+  assert.equal(h.loop.stats.cooperatePending,1);
+  assert.equal(h.loop.stats.cooperateRequests,1);
+  assert.equal(h.loop.stats.cooperateCoalesced,1);
+  h.step();
+  assert.deepEqual(seen,[], 'hint is observed only at legal scheduler boundary');
+  assert.equal(h.loop.stats.cooperateDeferrals,1);
+  assert.equal(h.loop.stats.ready,2,'no extra scheduler ticket minted');
+  h.step();
+  assert.deepEqual(seen,['other'],'different owner gets next fair DATA turn');
+  h.drain();
+  assert.deepEqual(seen,['other','cooperating']);
+  assert.equal(h.loop.stats.cooperatePending,0);
+  assert.equal(h.loop.stats.completed,2);
+});
+
+test('TaskCooperateRequest never postpones cancel CONTROL or revives retired owner',()=>{
+  const h=harness(),seen=[];
+  assert.equal(h.loop.attachOwner('child',10),true);
+  assert.equal(h.loop.admitData('child',10,()=>seen.push('guest-data')),true);
+  assert.equal(h.loop.requestCooperate('child',10),true);
+  assert.equal(h.loop.admitControl('child',10,()=>seen.push('cancel-control')),true);
+  h.step();
+  assert.deepEqual(seen,['cancel-control']);
+  assert.equal(h.loop.stats.cooperatePending,1);
+  assert.equal(h.loop.retireOwner('child',10),true);
+  assert.equal(h.loop.stats.cooperatePending,0);
+  assert.equal(h.loop.requestCooperate('child',10),false);
+  assert.equal(h.loop.attachOwner('child',11),true);
+  assert.equal(h.loop.requestCooperate('child',10),false);
+  assert.equal(h.loop.admitData('child',11,()=>seen.push('fresh')),true);
+  h.drain();
+  assert.deepEqual(seen,['cancel-control','fresh']);
+  assert.equal(h.loop.stats.cooperateDeferrals,0,'stale hints never delay new incarnation');
+});
+
+test('cooperation hint keeps a queued completion cancellable and cannot wake a suspended child',()=>{
+  const h=harness(),seen=[];
+  assert.equal(h.loop.attachOwner('child',1),true);
+  const ticket=h.loop.beginSuspension('child',1,value=>seen.push(value));
+  assert.equal(h.loop.requestCooperate('child',1),true);
+  assert.equal(h.scheduled.length,0,'request does not synthesize a wake');
+  assert.equal(h.loop.complete(ticket,42),true);
+  h.step();
+  assert.equal(h.loop.stats.cooperateDeferrals,1);
+  assert.equal(h.loop.cancel(ticket),true,'completion still cancellable after deferral');
+  h.drain();
+  assert.deepEqual(seen,[]);
+  assert.equal(h.loop.stats.suspended,0);
+  assert.equal(h.loop.stats.ready,0);
+});
+
+test('closed loop rejects new TaskCooperateRequest and clears bounded pending hints',()=>{
+  const h=harness();
+  assert.equal(h.loop.attachOwner('a',1),true);
+  assert.equal(h.loop.requestCooperate('a',1),true);
+  assert.throws(()=>h.loop.requestCooperate({},1),/invalid cooperation identity/);
+  assert.throws(()=>h.loop.requestCooperate('a',0),/invalid cooperation identity/);
+  assert.equal(h.loop.stats.cooperatePending,1);
+  h.loop.close();
+  assert.equal(h.loop.stats.cooperatePending,0);
+  assert.equal(h.loop.requestCooperate('a',1),false);
+});
