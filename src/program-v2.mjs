@@ -1,5 +1,6 @@
 import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
+import {isCoreConstructor} from './automatic-prelude.mjs';
 /**
  * Experimental Oreslang program-to-ESM v2 slice:
  * flat runtime modules, private/public functions, qualified calls, integer matches.
@@ -771,7 +772,7 @@ class Parser {
     // same statically checked intrinsics; don't introduce any new host API.
     if(qualifier===null){
       const constructors={Some:['Option','some'],Ok:['Result','ok'],Err:['Result','err']};
-      if(Object.hasOwn(constructors,symbol)){
+      if(Object.hasOwn(constructors,symbol) && isCoreConstructor(symbol)){
         const [scope,name]=constructors[symbol];
         return {kind:'call',qualifier:scope,name,args};
       }
