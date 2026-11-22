@@ -5,6 +5,7 @@
 // guest code in a MessagePort or reactor handler.
 import {createWorkerControlLoop} from './worker-control-loop.mjs';
 import {createWorkerCompletionCapabilitiesV1} from './worker-completion-capability-v1.mjs';
+import {createTaskFutureHostV1} from './task-future-host-v1.mjs';
 
 export const PORTABLE_TASK_V5='atto.browser.guest.v5';
 const POSITIVE_I32=x=>Number.isSafeInteger(x)&&x>0&&x<=0x7fffffff;
@@ -209,6 +210,18 @@ export function createPortableTaskHostV5({
       });}
     });
   }
+  // Opt-in owned TaskFuture host facade. This does not imply support for
+  // source-language TaskFuture<T> until compiled guest task IR is verified.
+  function spawnTaskFuture(options={}) {
+    if(typeof loop.requestCooperate!=='function')
+      throw new TypeError('E_V5_COOPERATION_UNSUPPORTED');
+    const task=spawn(options);
+    return createTaskFutureHostV1({
+      result:task.result,
+      cancelTask:()=>task.cancel(),
+      requestCooperate:()=>loop.requestCooperate(options.owner,options.epoch)
+    });
+  }
   function close() {
     if(closed)return false;
     closed=true;
@@ -217,7 +230,7 @@ export function createPortableTaskHostV5({
     return true;
   }
   return Object.freeze({
-    version:PORTABLE_TASK_V5,capacity,spawn,close,
+    version:PORTABLE_TASK_V5,capacity,spawn,spawnTaskFuture,close,
     get stats(){return Object.freeze({
       closed,live:active.size,liveFrames,peak,turns,starts,resumes,
       completions,drops,errors
