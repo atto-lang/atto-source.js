@@ -1,6 +1,6 @@
 # Experimental JS Worker control loop (host-only v1)
 
-**Status:** review candidate. This is not a source-compiled `susp`/ `suspends` or `await` implementation, not an actual NIO/TCP reactor, and not an untrusted TenantVM sandbox. The public playground compiler is unchanged.
+**Status (2026-11-21):** review candidate. The underlying control loop is host-owned, and now has a limited source-compiled Rust/Wasm guest v3 AOT lifecycle integration; it is **not** general `Future<T>` compilation, a production NIO/TCP reactor, authenticated cross-Worker transport, or an untrusted TenantVM sandbox. The public playground compiler is unchanged.
 
 ## Shared architecture
 
@@ -31,6 +31,16 @@ The portable contract is **logical continuation scheduling**, not an imposed OS 
 - A Promise-returning quantum is rejected and observed, not awaited while claiming the scheduler lane; compiler lowering must split at suspension points.
 
 `postTurn` is a **trusted asynchronous host scheduler hook**; a synchronously invoked callback triggers terminal fail-closed shutdown rather than executing guest code inside admission. Callers must never inject a synchronous callback executor or expose host continuations to arbitrary tenant code. The ticket is checked by object identity, **not serializable authority**: wire protocols crossing Worker ports must validate their own owner, epoch, ticket, capability and limits before dispatching to this module. There is no implicit guest import or network permission.
+
+## Experimental fully AOT guest-v3 continuation adapter
+
+The exported `./portable-task-host-v3` module verifies the exact `atto.browser.guest.v3` marker (one byte, value 3), compatibility async/2 marker, one static `atto.cooperate` import, and the five required lifecycle function exports. For the **closed single-task scalar literal-await profile only**, it instantiates ordinary Wasm and deliberately makes the legacy `atto.cooperate` import throw. It never calls `WebAssembly.Suspending` or `WebAssembly.promising`.
+
+It schedules one synchronous Wasm lifecycle call per DATA turn. The first `task_start_v3(owner_id,epoch)` returns `PENDING=1`. Subsequent `task_resume_v3` calls either return `PENDING=1` or `DONE=2`. The final result is read as i64 and `task_drop_v3` is called before resolving the host-side Promise. Cancellation marks the run as revoked immediately and requests a reserved CONTROL turn to call `task_cancel_v3` and `task_drop_v3`. A cancelled queued DATA turn must not resume the guest. Retirement and error cleanup are fail-closed and remain in the trusted owning Worker.
+
+Guest status codes for the currently implemented slice: `READY=0`, `PENDING=1`, `DONE=2`, `CANCELLED=4`, `INVALID=-1`; `FAILED=3` is reserved only. Owner/epoch values are identity fences, **not authenticated serialized capabilities**. The v3 marker by itself is not a trustworthy code signature: the adapter must be used with verified source-compiled artifacts, not arbitrary untrusted Wasm. It does not yet implement actor-scoped arbitrary continuation frames, cross-Worker migration, general `Future<T>`, fairness for contended mutexes, or guard cleanup.
+
+The companion Rust compiler PR #197 emitted the actual guest Wasm, and its private source-exact CI executed this exact host file in both Node and a genuine Chromium module Worker, without JSPI. Each await required a new scheduler quantum; completion dropped the Wasm global frame. Independent JavaScript backend CI also verified the adapter's marker fail-closed checks. These remain experimental Draft changes; no public playground promotion is authorized.
 
 ## Still needed before the requested mutex example runs
 
