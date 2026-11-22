@@ -59,3 +59,48 @@ versioned Wasm ABI fixtures, real Node Worker/MessagePort communication,
 shutdown cleanup. The Rust PR's real compiler-generated guest tests in
 Node and Chromium must also pass before claiming cross-backend AOT parity.
 Both PRs remain Draft.
+
+
+## Experimental TaskFuture host facade (TaskFuture control v1)
+
+The `createPortableTaskHostV5` object now provides an **opt-in**
+`spawnTaskFuture({owner,ownerId,epoch,onPending,port})` method in addition
+to the unchanged legacy `spawn(...)` API. The result is a frozen
+trusted-host facade exposing only `get_ready()`, `cancel_task()`,
+`cooperate()` and direct `await taskFuture` (a single-use JS thenable).
+The `TaskFuture` does NOT expose the raw Promise, completion ticket,
+TaskId, mutable frame handle, or worker port to guest code.
+
+`get_ready()` moves one result-observation right to a frozen awaitable
+`Future` receipt. A second `get_ready()` or a second `await` fails
+`E_TASK_RESULT_CONSUMED`. `cancel_task(): void` submits the same fenced
+cancellation request as legacy host `cancel()` without consuming the
+result right, and `cooperate(): void` submits a bounded, coalesced,
+owner+epoch-fenced scheduler hint. A running DATA quantum cannot be forcibly
+preempted; the **next** DATA turn for that owner is deferred to the queue
+tail once at a legal turn boundary. CONTROL dispatch remains higher priority,
+a pending external future is not spuriously awakened, and a retired owner's
+hint is discarded. This is *cooperation at scheduler dispatch*, NOT proof
+of guest-inserted loop/backedge safe points or bounded host-call latency.
+
+The ordinary `host.spawn(...)` API remains backward compatible and
+returns `{result,cancel,complete,stats}`; the new facade intentionally
+does not expose `complete` or `result`. The external Worker can still
+resolve a pending guest future through its preexisting authenticated
+MessagePort. This preserves the portable v5 full-guest-AOT frame ABI:
+no new Wasm import, guest interpreter, JIT, unsafe raw-memory access, or
+thread-kill fallback is added.
+
+This patch is a **host/runtime substrate only**. It does NOT parse or
+lower Atto source expressions `TaskFuture<T>`, `t.get_ready()`,
+`t.cancel_task()` or `t.cooperate()` into guest MIR, and must not be
+used to certify general actor TaskScope, deep cancellation/cleanup,
+untrusted-tenant safety or multi-backend compiler parity. The canonical
+target contract lives in atto-spec PR #212, with source-only conformance
+fixtures in atto-platform-conformance PR #565. Unsupported source-task
+compiler paths must continue to fail closed.
+
+Run `node --test tests/worker-control-loop.test.mjs
+tests/task-future-host-v1.test.mjs tests/portable-task-host-v5.test.mjs`
+on the exact branch head. Host-only tests and a constant-Wasm ABI fixture
+do not certify source-compiled Atto task execution.
