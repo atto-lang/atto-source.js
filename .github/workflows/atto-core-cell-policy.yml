@@ -1,16 +1,19 @@
-# SOURCE-OWNED evidence. This never authorizes cross-organization source mirroring.
-name: Atto backend-owned core cell owner policy (NON-GUEST)
+# Source-owned compiled pure policy guest, NOT a native mutable-loan or borrow-MIR proof.
+name: Atto JS core Cell compiled policy guest (NOT borrow-MIR)
 on:
   pull_request:
     paths:
       - 'library/atto.core/cell.atto'
       - 'tests/**core*cell*'
+      - 'src/freestanding-core.mjs'
+      - 'src/program-v2.mjs'
+      - 'src/program-ir-v2.mjs'
       - '.github/workflows/atto-core-cell-policy.yml'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  core-cell-source-only:
+  js-core-cell-compiled-policy:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -35,14 +38,18 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
-      - name: Run backend source integrity and bounded owner-policy oracle
+      - name: Run production typed-IR compiler and actual ESM policy guest vectors
         shell: bash
         run: |
           set -euo pipefail
           node --test tests/core-math-hash-cell-source.test.mjs
-      - name: Report non-certifying source-only limit
-        if: always()
+      - name: Report successful compiled Atto policy guest, not owned Cell runtime
         shell: bash
         run: |
-          echo 'CORE_CELL_POLICY_SOURCE_TEST_ONLY; typed-MIR borrow and compiled Atto guest NOT_EXECUTED' >> "$GITHUB_STEP_SUMMARY"
-          echo 'No private Git tree was exported; zero-step workflows are NOT_EXECUTED.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'CORE_CELL_JS_POLICY_TYPED_IR_GUEST=EXECUTED; OWNED_CELL_BORROW_MIR=NOT_EXECUTED' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No private Git tree was exported; source SHA/tree/blob checked.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Do not promote failed or zero-step jobs
+        if: failure()
+        shell: bash
+        run: |
+          echo 'CORE_CELL_JS_POLICY_TYPED_IR_GUEST=NOT_VERIFIED; OWNED_CELL_BORROW_MIR=NOT_EXECUTED' >> "$GITHUB_STEP_SUMMARY"
