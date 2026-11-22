@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile,lstat} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {compileOwnedCoreMath,compileFreestandingCore} from '../src/freestanding-core.mjs';
+import {compileToProgramIRV2} from '../src/program-v2.mjs';
 const SHA={
   "math": "845379a28b68e4674aed7d94489a18725ca16144",
   "hash": "1f836230d8d976ab0a70c918c6fa48b8731bbc13",
@@ -71,6 +72,31 @@ test('new math compilation gate does not widen core or admit hash/host modules',
  assert.throws(()=>compileOwnedCoreMath(
    math.replace('use namespace atto.core.math;',
                 'import * as math from pkg "atto.core.math";')),/error:/);
+});
+test('namespace metadata survives parsing but creates no import authority',()=>{
+ const source='use namespace atto.core.math; pub fnc one():int{return 1;}';
+ const ir=compileToProgramIRV2(source);
+ assert.equal(ir.sourceNamespace,'atto.core.math');
+ assert.deepEqual(ir.modules,[]);
+ assert.equal(ir.functions[0].module,null);
+ assert.equal(ir.functions[0].pub,true);
+ for(const bad of [
+  'use namespace __proto__.core.math; pub fnc main():int{return 1;}',
+  'use namespace atto.core.math; use namespace atto.core.math; pub fnc main():int{return 1;}',
+  'pub fnc main():int{return 1;} use namespace atto.core.math;',
+  'use namespace a.b.c.d.e.f.g.h.i; pub fnc main():int{return 1;}',
+  'use namespace atto.core.math; import module other from "./other.atto"; pub fnc main():int{return 1;}'
+ ]) assert.throws(()=>compileToProgramIRV2(bad),/error:/);
+});
+test('namespace exports public calls and retains local private helpers',async()=>{
+ const source='use namespace atto.core.math; '+
+  'fnc twice(int x):int{return x+x;} '+
+  'pub fnc answer():int{return twice(21);}';
+ const generated=compileOwnedCoreMath(source);
+ const {math}=await import('data:text/javascript,'+encodeURIComponent(generated));
+ assert.equal(math.answer(),42n);
+ assert.equal(math.twice,undefined);
+ assert.equal(Object.isFrozen(math),true);
 });
 test('source-free hash and borrow-policy golden reference are not guest execution',()=>{
  const step=(s,b)=>{
