@@ -127,3 +127,33 @@ test('freestanding namespace admission is strict and does not widen module privi
     'namespace core; define class Host as end pub fnc f(): int { return 42; }'
   ]) assert.throws(() => compileFreestandingCore(source), /error:/);
 });
+
+test('concrete scalar tag queries preserve a reusable Copy carrier', async () => {
+  const option = await moduleFrom('../core/option.atto');
+  const result = await moduleFrom('../core/result.atto');
+  const some = option.option_if_positive(42n);
+  const ok = result.result_ok_if_nonnegative(42n);
+  // These are immutable Copy-only scalar ADT cases, not affine loan proofs.
+  for (let n = 0; n < 3; n++) {
+    assert.equal(option.option_is_some(some), true);
+    assert.equal(result.result_is_ok(ok), true);
+  }
+  assert.equal(option.option_unwrap_or(some, 0n), 42n);
+  assert.equal(result.result_unwrap_or(ok, 0n), 42n);
+});
+
+test('generic borrow and affine ownership syntax must fail closed until admitted', () => {
+  // The freestanding JS stage admits only concrete Option<int> / Result<int,int>.
+  // An unsupported borrow form must never silently erase the loan and compile
+  // into an owned handle. Generic parse errors do not count as borrow proof.
+  const futureOnly = [
+    'namespace core; pub fnc is_present(borrow Option<int> value): bool { return Option.is_some(value); }',
+    'namespace core; pub fnc is_present(Option<int> value): bool { return Option.is_some(borrow! value); }',
+    'namespace core; pub fnc owner_escape(Option<int> value): Option<int> { return take! value; }',
+    'namespace core; pub fnc affine_unwrap(Option<Box> value): Box { return Option.unwrap(value); }',
+    'namespace core; pub fnc generic_map<T>(Option<T> value): Option<T> { return value; }'
+  ];
+  for (const source of futureOnly)
+    assert.throws(() => compileFreestandingCore(source), /error:/,
+      'unsupported ownership/generic case must not yield compiled guest output');
+});
