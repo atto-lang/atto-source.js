@@ -7,7 +7,7 @@ import {compileToProgramIRV2} from '../src/program-v2.mjs';
 const SHA={
   "math": "845379a28b68e4674aed7d94489a18725ca16144",
   "hash": "1f836230d8d976ab0a70c918c6fa48b8731bbc13",
-  "cell": "01e75c747dce25c0b76629e186e54d9889593a78"
+  "cell": "ae54f28baee13675a71088251b41dd8182f60084"
 };
 const gitBlob=bytes=>createHash('sha1')
   .update(Buffer.from('blob '+bytes.length+'\0'))
@@ -147,4 +147,22 @@ test('real JS compiler denies unproven Cell<T> borrowing or module promotion',as
   const illegal='use namespace atto.core.cell; '+
     'import module x from "std/thread"; pub fnc main():int{return 42;}';
   assert.throws(()=>compileToProgramIRV2(illegal),/error:/);
+});
+
+test('core/cell saturated read admission rejects overflow but retains owner read', async () => {
+  const source=(await readFile(new URL('../library/atto.core/cell.atto',import.meta.url))).toString('utf8');
+  // Source-only policy shape. This MUST NOT be promoted to a compiler loan.
+  assert.match(source,/pub fnc can_borrow_read\(/);
+  assert.match(source,/pub fnc can_owner_read\(/);
+  assert.match(source,/if readers >= 65535;/);
+  const canAcquire=(n,w)=>n>=0 && n<65535 && !w;
+  const ownerRead=(n,w)=>n>=0 && n<=65535 && !w;
+  for(const [n,w,acquire,read] of [
+    [0,false,true,true],[65534,false,true,true],[65535,false,false,true],
+    [65536,false,false,false],[-1,false,false,false],[0,true,false,false]
+  ]) {
+    assert.equal(canAcquire(n,w),acquire);
+    assert.equal(ownerRead(n,w),read);
+  }
+  assert.ok(!source.includes('pub fnc issue_loan('));
 });
