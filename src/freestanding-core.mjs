@@ -21,17 +21,22 @@ export function compileFreestandingCore(source) {
   return compileProgramIRV2(ir);
 }
 
-// Additive closed-world math-only module gate. Does not silently admit
-// hash loops, dynamic Cell<T>, imported modules or host capabilities.
-// Existing compileFreestandingCore(core) remains byte-for-byte unchanged.
+// Additive closed-world parser for canonical file namespace Atto Core math.
+// Callers provide explicitly trusted source bytes. 'use namespace' is NOT a
+// package import grant, a filesystem path, or a dynamic JS runtime global.
 export function compileOwnedCoreMath(source) {
   const ir=compileToProgramIRV2(source);
-  if(ir.sourceNamespace!==null || ir.modules.length!==1 || ir.modules[0]!=='math' ||
-     !ir.functions.length || ir.functions.some(f=>f.module!=='math'||f.kind!=='fnc'))
-    throw new FreestandingCoreError('math requires one pure math module only');
-  // The existing validated IR checker/generator enforces checked i64 and
-  // static calls; no host-injected Math object or dynamic JS import.
-  return compileProgramIRV2(ir);
+  if(ir.sourceNamespace!=='atto.core.math' || ir.modules.length!==0 ||
+     !ir.functions.length || ir.functions.some(f=>f.module!==null||f.kind!=='fnc'||!f.pub) ||
+     (ir.classes?.length??0) || (ir.generators?.length??0) ||
+     (ir.fileExports?.length??0))
+    throw new FreestandingCoreError('math requires only public top-level functions in use namespace atto.core.math');
+  // Internal checked-IR export adapter: the caller-verified lexical namespace
+  // is represented as the existing frozen 'math' ESM API for compatibility.
+  // Both pre- and post-adaptation IR go through the production validator.
+  const adapted={...ir,sourceNamespace:null,modules:['math'],
+    functions:ir.functions.map(f=>({...f,module:'math'}))};
+  return compileProgramIRV2(adapted);
 }
 
 export function checkFreestandingCore(source) {
