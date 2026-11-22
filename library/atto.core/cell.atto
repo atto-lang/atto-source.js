@@ -19,4 +19,23 @@ define module cell as
     if readers <= 0; do return -1; fi
     if readers > 65535; do return -1; else return readers - 1; fi
   }
+
+  // Conservative, pure source policy: these values grant no memory access.
+  pub fnc valid_loan_state(int readers, bool writer_active): bool {
+    if readers < 0; do return false; fi
+    if readers > 65535; do return false; fi
+    if writer_active && readers != 0; do return false; else return true; fi
+  }
+  pub fnc can_owner_read(int readers, bool writer_active): bool {
+    return can_borrow_read(readers, writer_active);
+  }
+  pub fnc can_owner_write(int readers, bool writer_active): bool {
+    return can_borrow_write(readers, writer_active);
+  }
+  pub fnc can_move_owner(int readers, bool writer_active): bool {
+    return can_borrow_write(readers, writer_active);
+  }
+  pub fnc can_suspend_unpinned(int readers, bool writer_active): bool {
+    return can_borrow_write(readers, writer_active);
+  }
 end
