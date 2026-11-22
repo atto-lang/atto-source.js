@@ -155,3 +155,61 @@ test('real Node Worker MessagePort: bearer completion schedules guest in a later
     port1.close();
   }finally{port1.close();await worker.terminate();}
 });
+
+
+test('portable v5 spawnTaskFuture controls a genuine compiled-Wasm frame at scheduler boundaries',async()=>{
+  const {turns,loop}=harness(),pending=[];
+  const host=createPortableTaskHostV5({module,loop});
+  const task=host.spawnTaskFuture({owner:'task-future',ownerId:1,epoch:1,
+    onPending:grant=>pending.push(grant)});
+  assert.ok(Object.isFrozen(task));
+  assert.equal(Object.hasOwn(task,'result'),false,'no replayable Promise exposed');
+  assert.equal(task.cooperate(),undefined);
+  assert.equal(task.cooperate(),undefined);
+  assert.equal(loop.stats.cooperatePending,1);
+  flush(turns,1);
+  assert.equal(host.stats.starts,0,'coalesced hint defers the one pending DATA quantum');
+  assert.equal(loop.stats.cooperateDeferrals,1);
+  flush(turns,1);
+  assert.equal(host.stats.starts,1);
+  assert.equal(pending.length,1);
+  const ready=task.get_ready();
+  assert.throws(()=>task.get_ready(),/E_TASK_RESULT_CONSUMED/);
+  assert.equal(task.cooperate(),undefined);
+  assert.equal(task.complete,undefined,'only owned public control methods');
+  // The original private completion ticket belongs to the guest host, not
+  // the narrowed TaskFuture surface; use a trusted host-controlled port in
+  // production. This task exercises cancellation of a pending Wasm frame.
+  assert.equal(task.cancel_task(),undefined);
+  flush(turns,1); // CONTROL precedes any cooperative DATA request
+  await assert.rejects(Promise.resolve(ready),/E_V5_CANCELLED/);
+  assert.equal(host.stats.liveFrames,0);
+  assert.equal(host.stats.drops,1);
+  assert.equal(loop.stats.cooperatePending,0);
+  assert.equal(host.close(),true);
+});
+
+test('portable v5 TaskFuture can await a real completed compiled-Wasm result',async()=>{
+  const {turns,loop}=harness(),pending=[];
+  const host=createPortableTaskHostV5({module,loop});
+  // A trusted caller can use the existing authenticated completion port
+  // rather than expose a raw replayable result or forged completion ticket.
+  const {port1,port2}=new MessageChannel();
+  try {
+    const t=host.spawnTaskFuture({owner:'ready',ownerId:2,epoch:1,
+      port:port1,onPending:x=>pending.push(x)});
+    flush(turns,1); // guest TaskStart generates one external future key
+    assert.equal(pending.length,1);
+    const ready=t.get_ready();
+    assert.equal(t.cooperate(),undefined);
+    port2.postMessage({...pending[0].grant,value:42n});
+    for(let i=0;i<50&&turns.length===0;i++)
+      await new Promise(r=>setTimeout(r,5));
+    assert.ok(turns.length>0,'authenticated completion arrived');
+    flush(turns,3); // hint defers completion; next completes, then resume
+    assert.equal(await ready,42n);
+    assert.equal(host.stats.liveFrames,0);
+    assert.equal(t.cancel_task(),undefined,'terminal cancel is a harmless request');
+    assert.equal(host.close(),true);
+  } finally {port1.close();port2.close();}
+});
