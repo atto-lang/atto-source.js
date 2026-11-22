@@ -39,6 +39,7 @@
     "./wasm-jspi-control-bridge-v1": "./src/wasm-jspi-control-bridge-v1.mjs",
     "./portable-task-host-v3": "./src/portable-task-host-v3.mjs",
     "./portable-task-host-v4": "./src/portable-task-host-v4.mjs",
+    "./portable-task-host-v5": "./src/portable-task-host-v5.mjs",
     "./worker-completion-capability-v1": "./src/worker-completion-capability-v1.mjs"
   },
   "bin": {
