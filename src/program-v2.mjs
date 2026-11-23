@@ -1,4 +1,5 @@
 import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
+import {TESTING_SCALAR_SOURCE, TESTING_SCALAR_EXPORTS} from './compiler-owned-testing-scalar.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
 /**
  * Experimental Oreslang program-to-ESM v2 slice:
@@ -205,6 +206,21 @@ function tokenize(source) {
         value=normalizeProcessSymbolName(value);
       }
       emit('symbol',value,start);
+    } else if ((c==='"' || c==="'") && result.length && result[result.length-1].value==='from') {
+      // Quoted strings are *only* admissible in the compiler-owned std import
+      // declaration below. General string expressions remain unsupported.
+      const quote=c;
+      advance();
+      let value='';
+      while(pos < source.length && source[pos] !== quote) {
+        const ch=source[pos];
+        if(ch==='\\'||ch==='\n'||ch==='\r'||ch.charCodeAt(0)<32)
+          fail('invalid or escaped module import string',start);
+        value+=ch;advance();
+        if(value.length>128)fail('module import path exceeds 128 bytes',start);
+      }
+      if(pos>=source.length)fail('unterminated module import string',start);
+      advance();emit('str',value,start);
     } else if (/[A-Za-z_]/.test(c)) {
       let word = '';
       while (pos < source.length && /[A-Za-z0-9_]/.test(source[pos])) {
@@ -1420,11 +1436,97 @@ function emitProgram(program) {
   if(hasSymbol)out.push('export { _symbolWireV1 as "@oreslang/symbol-wire-v1" };');
   return out.join('\n')+'\n';
 }
+// This is not ambient file importing. The browser compiler embeds only the
+// exact .atto testing module owned by THIS backend. No runtime IO, dynamic
+// source resolution, graph traversal or host-owned mocks enter the guest.
+const TESTING_SCALAR_IMPORT_IDS = new Set([
+  'std/testing_scalar', 'std/testing_scalar.atto',
+  'atto.std/testing_scalar', 'atto.std/testing_scalar.atto'
+]);
+function lowerCompilerOwnedTestingImports(tokens) {
+  let i=0,declarations=0;
+  const locals=new Map(),seenExports=new Set();
+  const next=()=>tokens[i];
+  const eat=v=>{if(next()?.value===v){i++;return true;}return false;};
+  const requireToken=v=>{
+    if(!eat(v))fail('E_STD_IMPORT: expected '+v,next());
+  };
+  const identifier=()=>{
+    const t=next();
+    if(t?.kind!=='id'||!TOKEN_NAME.test(t.value))
+      fail('E_STD_IMPORT: expected import function identifier',t);
+    i++;
+    return t.value;
+  };
+  // Only `import fnc ... from "<compiler-owned testing id>";` is lowered
+  // here; every other import form keeps its existing fail-closed diagnostics.
+  const isTestingImport=j=>{
+    if(tokens[j]?.value!=='import'||tokens[j+1]?.value!=='fnc')return false;
+    for(let k=j+2;k<tokens.length&&k<j+64;k++){
+      if(tokens[k].value===';')return false;
+      if(tokens[k].value==='from')return tokens[k+1]?.kind==='str'&&TESTING_SCALAR_IMPORT_IDS.has(tokens[k+1].value);
+    }
+    return false;
+  };
+  while(next()?.value==='import' && isTestingImport(i)) {
+    const pos=next();
+    if(++declarations>8)fail('E_STD_IMPORT: too many library import declarations',pos);
+    i++;
+    requireToken('fnc');
+    const names=[];
+    do {
+      const exported=identifier();
+      const local=eat('as')?identifier():exported;
+      if(!TESTING_SCALAR_EXPORTS.includes(exported))
+        fail('E_STD_IMPORT: unknown compiler-owned assertion '+exported,pos);
+      if(locals.has(local)||seenExports.has(exported))
+        fail('E_STD_IMPORT: duplicated or shadowed assertion import',pos);
+      if(local.startsWith('__atto_'))
+        fail('E_STD_IMPORT: reserved import alias',pos);
+      locals.set(local,exported);
+      seenExports.add(exported);
+      names.push(local);
+      if(names.length>TESTING_SCALAR_EXPORTS.length)
+        fail('E_STD_IMPORT: import binding budget exceeded',pos);
+    } while(eat(','));
+    requireToken('from');
+    const path=next();
+    if(path?.kind!=='str'||!TESTING_SCALAR_IMPORT_IDS.has(path.value))
+      fail('E_STD_IMPORT: unsupported compiler-owned library path',path);
+    i++;requireToken(';');
+  }
+  return {rootTokens:declarations?tokens.slice(i):tokens,locals};
+}
+function bindCompilerOwnedTestingImports(parsed,locals) {
+  if(!locals.size)return parsed;
+  // Parse the embedded .atto source through the same parser as user code.
+  // Its six public declarations remain separately owned in this compiler.
+  const library=new Parser(tokenize(TESTING_SCALAR_SOURCE)).parse();
+  if(library.modules.length||library.classes.length||library.generators.length||
+      library.functions.length!==TESTING_SCALAR_EXPORTS.length||
+      library.functions.some(f=>!f.pub||f.module!==null)||
+      TESTING_SCALAR_EXPORTS.some(n=>!library.functions.some(f=>f.name===n)))
+    fail('E_STD_IMPORT: compiler-owned library source contract mismatch');
+  for(const [local,exported] of locals) {
+    if(parsed.functions.some(f=>f.name===local)||
+       parsed.generators.some(g=>g.name===local)||
+       parsed.classes.some(c=>c.name===local)||parsed.modules.includes(local))
+      fail('E_STD_IMPORT: imported name collides with local declaration '+local);
+    const fn=library.functions.find(f=>f.name===exported);
+    parsed.functions.push({...fn,name:local,pub:false});
+  }
+  if(parsed.functions.length>512)
+    fail('E_STD_IMPORT: linked function budget exceeded');
+  return parsed;
+}
+
 export function compileToProgramIRV2(source) {
   const tokens=tokenize(source);
   rejectExecutionDomains(tokens,fail);
   rejectUnsupportedStaticSelect(tokens);
-  const program=resolveProgram(new Parser(tokens).parse());
+  const linked=lowerCompilerOwnedTestingImports(tokens);
+  const parsed=bindCompilerOwnedTestingImports(new Parser(linked.rootTokens).parse(),linked.locals);
+  const program=resolveProgram(parsed);
   return validateProgramIRV2({
     schemaVersion:PROGRAM_IR_VERSION,
     dialect:PROGRAM_IR_DIALECT,
