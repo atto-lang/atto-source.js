@@ -235,6 +235,11 @@ function tokenize(source) {
       }
       if (number.length > 64 || !/^[0-9]+(?:_[0-9]+)*$/.test(number)) fail('invalid int literal',start);
       emit('int',number,start);
+    } else if (source.startsWith('&&',pos) || source.startsWith('||',pos)) {
+      // Atto's symbolic boolean operators are aliases of the existing
+      // lazy `and`/`or` IR. Never lower these to eager JS bitwise ops.
+      emit('id',source.startsWith('&&',pos)?'and':'or',start);
+      advance(); advance();
     } else if (['<=','>=','==','!='].some(op=>source.startsWith(op,pos))) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
     } else if (source.startsWith('->',pos) || source.startsWith('::',pos)) {
@@ -619,7 +624,15 @@ class Parser {
     // Oreslang's flat source namespace is compile-time package metadata,
     // not a runtime module/object. It must occur only once at file start.
     let namespace = null;
-    if (this.eat('namespace')) {
+    // Source-file namespace metadata is NOT a runtime module nor an import.
+    // The canonical spelling `use namespace types;` is accepted only at
+    // position zero, before any function or import. Preserve the older
+    // `namespace types;` spelling for existing program-v2 consumers.
+    if (this.eat('use')) {
+      this.expect('namespace');
+      namespace = this.name();
+      this.expect(';');
+    } else if (this.eat('namespace')) {
       namespace = this.name();
       this.expect(';');
     }
