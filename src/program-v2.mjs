@@ -206,7 +206,7 @@ function tokenize(source) {
         value=normalizeProcessSymbolName(value);
       }
       emit('symbol',value,start);
-    } else if (c==='"' || c==="'") {
+    } else if ((c==='"' || c==="'") && result.length && result[result.length-1].value==='from') {
       // Quoted strings are *only* admissible in the compiler-owned std import
       // declaration below. General string expressions remain unsupported.
       const quote=c;
@@ -1458,7 +1458,17 @@ function lowerCompilerOwnedTestingImports(tokens) {
     i++;
     return t.value;
   };
-  while(next()?.value==='import') {
+  // Only `import fnc ... from "<compiler-owned testing id>";` is lowered
+  // here; every other import form keeps its existing fail-closed diagnostics.
+  const isTestingImport=j=>{
+    if(tokens[j]?.value!=='import'||tokens[j+1]?.value!=='fnc')return false;
+    for(let k=j+2;k<tokens.length&&k<j+64;k++){
+      if(tokens[k].value===';')return false;
+      if(tokens[k].value==='from')return tokens[k+1]?.kind==='str'&&TESTING_SCALAR_IMPORT_IDS.has(tokens[k+1].value);
+    }
+    return false;
+  };
+  while(next()?.value==='import' && isTestingImport(i)) {
     const pos=next();
     if(++declarations>8)fail('E_STD_IMPORT: too many library import declarations',pos);
     i++;
