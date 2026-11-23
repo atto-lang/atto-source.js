@@ -68,7 +68,9 @@ test('sum variants and loan-sensitive ownership identities cannot be forged', ()
     assert.equal(isProtectedPreludeIdentity(name), true);
   }
   assert.equal(isProtectedPreludeIdentity('int'),true);
-  assert.equal(isProtectedPreludeIdentity('From'),true);
+  // Traits and collections are auto-imported but shadowable (Rust-style).
+  assert.equal(isProtectedPreludeIdentity('From'),false);
+  assert.equal(isProtectedPreludeIdentity('Box'),false);
   assert.equal(isProtectedPreludeIdentity('HashMap'),false);
   assert.equal(isCoreConstructor('Map'), false);
   assert.equal(isCoreSumCarrier('Option',1), true);
@@ -82,7 +84,7 @@ test('sum variants and loan-sensitive ownership identities cannot be forged', ()
 });
 
 test('real freestanding compiler refuses compiler-owned alias spoofing', () => {
-  const source='define module core as pub fnc Map(): int { return 42; } end';
+  const source='define module core as pub fnc Ok(): int { return 42; } end';
   assert.throws(() => compileFreestandingCore(source), /E_PRELUDE_SPOOF/);
 });
 
@@ -105,12 +107,23 @@ test('unsupported affine borrow syntax must not compile as a host fallback', () 
 
 test('every program-v2 declaration path protects the implicit prelude', () => {
   for (const source of [
-    'pub fnc Map(): int { return 42; }',
-    'define class Map as end',
-    'generator* Map(): Iterator<int> { yield 42; }',
+    'pub fnc Ok(): int { return 42; }',
+    'define class Option as end',
+    'generator* Some(): Iterator<int> { yield 42; }',
     'define module Result as end'
   ]) {
-    assert.throws(() => compileToProgramIRV2(source), /E_PRELUDE_SPOOF/,
+    // `define class Option` is already refused by the reserved-identifier
+    // gate that runs before the prelude check; both are fail-closed.
+    assert.throws(() => compileToProgramIRV2(source), /E_PRELUDE_SPOOF|reserved (class\/member|generator) identifier/,
       'expected protected-name rejection before guest output: '+source);
+  }
+});
+
+test('non-carrier prelude names are shadowed by user declarations', () => {
+  for (const source of [
+    'define class Box as end\npub fnc main(): int { return 42; }',
+    'pub fnc Map(): int { return 42; }',
+  ]) {
+    assert.doesNotThrow(() => compileToProgramIRV2(source), source);
   }
 });

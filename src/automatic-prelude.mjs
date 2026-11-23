@@ -72,12 +72,12 @@ for(const [name,module,scope,kind,ownership,canonicalOverride] of names){
   if(registry.has(name))throw new Error('duplicate core prelude name');
   registry.set(name,Object.freeze({name,canonical:canonicalOverride??module+'/'+name,scope,kind,ownership}));
 }
-const protectedNames=new Set([
-  ...[...registry.values()]
-    .filter(binding=>binding.scope!=='explicit')
-    .map(binding=>binding.name),
-  'FixedList','Vector','ReadLoan','WriteLoan'
-]);
+// Prelude names are auto-imported, not reserved: like Rust, a user
+// declaration of Box, Error, Pair, String, ... shadows the prelude binding.
+// Only the compiler-owned core sum carriers and their constructors keep a
+// protected identity, because pattern matching and `?` lower against them.
+const protectedNames=new Set(['Option','Some','None','Result','Ok','Err',
+  'int','bool','float','void']);
 
 const arities = Object.freeze({
   Option:[1,1], Some:[1,1], None:[0,0], Result:[2,2], Ok:[1,1], Err:[1,1],
