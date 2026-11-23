@@ -1,6 +1,7 @@
 import {createScalarIR, validateScalarIR} from './scalar-ir.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
 import {scanStringLiteral} from './string-literal-syntax.mjs';
+import {preflightCoreFutureOwnership} from './core-future-ownership.mjs';
 /** Experimental fail-closed Oreslang scalar-to-ESM compiler. */
 const MAX_BYTES = 262144;
 const I64_MAX = (1n << 63n) - 1n;
@@ -98,7 +99,7 @@ function lex(src) {
     }else if(src.startsWith('->',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
     else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
     else if(src[i]==='^')throw new CompileError(src.startsWith('^^',i)?"'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)":"'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",loc);
-    else if('(){}[]:,;+-*/=.'.includes(src[i])){add('sym',src[i],loc);advance();}
+    else if('(){}[]:,;+-*/=.!<>'.includes(src[i])){add('sym',src[i],loc);advance();}
     else throw new CompileError('unsupported character',loc);
   }
   out.push({kind:'eof',value:'<eof>',line,col});return out;
@@ -265,6 +266,9 @@ class Parser {
 // should produce this versioned IR instead of duplicating parser semantics.
 export function compileToIR(source) {
   const tokens=lex(source);
+  // Reject affine Future violations at the compiler core boundary before IR.
+  // Valid Future code still cannot execute in the scalar-only JS backend.
+  preflightCoreFutureOwnership(tokens,(code,message,token)=>{throw new CompileError(code+': '+message,token);});
   rejectExecutionDomains(tokens,(message,token)=>{throw new CompileError(message,token);});
   rejectUnloweredInvertedClasses(tokens);
   rejectUnsupportedSelect(tokens);
