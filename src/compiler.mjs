@@ -42,6 +42,7 @@ function lex(src) {
   validateSourceText(src);
   const out = [];
   let i=0, line=1, col=1;
+  let ownershipBang;
   const lineEnd=c=>c==='\n'||c==='\r'||c==='\u0085'||c==='\u2028'||c==='\u2029';
   function advance() {
     const ch=src[i];
@@ -79,12 +80,12 @@ function lex(src) {
     const loc={line,col};
     if(/[A-Za-z_]/.test(src[i])){
       let s='';while(i<src.length&&/[A-Za-z0-9_]/.test(src[i])){s+=src[i];advance();}
-      // Contextual ownership bangs must never fall through to future macro
-      // parsing without typed move/borrow/share IR. Comments are skipped above.
+      // Record the first contextual ownership bang so the typed Future
+      // preflight can still diagnose its legacy and canonical spellings.
       if(['copy','take','borrow','share'].includes(s) && src[i]==='!' &&
           src[i+1]!=='=' &&
           !(src.slice(i+1,i+3)==='eq' && !/[A-Za-z0-9_]/.test(src[i+3]??'')))
-        throw new CompileError('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: checked JS ownership lowering required',loc);
+        ownershipBang ??= loc;
       add('id',s,loc);
     }else if(/[0-9]/.test(src[i])){
       let s='';while(i<src.length&&/[0-9_]/.test(src[i])){s+=src[i];advance();}
@@ -108,7 +109,8 @@ function lex(src) {
     else if('(){}[]:,;+-*/=.!<>'.includes(src[i])){add('sym',src[i],loc);advance();}
     else throw new CompileError('unsupported character',loc);
   }
-  out.push({kind:'eof',value:'<eof>',line,col});return out;
+  out.push({kind:'eof',value:'<eof>',line,col});
+  return {tokens:out,ownershipBang};
 }
 function rejectUnloweredInvertedClasses(tokens) {
   for (let i=0; i+2<tokens.length; i++) {
@@ -241,10 +243,6 @@ class Parser {
       if(op.kind!=='id')throw new CompileError('expected runtime operation after rt',op);
       if(['ref','unref','deref','raw'].includes(op.value))
         throw new CompileError('pointer-style runtime operation rt '+op.value+' is not valid Oreslang source',op);
-      // Both historical mutable-borrow orders are valid source aliases.
-      // This scalar backend lacks the typed ownership MIR to execute either.
-      if(op.value==='borrow' && this.ts[this.pos+1]?.value==='mut')
-        throw new CompileError('runtime ownership operation requires typed lowering in the JS scalar backend',op);
       if(op.value==='mut' && this.ts[this.pos+1]?.value!=='borrow')
         throw new CompileError("'rt mut' only supports borrowing; use 'rt mut borrow value'",op);
       throw new CompileError('runtime ownership operation requires typed lowering in the JS scalar backend',op);
@@ -273,10 +271,12 @@ class Parser {
 // The isolated parser is a bootstrap adapter. Future language frontends
 // should produce this versioned IR instead of duplicating parser semantics.
 export function compileToIR(source) {
-  const tokens=lex(source);
+  const {tokens,ownershipBang}=lex(source);
   // Reject affine Future violations at the compiler core boundary before IR.
   // Valid Future code still cannot execute in the scalar-only JS backend.
   preflightCoreFutureOwnership(tokens,(code,message,token)=>{throw new CompileError(code+': '+message,token);});
+  if(ownershipBang)
+    throw new CompileError('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: checked JS ownership lowering required',ownershipBang);
   rejectExecutionDomains(tokens,(message,token)=>{throw new CompileError(message,token);});
   rejectUnloweredInvertedClasses(tokens);
   rejectUnsupportedSelect(tokens);
