@@ -274,6 +274,19 @@ function tokenize(source) {
   emit('eof','<eof>',{line,col});
   return result;
 }
+/**
+ * JS program-v2 supports a restricted tagged Option/Result value ABI,
+ * but has no compiler-owned guest throw/raise/panic classification or trap
+ * unwind boundary. Reject source trap before resolution/ESM publication.
+ * Match lexer tokens, never raw text: comments containing 'trap' are inert.
+ */
+function rejectUnsupportedTrapEffect(tokens) {
+  for (const token of tokens) {
+    if (token.kind==='id' && token.value==='trap') {
+      fail('trap requires verified ordinary-throw effect and cleanup lowering; Option/Result values alone are not a trap boundary',token);
+    }
+  }
+}
 function rejectUnsupportedStaticSelect(tokens) {
   const startsStaticSelect = next =>
     next && ['{','over','first','fair','random'].includes(next.value);
@@ -1548,6 +1561,7 @@ export function compileToProgramIRV2(source) {
   rejectExecutionDomains(tokens,fail);
   rejectUnsupportedHttpActors(tokens,fail);
   rejectUnsupportedStaticSelect(tokens);
+  rejectUnsupportedTrapEffect(tokens);
   const linked=lowerCompilerOwnedTestingImports(tokens);
   const parsed=bindCompilerOwnedTestingImports(new Parser(linked.rootTokens).parse(),linked.locals);
   const program=resolveProgram(parsed);
