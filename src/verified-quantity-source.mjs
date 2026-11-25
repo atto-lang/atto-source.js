@@ -231,15 +231,16 @@ export function lowerVerifiedQuantitySource(tokens,report){
     const bindings=[];
     while(take('val')){
       if(!aliases.size||bindings.length>=64)fail('E_UNIT_LIMIT','typed local admission or budget');
-      let key,want;
+      let key,want=null;
       if(tokens[at+1]?.value===':'){key=identifier();expect(':');want=type();}
+      else if(tokens[at+1]?.value==='='){key=identifier();}
       else{want=type();key=identifier();}
       if(locals.has(key))fail('E_UNIT_DUPLICATE','duplicate local');
       expect('=');const value=expr(0,0);expect(';');
-      boundary(want,value,'E_REFINEMENT_BINDING');
+      if(want!==null)boundary(want,value,'E_REFINEMENT_BINDING');
       const slot=bindings.length;
       bindings.push({slot,init:value.ir});
-      locals.set(key,make(want.unit,{kind:'capture',slot},null,value.range));
+      locals.set(key,make(value.unit,{kind:'capture',slot},null,value.range));
     }
     expect('return');const v=expr(0,0);expect(';');expect('}');
     if(pub&&!same(v.unit,scalar()))fail('E_UNIT_ERASURE','main requires scale-one scalar');
