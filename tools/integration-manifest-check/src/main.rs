@@ -123,6 +123,7 @@ fn expected_upstreams(repository: &str) -> Option<&'static [&'static str]> {
             "oreslang-wasm",
         ]),
         "oreslang-source.js" => Some(&["oreslang-common-source", "oreslang-target-profiles"]),
+        "atto-source.js" => Some(&["atto-common-source", "atto-target-profiles"]),
         "oreslang-source.hdl" => Some(&["oreslang-common-source", "oreslang-target-profiles"]),
         "oreslang-source.forge" => Some(&["oreslang-common-source", "oreslang-target-profiles"]),
         "oreslang-source.net" => Some(&["oreslang-common-source", "oreslang-target-profiles"]),
@@ -182,7 +183,11 @@ fn verify_bytes(raw: &[u8], repository_name: &str) -> Result<(), String> {
         return Err("unsupported protocol".to_owned());
     }
 
-    let expected_repository = format!("ores-truffle-oreslang/{repository_name}");
+    let expected_repository = if repository_name == "atto-source.js" {
+        "atto-lang/atto-source.js".to_owned()
+    } else {
+        format!("ores-truffle-oreslang/{repository_name}")
+    };
     if string_value(&object, "repository")? != expected_repository {
         return Err("repository identity mismatch".to_owned());
     }
@@ -315,7 +320,8 @@ mod tests {
     fn real_local_manifest_is_valid() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let raw = fs::read(root.join(".oreslang/integration.json")).unwrap();
-        verify_bytes(&raw, "oreslang-source.js").unwrap();
+        verify_bytes(&raw, "atto-source.js").unwrap();
+        assert_reject(&raw, "oreslang-source.js");
     }
 
     #[test]

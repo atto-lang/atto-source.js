@@ -14,7 +14,7 @@ test('untrusted identity is denied even when isolation says trusted-worker',()=>
   const options=Object.create(null);
   options.isolation='trusted-worker';
   options.untrusted=true;
-  assert.throws(()=>admit(options),/separately verified OS sandbox/);
+  assert.throws(()=>admit(options),/untrusted tenant requires a verified TenantVM execution boundary/);
 });
 
 test('null-prototype records must not bypass unknown-option checks',()=>{

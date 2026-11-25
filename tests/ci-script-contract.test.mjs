@@ -25,7 +25,7 @@ test('all workflow npm-run commands have registered package scripts',()=>{
     assert.ok(commands.some(x=>x.command===name),'missing required workflow gate '+name);
 });
 test('named conformance commands execute existing test files',()=>{
-  for(const name of expected.filter(x=>x.startsWith('test:')||x.startsWith('parity:'))) {
+  for(const name of expected.filter(x=>x.startsWith('test:'))) {
     const cmd=manifest.scripts[name];
     assert.match(cmd,/^node --test (?:tests\/[a-zA-Z0-9_-]+\.test\.mjs ?)+$/);
     const selected=cmd.match(/tests\/[a-zA-Z0-9_-]+\.test\.mjs/g)||[];
@@ -35,8 +35,14 @@ test('named conformance commands execute existing test files',()=>{
   }
 });
 test('check command is an existing Node-only syntax gate',()=>{
-  assert.equal(manifest.scripts.check,'node scripts/check-js-syntax.mjs');
+  assert.equal(manifest.scripts.check,'node scripts/check-js-syntax.mjs && node bin/oreslang-jsc.mjs --check tests/fixtures/arithmetic.ores');
   assert.ok(existsSync(join(root,'scripts/check-js-syntax.mjs')));
+});
+test('parity reporting commands preserve the real existing reports',()=>{
+  for(const [name,script] of [['parity:js','bin/js-semantic-parity-report.mjs'],['parity:numeric-js','bin/js-numeric-boundary-report.mjs']]){
+    assert.equal(manifest.scripts[name],'node '+script);
+    assert.ok(existsSync(join(root,script)),script);
+  }
 });
 test('the missing-script detector fails on a synthetic removed command',()=>{
   const broken={...manifest.scripts};

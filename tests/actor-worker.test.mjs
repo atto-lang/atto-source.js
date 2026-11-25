@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {transpile_to_worker, TranspileError} from '../src/transpile-worker.mjs';
+import {rejectUnsupportedWorkerPlacement} from '../src/worker-actor-client.mjs';
 
 // Same Atto source shape as atto-source.rs/tests/fixtures/browser/remote-actor-receiver.atto.
 const actor_source = `
@@ -70,4 +71,26 @@ test('strict actor subset rejects unsupported effects, injections, extra actors 
   ];
   for(const source of rejects)
     assert.throws(()=>transpile_to_worker(source),error=>error instanceof TranspileError);
+});
+test('elastic actor worker placement fails closed before spawning unsupported JS Worker', () => {
+  const denied = [
+    'maxParallelism','max_parallelism','minParallelism','min_parallelism',
+    'poolSize','pool_size','pool','threadPool','threadPolicy',
+    'affinity','threadAffinity','pinnedWorker','dedicatedWorker',
+    'schedule','actor_schedule','actorSchedule'
+  ];
+  for (const key of denied) {
+    const options = Object.assign(Object.create(null), {[key]: 1});
+    assert.throws(() => rejectUnsupportedWorkerPlacement(options),
+      /elastic actor scheduling/, key);
+  }
+  assert.doesNotThrow(() => rejectUnsupportedWorkerPlacement({
+    moduleUrl: 'file:///trusted/guest.mjs', mode: 'handler', maxPending: 8
+  }));
+  assert.throws(
+    () => transpile_to_worker(
+      '@actor_schedule(max_parallelism = pool_size)\n' + actor_source),
+    error => error instanceof TranspileError,
+    'no unverified source annotation silently ignored by actor lowering'
+  );
 });

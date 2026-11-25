@@ -1,16 +1,3 @@
-# JS workflow named-command repair
+# JS CI admission and migration regression repair
 
-The protected CI workflow invokes eleven npm scripts missing from the previous
-package manifest. This proposal restores every command with explicit, existing
-Node source tests, preserving the full `npm test` run and all existing workflow
-steps. No workflow YAML is altered, and no gate is skipped.
-
-`check` validates JavaScript syntax in src, runtime, bin, scripts and tests
-with a bounded, shell-free Node child process; the separate contract test in
-`npm test` rejects missing workflow scripts, silently deleted required
-workflow commands, and nonexistent selected test files.
-
-The source Git tree was checked for each named target; whole-suite Node 22,
-actual browser Worker, and stepful GitHub Actions remain NOT_EXECUTED.
-Keep DRAFT pending exact-head execution, protected workflow review, and
-independent admission. No private source was copied out of the repository.
+Current main already restores all eleven named commands. Preserve existing compiler and numeric parity reports, add the bounded syntax gate before the existing arithmetic smoke, and guard every workflow npm command. Repair stale package self-references and exact tenant denial-message assertions without altering runtime admission. Migrate the declaration-only manifest to the explicit Atto JS identity and upstreams while retaining strict legacy validation, negative identity checks, and the not-attested disclaimer. No workflow or isolation gate is removed. Exact-head execution required.
