@@ -563,6 +563,15 @@ class Parser {
         const body=this.expression();
         this.expect(';');
         statements.push({kind:'return',body});
+      } else if(this.eat('val')) {
+        // This bounded slice admits only function-scope immutable int locals.
+        if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
+        this.expect('int');
+        const name=this.name();
+        this.expect('=');
+        const init=this.expression();
+        this.expect(';');
+        statements.push({kind:'local',name,init});
       } else if(this.eat('if')) {
         const condition=this.expression();
         // Canonical statement-only `if`; retain old ; do syntax.
@@ -598,6 +607,10 @@ class Parser {
           (this.returnsOnAllPaths(stmt.yes||[])&&this.returnsOnAllPaths(stmt.no||[]))))
         fail('unreachable statement after terminating return/if');
       if(stmt.kind==='return')result=stmt.body;
+      else if(stmt.kind==='local'){
+        if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
+        result={kind:'local',name:stmt.name,init:stmt.init,body:result};
+      }
       else if(stmt.kind==='voidCall'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: void call must precede a value return');
         result={kind:'seqVoidCall',call:stmt.expr,value:result};
@@ -631,6 +644,7 @@ class Parser {
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
+        case 'local':add(expr.init);add(expr.body);break;
         case 'newClass':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'methodCall':
           add(expr.receiver);for(const arg of expr.args)add(arg.expr??arg);break;
@@ -990,6 +1004,7 @@ function resolveProgram(parsed) {
       }
       case 'if':return resolvedType(expr.yes,owner);
       case 'seqVoidCall':return resolvedType(expr.value,owner);
+      case 'local':return resolvedType(expr.body,owner);
       case 'adtMatch':return resolvedType(expr.arms[0].body,owner);
       default:fail('cannot infer resolved expression type '+expr.kind);
     }
@@ -1018,6 +1033,14 @@ function resolveProgram(parsed) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
       case 'int':case 'bool':case 'symbol':return expr;
+      case 'local': {
+        if(owner.ownerKind==='method'||owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))
+          fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
+        if(nextCaptureSlot>=MAX_TOKENS)fail('local slot budget exceeded');
+        const slot=nextCaptureSlot++;
+        const init=resolve(expr.init,owner,depth+1,bindings);
+        return {kind:'local',slot,init,body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot}])};
+      }
       case 'seqVoidCall': {
         if(expr.call.kind!=='call'||expr.call.qualifier!==null)
           fail('VOID_STATEMENT_DIRECT_CALL_REQUIRED');
@@ -1170,6 +1193,7 @@ function resolveProgram(parsed) {
     else if(expr.kind==='binary'||expr.kind==='compare'||expr.kind==='symbolCompare') {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='seqVoidCall'){inspect(expr.call,owner);inspect(expr.value,owner);}
+    else if(expr.kind==='local'){inspect(expr.init,owner);inspect(expr.body,owner);}
     else if(expr.kind==='neg'||expr.kind==='not') inspect(expr.inner,owner);
     else if(expr.kind==='match'||expr.kind==='adtMatch') {
       inspect(expr.subject,owner);expr.arms.forEach(a=>inspect(a.body,owner));
@@ -1213,6 +1237,7 @@ function emitProgram(program) {
       case 'bool': return expr.value?'true':'false';
       case 'param':return '_p'+expr.index;
       case 'capture':return '_v'+expr.slot;
+      case 'local':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
@@ -1313,6 +1338,7 @@ function emitProgram(program) {
         return usesSymbol(expr.left)||usesSymbol(expr.right);
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
       case 'seqVoidCall':return usesSymbol(expr.call)||usesSymbol(expr.value);
+      case 'local':return usesSymbol(expr.init)||usesSymbol(expr.body);
       case 'neg':case 'not':return usesSymbol(expr.inner);
       case 'match':case 'adtMatch':return usesSymbol(expr.subject)||
         expr.arms.some(arm=>usesSymbol(arm.body));
@@ -1352,6 +1378,7 @@ function emitProgram(program) {
       case 'if':return usesPortableRuntime(expr.condition)||
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
       case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
+      case 'local':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'neg':case 'not':return usesPortableRuntime(expr.inner);
       case 'match':return usesPortableRuntime(expr.subject)||
         expr.arms.some(arm=>usesPortableRuntime(arm.body));
@@ -1519,7 +1546,8 @@ export function compileAttoScalarV1(source) {
     fail('AttoLang scalar-v1 admits only root integer functions');
   const visit=expr=>{
     switch(expr.kind){
-      case 'int':case 'param':return;
+      case 'int':case 'param':case 'capture':return;
+      case 'local':visit(expr.init);visit(expr.body);return;
       case 'neg':return visit(expr.inner);
       case 'binary':
         if(!['+','-','*','/','%','mod'].includes(expr.op))
