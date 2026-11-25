@@ -72,7 +72,6 @@ test('strict actor subset rejects unsupported effects, injections, extra actors 
   for(const source of rejects)
     assert.throws(()=>transpile_to_worker(source),error=>error instanceof TranspileError);
 });
-
 test('elastic actor worker placement fails closed before spawning unsupported JS Worker', () => {
   const denied = [
     'maxParallelism','max_parallelism','minParallelism','min_parallelism',

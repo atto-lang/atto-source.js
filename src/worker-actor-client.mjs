@@ -8,10 +8,7 @@ const errorText = error => {
 };
 const DEFAULT_MAX_PENDING_BYTES=32*1024*1024;
 const MAX_CONFIGURED_PENDING_BYTES=256*1024*1024;
-// The current JS Worker adapter creates one Worker per actor and cannot
-// guarantee pool-size elastic turns, pinned/dedicated carriers or spawn policy.
-// Deny unknown scheduling authority BEFORE constructing a Worker rather than
-// silently dropping the option and claiming source-level scheduling parity.
+// Single Worker per actor: fail closed on unsupported scheduling authority.
 const UNSUPPORTED_PLACEMENT_KEYS = Object.freeze([
   'placement','cpuAffinity','maxParallelTurns',
   'accelerator','gpuDeviceId','maxGpuInFlight',

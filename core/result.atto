@@ -1,0 +1,29 @@
+// JS freestanding compiler: independently owned namespace core Result ABI.
+// Stage-1 supports Result<int,int> only. No dynamic duck typing, host Either,
+// callback effects, auto-unboxing of Err, or arbitrary recursive ADTs.
+namespace core;
+  pub fnc result_ok_if_nonnegative(int value): Result<int, int> {
+    if value < 0; do return Err(value); fi
+    return Ok(value);
+  }
+  pub fnc result_is_ok(Result<int, int> value): bool {
+    return Result.is_ok(value);
+  }
+  pub fnc result_unwrap_or(Result<int, int> value, int fallback): int {
+    return Result.unwrap_or(value, fallback);
+  }
+  pub fnc result_error_or(Result<int, int> value, int fallback): int {
+    return Result.unwrap_err_or(value, fallback);
+  }
+  pub fnc result_map_add(Result<int, int> value, int delta): Result<int, int> {
+    if Result.is_ok(value); do
+      return Ok(Result.unwrap_or(value, 0) + delta);
+    fi
+    return Err(Result.unwrap_err_or(value, 0));
+  }
+  pub fnc result_to_option(Result<int, int> value): Option<int> {
+    if Result.is_ok(value); do
+      return Some(Result.unwrap_or(value, 0));
+    fi
+    return None;
+  }
