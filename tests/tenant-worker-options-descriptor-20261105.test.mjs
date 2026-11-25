@@ -31,7 +31,7 @@ test('symbolic, inherited and unexpected options cannot grant authority',()=>{
 
 test('unsupported sandbox modes and untrusted actors fail closed',()=>{
  assert.throws(()=>requireSupportedTenantWorkerIsolation(
-  {isolation:'trusted-worker',untrusted:true}),/separately verified OS sandbox/);
+  {isolation:'trusted-worker',untrusted:true}),/untrusted tenant requires a verified TenantVM execution boundary/);
  for(const isolation of ['vm-isolate','wasmtime-store','sandboxed-process','untrusted'])
   assert.throws(()=>requireSupportedTenantWorkerIsolation({isolation}),/not implemented/);
 });

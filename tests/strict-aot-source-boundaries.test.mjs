@@ -77,7 +77,11 @@ test("the JS-specific policy remains a draft and never claims native guest AOT o
   assert.match(policy, /not native full guest AOT/u);
   assert.match(policy, /the JS engine may JIT and uses GC/u);
   assert.match(policy, /Legacy\/experimental divergence is labeled/u);
-  assert.match(agent, /steps=\[\]/u);
-  assert.match(agent, /NOT_EXECUTED/u);
+  // Local agent instructions delegate governance to the canonical org policy;
+  // the backend evidence policy explicitly retains the zero-step rule.
+  assert.match(agent, /github\.com\/atto-lang\/\.github\/blob\/main\/AGENTS\.md/u);
+  assert.match(policy, /steps=\[\]/u);
+  assert.match(policy, /steps=null/u);
+  assert.match(policy, /NOT_EXECUTED/u);
   assert.match(copilot, /the JS engine may still JIT and use tracing GC/u);
 });

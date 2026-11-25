@@ -35,9 +35,13 @@ const GENERATOR_RESERVED=new Set([
   'Some','None','Ok','Err','using','requires','serial','critical-read','critical-write','nb-select'
 ]);
 export class ProgramIRError extends Error {
-  constructor(detail) {super('error: program IR: '+detail);this.name='ProgramIRError';}
+  constructor(detail, code=null) {
+    super('error: program IR: '+detail);
+    this.name='ProgramIRError';
+    this.code=code;
+  }
 }
-const fail=s=>{throw new ProgramIRError(s);};
+const fail=(s,code=null)=>{throw new ProgramIRError(s,code);};
 function record(v,keys,context) {
   if(v===null || typeof v!=='object' || Array.isArray(v))fail(context+': expected object');
   const proto=Object.getPrototypeOf(v);
@@ -211,7 +215,7 @@ export function validateProgramIRV2(input) {
     if(typed&&returnType==='int'&&paramTypes.every(t=>t==='int'))
       fail('redundant typed metadata on int-only function');
     const slot=(module===null?'@file/':'@module/'+module+'/')+name+'/'+params.length;
-    if(slots.has(slot))fail('duplicate caller-visible method arity '+slot);
+    if(slots.has(slot))fail('duplicate caller-visible method arity '+slot,'E_DUPLICATE');
     const family=slot.slice(0,slot.lastIndexOf('/'));
     if(symbolKinds.has(family)&&symbolKinds.get(family)!==f.kind)
       fail('fnc/routine overload kind conflict '+family);
@@ -280,6 +284,8 @@ export function validateProgramIRV2(input) {
   const graph=owners.map(()=>new Set());
   let nodes=0;
   const captureSlots=owners.map(()=>new Set());
+  const floatSlots=owners.map(()=>new Set());
+  const trapSlots=owners.map(()=>new Set());
   function node(expr,owner,depth=0,expected='int',active=[]){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('expression complexity exceeded');
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid expression');
@@ -295,6 +301,33 @@ export function validateProgramIRV2(input) {
     if(expected!=='symbol'&&desc.value==='symbol')
       fail('Symbol value cannot be used as non-Symbol');
     switch(desc.value) {
+      case 'float':
+        record(expr,['kind','value'],'float');
+        if(expected!=='float'||typeof expr.value!=='string'||expr.value.length>128||
+           !/^[0-9]+\.[0-9]+$/.test(expr.value)||!Number.isFinite(Number(expr.value)))fail('invalid float literal/type');
+        return {kind:'float',value:expr.value};
+      case 'trap':
+        record(expr,['kind','operandType','inner'],'typed arithmetic trap');
+        if(expected!=='trapResult'||!['int','result<int,int>','trapResult'].includes(expr.operandType))fail('trap operand/result type mismatch');
+        return {kind:'trap',operandType:expr.operandType,inner:node(expr.inner,owner,depth+1,expr.operandType,active)};
+      case 'trapMethod':
+        record(expr,['kind','name','receiver'],'trap Result method');
+        if(!['is_ok','is_err','unwrap'].includes(expr.name)||expected!==(expr.name==='unwrap'?'int':'bool'))fail('trap Result method type mismatch');
+        return {kind:'trapMethod',name:expr.name,receiver:node(expr.receiver,owner,depth+1,'trapResult',active)};
+      case 'floatNeg':
+        record(expr,['kind','inner'],'float negation');
+        if(expected!=='float')fail('float negation type mismatch');
+        return {kind:'floatNeg',inner:node(expr.inner,owner,depth+1,'float',active)};
+      case 'floatBin':
+        record(expr,['kind','op','left','right'],'float arithmetic');
+        if(expected!=='float'||!['+','-','*','/'].includes(expr.op))fail('float arithmetic type mismatch');
+        return {kind:'floatBin',op:expr.op,left:node(expr.left,owner,depth+1,'float',active),right:node(expr.right,owner,depth+1,'float',active)};
+      case 'numericCompare':
+        record(expr,['kind','op','leftType','rightType','left','right'],'numeric comparison');
+        if(expected!=='bool'||!['<','>','<=','>=','==','!='].includes(expr.op)||
+           !['int','float'].includes(expr.leftType)||!['int','float'].includes(expr.rightType))fail('numeric comparison type mismatch');
+        return {kind:'numericCompare',op:expr.op,leftType:expr.leftType,rightType:expr.rightType,
+          left:node(expr.left,owner,depth+1,expr.leftType,active),right:node(expr.right,owner,depth+1,expr.rightType,active)};
       case 'int':
         record(expr,['kind','value'],'int');
         if(expected!=='int')fail('boolean expected, got int');
@@ -355,13 +388,27 @@ export function validateProgramIRV2(input) {
           ...(named?{paramOrder:order}:{})
         };
       }
-      case 'capture':
+      case 'local':case 'floatLocal':case 'trapLocal': {
+        record(expr,['kind','slot','init','body'],'immutable numeric local');
+        if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
+           expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
+          fail('invalid or repeated local slot');
+        captureSlots[owner].add(expr.slot);
+        const t=desc.value==='floatLocal'?'float':desc.value==='trapLocal'?'trapResult':'int';
+        const init=node(expr.init,owner,depth+1,t,active);
+        if(t==='float')floatSlots[owner].add(expr.slot);
+        if(t==='trapResult')trapSlots[owner].add(expr.slot);
+        return {kind:desc.value,slot:expr.slot,init,body:node(expr.body,owner,depth+1,expected,[...active,expr.slot])};
+      }
+      case 'capture':case 'floatCapture':case 'trapCapture':
         record(expr,['kind','slot'],'capture');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            !active.includes(expr.slot))
           fail('ADT capture outside its typed payload scope');
-        if(expected!=='int')fail('ADT int payload capture type mismatch');
-        return {kind:'capture',slot:expr.slot};
+        const captureType=floatSlots[owner].has(expr.slot)?'float':trapSlots[owner].has(expr.slot)?'trapResult':'int';
+        if(captureType==='int'&&expected!=='int')fail('ADT int payload capture type mismatch');
+        if(expected!==captureType||desc.value!==(captureType==='float'?'floatCapture':captureType==='trapResult'?'trapCapture':'capture'))fail('capture type mismatch');
+        return {kind:desc.value,slot:expr.slot};
       case 'param':
         record(expr,['kind','index'],'param');
         if(!Number.isSafeInteger(expr.index)||Object.is(expr.index,-0)||expr.index<0||expr.index>=owners[owner].params.length)
@@ -380,7 +427,7 @@ export function validateProgramIRV2(input) {
       case 'binary':
         record(expr,['kind','op','left','right'],'binary');
         if(expected!=='int')fail('arithmetic in boolean context');
-        if(!['+','-','*','%','mod','^'].includes(expr.op))fail('unsupported binary operator');
+        if(!['+','-','*','/','%','mod','^'].includes(expr.op))fail('unsupported binary operator');
         return {kind:'binary',op:expr.op,
           left:node(expr.left,owner,depth+1,'int',active),right:node(expr.right,owner,depth+1,'int',active)};
       case 'compare':
@@ -401,6 +448,16 @@ export function validateProgramIRV2(input) {
         return {kind:'if',condition:node(expr.condition,owner,depth+1,'bool',active),
           yes:node(expr.yes,owner,depth+1,expected,active),
           no:node(expr.no,owner,depth+1,expected,active)};
+      case 'seqVoidCall': {
+        record(expr,['kind','call','value'],'void-call sequence');
+        const effectKind=expr.call&&typeof expr.call==='object'&&
+          Object.getOwnPropertyDescriptor(expr.call,'kind')?.value;
+        if(effectKind!=='call'&&effectKind!=='namedCall')
+          fail('void-call sequence requires a direct call');
+        return {kind:'seqVoidCall',
+          call:node(expr.call,owner,depth+1,'void',active),
+          value:node(expr.value,owner,depth+1,expected,active)};
+      }
       case 'call': {
         record(expr,['kind','target','args'],'call');
         if(!Number.isSafeInteger(expr.target)||Object.is(expr.target,-0)||expr.target<0||expr.target>=headers.length)
@@ -551,7 +608,7 @@ export function validateProgramIRV2(input) {
         return {kind:'not',inner:methodNode(expr.inner,method,depth+1,'bool')};
       case 'binary':
         record(expr,['kind','op','left','right'],'method binary');
-        if(expected!=='int'||!['+','-','*','%','mod','^'].includes(expr.op))
+        if(expected!=='int'||!['+','-','*','/','%','mod','^'].includes(expr.op))
           fail('unsupported method arithmetic');
         return {kind:'binary',op:expr.op,
           left:methodNode(expr.left,method,depth+1,'int'),

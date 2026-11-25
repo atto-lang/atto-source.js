@@ -100,7 +100,8 @@ function lex(src) {
       }
       while(i<literal.end)advance();
       add(literal.kind,literal,loc);
-    }else if(src.startsWith('->',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
+    }else if(src.startsWith('->',i)||src.startsWith('<-',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
+    else if(src[i]==='•'){add('sym','•',loc);advance();}
     else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
     else if(src[i]==='^')throw new CompileError(src.startsWith('^^',i)?"'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)":"'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",loc);
     else if('(){}[]:,;+-*/=.'.includes(src[i])){add('sym',src[i],loc);advance();}
@@ -167,7 +168,13 @@ class Parser {
       if(pub){this.match('define');}
       else if(this.match('define')){pub=this.match('pub');}
       const at=this.peek();
-      if(!this.match('fnc')&&!this.match('routine'))throw new CompileError('unsupported declaration',at);
+      // Canonical return-first int callables lower through the existing IR.
+      const fnc=this.match('fnc'),routine=!fnc&&this.match('routine');
+      const requestedReturnType=this.peek().value;
+      const returnFirst=['int','infer'].includes(requestedReturnType) &&
+        ['<-','•'].includes(this.ts[this.pos+1]?.value);
+      if(!fnc&&!routine&&!returnFirst)throw new CompileError('unsupported declaration',at);
+      if(returnFirst){this.pos+=2;}
       const name=this.id();this.expect('(');const params=[];
       if(!this.match(')')){
         do{if(params.length>=128)throw new CompileError('parameter limit');this.expect('int');const v=this.id();if(params.includes(v))throw new CompileError('duplicate parameter '+v);params.push(v);}while(this.match(','));
@@ -176,14 +183,42 @@ class Parser {
       // The bootstrap parser only supports int functions with a single
       // return expression. Support canonical arrow/end spellings without
       // pretending to support arbitrary statement bodies or async functions.
-      const arrow=this.match('->');
-      if(!arrow)this.expect(':');
-      this.expect('int');
+      let arrow=returnFirst?false:this.match('->');
+      let declaredReturnType=requestedReturnType;
+      if(!returnFirst){
+        if(!arrow)this.expect(':');
+        if(this.match('infer'))declaredReturnType='infer';
+        else {this.expect('int');declaredReturnType='int';}
+        // A name-first `: T -> { ... }` header shares the same IR.
+        if(!arrow)arrow=this.match('->');
+      }
       const braced=this.match('{');
-      if(!braced&&!arrow)throw new CompileError('expected { for colon function body',this.peek());
-      if(!braced){if(!this.match('as'))this.match('::');}
+      const began=!braced&&returnFirst&&this.match('begin');
+      if(!braced&&!began&&!arrow&&!returnFirst)
+        throw new CompileError('expected { or begin for return-first function body',this.peek());
+      if(!braced&&!began&&!returnFirst){if(!this.match('as'))this.match('::');}
       this.expect('return');
       const body=this.expr();this.expect(';');this.expect(braced?'}':'end');
+      // Only return-first end bodies admit one native-compatible suffix.
+      // A final dot cannot act as a separator before another declaration.
+      if(returnFirst&&!braced){
+        if(this.peek().value===';')this.pos++;
+        else if(this.peek().value==='.'&&this.ts[this.pos+1]?.kind==='eof')this.pos++;
+      }
+      if(declaredReturnType==='infer'){
+        // Infer is a static type proof, not a covert conversion to int.
+        // Unsupported effects, calls or non-scalar expressions are rejected.
+        function provenInt(node) {
+          if(node.kind==='int')return true;
+          if(node.kind==='var')return params.includes(node.name);
+          if(node.kind==='neg')return provenInt(node.inner);
+          if(node.kind==='binary'&&['+','-','*'].includes(node.op))
+            return provenInt(node.left)&&provenInt(node.right);
+          return false;
+        }
+        if(!provenInt(body))
+          throw new CompileError('INFER_UNSUPPORTED: return-first infer requires pure int scalar expression',at);
+      }
       functions.push({name,params,body,pub});
     }
     if(module)this.expect('end');

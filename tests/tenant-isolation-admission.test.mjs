@@ -11,7 +11,7 @@ test('ordinary trusted Workers remain explicitly in-process',()=>{
 
 test('hostile tenant mode always fails closed',()=>{
   for(const isolation of ['trusted-worker','wasmtime-store','vm-isolate','sandboxed-process','untrusted']){
-    assert.throws(()=>requireSupportedTenantWorkerIsolation({isolation,untrusted:true}),/OS sandbox/);
+    assert.throws(()=>requireSupportedTenantWorkerIsolation({isolation,untrusted:true}),/untrusted tenant requires a verified TenantVM execution boundary/);
   }
 });
 

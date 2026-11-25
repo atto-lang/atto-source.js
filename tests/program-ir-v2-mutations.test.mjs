@@ -26,7 +26,7 @@ const cases=[
  x=>{x.functions[2].body={kind:'param',index:0};},
  x=>{x.functions[2].body={kind:'int',value:'01'};},
  x=>{x.functions[2].body={kind:'int',value:'9223372036854775808'};},
- x=>{x.functions[2].body={kind:'binary',op:'/',left:lit(),right:lit()};},
+ x=>{x.functions[2].body={kind:'binary',op:'//',left:lit(),right:lit()};},
  x=>{x.functions[2].body={kind:'call',target:2,args:[]};},
  x=>{x.functions[1].params=['a','a'];},
  x=>{x.functions.push({...x.functions[0]});},
