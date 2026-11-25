@@ -1,5 +1,6 @@
 import {createScalarIR, validateScalarIR} from './scalar-ir.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
+import {rejectUnsupportedHttpActors} from './http-actor-admission.mjs';
 import {scanStringLiteral} from './string-literal-syntax.mjs';
 import {preflightCoreFutureOwnership} from './core-future-ownership.mjs';
 /** Experimental fail-closed Oreslang scalar-to-ESM compiler. */
@@ -82,6 +83,14 @@ function lex(src) {
     const loc={line,col};
     if(/[A-Za-z_]/.test(src[i])){
       let s='';while(i<src.length&&/[A-Za-z0-9_]/.test(src[i])){s+=src[i];advance();}
+      // A typed Topic receiver may be a local, parameter or import. Until
+      // scalar ESM owns actor/group capabilities, share! and Result lowering,
+      // reject actual member publication before producing source/IR artifacts.
+      // Opaque strings/comments were already skipped by this lexer.
+      if(s==='try_publish' && out.at(-1)?.kind==='sym' &&
+         out.at(-1).value==='.')
+        throw new CompileError(
+          'Topic.try_publish requires checked actor/group, share! and Result lowering; JS scalar backend unsupported',loc);
       // Record the first contextual ownership bang so the typed Future
       // preflight can still diagnose its legacy and canonical spellings.
       if(['copy','take','borrow','share'].includes(s) && src[i]==='!' &&
@@ -296,6 +305,7 @@ export function compileToIR(source) {
   if(ownershipBang)
     throw new CompileError('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: checked JS ownership lowering required',ownershipBang);
   rejectExecutionDomains(tokens,(message,token)=>{throw new CompileError(message,token);});
+  rejectUnsupportedHttpActors(tokens,(message,token)=>{throw new CompileError(message,token);});
   rejectSingletonDeclarations(tokens);
   rejectUnloweredInvertedClasses(tokens);
   rejectUnsupportedSelect(tokens);

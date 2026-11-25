@@ -24,7 +24,9 @@ export function rejectUnsupportedWorkerPlacement(options) {
   for (const key of UNSUPPORTED_PLACEMENT_KEYS) {
     if (Object.prototype.hasOwnProperty.call(options,key)) {
       throw new TypeError(
-        'JavaScript Worker backend cannot guarantee CPU/GPU placement or elastic actor scheduling: ' + key);
+        (['placement','cpuAffinity','maxParallelTurns','accelerator','gpuDeviceId','maxGpuInFlight'].includes(key)
+          ? 'JavaScript Worker backend cannot guarantee CPU/GPU placement: '
+          : 'JavaScript Worker backend cannot guarantee elastic actor scheduling: ') + key);
     }
   }
 }

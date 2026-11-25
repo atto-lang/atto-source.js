@@ -72,18 +72,17 @@ test('source admission keeps normal Unicode comments and visible escapes inert',
 });
 
 
-test('scalar preserves explicit Unicode comment boundaries; program-v2 rejects ambiguous separators', () => {
+test('both source frontends preserve explicit Unicode comment boundaries without hiding directives', () => {
   for (const cp of [0x0085, 0x2028, 0x2029]) {
     const sep = String.fromCodePoint(cp);
     for (const source of ['/* café 😀 '+sep+' */ '+base,
       '// visible comment '+sep+base, base+' // '+sep]) {
       assert.doesNotThrow(() => compile(source));
-      const pos = source.indexOf(sep);
-      assert.throws(() => compileToProgramIRV2(source),
-        new RegExp('Unicode line separator in source at UTF-16 offset '+pos+'$'));
+      assert.doesNotThrow(() => compileToProgramIRV2(source));
     }
-    assert.throws(() => compile('// ignored'+sep+'// oreslang:checked-i64'+sep+base),
-      /checked-i64 source requires program-v2/);
+    const displaced='// ignored'+sep+'// oreslang:checked-i64-v1'+sep+base;
+    assert.throws(() => compile(displaced), /checked-i64 source requires program-v2/);
+    assert.throws(() => compileToProgramIRV2(displaced), /checked-i64-v1: malformed, duplicated, displaced or unsupported directive/);
   }
 });
 

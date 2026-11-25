@@ -1,6 +1,7 @@
 import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 import {TESTING_SCALAR_SOURCE, TESTING_SCALAR_EXPORTS} from './compiler-owned-testing-scalar.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
+import {rejectUnsupportedHttpActors} from './http-actor-admission.mjs';
 import {isCoreConstructor,isProtectedPreludeIdentity} from './automatic-prelude.mjs';
 /**
  * Experimental Oreslang program-to-ESM v2 slice:
@@ -43,6 +44,7 @@ export class ProgramCompileError extends Error {
   }
 }
 const fail = (message, loc) => {throw new ProgramCompileError(message, loc);};
+const sourceLineEnd = ch => ch==='\n'||ch==='\r'||ch==='\u0085'||ch==='\u2028'||ch==='\u2029';
 
 /**
  * Align source-profile negotiation with Java CheckedI64SourceHeader.
@@ -72,13 +74,13 @@ function requireWellFormedCheckedI64Header(source) {
     if(ch==='"'||ch==="'"){quote=ch;i++;continue;}
     if(ch==='/'&&next==='*'){depth=1;i+=2;continue;}
     if(ch==='/'&&next==='/'){
-      const end=source.indexOf('\n',i);
-      const stop=end<0?source.length:end;
+      let stop=i+2;
+      while(stop<source.length&&!sourceLineEnd(source[stop]))stop++;
       let marker=i+2;
       while(marker<stop&&' \t\r\v\f'.includes(source[marker]))marker++;
       if(source.startsWith(prefix,marker)&&(!enabled||i!==0))
         fail('checked-i64-v1: malformed, duplicated, displaced or unsupported directive');
-      i=end<0?stop:end+1;
+      i=stop;
       continue;
     }
     i++;
@@ -100,10 +102,7 @@ function validateSourceText(source) {
     if(unit===0x061c||unit===0x200e||unit===0x200f||
        (unit>=0x202a&&unit<=0x202e)||(unit>=0x2066&&unit<=0x2069))
       fail('bidirectional Unicode control in source at UTF-16 offset '+i);
-    // Unlike scalar-v1, this lexer does not treat all Unicode separators as
-    // line-comment boundaries. Refuse ambiguous source until it does.
-    if(unit===0x0085||unit===0x2028||unit===0x2029)
-      fail('Unicode line separator in source at UTF-16 offset '+i);
+    // All supported Unicode source line separators are handled consistently by the lexer and directive scanner.
     if(unit>=0xd800&&unit<=0xdbff){
       const lo=source.charCodeAt(i+1);
       if(!(lo>=0xdc00&&lo<=0xdfff))fail('invalid UTF-16 source');
@@ -141,7 +140,9 @@ function tokenize(source) {
   const result = [];
   let pos = 0, line = 1, col = 1;
   function advance() {
-    if (source[pos] === '\n') {line++; col = 1;} else col++;
+    const ch=source[pos];
+    if(sourceLineEnd(ch)){if(ch!=='\n'||source[pos-1]!=='\r')line++;col=1;}
+    else col++;
     pos++;
   }
   function emit(kind, value, start) {
@@ -151,9 +152,9 @@ function tokenize(source) {
   while (pos < source.length) {
     const start = {line, col};
     const c = source[pos];
-    if (/\s/.test(c)) {advance(); continue;}
+    if (/\s/.test(c)||c==='\u0085') {advance(); continue;}
     if (source.startsWith('//',pos)) {
-      while (pos < source.length && source[pos] !== '\n') advance();
+      while (pos < source.length && !sourceLineEnd(source[pos])) advance();
       continue;
     }
     if (source.startsWith('/*',pos)) {
@@ -1545,6 +1546,7 @@ function bindCompilerOwnedTestingImports(parsed,locals) {
 export function compileToProgramIRV2(source) {
   const tokens=tokenize(source);
   rejectExecutionDomains(tokens,fail);
+  rejectUnsupportedHttpActors(tokens,fail);
   rejectUnsupportedStaticSelect(tokens);
   const linked=lowerCompilerOwnedTestingImports(tokens);
   const parsed=bindCompilerOwnedTestingImports(new Parser(linked.rootTokens).parse(),linked.locals);
