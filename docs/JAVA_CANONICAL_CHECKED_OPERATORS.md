@@ -1,0 +1,5 @@
+# Java canonical operators: current-main integration
+
+Based on main db5f12c32bf80b9adaa53cc74768e69166f7723f. Forward-ports the checked operator slice of JS #73 (fb0780376dad5553de1fdfd922a72b358709dc4a) and the shift contract from JS #46; supersedes the old removed-XOR assertion from JS #91. Java strict #72 is the temporary semantic authority. ^ is statement-only return, ^^ is signed-i64 XOR, & > ^^ > |, and triple shifts are bounded bit-pattern operations. Raw % and infix ^ are invalid; typed << and >> do not silently become shifts. Generic closers are still individual tokens. No changes to old wrapping scalar-v1 or the worker entrypoint in this slice.
+
+Actual checked source -> validated IR -> emitted artifact tests use Node ESM. Supplemental isolated V8 preflight: 46 cases; imports/exports adapted and UTF-8 encoder supplied. This is not exact-head Node CI, full regression, native AOT or zero-GC evidence. Full trap, quotient and typed error port from #73 remains separate; current main rejects those unsupported constructs. Keep full AOT and zero-GC guest ownership as design requirements; BigInt and JS engine GC are not zero-GC proof.

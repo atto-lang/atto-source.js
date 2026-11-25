@@ -263,11 +263,9 @@ function tokenize(source) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
     } else if (c==='%') {
       fail("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",start);
-    } else if (c==='^') {
-      fail(source.startsWith('^^',pos)
-        ? "'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)"
-        : "'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",start);
-    } else if ('(){}[]:,;+-*/=.<>!?'.includes(c)) {
+    } else if (source.startsWith('^^',pos)) {
+      emit('sym','^^',start); advance(); advance();
+    } else if ('(){}[]:,;+-*/=.<>!?^&|'.includes(c)) {
       emit('sym',c,start); advance();
     } else fail('unsupported character',start);
   }
@@ -422,7 +420,7 @@ class Parser {
       const terminator=braced?'}':'end';
       let body=null;
       if(returnType==='void'){
-        if(this.eat('return')){
+        if((this.eat('return')||this.eat('^'))){
           if(this.peek().value!==';')fail('RETURN_VOID_VALUE: void method cannot return a value',this.peek());
           this.expect(';');
         }
@@ -491,7 +489,7 @@ class Parser {
         if(this.eat('*'))fail('yield* is not implemented in JS sync generator v1',this.peek());
         if(yields.length>=MAX_TOKENS)fail('generator yield budget exceeded',this.peek());
         yields.push(this.expression());this.expect(';');
-      }else if(this.eat('return')){
+      }else if((this.eat('return')||this.eat('^'))){
         if(this.peek().value!==';')
           fail('generator return cannot carry a value; use yield',this.peek());
         this.expect(';');returned=true;
@@ -537,7 +535,7 @@ class Parser {
     if(returnType==='void'){
       // Program-v2 has no general statement/effect lowering yet. Match the
       // existing pure-void class-method subset without fabricating a value.
-      if(this.eat('return')){
+      if((this.eat('return')||this.eat('^'))){
         if(this.peek().value!==';')fail('RETURN_VOID_VALUE: void function cannot return a value',this.peek());
         this.expect(';');
       }
@@ -566,7 +564,7 @@ class Parser {
     const statements=[];
     while(this.peek().kind!=='eof'&&!terminators.includes(this.peek().value)) {
       if(++this.statementNodes>MAX_TOKENS)fail('statement budget exceeded',this.peek());
-      if(this.eat('return')) {
+      if((this.eat('return')||this.eat('^'))) {
         if(this.peek().value===';')
           fail('RETURN_VALUE_REQUIRED: nonvoid return requires a value',this.peek());
         const body=this.expression();
@@ -769,7 +767,15 @@ class Parser {
     try {
       let left = this.primary();
       while (true) {
-        const op = this.peek().value;
+        const token=this.peek();
+        let op=token.value, width=1;
+        // Recognize contiguous triple shifts only at expression boundaries.
+        // Keep individual > tokens for nested nominal generic closers.
+        if(op==='<'||op==='>'){
+          const adjacent=n=>{const t=this.tokens[this.i+n];return t?.kind==='sym'&&t.value===op&&t.line===token.line&&t.col===token.col+n;};
+          if(adjacent(1)&&adjacent(2)){op=op.repeat(3);width=3;}
+          else if(adjacent(1))fail('typed I/O requires capability and suspension lowering; not a numeric shift',token);
+        }
         if (op==='?' && min<=1) {
           this.i++;
           const yes=this.expression();
@@ -783,10 +789,13 @@ class Parser {
         // lazy conditionals, never JS truthiness or eager bitwise operators.
         const compare=['<','>','<=','>=','==','!=','eq','neq'].includes(op);
         const logical=op==='and'||op==='or';
-        const prec=op==='*'?20:op==='+'||op==='-'?10:
-          compare?5:op==='and'?4:op==='or'?3:-1;
+        if(op==='^')fail("E_OPERATOR_CARET: single infix '^' is invalid; use '^^' for integer XOR",token);
+        const prec=op==='*'?20:op==='+'||op==='-'?15:
+          op==='<<<'||op==='>>>'?12:
+          ['<','>','<=','>='].includes(op)?9:compare?8:
+          op==='&'?7:op==='^^'?6:op==='|'?5:op==='and'?4:op==='or'?3:-1;
         if (prec < min) break;
-        this.i++;
+        this.i+=width;
         const right=this.expression(prec+1);
         if(logical){
           left=op==='and'
@@ -794,7 +803,7 @@ class Parser {
             : {kind:'if',condition:left,yes:{kind:'bool',value:true},no:right};
         }else{
           left={kind:compare?'compare':'binary',
-            op:op==='eq'?'==':op==='neq'?'!=':op,left,right};
+            op:op==='eq'?'==':op==='neq'?'!=':op==='^^'?'^':op,left,right};
         }
       }
       return left;
@@ -841,8 +850,8 @@ class Parser {
       return {kind:'variable', name:first};
     }
     const args=this.argumentsAfterOpen();
-    // Named integer operations replace the reserved %, ^ and ^^ operators.
-    // The binary ops below are internal IR names, never source syntax.
+    // Named integer operations retain their semantics; raw % remains reserved.
+    // Internal ^ denotes integer XOR; only ^^ spells it in source.
     if(qualifier==='Integer'){
       const ops={rem:'%',mod:'mod',bitXor:'^'};
       if(!Object.hasOwn(ops,symbol))fail('Integer.'+symbol+' is unsupported; use Integer.rem, Integer.mod or Integer.bitXor',token);
@@ -1248,6 +1257,15 @@ function emitProgram(program) {
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
       case 'not':return '!('+emitExpr(expr.inner,depth+1)+')';
       case 'binary':
+        if(expr.op==='<<<'||expr.op==='>>>'){
+          const staticCount=expr.right.kind==='int'?BigInt(expr.right.value):
+            expr.right.kind==='neg'&&expr.right.inner.kind==='int'?-BigInt(expr.right.inner.value):null;
+          if(staticCount!==null&&(staticCount<0n||staticCount>63n))fail('E_SHIFT_DISTANCE: expected 0..63');
+          const left=emitExpr(expr.left,depth+1),right=emitExpr(expr.right,depth+1);
+          // Evaluate both operands once; validate before shifting, never mask counts.
+          const shift=expr.op==='<<<'?'a<<b':'BigInt.asUintN(64,a)>>b';
+          return '((a,b)=>{_check(a);_check(b);if(b<0n||b>63n)throw new RangeError("E_GUEST_SHIFT_DISTANCE: expected 0..63");return BigInt.asIntN(64,'+shift+');})('+left+','+right+')';
+        }
         if(expr.op==='%')return '_rem(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
         // Inline so programs without Integer.mod keep byte-identical output.
         if(expr.op==='mod')return '((a,b)=>{const r=_rem(a,b);return r<0n?_check(b>0n?r+b:r-b):r;})(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
@@ -1633,7 +1651,7 @@ export function compileAttoScalarV1(source) {
       case 'int':case 'param':return;
       case 'neg':return visit(expr.inner);
       case 'binary':
-        if(!['+','-','*'].includes(expr.op))
+        if(!['+','-','*','^','&','|','<<<','>>>'].includes(expr.op))
           fail('AttoLang scalar-v1 removed or unsupported operator '+expr.op);
         visit(expr.left);visit(expr.right);return;
       case 'call':
