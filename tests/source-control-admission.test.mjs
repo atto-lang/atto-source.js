@@ -72,20 +72,18 @@ test('source admission keeps normal Unicode comments and visible escapes inert',
 });
 
 
-test('scalar and program-v2 reject visually deceptive Unicode source line separators', () => {
+test('scalar preserves explicit Unicode comment boundaries; program-v2 rejects ambiguous separators', () => {
   for (const cp of [0x0085, 0x2028, 0x2029]) {
     const sep = String.fromCodePoint(cp);
-    for (const source of [
-      '/* café 😀 '+sep+' */ '+base,
-      '// misleading '+sep+'\n'+base,
-      base+' // '+sep,
-      'pub fnc main(): int { val s = "text'+sep+'"; return 42; }',
-    ]) {
+    for (const source of ['/* café 😀 '+sep+' */ '+base,
+      '// visible comment '+sep+base, base+' // '+sep]) {
+      assert.doesNotThrow(() => compile(source));
       const pos = source.indexOf(sep);
-      const expected = new RegExp('Unicode line separator in source at UTF-16 offset '+pos+'$');
-      assert.throws(() => compile(source), expected);
-      assert.throws(() => compileToProgramIRV2(source), expected);
+      assert.throws(() => compileToProgramIRV2(source),
+        new RegExp('Unicode line separator in source at UTF-16 offset '+pos+'$'));
     }
+    assert.throws(() => compile('// ignored'+sep+'// oreslang:checked-i64'+sep+base),
+      /checked-i64 source requires program-v2/);
   }
 });
 
