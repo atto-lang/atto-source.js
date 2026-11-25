@@ -34,7 +34,7 @@ test('module wrappers, parameter checking, precedence and wrapping',async()=>{
  assert.equal(signed.main(), -(1n<<63n));
 });
 test('signed-i64 remainder follows Java long remainder semantics',async()=>{
- const mod=await moduleFrom('pub fnc rem(int a, int b): int { return a % b; }');
+ const mod=await moduleFrom('pub fnc rem(int a, int b): int { return Integer.rem(a, b); }');
  assert.equal(mod.rem(7n,3n),1n);
  assert.equal(mod.rem(-7n,3n),-1n);
  assert.equal(mod.rem(-(1n<<63n),-1n),0n);
@@ -117,7 +117,7 @@ test('CLI never publishes JS for rejected select source', async()=> {
 test('pointer-style source syntax and legacy mutable borrow fail closed',()=>{
  assert.throws(()=>compile('pub fnc main(): int { return rt ref value; }'),/pointer-style runtime operation/);
  assert.throws(()=>compile('pub fnc main(): int { return rt deref value; }'),/pointer-style runtime operation/);
- assert.throws(()=>compile('pub fnc main(): int { return rt borrow mut value; }'),/legacy 'rt borrow mut'/);
+ assert.throws(()=>compile('pub fnc main(): int { return rt borrow mut value; }'),/runtime ownership operation requires typed lowering/);
  assert.throws(()=>compile('pub fnc main(): int { return rt mut borrow value; }'),/runtime ownership operation requires typed lowering/);
  for(const source of [
   'pub fnc main(): int { return &value; }',

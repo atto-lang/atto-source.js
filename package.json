@@ -1,5 +1,5 @@
 {
-  "name": "@oreslang/source-js",
+  "name": "@atto-lang/source-js",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -27,12 +27,15 @@
     "./actor-host.node": "./src/actor-host.node.mjs",
     "./tenant-isolation-policy": "./src/tenant-isolation-policy.mjs",
     "./worker-actor-client": "./src/worker-actor-client.mjs",
+    "./guest-cooperation-budget": "./src/guest-cooperation-budget.mjs",
     "./freestanding-core": "./src/freestanding-core.mjs",
     "./freestanding-core-link": "./src/freestanding-core-link.mjs",
     "./select-runtime": "./src/select-runtime.mjs",
     "./selectable-i64-channel": "./src/selectable-i64-channel.mjs",
     "./selectable-i64-future": "./src/selectable-i64-future.mjs",
-    "./select-continuation-fence": "./src/select-continuation-fence.mjs"
+    "./select-continuation-fence": "./src/select-continuation-fence.mjs",
+    "./structural-runtime": "./src/structural-runtime.mjs",
+    "./std-time-runtime": "./src/std-time-runtime.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
@@ -60,6 +63,8 @@
     "test:symbol-wire": "node --test tests/symbol-equality-wire-v1.test.mjs tests/symbol-wire-v1.test.mjs",
     "test:program-classes": "node --test tests/program-classes-v2.test.mjs",
     "test:class-methods": "node --test tests/class-methods-compat-v1.test.mjs",
-    "test:shared-scalar50": "node --test tests/shared-scalar50-js-esm.test.mjs"
+    "test:shared-scalar50": "node --test tests/shared-scalar50-js-esm.test.mjs",
+    "test:atto-canonical": "node --test tests/atto-java-llvm-source-transpilation.test.mjs",
+    "test:std-time": "node --test tests/std-time-runtime.test.mjs"
   }
 }
