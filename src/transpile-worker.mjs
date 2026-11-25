@@ -35,6 +35,27 @@ function tokenize(source) {
   }
   return tokens;
 }
+// This restricted compiler has no guest mutex/lease implementation. Still
+// diagnose the stable nominal resource constructor grammar before lowering.
+// These are lexer tokens (comments/whitespace omitted), not regexes on raw
+// attacker-controlled source, and checking does not grant any runtime access.
+function reject_unsupported_mutex_constructor(tokens) {
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] !== 'Mutex' || tokens[i + 1] !== '<') continue;
+    let depth = 0, end = -1;
+    for (let j = i + 1; j < tokens.length; j++) {
+      if (tokens[j] === '<') depth++;
+      if (tokens[j] === '>') {
+        depth--;
+        if (depth === 0) { end = j; break; }
+        if (depth < 0) break;
+      }
+    }
+    if (end < 0 || tokens[end + 1] !== '(') continue; // type, not constructor
+    if (tokens[i - 1] !== 'new') throw new TranspileError('E_NEW_REQUIRED');
+    throw new TranspileError('E_LOCK_UNSUPPORTED');
+  }
+}
 export function transpile_to_worker(source) {
   if (typeof source !== 'string' || new TextEncoder().encode(source).byteLength > MAX_SOURCE) throw new TranspileError('E_SOURCE_LIMIT');
   // Raw terminal controls and NUL must not be hidden in comments or
@@ -59,6 +80,7 @@ export function transpile_to_worker(source) {
   if (/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(source))
     throw new TranspileError('E_BIDI_CONTROL');
   const tokens=tokenize(source);
+  reject_unsupported_mutex_constructor(tokens);
   if(tokens[0]==='define')return transpile_actor_tokens(tokens);
   if(tokens.includes('Result')||tokens.includes('match')||tokens.includes('parse')) {
     try { return transpile_result_int_parse_tokens(tokens); }

@@ -1,0 +1,44 @@
+name: JS checked-i64 Java parity source witnesses
+on:
+  pull_request:
+    paths:
+      - 'contracts/checked-i64-java-js-v1/**'
+      - 'tests/checked-i64-java-js-v1.test.mjs'
+      - 'src/program-v2.mjs'
+      - 'src/program-ir-v2.mjs'
+      - '.github/workflows/checked-i64-java-js.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compiled-esm-guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify real source HEAD and immutable shared fixture
+        shell: bash
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          git diff --quiet HEAD --
+          test -z "$(git ls-files --others --exclude-standard)"
+          file=contracts/checked-i64-java-js-v1/cases.tsv
+          test "$(git hash-object "$file")" = "$(git rev-parse "HEAD:$file")"
+          echo "CHECKED_I64_JS_HEAD=$EXPECTED TREE=$(git rev-parse 'HEAD^{tree}')"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Execute real ESM guests and independent checked-i64 differential coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test tests/checked-i64-java-js-v1.test.mjs tests/checked-i64-arithmetic-differential.test.mjs tests/checked-i64-source-header.test.mjs
+          npm test
+          echo 'CHECKED_I64_JS_GUEST_TESTS_EXECUTED=true'
