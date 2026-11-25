@@ -1,0 +1,2 @@
+trap fnc answer(): int { return 42; }
+pub fnc main(): int { return answer(); }

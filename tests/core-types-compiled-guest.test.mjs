@@ -1,0 +1,72 @@
+// True generated-JavaScript guest test: compile unchanged backend-owned
+// core/types.atto with the production program-v2 parser/codegen and execute
+// the ESM exports. This is not JVM, Wasm, NativeAOT or actor runtime evidence.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {compileToProgramIRV2,compileProgramV2} from '../src/program-v2.mjs';
+
+const source = await readFile(new URL('../core/types.atto',import.meta.url),'utf8');
+const MIN=-(1n<<63n),MAX=(1n<<63n)-1n;
+const ranges={
+  fits_i8:[-128n,127n],fits_i16:[-32768n,32767n],
+  fits_i32:[-2147483648n,2147483647n],fits_i64:[MIN,MAX],
+  fits_u8:[0n,255n],fits_u16:[0n,65535n],
+  fits_u32:[0n,4294967295n],fits_u64:[0n,MAX]
+};
+const exportNames=[
+ 'int_value_bits','bool_value_bits','byte_value_bits','int_min_value','int_max_value',
+ ...Object.keys(ranges)
+];
+async function guest(src) {
+  const esm=compileProgramV2(src);
+  assert.doesNotMatch(esm,/\b(?:fetch|eval|require|process|Worker|document)\b/,
+    'compiled freestanding library may not access host capabilities');
+  return import('data:text/javascript;charset=utf-8,'+encodeURIComponent(esm));
+}
+test('the exact .atto library compiles into executable ESM with one source namespace',async()=>{
+  const ir=compileToProgramIRV2(source);
+  assert.equal(ir.sourceNamespace,'types');
+  assert.deepEqual(ir.modules,[]);
+  assert.equal(ir.functions.length,13);
+  const mod=await guest(source);
+  assert.deepEqual(Object.keys(mod).sort(),exportNames.sort());
+  assert.equal(mod.int_value_bits(),64n);
+  assert.equal(mod.bool_value_bits(),1n);
+  assert.equal(mod.byte_value_bits(),8n);
+  assert.equal(mod.int_min_value(),MIN);
+  assert.equal(mod.int_max_value(),MAX);
+});
+test('every compiled predicate handles signed-i64 boundaries, no JS Number rounding',async()=>{
+  const mod=await guest(source);
+  const samples=[
+    MIN,MIN+1n,-9007199254740993n,-4294967296n,-2147483649n,
+    -32769n,-129n,-128n,-1n,0n,1n,127n,128n,255n,256n,
+    32767n,32768n,65535n,65536n,2147483647n,2147483648n,
+    4294967295n,4294967296n,9007199254740993n,MAX-1n,MAX
+  ];
+  let checks=0;
+  for(const [name,[lo,hi]] of Object.entries(ranges)) {
+    for(const x of new Set([...samples,lo,hi,lo>MIN?lo-1n:lo,hi<MAX?hi+1n:hi])) {
+      assert.equal(mod[name](x),x>=lo && x<=hi,name+'('+x+')');
+      checks++;
+    }
+  }
+  assert.ok(checks>=208);
+});
+test('the generated executable rejects invalid host-number and i64 inputs',async()=>{
+  const mod=await guest(source);
+  for(const arg of [1,0.1,NaN,Infinity,'1',null,undefined,MIN-1n,MAX+1n]) {
+    assert.throws(()=>mod.fits_i8(arg),/(?:BigInt|i64|OVERFLOW|RangeError|integer|required)/i);
+  }
+});
+test('namespace placement, duplicate namespace and malformed boolean operators fail closed',()=>{
+  const examples=[
+    source.replace('use namespace types;','use namespace wrong; use namespace types;'),
+    source.replace('use namespace types;','pub fnc before() -> int { return 1; } use namespace types;'),
+    source.replace('use namespace types;','import * as types from "../types.atto"; use namespace types;'),
+    source.replace('value >= -128 && value <= 127','value >= -128 & value <= 127'),
+    source.replace('value >= -128 && value <= 127','value >= -128 | value <= 127')
+  ];
+  for(const bad of examples)assert.throws(()=>compileProgramV2(bad),/error:/);
+});

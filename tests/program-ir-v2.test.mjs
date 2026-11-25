@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {compileToProgramIRV2,compileProgramIRV2,compileProgramV2} from '../src/program-v2.mjs';
 import {validateProgramIRV2,stringifyProgramIRV2} from '../src/program-ir-v2.mjs';
-import {compileProgramV2 as apiCompile} from '@oreslang/source-js/program-v2';
+import {compileProgramV2 as apiCompile} from '@atto-lang/source-js/program-v2';
 import {mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';

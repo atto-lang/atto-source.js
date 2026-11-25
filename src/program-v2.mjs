@@ -1,5 +1,8 @@
 import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
+import {TESTING_SCALAR_SOURCE, TESTING_SCALAR_EXPORTS} from './compiler-owned-testing-scalar.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
+import {rejectUnsupportedHttpActors} from './http-actor-admission.mjs';
+import {isCoreConstructor,isProtectedPreludeIdentity} from './automatic-prelude.mjs';
 /**
  * Experimental Oreslang program-to-ESM v2 slice:
  * flat runtime modules, private/public functions, qualified calls, integer matches.
@@ -13,7 +16,7 @@ const CLASS_METHOD_RESERVED=new Set([
   'default','new','class','export','import','null','this','super','extends','static',
   'constructor','prototype','__proto__','define','pub','as','end','self','int',
   'void','return','mut','private','actor','fnc','routine','bool','Symbol','let',
-  'val','const','if','fi','then','else','await','task','spawn','module','trait',
+  'val','const','if','fi','then','else','guard','await','task','spawn','module','trait',
   'interface','type','rt','gen','generator','async','suspend','suspends','yield',
   'Iterator','AsyncIterator'
 ]);
@@ -26,7 +29,7 @@ const GENERATOR_RESERVED=new Set([
   'recover','finally','end','fi','if','do','else','then','new','spawn','stop','done',
   'await','rt','async','suspend','suspends','critical','gen','generator','nlex','trap',
   'actor','isoactor','def','fnc','routine','while','for','of','loop','block','break',
-  'continue','yield','super','elseif','elif','switch','match','matches','is','default',
+  'continue','yield','guard','super','elseif','elif','switch','match','matches','is','default',
   'eq','neq','nb','select','readch','writech','cb','shared','untrusted','type','types',
   'typeof','interface','trait','struct','impl','abstract','void','static','pub','private',
   'return','defer','val','const','let','mut','borrow','self','true','false','null','obj',
@@ -41,6 +44,7 @@ export class ProgramCompileError extends Error {
   }
 }
 const fail = (message, loc) => {throw new ProgramCompileError(message, loc);};
+const sourceLineEnd = ch => ch==='\n'||ch==='\r'||ch==='\u0085'||ch==='\u2028'||ch==='\u2029';
 
 /**
  * Align source-profile negotiation with Java CheckedI64SourceHeader.
@@ -70,13 +74,13 @@ function requireWellFormedCheckedI64Header(source) {
     if(ch==='"'||ch==="'"){quote=ch;i++;continue;}
     if(ch==='/'&&next==='*'){depth=1;i+=2;continue;}
     if(ch==='/'&&next==='/'){
-      const end=source.indexOf('\n',i);
-      const stop=end<0?source.length:end;
+      let stop=i+2;
+      while(stop<source.length&&!sourceLineEnd(source[stop]))stop++;
       let marker=i+2;
       while(marker<stop&&' \t\r\v\f'.includes(source[marker]))marker++;
       if(source.startsWith(prefix,marker)&&(!enabled||i!==0))
         fail('checked-i64-v1: malformed, duplicated, displaced or unsupported directive');
-      i=end<0?stop:end+1;
+      i=stop;
       continue;
     }
     i++;
@@ -93,6 +97,12 @@ function validateSourceText(source) {
   for(let i=0;i<source.length;i++){
     const unit=source.charCodeAt(i);
     if(unit===0)fail('NUL in source');
+    if(unit===0x1b||unit===0x7f)
+      fail('terminal control in source at UTF-16 offset '+i);
+    if(unit===0x061c||unit===0x200e||unit===0x200f||
+       (unit>=0x202a&&unit<=0x202e)||(unit>=0x2066&&unit<=0x2069))
+      fail('bidirectional Unicode control in source at UTF-16 offset '+i);
+    // All supported Unicode source line separators are handled consistently by the lexer and directive scanner.
     if(unit>=0xd800&&unit<=0xdbff){
       const lo=source.charCodeAt(i+1);
       if(!(lo>=0xdc00&&lo<=0xdfff))fail('invalid UTF-16 source');
@@ -130,7 +140,9 @@ function tokenize(source) {
   const result = [];
   let pos = 0, line = 1, col = 1;
   function advance() {
-    if (source[pos] === '\n') {line++; col = 1;} else col++;
+    const ch=source[pos];
+    if(sourceLineEnd(ch)){if(ch!=='\n'||source[pos-1]!=='\r')line++;col=1;}
+    else col++;
     pos++;
   }
   function emit(kind, value, start) {
@@ -140,9 +152,9 @@ function tokenize(source) {
   while (pos < source.length) {
     const start = {line, col};
     const c = source[pos];
-    if (/\s/.test(c)) {advance(); continue;}
+    if (/\s/.test(c)||c==='\u0085') {advance(); continue;}
     if (source.startsWith('//',pos)) {
-      while (pos < source.length && source[pos] !== '\n') advance();
+      while (pos < source.length && !sourceLineEnd(source[pos])) advance();
       continue;
     }
     if (source.startsWith('/*',pos)) {
@@ -205,12 +217,33 @@ function tokenize(source) {
         value=normalizeProcessSymbolName(value);
       }
       emit('symbol',value,start);
+    } else if ((c==='"' || c==="'") && result.length && result[result.length-1].value==='from') {
+      // Quoted strings are *only* admissible in the compiler-owned std import
+      // declaration below. General string expressions remain unsupported.
+      const quote=c;
+      advance();
+      let value='';
+      while(pos < source.length && source[pos] !== quote) {
+        const ch=source[pos];
+        if(ch==='\\'||ch==='\n'||ch==='\r'||ch.charCodeAt(0)<32)
+          fail('invalid or escaped module import string',start);
+        value+=ch;advance();
+        if(value.length>128)fail('module import path exceeds 128 bytes',start);
+      }
+      if(pos>=source.length)fail('unterminated module import string',start);
+      advance();emit('str',value,start);
     } else if (/[A-Za-z_]/.test(c)) {
       let word = '';
       while (pos < source.length && /[A-Za-z0-9_]/.test(source[pos])) {
         word += source[pos]; advance();
       }
       if (word.length > 128) fail('identifier limit',start);
+      // Never parse a contextual ownership bang as a macro or ordinary call;
+      // this ESM compiler lacks typechecked move/borrow/share lowering.
+      if (['copy','take','borrow','share'].includes(word) && source[pos]==='!' &&
+          source[pos+1]!=='=' &&
+          !(source.slice(pos+1,pos+3)==='eq' && !/[A-Za-z0-9_]/.test(source[pos+3]??'')))
+        fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
       emit('id',word,start);
     } else if (/[0-9]/.test(c)) {
       let number = '';
@@ -219,6 +252,11 @@ function tokenize(source) {
       }
       if (number.length > 64 || !/^[0-9]+(?:_[0-9]+)*$/.test(number)) fail('invalid int literal',start);
       emit('int',number,start);
+    } else if (source.startsWith('&&',pos) || source.startsWith('||',pos)) {
+      // Atto's symbolic boolean operators are aliases of the existing
+      // lazy `and`/`or` IR. Never lower these to eager JS bitwise ops.
+      emit('id',source.startsWith('&&',pos)?'and':'or',start);
+      advance(); advance();
     } else if (['<=','>=','==','!='].some(op=>source.startsWith(op,pos))) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
     } else if (source.startsWith('->',pos) || source.startsWith('::',pos)) {
@@ -235,6 +273,19 @@ function tokenize(source) {
   }
   emit('eof','<eof>',{line,col});
   return result;
+}
+/**
+ * JS program-v2 supports a restricted tagged Option/Result value ABI,
+ * but has no compiler-owned guest throw/raise/panic classification or trap
+ * unwind boundary. Reject source trap before resolution/ESM publication.
+ * Match lexer tokens, never raw text: comments containing 'trap' are inert.
+ */
+function rejectUnsupportedTrapEffect(tokens) {
+  for (const token of tokens) {
+    if (token.kind==='id' && token.value==='trap') {
+      fail('trap requires verified ordinary-throw effect and cleanup lowering; Option/Result values alone are not a trap boundary',token);
+    }
+  }
 }
 function rejectUnsupportedStaticSelect(tokens) {
   const startsStaticSelect = next =>
@@ -282,7 +333,7 @@ class Parser {
   }
   eatMethodMarker() {
     const marker=this.peek().value;
-    if(marker!=='mtd'&&marker!=='method')return false;
+    if(marker!=='mtd'&&marker!=='method'&&marker!=='fnc')return false;
     const next=this.tokens[this.i+1],after=this.tokens[this.i+2];
     if(!next||next.kind!=='id'||after?.value!=='(')return false;
     const value=next.value;
@@ -334,6 +385,8 @@ class Parser {
   }
   classDeclaration(pub) {
     const name=this.classIdentifier();
+    if(isProtectedPreludeIdentity(name))
+      fail('E_PRELUDE_SPOOF: cannot define compiler-owned core class '+name,this.peek());
     this.expect('as');
     const methods=[],slots=new Set();
     while(!this.eat('end')) {
@@ -407,6 +460,8 @@ class Parser {
     if(mode!=='sync')
       fail(mode+' gen* requires the JS async continuation/cleanup ABI and is not implemented yet',start);
     const name=this.generatorIdentifier();
+    if(isProtectedPreludeIdentity(name))
+      fail('E_PRELUDE_SPOOF: cannot define compiler-owned core generator '+name,start);
     this.expect('(');
     const params=[],paramTypes=[];
     if(!this.eat(')')){
@@ -454,6 +509,8 @@ class Parser {
     // The program-v2 ESM slice has no once-only, reachability-scoped
     // startup state machine. Never emit init as a normal callable/export.
     if(name==='init')fail('init lifecycle requires once-only reachable initialization lowering',start);
+    if(isProtectedPreludeIdentity(name))
+      fail('E_PRELUDE_SPOOF: cannot define compiler-owned core name '+name,start);
     // Xor(a, b) is a builtin; a user function could never be called by that name.
     if(name==='Xor')fail("'Xor' is a reserved builtin name",start);
     this.expect('(');
@@ -515,6 +572,30 @@ class Parser {
         const body=this.expression();
         this.expect(';');
         statements.push({kind:'return',body});
+      } else if(this.eat('guard')) {
+        // Guard's predicate must be a bool. Reuse the typed IR's conditional
+        // checker and evaluate each comma-separated predicate at most once,
+        // short-circuiting from left to right on the first failure.
+        let condition=this.expression();
+        while(this.eat(',')) {
+          const next=this.expression();
+          condition={kind:'if',condition,yes:next,no:{kind:'bool',value:false}};
+        }
+        let failure;
+        if(this.eat('{')){
+          failure=this.statementSequence(['}'],depth+1);
+          this.expect('}');
+          // A braced guard inside an outer if may be followed by the outer
+          // else; do not consume it here. A duplicate standalone else will
+          // remain an ordinary enclosing syntax error.
+        }else if(this.eat('else')){
+          failure=this.statementSequence(['end'],depth+1);
+          this.expect('end');
+        }else fail("E_GUARD: expected '{ ... }' or 'else ... end'",this.peek());
+        if(!this.returnsOnAllPaths(failure))
+          fail('E_GUARD: every failure path must explicitly return from the function',this.peek());
+        statements.push({kind:'branch',condition:{kind:'not',inner:condition},
+          yes:failure,no:[]});
       } else if(this.eat('if')) {
         const condition=this.expression();
         // Canonical statement-only `if`; retain old ; do syntax.
@@ -603,7 +684,15 @@ class Parser {
     // Oreslang's flat source namespace is compile-time package metadata,
     // not a runtime module/object. It must occur only once at file start.
     let namespace = null;
-    if (this.eat('namespace')) {
+    // Source-file namespace metadata is NOT a runtime module nor an import.
+    // The canonical spelling `use namespace types;` is accepted only at
+    // position zero, before any function or import. Preserve the older
+    // `namespace types;` spelling for existing program-v2 consumers.
+    if (this.eat('use')) {
+      this.expect('namespace');
+      namespace = this.name();
+      this.expect(';');
+    } else if (this.eat('namespace')) {
       namespace = this.name();
       this.expect(';');
     }
@@ -646,8 +735,8 @@ class Parser {
         }
         if(declarationPub)fail('public define is only supported for classes/functions in program-v2',this.peek());
         this.expect('module');const name=this.name();
-        if(name==='Option'||name==='Result'||name==='Symbol'||name==='Integer')
-          fail('reserved portable intrinsic module name '+name);
+        if(isProtectedPreludeIdentity(name)||name==='Symbol'||name==='Integer')
+          fail('E_PRELUDE_SPOOF: reserved portable intrinsic module name '+name);
         if(usedModules.has(name)||usedClasses.has(name))fail('duplicate module/class name '+name);
         usedModules.add(name);this.eat('as');modules.push(name);
         let count=0;
@@ -771,7 +860,7 @@ class Parser {
     // same statically checked intrinsics; don't introduce any new host API.
     if(qualifier===null){
       const constructors={Some:['Option','some'],Ok:['Result','ok'],Err:['Result','err']};
-      if(Object.hasOwn(constructors,symbol)){
+      if(Object.hasOwn(constructors,symbol) && isCoreConstructor(symbol)){
         const [scope,name]=constructors[symbol];
         return {kind:'call',qualifier:scope,name,args};
       }
@@ -779,20 +868,29 @@ class Parser {
     return {kind:'call',qualifier,name:symbol,args};
   }
   matchExpression() {
+    // A typed scalar match is a canonical source form, not a new
+    // dynamically-dispatched container or unchecked JS pattern primitive.
+    const typed=this.eat('<');
+    if(typed){this.expect('int');this.expect('>');}
     const subject=this.expression();
-    this.eat('over');
+    const hasOver=this.eat('over');
+    if(typed&&!hasOver)fail('typed scalar match requires over',this.peek());
     const braced=this.eat('{');
     const arms=[],seen=new Set();
     let family=null,wildcard=false;
     const ended=()=>braced?this.peek().value==='}':this.peek().value==='end';
     while(!ended()&&this.peek().kind!=='eof') {
       let tag=null, bind=null, value=null;
-      if(this.eat('else')) {
-        if(family==='adt')fail('ADT match requires exhaustive named variants, not else');
+      const canonicalDefault=this.eat('default');
+      const legacyElse=!canonicalDefault&&this.eat('else');
+      if(canonicalDefault||legacyElse) {
+        if(family==='adt')fail('ADT match requires exhaustive named variants, not default',this.peek());
         family='int';tag='wildcard';
       } else {
         this.expect('on');
         const at=this.peek();
+        if(this.eat('default'))
+          fail("match fallback must use 'default ->' without 'on'",at);
         if(this.eat('_')){
           if(family==='adt')fail('ADT match forbids wildcard');
           family='int';tag='wildcard';
@@ -812,12 +910,15 @@ class Parser {
           value=this.integer(this.eat('-'));
         }
       }
+      if(tag==='wildcard'&&(this.peek().value==='when'||this.peek().value==='as'))
+        fail('match default/wildcard arm cannot have a guard or binding',this.peek());
       if(wildcard)fail('unreachable arm after wildcard',this.peek());
       if(tag==='wildcard')wildcard=true;
       const key=tag==='integer'?'int:'+value:tag;
       if(seen.has(key))fail('duplicate match pattern '+key);
       seen.add(key);
-      this.eat('->');
+      if(canonicalDefault)this.expect('->');
+      else this.eat('->');
       this.expect('{');
       // Existing Oreslang ADT fixture uses statement-looking return bodies
       // inside a match expression. Treat that spelling as an expression arm.
@@ -1407,11 +1508,99 @@ function emitProgram(program) {
   if(hasSymbol)out.push('export { _symbolWireV1 as "@oreslang/symbol-wire-v1" };');
   return out.join('\n')+'\n';
 }
+// This is not ambient file importing. The browser compiler embeds only the
+// exact .atto testing module owned by THIS backend. No runtime IO, dynamic
+// source resolution, graph traversal or host-owned mocks enter the guest.
+const TESTING_SCALAR_IMPORT_IDS = new Set([
+  'std/testing_scalar', 'std/testing_scalar.atto',
+  'atto.std/testing_scalar', 'atto.std/testing_scalar.atto'
+]);
+function lowerCompilerOwnedTestingImports(tokens) {
+  let i=0,declarations=0;
+  const locals=new Map(),seenExports=new Set();
+  const next=()=>tokens[i];
+  const eat=v=>{if(next()?.value===v){i++;return true;}return false;};
+  const requireToken=v=>{
+    if(!eat(v))fail('E_STD_IMPORT: expected '+v,next());
+  };
+  const identifier=()=>{
+    const t=next();
+    if(t?.kind!=='id'||!TOKEN_NAME.test(t.value))
+      fail('E_STD_IMPORT: expected import function identifier',t);
+    i++;
+    return t.value;
+  };
+  // Only `import fnc ... from "<compiler-owned testing id>";` is lowered
+  // here; every other import form keeps its existing fail-closed diagnostics.
+  const isTestingImport=j=>{
+    if(tokens[j]?.value!=='import'||tokens[j+1]?.value!=='fnc')return false;
+    for(let k=j+2;k<tokens.length&&k<j+64;k++){
+      if(tokens[k].value===';')return false;
+      if(tokens[k].value==='from')return tokens[k+1]?.kind==='str'&&TESTING_SCALAR_IMPORT_IDS.has(tokens[k+1].value);
+    }
+    return false;
+  };
+  while(next()?.value==='import' && isTestingImport(i)) {
+    const pos=next();
+    if(++declarations>8)fail('E_STD_IMPORT: too many library import declarations',pos);
+    i++;
+    requireToken('fnc');
+    const names=[];
+    do {
+      const exported=identifier();
+      const local=eat('as')?identifier():exported;
+      if(!TESTING_SCALAR_EXPORTS.includes(exported))
+        fail('E_STD_IMPORT: unknown compiler-owned assertion '+exported,pos);
+      if(locals.has(local)||seenExports.has(exported))
+        fail('E_STD_IMPORT: duplicated or shadowed assertion import',pos);
+      if(local.startsWith('__atto_'))
+        fail('E_STD_IMPORT: reserved import alias',pos);
+      locals.set(local,exported);
+      seenExports.add(exported);
+      names.push(local);
+      if(names.length>TESTING_SCALAR_EXPORTS.length)
+        fail('E_STD_IMPORT: import binding budget exceeded',pos);
+    } while(eat(','));
+    requireToken('from');
+    const path=next();
+    if(path?.kind!=='str'||!TESTING_SCALAR_IMPORT_IDS.has(path.value))
+      fail('E_STD_IMPORT: unsupported compiler-owned library path',path);
+    i++;requireToken(';');
+  }
+  return {rootTokens:declarations?tokens.slice(i):tokens,locals};
+}
+function bindCompilerOwnedTestingImports(parsed,locals) {
+  if(!locals.size)return parsed;
+  // Parse the embedded .atto source through the same parser as user code.
+  // Its six public declarations remain separately owned in this compiler.
+  const library=new Parser(tokenize(TESTING_SCALAR_SOURCE)).parse();
+  if(library.modules.length||library.classes.length||library.generators.length||
+      library.functions.length!==TESTING_SCALAR_EXPORTS.length||
+      library.functions.some(f=>!f.pub||f.module!==null)||
+      TESTING_SCALAR_EXPORTS.some(n=>!library.functions.some(f=>f.name===n)))
+    fail('E_STD_IMPORT: compiler-owned library source contract mismatch');
+  for(const [local,exported] of locals) {
+    if(parsed.functions.some(f=>f.name===local)||
+       parsed.generators.some(g=>g.name===local)||
+       parsed.classes.some(c=>c.name===local)||parsed.modules.includes(local))
+      fail('E_STD_IMPORT: imported name collides with local declaration '+local);
+    const fn=library.functions.find(f=>f.name===exported);
+    parsed.functions.push({...fn,name:local,pub:false});
+  }
+  if(parsed.functions.length>512)
+    fail('E_STD_IMPORT: linked function budget exceeded');
+  return parsed;
+}
+
 export function compileToProgramIRV2(source) {
   const tokens=tokenize(source);
   rejectExecutionDomains(tokens,fail);
+  rejectUnsupportedHttpActors(tokens,fail);
   rejectUnsupportedStaticSelect(tokens);
-  const program=resolveProgram(new Parser(tokens).parse());
+  rejectUnsupportedTrapEffect(tokens);
+  const linked=lowerCompilerOwnedTestingImports(tokens);
+  const parsed=bindCompilerOwnedTestingImports(new Parser(linked.rootTokens).parse(),linked.locals);
+  const program=resolveProgram(parsed);
   return validateProgramIRV2({
     schemaVersion:PROGRAM_IR_VERSION,
     dialect:PROGRAM_IR_DIALECT,

@@ -74,7 +74,6 @@ sandbox arbitrary JavaScript within the same origin. Do not run untrusted
 tenants through this JS backend. Use `npm test` with Node 22+ for its focused
 host tests, and report separate browser/compiler/guest validation evidence.
 
-
 ## Narrow inline `sync task` preview (trusted JS only)
 
 The checked-i64 browser-worker subset admits pure, nonsuspending
