@@ -284,6 +284,7 @@ export function validateProgramIRV2(input) {
   const graph=owners.map(()=>new Set());
   let nodes=0;
   const captureSlots=owners.map(()=>new Set());
+  const floatSlots=owners.map(()=>new Set());
   function node(expr,owner,depth=0,expected='int',active=[]){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('expression complexity exceeded');
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid expression');
@@ -299,6 +300,25 @@ export function validateProgramIRV2(input) {
     if(expected!=='symbol'&&desc.value==='symbol')
       fail('Symbol value cannot be used as non-Symbol');
     switch(desc.value) {
+      case 'float':
+        record(expr,['kind','value'],'float');
+        if(expected!=='float'||typeof expr.value!=='string'||expr.value.length>128||
+           !/^[0-9]+\.[0-9]+$/.test(expr.value)||!Number.isFinite(Number(expr.value)))fail('invalid float literal/type');
+        return {kind:'float',value:expr.value};
+      case 'floatNeg':
+        record(expr,['kind','inner'],'float negation');
+        if(expected!=='float')fail('float negation type mismatch');
+        return {kind:'floatNeg',inner:node(expr.inner,owner,depth+1,'float',active)};
+      case 'floatBin':
+        record(expr,['kind','op','left','right'],'float arithmetic');
+        if(expected!=='float'||!['+','-','*','/'].includes(expr.op))fail('float arithmetic type mismatch');
+        return {kind:'floatBin',op:expr.op,left:node(expr.left,owner,depth+1,'float',active),right:node(expr.right,owner,depth+1,'float',active)};
+      case 'numericCompare':
+        record(expr,['kind','op','leftType','rightType','left','right'],'numeric comparison');
+        if(expected!=='bool'||!['<','>','<=','>=','==','!='].includes(expr.op)||
+           !['int','float'].includes(expr.leftType)||!['int','float'].includes(expr.rightType))fail('numeric comparison type mismatch');
+        return {kind:'numericCompare',op:expr.op,leftType:expr.leftType,rightType:expr.rightType,
+          left:node(expr.left,owner,depth+1,expr.leftType,active),right:node(expr.right,owner,depth+1,expr.rightType,active)};
       case 'int':
         record(expr,['kind','value'],'int');
         if(expected!=='int')fail('boolean expected, got int');
@@ -359,22 +379,25 @@ export function validateProgramIRV2(input) {
           ...(named?{paramOrder:order}:{})
         };
       }
-      case 'local': {
-        record(expr,['kind','slot','init','body'],'immutable int local');
+      case 'local':case 'floatLocal': {
+        record(expr,['kind','slot','init','body'],'immutable numeric local');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
           fail('invalid or repeated local slot');
         captureSlots[owner].add(expr.slot);
-        const init=node(expr.init,owner,depth+1,'int',active);
-        return {kind:'local',slot:expr.slot,init,body:node(expr.body,owner,depth+1,expected,[...active,expr.slot])};
+        const t=desc.value==='floatLocal'?'float':'int';
+        const init=node(expr.init,owner,depth+1,t,active);
+        if(t==='float')floatSlots[owner].add(expr.slot);
+        return {kind:desc.value,slot:expr.slot,init,body:node(expr.body,owner,depth+1,expected,[...active,expr.slot])};
       }
-      case 'capture':
+      case 'capture':case 'floatCapture':
         record(expr,['kind','slot'],'capture');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            !active.includes(expr.slot))
           fail('ADT capture outside its typed payload scope');
-        if(expected!=='int')fail('ADT int payload capture type mismatch');
-        return {kind:'capture',slot:expr.slot};
+        const captureType=floatSlots[owner].has(expr.slot)?'float':'int';
+        if(expected!==captureType||desc.value!==(captureType==='float'?'floatCapture':'capture'))fail('capture type mismatch');
+        return {kind:desc.value,slot:expr.slot};
       case 'param':
         record(expr,['kind','index'],'param');
         if(!Number.isSafeInteger(expr.index)||Object.is(expr.index,-0)||expr.index<0||expr.index>=owners[owner].params.length)
