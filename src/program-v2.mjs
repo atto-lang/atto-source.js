@@ -1056,9 +1056,12 @@ function resolveProgram(parsed) {
     switch(expr.kind){
       case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
       case 'float':case 'floatNeg':case 'floatBin':case 'floatCapture':return 'float';
-      case 'trap':case 'trapCapture':return 'trapResult';
+      case 'trap':return ['option<int>','trapOptionResult'].includes(expr.operandType)?'trapOptionResult':'trapResult';
+      case 'trapCapture':return 'trapResult';
+      case 'trapOptionCapture':return 'trapOptionResult';
       case 'trapMethod':return expr.name==='unwrap'?'int':'bool';
-      case 'local':case 'floatLocal':case 'trapLocal':return resolvedType(expr.body,owner);
+      case 'trapOptionMethod':return expr.name==='unwrap'?'option<int>':'bool';
+      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return resolvedType(expr.body,owner);
       case 'bool':case 'not':case 'compare':case 'numericCompare':case 'symbolCompare':return 'bool';
       case 'symbol':return 'symbol';
       case 'param':return owner.paramTypes?.[expr.index]??'int';
@@ -1110,14 +1113,17 @@ function resolveProgram(parsed) {
         if(nextCaptureSlot>=MAX_TOKENS)fail('local slot budget exceeded');
         const slot=nextCaptureSlot++;
         const init=resolve(expr.init,owner,depth+1,bindings);
-        return {kind:expr.localType==='trapResult'?'trapLocal':expr.localType==='float'?'floatLocal':'local',slot,init,
-          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type:expr.localType}])};
+        const type=expr.localType==='trapResult'?resolvedType(init,owner):expr.localType;
+        if(expr.localType==='trapResult'&&!['trapResult','trapOptionResult'].includes(type))
+          fail('inferred trap local requires Result');
+        return {kind:type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':'local',slot,init,
+          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type}])};
       }
       case 'trap':{
         if(owner.ownerKind==='method')fail('trap in methods unsupported');
         const inner=resolve(expr.inner,owner,depth+1,bindings);
         const operandType=resolvedType(inner,owner);
-        if(!['int','result<int,int>','trapResult'].includes(operandType))fail('trap requires int or closed Result operand');
+        if(!['int','option<int>','result<int,int>','trapResult','trapOptionResult'].includes(operandType))fail('trap requires int, Option<int> or closed Result operand');
         return {kind:'trap',operandType,inner};
       }
       case 'newClass': {
@@ -1152,7 +1158,7 @@ function resolveProgram(parsed) {
       }
       case 'variable': {
         const captured=bindings.findLast(b=>b.name===expr.name);
-        if(captured)return {kind:captured.type==='trapResult'?'trapCapture':captured.type==='float'?'floatCapture':'capture',slot:captured.slot};
+        if(captured)return {kind:captured.type==='trapOptionResult'?'trapOptionCapture':captured.type==='trapResult'?'trapCapture':captured.type==='float'?'floatCapture':'capture',slot:captured.slot};
         const index=owner.params.indexOf(expr.name);
         if(index<0) fail('unresolved identifier '+expr.name);
         return {kind:'param',index};
@@ -1190,9 +1196,11 @@ function resolveProgram(parsed) {
       case 'call': {
         const local=bindings.findLast(b=>b.name===expr.qualifier);
         if(local){
-          if(local.type!=='trapResult'||!['is_ok','is_err','unwrap'].includes(expr.name)||expr.args.length!==0)
+          if(!['trapResult','trapOptionResult'].includes(local.type)||!['is_ok','is_err','unwrap'].includes(expr.name)||expr.args.length!==0)
             fail('unsupported local Result method/arity');
-          return {kind:'trapMethod',name:expr.name,receiver:{kind:'trapCapture',slot:local.slot}};
+          const option=local.type==='trapOptionResult';
+          return {kind:option?'trapOptionMethod':'trapMethod',name:expr.name,
+            receiver:{kind:option?'trapOptionCapture':'trapCapture',slot:local.slot}};
         }
         if(expr.qualifier==='Option'||expr.qualifier==='Result'){
           const key=expr.qualifier+'.'+expr.name;
@@ -1282,8 +1290,8 @@ function resolveProgram(parsed) {
     } else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
     else if(['binary','floatBin','compare','numericCompare','symbolCompare'].includes(expr.kind)) {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
-    else if(['local','floatLocal','trapLocal'].includes(expr.kind)){inspect(expr.init,owner);inspect(expr.body,owner);}
-    else if(expr.kind==='trapMethod')inspect(expr.receiver,owner);
+    else if(['local','floatLocal','trapLocal','trapOptionLocal'].includes(expr.kind)){inspect(expr.init,owner);inspect(expr.body,owner);}
+    else if(['trapMethod','trapOptionMethod'].includes(expr.kind))inspect(expr.receiver,owner);
     else if(['neg','floatNeg','not','trap'].includes(expr.kind)) inspect(expr.inner,owner);
     else if(expr.kind==='match'||expr.kind==='adtMatch') {
       inspect(expr.subject,owner);expr.arms.forEach(a=>inspect(a.body,owner));
@@ -1328,10 +1336,10 @@ function emitProgram(program) {
       case 'symbol':return '_symbol('+JSON.stringify(expr.value)+')';
       case 'bool': return expr.value?'true':'false';
       case 'param':return '_p'+expr.index;
-      case 'capture':case 'floatCapture':case 'trapCapture':return '_v'+expr.slot;
-      case 'local':case 'floatLocal':case 'trapLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
+      case 'capture':case 'floatCapture':case 'trapCapture':case 'trapOptionCapture':return '_v'+expr.slot;
+      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
       case 'trap':return '_trap(()=>('+emitExpr(expr.inner,depth+1)+'),'+JSON.stringify(expr.operandType)+')';
-      case 'trapMethod':return '_trapMethod('+JSON.stringify(expr.name)+','+emitExpr(expr.receiver,depth+1)+')';
+      case 'trapMethod':case 'trapOptionMethod':return '_trapMethod('+JSON.stringify(expr.name)+','+emitExpr(expr.receiver,depth+1)+','+(expr.kind==='trapOptionMethod')+')';
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
@@ -1445,8 +1453,8 @@ function emitProgram(program) {
         return usesSymbol(expr.left)||usesSymbol(expr.right);
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
       case 'neg':case 'floatNeg':case 'not':case 'trap':return usesSymbol(expr.inner);
-      case 'local':case 'floatLocal':case 'trapLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
-      case 'trapMethod':return usesSymbol(expr.receiver);
+      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
+      case 'trapMethod':case 'trapOptionMethod':return usesSymbol(expr.receiver);
       case 'match':case 'adtMatch':return usesSymbol(expr.subject)||
         expr.arms.some(arm=>usesSymbol(arm.body));
       default:return false;
@@ -1475,7 +1483,7 @@ function emitProgram(program) {
   function usesPortableRuntime(expr) {
     if(expr===null)return false;
     switch(expr.kind) {
-      case 'intrinsic':case 'trap':case 'trapMethod':case 'trapLocal':return true;
+      case 'intrinsic':case 'trap':case 'trapMethod':case 'trapOptionMethod':case 'trapLocal':case 'trapOptionLocal':return true;
       case 'local':case 'floatLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'newClass':return false;
       case 'methodCall':case 'namedMethodCall':
@@ -1514,8 +1522,8 @@ function emitProgram(program) {
       'function _error_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Err"?x.value:d;}',
       // trapResult is a closed compiler-only local type, never an exported
       // parameter/result ABI. Existing checked Result identity is preserved.
-      'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult")return v;return t==="int"?_ok(v):_checkresult(v);}catch(e){if(!_ArithmeticError.isGuest(e))throw e;return _tag("Err",e);}}',
-      'function _trapMethod(m,r){if(m==="is_ok")return r.kind==="Ok";if(m==="is_err")return r.kind==="Err";if(m==="unwrap"&&r.kind==="Ok")return _check(r.value);if(m==="unwrap"){const e=new Error("cannot unwrap Err",{cause:r.value});Object.defineProperty(e,"name",{value:"ResultUnwrapPanic"});throw Object.freeze(e);}throw new TypeError("invalid trap Result method");}'
+      'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult"||t==="trapOptionResult")return v;if(t==="option<int>")return _tag("Ok",_checkoption(v));return t==="int"?_ok(v):_checkresult(v);}catch(e){if(!_ArithmeticError.isGuest(e))throw e;return _tag("Err",e);}}',
+      'function _trapMethod(m,r,option){if(m==="is_ok")return r.kind==="Ok";if(m==="is_err")return r.kind==="Err";if(m==="unwrap"&&r.kind==="Ok")return option?_checkoption(r.value):_check(r.value);if(m==="unwrap"){const e=new Error("cannot unwrap Err",{cause:r.value});Object.defineProperty(e,"name",{value:"ResultUnwrapPanic"});throw Object.freeze(e);}throw new TypeError("invalid trap Result method");}'
     );
   }
   (program.classes??[]).forEach((cls,classIndex)=>{

@@ -281,6 +281,7 @@ export function validateProgramIRV2(input) {
   let nodes=0;
   const captureSlots=owners.map(()=>new Set());
   const trapSlots=owners.map(()=>new Set());
+  const trapOptionSlots=owners.map(()=>new Set());
   const floatSlots=owners.map(()=>new Set());
   function node(expr,owner,depth=0,expected='int',active=[]){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('expression complexity exceeded');
@@ -318,14 +319,19 @@ export function validateProgramIRV2(input) {
           left:node(expr.left,owner,depth+1,expr.leftType,active),right:node(expr.right,owner,depth+1,expr.rightType,active)};
       case 'trap':
         record(expr,['kind','operandType','inner'],'typed arithmetic trap');
-        if(expected!=='trapResult'||!['int','result<int,int>','trapResult'].includes(expr.operandType))
+        const option=['option<int>','trapOptionResult'].includes(expr.operandType);
+        if(expected!==(option?'trapOptionResult':'trapResult')||
+           !['int','option<int>','result<int,int>','trapResult','trapOptionResult'].includes(expr.operandType))
           fail('trap operand/result type mismatch');
         return {kind:'trap',operandType:expr.operandType,inner:node(expr.inner,owner,depth+1,expr.operandType,active)};
-      case 'trapMethod':
+      case 'trapMethod':case 'trapOptionMethod':{
         record(expr,['kind','name','receiver'],'trap Result method');
-        if(!['is_ok','is_err','unwrap'].includes(expr.name)||expected!==(expr.name==='unwrap'?'int':'bool'))
+        const option=desc.value==='trapOptionMethod';
+        if(!['is_ok','is_err','unwrap'].includes(expr.name)||expected!==(expr.name==='unwrap'?(option?'option<int>':'int'):'bool'))
           fail('trap Result method type mismatch');
-        return {kind:'trapMethod',name:expr.name,receiver:node(expr.receiver,owner,depth+1,'trapResult',active)};
+        return {kind:desc.value,name:expr.name,
+          receiver:node(expr.receiver,owner,depth+1,option?'trapOptionResult':'trapResult',active)};
+      }
       case 'int':
         record(expr,['kind','value'],'int');
         if(expected!=='int')fail('boolean expected, got int');
@@ -386,24 +392,25 @@ export function validateProgramIRV2(input) {
           ...(named?{paramOrder:order}:{})
         };
       }
-      case 'local':case 'floatLocal':case 'trapLocal':{
+      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':{
         record(expr,['kind','slot','init','body'],'immutable local');
         if(owner>=headers.length||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
           fail('invalid or repeated local slot');
         captureSlots[owner].add(expr.slot);
-        const t=desc.value==='trapLocal'?'trapResult':desc.value==='floatLocal'?'float':'int';
+        const t=desc.value==='trapOptionLocal'?'trapOptionResult':desc.value==='trapLocal'?'trapResult':desc.value==='floatLocal'?'float':'int';
         const init=node(expr.init,owner,depth+1,t,active);
         if(t==='trapResult')trapSlots[owner].add(expr.slot);
+        if(t==='trapOptionResult')trapOptionSlots[owner].add(expr.slot);
         if(t==='float')floatSlots[owner].add(expr.slot);
         return {kind:desc.value,slot:expr.slot,init,body:node(expr.body,owner,depth+1,expected,[...active,expr.slot])};
       }
-      case 'capture':case 'floatCapture':case 'trapCapture':
+      case 'capture':case 'floatCapture':case 'trapCapture':case 'trapOptionCapture':
         record(expr,['kind','slot'],'capture');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            !active.includes(expr.slot))fail('ADT capture outside its typed payload scope');
-        const captureType=trapSlots[owner].has(expr.slot)?'trapResult':floatSlots[owner].has(expr.slot)?'float':'int';
-        if(expected!==captureType||desc.value!==(captureType==='trapResult'?'trapCapture':captureType==='float'?'floatCapture':'capture'))
+        const captureType=trapOptionSlots[owner].has(expr.slot)?'trapOptionResult':trapSlots[owner].has(expr.slot)?'trapResult':floatSlots[owner].has(expr.slot)?'float':'int';
+        if(expected!==captureType||desc.value!==(captureType==='trapOptionResult'?'trapOptionCapture':captureType==='trapResult'?'trapCapture':captureType==='float'?'floatCapture':'capture'))
           fail('capture type mismatch');
         return {kind:desc.value,slot:expr.slot};
       case 'param':
