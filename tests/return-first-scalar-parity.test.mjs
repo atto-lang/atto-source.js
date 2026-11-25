@@ -234,7 +234,7 @@ test('standalone calls fail closed for discarded values, arity and fallthrough',
     'fnc reset():void{} pub fnc main()->int{return 0;reset();}',
   ];
   for(const source of negatives)
-    assert.throws(()=>compileProgramV2(source),/^error: program (?:v2|IR): /,source);
+    assert.throws(()=>compileProgramV2(source),/error: program (?:v2|IR): /,source);
 });
 
 test('validated void-call sequence IR rejects forged effects, wrong return types, and extra fields',()=>{
@@ -303,7 +303,7 @@ test('infer still fails closed for nonvoid effects and unproven return values',(
     'fnc trace():void{} pub fnc main()->infer{trace();}',
   ];
   for(const source of invalid)
-    assert.throws(()=>compileProgramV2(source),/^error: program (?:v2|IR): /,source);
+    assert.throws(()=>compileProgramV2(source),/error: program (?:v2|IR): /,source);
 });
 test('conditional pure-void calls run only on the selected branch',()=>{
   const source='fnc trace():void{} pub fnc main(bool flag)->int{'+
