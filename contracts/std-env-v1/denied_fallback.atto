@@ -1,0 +1,7 @@
+// Runtime negative fixture: with ATTO_ENV_SECRET_KEY denied, fail before fallback.
+import module std_env from "std/env";
+pub fnc main(): int {
+  val String value = std_env.get_or("ATTO_ENV_SECRET_KEY", "fallback");
+  if value == "fallback"; do return 7; fi
+  return 8;
+}

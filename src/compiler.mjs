@@ -1,6 +1,8 @@
 import {createScalarIR, validateScalarIR} from './scalar-ir.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
+import {rejectUnsupportedHttpActors} from './http-actor-admission.mjs';
 import {scanStringLiteral} from './string-literal-syntax.mjs';
+import {preflightCoreFutureOwnership} from './core-future-ownership.mjs';
 /** Experimental fail-closed Oreslang scalar-to-ESM compiler. */
 const MAX_BYTES = 262144;
 const I64_MAX = (1n << 63n) - 1n;
@@ -20,6 +22,8 @@ function validateSourceText(src) {
   for (let i=0; i<src.length; i++) {
     const code=src.charCodeAt(i);
     if (code===0) throw new CompileError('NUL in source');
+    if (code===0x1b || code===0x7f)
+      throw new CompileError('terminal control in source at UTF-16 offset '+i);
     // Trojan Source: bidi format controls can reorder displayed source,
     // including comments and literals that the lexer would otherwise skip.
     if (code===0x061c || code===0x200e || code===0x200f ||
@@ -41,6 +45,7 @@ function lex(src) {
   validateSourceText(src);
   const out = [];
   let i=0, line=1, col=1;
+  let ownershipBang;
   const lineEnd=c=>c==='\n'||c==='\r'||c==='\u0085'||c==='\u2028'||c==='\u2029';
   function advance() {
     const ch=src[i];
@@ -78,6 +83,20 @@ function lex(src) {
     const loc={line,col};
     if(/[A-Za-z_]/.test(src[i])){
       let s='';while(i<src.length&&/[A-Za-z0-9_]/.test(src[i])){s+=src[i];advance();}
+      // A typed Topic receiver may be a local, parameter or import. Until
+      // scalar ESM owns actor/group capabilities, share! and Result lowering,
+      // reject actual member publication before producing source/IR artifacts.
+      // Opaque strings/comments were already skipped by this lexer.
+      if(s==='try_publish' && out.at(-1)?.kind==='sym' &&
+         out.at(-1).value==='.')
+        throw new CompileError(
+          'Topic.try_publish requires checked actor/group, share! and Result lowering; JS scalar backend unsupported',loc);
+      // Record the first contextual ownership bang so the typed Future
+      // preflight can still diagnose its legacy and canonical spellings.
+      if(['copy','take','borrow','share'].includes(s) && src[i]==='!' &&
+          src[i+1]!=='=' &&
+          !(src.slice(i+1,i+3)==='eq' && !/[A-Za-z0-9_]/.test(src[i+3]??'')))
+        ownershipBang ??= loc;
       add('id',s,loc);
     }else if(/[0-9]/.test(src[i])){
       let s='';while(i<src.length&&/[0-9_]/.test(src[i])){s+=src[i];advance();}
@@ -98,10 +117,11 @@ function lex(src) {
     }else if(src.startsWith('->',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
     else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
     else if(src[i]==='^')throw new CompileError(src.startsWith('^^',i)?"'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)":"'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",loc);
-    else if('(){}[]:,;+-*/=.'.includes(src[i])){add('sym',src[i],loc);advance();}
+    else if('(){}[]:,;+-*/=.!<>'.includes(src[i])){add('sym',src[i],loc);advance();}
     else throw new CompileError('unsupported character',loc);
   }
-  out.push({kind:'eof',value:'<eof>',line,col});return out;
+  out.push({kind:'eof',value:'<eof>',line,col});
+  return {tokens:out,ownershipBang};
 }
 function rejectUnloweredInvertedClasses(tokens) {
   for (let i=0; i+2<tokens.length; i++) {
@@ -116,6 +136,54 @@ function rejectUnloweredInvertedClasses(tokens) {
         tokens[at]);
   }
 }
+// Singleton is a declaration-context keyword, not a global reserved identifier.
+// This scalar JS emitter has no checked application-domain initialization, actor
+// owner provenance or fair scoped RW loans; never silently emit host JS for one.
+function rejectSingletonDeclarations(tokens) {
+  for (let i=0;i<tokens.length;i++) {
+    let at=i;
+    if(tokens[at]?.value==='pub' && tokens[at+1]?.value==='define') at++;
+    if(tokens[at]?.value!=='define') continue;
+    at++;
+    if(tokens[at]?.value==='pub') at++;
+    if(tokens[at]?.kind==='id' && tokens[at].value==='singleton')
+      throw new CompileError(
+        'ORES-SINGLETON-UNSUPPORTED: singleton requires compiler-resolved application-domain identity, exactly-once frozen publication and guarded unique-owner RW lowering',
+        tokens[at]);
+  }
+}
+// The scalar JS emitter has no nominal actor/object layout or lifetime/borrow
+// admission. Reject before building IR so a .atto actor heap can never
+// accidentally produce scalar JS that looks like a successful guest compile.
+// Inspect lexed tokens only: strings and comments are not authoritative code.
+function rejectUnloweredActorHeap(tokens) {
+  for (let i=0;i<tokens.length;i++) {
+    const at=tokens[i];
+    if(at.kind!=='id')continue;
+    if(at.value==='new' && tokens[i+1]?.kind==='id' &&
+       tokens[i+2]?.value==='(') {
+      throw new CompileError(
+        'E_ACTOR_MEMORY_GUEST_UNSUPPORTED: checked actor-owned class allocation and Ref32 field lowering are unavailable in JS scalar-v1',
+        at);
+    }
+    if(at.value!=='define' && at.value!=='pub')continue;
+    let p=i;
+    if(tokens[p]?.value==='pub') p++;
+    if(tokens[p]?.value!=='define') continue;
+    p++;
+    if(tokens[p]?.value==='pub') p++;
+    if(tokens[p]?.value==='class' || tokens[p]?.value==='actor' ||
+       (tokens[p]?.value==='inverted' && tokens[p+1]?.value==='class')) {
+      // Keep the existing precise inverted-class diagnostic, which the
+      // separate inversion gate owns. Do not reinterpret it as actor heap.
+      if(tokens[p]?.value==='inverted')continue;
+      throw new CompileError(
+        'E_ACTOR_MEMORY_GUEST_UNSUPPORTED: JS scalar-v1 requires typed actor heap, nominal layout and ownership lowering',
+        tokens[p]);
+    }
+  }
+}
+
 function rejectUnsupportedSelect(tokens) {
   const startsStaticSelect = next =>
     next && ['{','over','first','fair','random'].includes(next.value);
@@ -234,8 +302,6 @@ class Parser {
       if(op.kind!=='id')throw new CompileError('expected runtime operation after rt',op);
       if(['ref','unref','deref','raw'].includes(op.value))
         throw new CompileError('pointer-style runtime operation rt '+op.value+' is not valid Oreslang source',op);
-      if(op.value==='borrow' && this.ts[this.pos+1]?.value==='mut')
-        throw new CompileError("legacy 'rt borrow mut' is not valid Oreslang; use 'rt mut borrow value'",op);
       if(op.value==='mut' && this.ts[this.pos+1]?.value!=='borrow')
         throw new CompileError("'rt mut' only supports borrowing; use 'rt mut borrow value'",op);
       throw new CompileError('runtime ownership operation requires typed lowering in the JS scalar backend',op);
@@ -264,9 +330,17 @@ class Parser {
 // The isolated parser is a bootstrap adapter. Future language frontends
 // should produce this versioned IR instead of duplicating parser semantics.
 export function compileToIR(source) {
-  const tokens=lex(source);
+  const {tokens,ownershipBang}=lex(source);
+  // Reject affine Future violations at the compiler core boundary before IR.
+  // Valid Future code still cannot execute in the scalar-only JS backend.
+  preflightCoreFutureOwnership(tokens,(code,message,token)=>{throw new CompileError(code+': '+message,token);});
+  if(ownershipBang)
+    throw new CompileError('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: checked JS ownership lowering required',ownershipBang);
   rejectExecutionDomains(tokens,(message,token)=>{throw new CompileError(message,token);});
+  rejectUnsupportedHttpActors(tokens,(message,token)=>{throw new CompileError(message,token);});
+  rejectSingletonDeclarations(tokens);
   rejectUnloweredInvertedClasses(tokens);
+  rejectUnloweredActorHeap(tokens);
   rejectUnsupportedSelect(tokens);
   const parsed=new Parser(tokens).parse();
   try {
