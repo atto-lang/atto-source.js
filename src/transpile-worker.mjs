@@ -271,9 +271,10 @@ function transpile_actor_tokens(tokens) {
     const token=tokens[i++];
     if(!/^[0-9]+$/.test(token??''))
       throw new TranspileError('E_UNSUPPORTED_ACTOR_LITERAL');
-    const magnitude=BigInt(token);
-    if(magnitude>(negative?INT_MAX+1n:INT_MAX))
-      throw new TranspileError('E_INT_OVERFLOW');
+    // Check the significant decimal digits before materializing BigInt.
+    // An attacker can supply a near-MAX_SOURCE decimal literal; avoid
+    // allocating a huge temporary bignum merely to reject it.
+    const magnitude=checked_decimal(token,negative?INT_MAX+1n:INT_MAX);
     return negative ? -magnitude : magnitude;
   };
   expect('define');expect('actor');
