@@ -15,16 +15,16 @@ const probes=[
   ['min-plus-one',MIN+'+1','value','-9223372036854775807'],
   ['positive-cancel','9223372036854775807-9223372036854775807','value','0'],
   ['multiply-zero',MAX+'*0','value','0'],
-  ['negative-modulo','(-5)%3','value','-2'],
-  ['min-mod-minus-one',MIN+'%-1','value','0'],
+  ['negative-modulo','Integer.rem(-5, 3)','value','-2'],
+  ['min-mod-minus-one','Integer.rem('+MIN+', -1)','value','0'],
   ['positive-add-overflow',MAX+'+1','checked-overflow',null],
   ['negative-sub-overflow',MIN+'-1','checked-overflow',null],
   ['multiply-overflow',MAX+'*2','checked-overflow',null],
   ['negate-min','-'+MIN,'checked-overflow',null],
   ['multiply-min-negative-one',MIN+'*-1','checked-overflow',null],
   ['intermediate-add-overflow',MAX+'+1-1','checked-overflow',null],
-  ['intermediate-mul-overflow','('+MAX+'*2)%5','checked-overflow',null],
-  ['modulo-by-zero','1%0','division-by-zero',null]
+  ['intermediate-mul-overflow','Integer.rem(('+MAX+'*2), 5)','checked-overflow',null],
+  ['modulo-by-zero','Integer.rem(1, 0)','division-by-zero',null]
 ];
 export const NUMERIC_PROBES=Object.freeze(probes.map(([id,expression,expected_kind,expected_value])=>
   Object.freeze({id,expression,expected_kind,expected_value})));

@@ -187,3 +187,48 @@ Generators are represented in a separate optional `generators` section of progra
 The initial slice is deliberately narrow: `Iterator<int>`, integer parameters, sequential `yield expr;`, and bare `return;`. Public root/module generators are callable through the host iterator bridge. Generator/function overload identity is the same name-plus-value-arity rule as ordinary callables: a generator and function may share a name only at different arities, and one exported dispatcher routes those arities without duplicate ESM/module properties. Private generators do not become ESM/module exports. Source-level calls/for-of over generator values, `yield*`, generator methods, non-int element types, `async gen*`, and `suspend gen*` remain fail-closed. In particular, parser acceptance is not used to claim async-iterator parity.
 
 The normative cross-backend contract is tracked in `oreslang-common-source#161`; shared six-compiler target fixtures are in `oreslang-platform-conformance#176`. JS async/suspend continuation work remains tracked by issue #76.
+
+## Opt-in AttoLang scalar-v1 correctness profile (2026-11-07)
+
+The Java reference at commit `c39100b400c4dc1475dd25f5946b136b7032d5f6`
+contains `contracts/atto-scalar-v1/cases.json`, with 19 canonical source
+cases. Its `canonical-add` fixture has the same Git blob SHA-1
+(`015f8b0f79aafa796a148d2adeff1574e8d6c491`) as the LLVM
+`contracts/atto-parity-v1/add.atto` at
+`15bdd5cc48cf64387aee7e19f2926c253eb10e08`.
+These are **source comparisons**, not Java/LLVM execution receipts.
+
+The program-v2 parser now accepts both `fnc inc(int x)` and
+`fnc inc(x: int)`, including compatible method and generator parameter
+positions. Resolved IR retains the original declaration parameter order,
+while named call arguments preserve their source evaluation order.
+Legacy `--program-v2` and scalar-v1 retain their existing behavior.
+
+The new `--atto-scalar-v1` mode is stricter: it admits root-only, integer
+`fnc` programs with literals, parameters, calls, signed unary negation, and
+`+`, `-`, `*`. It rejects the removed `%` operator, while `^` and
+`^^` remain lexical errors; it never emits ESM for unsupported bool,
+match, class, module, or ADT input through this profile. This separation
+prevents an ordinary program-v2 `%` expression from being misreported as
+canonical AttoLang conformance.
+
+Run:
+```sh
+npm run test:atto-canonical
+node bin/oreslang-jsc.mjs --atto-scalar-v1 --check path/to/source.atto
+node bin/oreslang-jsc.mjs --atto-scalar-v1 path/to/source.atto --out=/absolute/result.mjs
+```
+
+The focused tests pin and check 13 exact Java source blobs: seven positive
+integer results, three checked overflow traps, and three removed-operator
+compile-time rejections. Positive and overflow cases also verify byte-identical
+ESM from source and round-tripped, validated program IR; a CLI smoke performs
+file-source compilation and executable ESM import. Three positive Java cases
+with immutable local declarations remain **UNSUPPORTED**. Other Java
+negative cases involving assignment or eager unused-local evaluation must not
+be relabeled as matching diagnostics merely because JS rejects their source.
+
+**Verification status:** code and tests are authored in a review branch;
+no stepful Node 22 CI, Java/GraalVM guest, or LLVM native guest evidence is
+asserted here. A Java/LLVM execution comparison requires exact source and
+compiler provenance, matching runtime observations and approved runner jobs.

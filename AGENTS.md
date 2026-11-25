@@ -1,11 +1,9 @@
-# AttoLang js compiler agent directives
+# Repository AI agent instructions
 
-These instructions apply to human and AI contributors to this backend. Prefer canonical `.atto` guest source (legacy `.ores` only for compatibility); keep host/compiler/worker/ABI code minimal and capability-checked. Preserve Rust-only first-party tooling, no Python, independent security review and exact-head conformance requirements.
+<!-- org-merge-review-policy:begin -->
+> **Agent/PR governance:** Read [atto-lang's canonical AGENTS.md](https://github.com/atto-lang/.github/blob/main/AGENTS.md). **Drafts:** at 72h of the CURRENT Draft cycle (creation if opened Draft, otherwise latest genuine Ready→Draft), automatically mark Ready if material CI passes on the exact current head and no `keep-as-draft`, `not-ready`, or legacy `keep-draft` label exists; recheck labels and CI before promotion. **The Ready review clock starts at zero upon promotion.** Ready age <72h: Codex/ChatGPT + Claude/Opus + `ORESoftware` + `the1mills` approvals. Ready age 72–240h: one verified independent approval, green CI, no conflicts, and a **mandatory competing/overlapping PR audit**; update current/competing PRs before merging when needed. Ready age ≥240h: fresh post-boundary reviews from all four. A genuine return to Draft ends/resets the Ready cycle. Respect GitHub protections, never manipulate draft state to game age, and inspect [legacy Oreslang counterpart PRs](https://github.com/ores-truffle-oreslang/.github/blob/main/governance/atto-migration-map.json) before duplicating features.
+<!-- org-merge-review-policy:end -->
 
-## Controlled dynamism and memory
+## Backend CI evidence
 
-Follow [organization directive PR #38](https://github.com/ores-truffle-oreslang/.github/pull/38), [language-spec PR #18](https://github.com/ores-truffle-oreslang/attolang-language-spec.md/pull/18), and the [backend checklist](docs/AOT_ZERO_GC_DYNAMISM.md). Strict **sealed full guest AOT** rejects runtime eval/source compilation, class/method injection, monkey-patching, arbitrary host reflection and hidden interpreter/JIT fallback *before executable code emission*. Keep dynamic dispatch, generics/macros, proxies and closure/async functions only through compile-time known targets, generated descriptors and statically lowered code.
-
-All guest allocations, closure captures, task frames and actor heaps need explicit owner/region, `rt take`/`rt copy`/`rt borrow`/`rt share` checking, bounded admission and exactly-once release across cancellation/restart. Strong cycles require a documented strategy; long-lived actors must reclaim retired memory without waiting for termination. Function/closure transport by channel/pub-sub is prohibited. Maintain no implicit conversions/operator overloading, no `%`/`^`/`^^` and no automatic nested `Future`/`Option` flattening.
-
-**Evidence:** declare host/guest AOT and guest/process GC scope; require compiler-backed positive and negative `.atto` fixtures, artifact provenance and stepful execution. Host-only, parser-only or `steps=[]`/`steps=null` means guest semantics **NOT_EXECUTED**. Existing experimental behavior is not certified.
+A workflow that fails before runner admission, including jobs with `steps=[]` or null steps, is `NOT_EXECUTED`, not a compiler or guest test result. Recover on an authorized runner and verify the exact source commit/tree and executed test results. A host-only JavaScript model or source transpilation is not proof of native guest AOT, zero process GC, or cross-backend parity.

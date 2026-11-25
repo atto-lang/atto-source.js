@@ -75,8 +75,8 @@ test('contextual mtd/method and Java callable keyword names survive convergence'
 test('named method ABI reorder preserves lexical source evaluation order',async()=>{
   const source=[
     'define class Pick as pub pick(self,int a,int b):int{return a;} end',
-    'pub fnc overflow_first():int{return new Pick().pick(b:9223372036854775807+1,a:1%0);}',
-    'pub fnc zero_first():int{return new Pick().pick(a:1%0,b:9223372036854775807+1);}'
+    'pub fnc overflow_first():int{return new Pick().pick(b:9223372036854775807+1,a:Integer.rem(1, 0));}',
+    'pub fnc zero_first():int{return new Pick().pick(a:Integer.rem(1, 0),b:9223372036854775807+1);}'
   ].join('\n');
   const mod=await load(source,'method-order');
   assert.throws(()=>mod.overflow_first(),/ORES_I64_OVERFLOW/);

@@ -14,10 +14,10 @@ const expr=x=>HEADER+'pub fnc main(): int { return '+x+'; }\n';
 
 test('identical checked-profile Oreslang source accepts signed remainders',async()=>{
   for(const [body,expected] of [
-    ['-7 % 3','-1'],['7 % -3','1'],['-7 % -3','-1'],
-    ['7 % 3','1'],['0 % -1','0'],
-    ['-9223372036854775808 % -1','0'],
-    ['9223372036854775807 % 43','41']
+    ['Integer.rem(-7, 3)','-1'],['Integer.rem(7, -3)','1'],['Integer.rem(-7, -3)','-1'],
+    ['Integer.rem(7, 3)','1'],['Integer.rem(0, -1)','0'],
+    ['Integer.rem(-9223372036854775808, -1)','0'],
+    ['Integer.rem(9223372036854775807, 43)','41']
   ]){
     const ns=await execute(expr(body));
     assert.equal(ns.main(),BigInt(expected),body);
@@ -26,8 +26,8 @@ test('identical checked-profile Oreslang source accepts signed remainders',async
 
 test('direct and dynamic remainder by zero emit stable nonattesting error code',async()=>{
   for(const source of [
-    expr('43 % 0'),
-    HEADER+'pub fnc rem(int left,int right): int {return left % right;} '+
+    expr('Integer.rem(43, 0)'),
+    HEADER+'pub fnc rem(int left,int right): int {return Integer.rem(left, right);} '+
       'pub fnc main(): int {return rem(43,0);}'
   ]){
     const ns=await execute(source);
@@ -40,12 +40,12 @@ test('direct and dynamic remainder by zero emit stable nonattesting error code',
 
 test('unevaluated remainder-by-zero branch stays lazy',async()=>{
   const ns=await execute(HEADER+
-    'pub fnc main(): int {return match 1 on 1 -> {43;} else -> {1 % 0;} end;}');
+    'pub fnc main(): int {return match 1 on 1 -> {43;} else -> {Integer.rem(1, 0);} end;}');
   assert.equal(ns.main(),43n);
 });
 
 test('evaluated left operand overflow wins before zero-divisor check',async()=>{
-  const ns=await execute(expr('(9223372036854775807 + 1) % 0'));
+  const ns=await execute(expr('Integer.rem((9223372036854775807 + 1), 0)'));
   assert.throws(()=>ns.main(),error=>
     error instanceof RangeError &&
     error.message.startsWith('ORES_I64_OVERFLOW:'));
@@ -53,7 +53,7 @@ test('evaluated left operand overflow wins before zero-divisor check',async()=>{
 
 test('foreign JS guest operands cannot bypass signed-i64 guards',async()=>{
   const ns=await execute(HEADER+
-    'pub fnc rem(int a,int b): int { return a % b; }');
+    'pub fnc rem(int a,int b): int { return Integer.rem(a, b); }');
   assert.equal(ns.rem(-7n,3n),-1n);
   assert.throws(()=>ns.rem(7,3n),/signed i64 BigInt required/);
   assert.throws(()=>ns.rem(7n,0n),/ORES_I64_DIVISION_BY_ZERO/);
@@ -63,7 +63,7 @@ test('foreign JS guest operands cannot bypass signed-i64 guards',async()=>{
 
 test('seeded 64-bit signed remainder differential vectors preserve exactness',async()=>{
   const ns=await execute(HEADER+
-    'pub fnc rem(int a,int b): int {return a % b;}');
+    'pub fnc rem(int a,int b): int {return Integer.rem(a, b);}');
   let seed=0x4a37e91d;
   function next(){
     seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;
