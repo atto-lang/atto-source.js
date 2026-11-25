@@ -9,6 +9,16 @@ const INT_MIN = -9223372036854775808n;
 export class TranspileError extends Error {
   constructor(code) { super(code); this.name = 'TranspileError'; this.code = code; }
 }
+// Bound decimal work before creating BigInt. Long padded zeros are safe:
+// only the significant suffix is converted after signed-i64 range checking.
+function checked_decimal(token, ceiling=INT_MAX) {
+  const significant=token.replace(/^0+/, '') || '0';
+  const bound=ceiling.toString();
+  if(significant.length>bound.length||
+     (significant.length===bound.length && significant>bound))
+    throw new TranspileError('E_INT_OVERFLOW');
+  return BigInt(significant);
+}
 function tokenize(source) {
   const tokens = [];
   let i=0;
@@ -94,44 +104,109 @@ export function transpile_to_worker(source) {
   const peek=()=>tokens[i];
   const expect=token=>{if(tokens[i++]!==token)throw new TranspileError('E_UNSUPPORTED_SYNTAX');};
   if (peek()==='pub') i++;
-  expect('fnc'); expect('main'); expect('('); expect(')'); expect(':'); expect('int'); expect('{'); expect('return');
-  const parse_expression=(min_prec=0,depth=0)=>{
+  expect('fnc'); expect('main'); expect('('); expect(')'); expect(':'); expect('int'); expect('{');
+  // Every admitted inline body has a statically proven non-suspending scalar type.
+  const result_type=node=>node?.kind==='inline_task'?node.payload_type:'int';
+  let inline_count=0;
+  const parse_expression=(min_prec=0,depth=0,discard_inline=false)=>{
     if(depth>=MAX_DEPTH)throw new TranspileError('E_NESTING_LIMIT');
     let left;
     if(peek()==='('){i++;left=parse_expression(0,depth+1);expect(')');}
+    else if(peek()==='sync'){
+      // Inline on the caller, without a child Future, TaskId or worker admission.
+      // Only pure i64 expressions/empty void bodies are admitted by this parser.
+      i++;expect('task');
+      if(++inline_count>64)throw new TranspileError('E_TASK_LIMIT');
+      let declared=null;
+      if(peek()==='<'){
+        i++;declared=tokens[i++];
+        // A do-sync task is a void-only statement, never a discarded T.
+        if(discard_inline&&declared!=='void')
+          throw new TranspileError('E_TASK_RETURN_TYPE');
+        if(declared!=='int'&&declared!=='void')
+          throw new TranspileError('E_TASK_UNSUPPORTED');
+        expect('>');
+      }
+      expect('{');
+      let body=null;
+      if(peek()==='return'){
+        i++;
+        // Bare return exits a void inline body; return expr produces T.
+        if(peek()===';')i++;
+        else{
+          body=parse_expression(0,depth+1);
+          if(result_type(body)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
+          expect(';');
+        }
+      }
+      expect('}');
+      const actual=body===null?'void':'int';
+      if(declared!==null&&declared!==actual)
+        throw new TranspileError('E_TASK_RETURN_TYPE');
+      left={kind:'inline_task',payload_type:actual,body};
+    }
     else if(peek()==='-'){
       i++;
-      if(/^\d+$/.test(peek()??'') && BigInt(peek())===INT_MAX+1n) {left={value:INT_MIN};i++;}
-      else left={op:'neg',arg:parse_expression(3,depth+1)};
+      if(/^\d+$/.test(peek()??'') && checked_decimal(peek(),INT_MAX+1n)===INT_MAX+1n) {left={value:INT_MIN};i++;}
+      else {const arg=parse_expression(3,depth+1);
+        if(result_type(arg)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
+        left={op:'neg',arg};}
     }
     else if(/^\d+$/.test(peek()??'')){
-      const value=BigInt(tokens[i++]);
-      if(value>INT_MAX)throw new TranspileError('E_INT_OVERFLOW');
+      const value=checked_decimal(tokens[i++]);
       left={value};
     } else throw new TranspileError('E_UNSUPPORTED_EXPRESSION');
     const precedence={'+':1,'-':1,'*':2};
     while(Object.hasOwn(precedence,peek()) && precedence[peek()]>=min_prec){
+      if(result_type(left)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
       const op=tokens[i++];
       const right=parse_expression(precedence[op]+1,depth+1);
+      if(result_type(right)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
       left={op,left,right};
     }
     return left;
   };
+  // Discarded inline task expressions require an explicit 'do' statement.
+  // Bare 'sync task { ... }' is an expression, not a statement.
+  // Spawned 'do task' / 'await task' still require a real scheduler.
+  const preludes=[];
+  while(peek()==='do'){
+    i++;
+    if(peek()!=='sync')throw new TranspileError('E_TASK_UNSUPPORTED');
+    const item=parse_expression(0,0,true);
+    if(item.kind!=='inline_task')throw new TranspileError('E_TASK_UNSUPPORTED');
+    if(item.payload_type!=='void')throw new TranspileError('E_TASK_RETURN_TYPE');
+    preludes.push(item);
+    if(peek()===';')i++;
+    else if(!['return','do'].includes(peek())) {
+      if(peek()==='sync'&&tokens[i+1]==='task')
+        throw new TranspileError('E_SYNTAX');
+      throw new TranspileError('E_UNSUPPORTED_SYNTAX');
+    }
+  }
+  if(peek()==='sync'&&tokens[i+1]==='task')
+    throw new TranspileError('E_SYNTAX');
+  expect('return');
   const ast=parse_expression();
+  if(result_type(ast)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
   expect(';');expect('}');
   if(i!==tokens.length)throw new TranspileError('E_TRAILING_SOURCE');
   const emit=node=>{
+    if(node.kind==='inline_task')
+      return node.body===null?'(()=>{})()':'(()=>{return '+emit(node.body)+';})()';
     if(Object.hasOwn(node,'value'))return `${node.value}n`;
     if(node.op==='neg')return `checked(-(${emit(node.arg)}))`;
     const op=node.op;
     return `checked((${emit(node.left)}) ${op} (${emit(node.right)}))`;
   };
+  const prelude_code=preludes.map(node=>'  '+emit(node)+';\n').join('');
   const code=`// Generated by AttoLang JS subset backend; no eval or source passthrough.\n`+
     `const MAX=9223372036854775807n,MIN=-9223372036854775808n;\n`+
     `function checked(n){if(n<MIN||n>MAX)throw new Error('E_GUEST_PANIC_1');return n;}\n`+
     `export async function create_tenant({tenant,generation}){\n`+
     ` let executed=false;return {async on_message(){\n`+
     `  if(executed)throw new Error('E_MAIN_ALREADY_CALLED');executed=true;\n`+
+    prelude_code+
     `  return {value:String(${emit(ast)}),stdout:'',actors:0};\n`+
     ` }};\n}\n`;
   return {backend:'js',trusted:true,guest_abi:'atto.js.browser.subset.v1',module_source:code};
@@ -151,7 +226,7 @@ function transpile_actor_tokens(tokens) {
   };
   const identifier=()=>{
     const token=tokens[i++];
-    if(!/^[A-Za-z_][A-Za-z_0-9]*$/.test(token??''))
+    if(token==='sync'||!/^[A-Za-z_][A-Za-z_0-9]*$/.test(token??''))
       throw new TranspileError('E_UNSUPPORTED_ACTOR_SYNTAX');
     return token;
   };
