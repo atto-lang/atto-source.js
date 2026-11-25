@@ -287,6 +287,7 @@ export function validateProgramIRV2(input) {
   const floatSlots=owners.map(()=>new Set());
   const trapSlots=owners.map(()=>new Set());
   const trapOptionSlots=owners.map(()=>new Set());
+  const caughtSlots=owners.map(()=>new Set());
   function node(expr,owner,depth=0,expected='int',active=[]){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('expression complexity exceeded');
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid expression');
@@ -302,9 +303,27 @@ export function validateProgramIRV2(input) {
     if(expected!=='symbol'&&desc.value==='symbol')
       fail('Symbol value cannot be used as non-Symbol');
     switch(desc.value) {
+      case 'tryCatch':{
+        record(expr,['kind','slot','body','handler'],'ordinary catch');
+        if(owner>=headers.length||expected!==(headers[owner].returnType??'int')||
+           !Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
+           expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
+          fail('E_CATCH_BINDING: invalid catch scope');
+        captureSlots[owner].add(expr.slot);
+        const body=node(expr.body,owner,depth+1,expected,active);
+        caughtSlots[owner].add(expr.slot);
+        return {kind:'tryCatch',slot:expr.slot,body,handler:node(expr.handler,owner,depth+1,expected,[...active,expr.slot])};
+      }
+      case 'rethrow':
+        record(expr,['kind','slot'],'caught Error rethrow');
+        if(owner>=headers.length||expected!==(headers[owner].returnType??'int')||
+           !Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||!active.includes(expr.slot)||!caughtSlots[owner].has(expr.slot))
+          fail('E_CATCH_BINDING: rethrow outside caught Error scope');
+        return {kind:'rethrow',slot:expr.slot};
       case 'guestEffect':
         record(expr,['kind','effect','message'],'core guest effect');
         if(owner>=headers.length||expected!==(headers[owner].returnType??'int')||
+           [...headers,...generatorHeaders,...classHeaders].some(h=>h.name==='Error')||seenModules.has('Error')||headers[owner].params.includes('Error')||
            !['throw','raise','panic'].includes(expr.effect)||typeof expr.message!=='string'||
            expr.message.length>256||!(/^[\x20-\x7e]*$/).test(expr.message))
           fail('E_EFFECT_PROFILE: invalid core guest effect');
@@ -419,7 +438,7 @@ export function validateProgramIRV2(input) {
       case 'capture':case 'floatCapture':case 'trapCapture':case 'trapOptionCapture':
         record(expr,['kind','slot'],'capture');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
-           !active.includes(expr.slot))fail('ADT capture outside its typed payload scope');
+           (!active.includes(expr.slot)||caughtSlots[owner].has(expr.slot)))fail('ADT capture outside its typed payload scope');
         const captureType=trapOptionSlots[owner].has(expr.slot)?'trapOptionResult':trapSlots[owner].has(expr.slot)?'trapResult':floatSlots[owner].has(expr.slot)?'float':'int';
         if(expected!==captureType||desc.value!==(captureType==='trapOptionResult'?'trapOptionCapture':captureType==='trapResult'?'trapCapture':captureType==='float'?'floatCapture':'capture'))
           fail('capture type mismatch');

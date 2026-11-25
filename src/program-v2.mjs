@@ -648,11 +648,28 @@ class Parser {
         statements.push({kind:'return',body});
       } else if(['throw','throw!','raise','raise!','panic','panic!'].includes(this.peek().value)){
         const effect=this.tokens[this.i++].value.replace(/!$/,'');
-        this.expect('new');this.expect('Error');this.expect('(');
-        const literal=this.peek();
-        if(literal.kind!=='errorMessage')fail('E_ERROR_MESSAGE: expected core Error literal',literal);
-        this.i++;this.expect(')');this.expect(';');
-        statements.push({kind:'effect',body:{kind:'guestEffect',effect,message:literal.value}});
+        if(!this.eat('new')){
+          if(effect!=='throw')fail('E_EFFECT_PROFILE: only ordinary caught Error can be rethrown',this.peek());
+          const name=this.name();this.expect(';');
+          statements.push({kind:'effect',body:{kind:'rethrow',name}});
+        }else{
+          this.expect('Error');this.expect('(');
+          const literal=this.peek();
+          if(literal.kind!=='errorMessage')fail('E_ERROR_MESSAGE: expected core Error literal',literal);
+          this.i++;this.expect(')');this.expect(';');
+          statements.push({kind:'effect',body:{kind:'guestEffect',effect,message:literal.value}});
+        }
+      } else if(this.eat('try')){
+        this.expect('{');const body=this.statementSequence(['}'],depth+1);this.expect('}');
+        this.expect('catch');this.expect('(');const name=this.name();this.expect(')');
+        if(GENERATOR_RESERVED.has(name)||isProtectedPreludeIdentity(name)||name==='Error')
+          fail('E_CATCH_BINDING: invalid catch binding',this.peek());
+        this.expect('{');const handler=this.statementSequence(['}'],depth+1);this.expect('}');
+        // The expression IR has no explicit fallthrough continuation yet. Never
+        // execute a subsequent statement inside the protected catch region.
+        if(!this.returnsOnAllPaths(body)||!this.returnsOnAllPaths(handler))
+          fail('E_TRY_FALLTHROUGH_UNSUPPORTED: both protected and handler paths must terminate',this.peek());
+        statements.push({kind:'tryCatch',name,body,handler});
       } else if(this.eat('guard')) {
         // Guard's predicate must be a bool. Reuse the typed IR's conditional
         // checker and evaluate each comma-separated predicate at most once,
@@ -713,7 +730,7 @@ class Parser {
   returnsOnAllPaths(stmts) {
     if(!stmts.length)return false;
     const last=stmts[stmts.length-1];
-    return last.kind==='return'||last.kind==='effect'||
+    return last.kind==='return'||last.kind==='effect'||last.kind==='tryCatch'||
       (last.kind==='branch'&&this.returnsOnAllPaths(last.yes)&&this.returnsOnAllPaths(last.no));
   }
   lowerStatements(stmts,fallback) {
@@ -721,10 +738,11 @@ class Parser {
     for(let i=stmts.length-1;i>=0;i--) {
       const stmt=stmts[i];
       if(i<stmts.length-1 &&
-         (stmt.kind==='return'||stmt.kind==='effect' ||
+         (stmt.kind==='return'||stmt.kind==='effect'||stmt.kind==='tryCatch' ||
           (this.returnsOnAllPaths(stmt.yes||[])&&this.returnsOnAllPaths(stmt.no||[]))))
         fail('unreachable statement after terminating return/if');
       if(stmt.kind==='return'||stmt.kind==='effect')result=stmt.body;
+      else if(stmt.kind==='tryCatch')result={kind:'tryCatch',name:stmt.name,body:this.lowerStatements(stmt.body,null),handler:this.lowerStatements(stmt.handler,null)};
       else if(stmt.kind==='local'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
         result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,body:result};
@@ -757,7 +775,8 @@ class Parser {
         if(total>MAX_TOKENS)fail('expanded conditional IR node budget exceeded');
       }
       switch(expr.kind){
-        case 'int':case 'float':case 'bool':case 'symbol':case 'variable':case 'guestEffect':break;
+        case 'int':case 'float':case 'bool':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':break;
+        case 'tryCatch':add(expr.body);add(expr.handler);break;
         case 'neg':case 'not':case 'trap':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
@@ -1188,8 +1207,19 @@ function resolveProgram(parsed) {
   function resolve(expr,owner,depth=0,bindings=[]) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
+      case 'tryCatch':{
+        if(owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer'||owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))fail('E_CATCH_BINDING: explicit return type and nonshadowing binding required');
+        if(nextCaptureSlot>=MAX_TOKENS)fail('catch slot budget exceeded');
+        const slot=nextCaptureSlot++;
+        return {kind:'tryCatch',slot,body:resolve(expr.body,owner,depth+1,bindings),handler:resolve(expr.handler,owner,depth+1,[...bindings,{name:expr.name,slot,type:'caughtError'}])};
+      }
+      case 'rethrow':{
+        const binding=bindings.findLast(b=>b.name===expr.name);
+        if(binding?.type!=='caughtError')fail('E_EFFECT_PROFILE: rethrow requires a scoped caught Error');
+        return {kind:'rethrow',slot:binding.slot};
+      }
       case 'guestEffect':
-        if(owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer'||owner.params.includes('Error')||bindings.some(b=>b.name==='Error'))
+        if(owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer'||owner.params.includes('Error')||bindings.some(b=>b.name==='Error')||classByName.has('Error')||modules.includes('Error')||[...functions,...generators].some(f=>f.name==='Error'))
           fail('E_EFFECT_PROFILE: explicit result type and unshadowed core Error required');
         return expr;
       case 'int':case 'float':case 'bool':case 'symbol':return expr;
@@ -1246,6 +1276,7 @@ function resolveProgram(parsed) {
       }
       case 'variable': {
         const captured=bindings.findLast(b=>b.name===expr.name);
+        if(captured?.type==='caughtError')fail('E_CATCH_BINDING: caught Error is only available for typed rethrow');
         if(captured)return {kind:captured.type==='trapOptionResult'?'trapOptionCapture':captured.type==='trapResult'?'trapCapture':captured.type==='float'?'floatCapture':'capture',slot:captured.slot};
         const index=owner.params.indexOf(expr.name);
         if(index<0) fail('unresolved identifier '+expr.name);
@@ -1383,6 +1414,7 @@ function resolveProgram(parsed) {
     } else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
     else if(['binary','floatBin','compare','numericCompare','symbolCompare'].includes(expr.kind)) {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
+    else if(expr.kind==='tryCatch'){inspect(expr.body,owner);inspect(expr.handler,owner);}
     else if(expr.kind==='seqVoidCall'){inspect(expr.call,owner);inspect(expr.value,owner);}
     else if(['local','floatLocal','trapLocal','trapOptionLocal'].includes(expr.kind)){inspect(expr.init,owner);inspect(expr.body,owner);}
     else if(['trapMethod','trapOptionMethod'].includes(expr.kind))inspect(expr.receiver,owner);
@@ -1426,6 +1458,8 @@ function emitProgram(program) {
   function emitExpr(expr,depth=0) {
     if(depth > MAX_DEPTH) fail('codegen depth exceeded');
     switch(expr.kind) {
+      case 'tryCatch':return '(()=>{try{return '+emitExpr(expr.body,depth+1)+';}catch(_v'+expr.slot+'){if(!_isOrdinaryGuest(_v'+expr.slot+'))throw _v'+expr.slot+';return '+emitExpr(expr.handler,depth+1)+';}})()';
+      case 'rethrow':return '(()=>{throw _v'+expr.slot+';})()';
       case 'guestEffect':return '_guestEffect('+JSON.stringify(expr.effect)+','+JSON.stringify(expr.message)+')';
       case 'int': return expr.value+'n';
       case 'float': return '('+String(Number(expr.value))+')';
@@ -1552,6 +1586,7 @@ function emitProgram(program) {
       case 'binary':case 'floatBin':case 'compare':case 'numericCompare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
+      case 'tryCatch':return usesSymbol(expr.body)||usesSymbol(expr.handler);
       case 'seqVoidCall':return usesSymbol(expr.call)||usesSymbol(expr.value);
       case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
       case 'trap':return usesSymbol(expr.inner);
@@ -1594,6 +1629,7 @@ function emitProgram(program) {
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
       case 'if':return usesPortableRuntime(expr.condition)||
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
+      case 'tryCatch':return usesPortableRuntime(expr.body)||usesPortableRuntime(expr.handler);
       case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
       case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
@@ -1642,9 +1678,11 @@ function emitProgram(program) {
     'const _ordinaryGuestBrand=new WeakSet();',
     'function _guestEffect(kind,message){const e=new Error(message);Object.defineProperty(e,"effect",{value:kind,enumerable:true});if(kind==="throw")_ordinaryGuestBrand.add(e);throw Object.freeze(e);}'
   );
+  function containsCatch(value){return !!value&&typeof value==='object'&&(value.kind==='tryCatch'||Object.values(value).some(containsCatch));}
+  if(containsTrap(program)||containsCatch(program))out.push('function _isOrdinaryGuest(e){return _arithmeticBrand.has(e)||(typeof _ordinaryGuestBrand!=="undefined"&&_ordinaryGuestBrand.has(e));}');
   if(containsTrap(program))out.push(
       'const _trapBrand=new WeakSet();',
-      'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult"||t==="trapOptionResult"){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}const result=t==="option<int>"?_tag("Ok",_checkoption(v)):t==="int"?_ok(v):_checkresult(v);_trapBrand.add(result);return result;}catch(e){if(!_arithmeticBrand.has(e)&&!(typeof _ordinaryGuestBrand!=="undefined"&&_ordinaryGuestBrand.has(e)))throw e;const result=_tag("Err",e);_trapBrand.add(result);return result;}}',
+      'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult"||t==="trapOptionResult"){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}const result=t==="option<int>"?_tag("Ok",_checkoption(v)):t==="int"?_ok(v):_checkresult(v);_trapBrand.add(result);return result;}catch(e){if(!_isOrdinaryGuest(e))throw e;const result=_tag("Err",e);_trapBrand.add(result);return result;}}',
       'function _trapMethod(m,result,option){if(!_trapBrand.has(result))throw new TypeError("invalid trap Result");if(m==="is_ok")return result.kind==="Ok";if(m==="is_err")return result.kind==="Err";if(m==="unwrap"&&result.kind==="Ok")return option?_checkoption(result.value):_check(result.value);if(m==="unwrap"){const e=new Error("cannot unwrap Err",{cause:result.value});Object.defineProperty(e,"name",{value:"ResultUnwrapPanic"});throw Object.freeze(e);}throw new TypeError("invalid trap Result method");}'
   );
   (program.classes??[]).forEach((cls,classIndex)=>{
