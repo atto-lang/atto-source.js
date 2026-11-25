@@ -1268,7 +1268,7 @@ function emitProgram(program) {
   const out=[
     '// experimental Oreslang program-v2, provisional signed-64 integer model',
     'const _arithmeticBrand=new WeakSet();',
-    'function _arith(code,message){const e=new RangeError(message);Object.defineProperties(e,{name:{value:code==="integer_overflow"?"ArithmeticOverflowError":"DivisionByZeroError"},code:{value:code,enumerable:true}});_arithmeticBrand.add(e);return Object.freeze(e);}',
+    'function _arith(code,message){const e=new RangeError(message);Object.defineProperties(e,{name:{value:code==="integer_overflow"?"ArithmeticOverflowError":"DivisionByZeroError"},code:{value:code,enumerable:true},abiCode:{value:code==="integer_overflow"?65537:65538,enumerable:true}});_arithmeticBrand.add(e);return Object.freeze(e);}',
     'function _check(v){if(typeof v!=="bigint")throw new TypeError("Oreslang signed i64 BigInt required");if(v<-(1n<<63n)||v>(1n<<63n)-1n)throw _arith("integer_overflow","ORES_I64_OVERFLOW: checked signed 64-bit overflow");return v;}',
     // Do not expose JS engine-specific "Division by zero" RangeError text as
     // an unclassified Oreslang guest failure. This is a provisional host-side
@@ -1467,7 +1467,7 @@ function emitProgram(program) {
       'function _error_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Err"?x.value:d;}',
       'const _trapBrand=new WeakSet();',
       'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult"){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}const result=t==="int"?_ok(v):_checkresult(v);_trapBrand.add(result);return result;}catch(e){if(!_arithmeticBrand.has(e))throw e;const result=_tag("Err",e);_trapBrand.add(result);return result;}}',
-      'function _trapMethod(m,result){if(!_trapBrand.has(result))throw new TypeError("invalid trap Result");if(m==="is_ok")return result.kind==="Ok";if(m==="is_err")return result.kind==="Err";if(m==="unwrap"&&result.kind==="Ok")return _check(result.value);if(m==="unwrap"&&_arithmeticBrand.has(result.value))throw result.value;throw new TypeError("cannot unwrap Err");}'
+      'function _trapMethod(m,result){if(!_trapBrand.has(result))throw new TypeError("invalid trap Result");if(m==="is_ok")return result.kind==="Ok";if(m==="is_err")return result.kind==="Err";if(m==="unwrap"&&result.kind==="Ok")return _check(result.value);if(m==="unwrap"){const e=new Error("cannot unwrap Err",{cause:result.value});Object.defineProperty(e,"name",{value:"ResultUnwrapPanic"});throw Object.freeze(e);}throw new TypeError("invalid trap Result method");}'
     );
   }
   (program.classes??[]).forEach((cls,classIndex)=>{
