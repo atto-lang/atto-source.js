@@ -244,6 +244,11 @@ function tokenize(source) {
           source[pos+1]!=='=' &&
           !(source.slice(pos+1,pos+3)==='eq' && !/[A-Za-z0-9_]/.test(source[pos+3]??'')))
         fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
+      if(['trap','throw','raise','panic'].includes(word)&&source[pos]==='!'&&
+         source[pos+1]!=='='&&!/^!eq(?![A-Za-z0-9_])/.test(source.slice(pos))){
+        if(word!=='trap')fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: typed guest effects and cleanup lowering required',start);
+        advance();word='trap!';
+      }
       emit('id',word,start);
     } else if (/[0-9]/.test(c)) {
       let number = '';
@@ -273,16 +278,15 @@ function tokenize(source) {
   return result;
 }
 /**
- * JS program-v2 supports a restricted tagged Option/Result value ABI,
- * but has no compiler-owned guest throw/raise/panic classification or trap
- * unwind boundary. Reject source trap before resolution/ESM publication.
- * Match lexer tokens, never raw text: comments containing 'trap' are inert.
+ * Only a function-local, inferred Result capture is implemented. All other
+ * trap contexts retain the existing fail-closed diagnostic.
  */
 function rejectUnsupportedTrapEffect(tokens) {
-  for (const token of tokens) {
-    if (token.kind==='id' && token.value==='trap') {
-      fail('trap requires verified ordinary-throw effect and cleanup lowering; Option/Result values alone are not a trap boundary',token);
-    }
+  for(let i=0;i<tokens.length;i++){
+    const token=tokens[i];
+    if(token.kind!=='id'||!['trap','trap!'].includes(token.value))continue;
+    if(tokens[i-3]?.value==='val'&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='=')continue;
+    fail('trap requires verified ordinary-throw effect and cleanup lowering; only immutable local Result capture is supported',token);
   }
 }
 function rejectUnsupportedStaticSelect(tokens) {
@@ -570,6 +574,22 @@ class Parser {
         const body=this.expression();
         this.expect(';');
         statements.push({kind:'return',body});
+      } else if(this.eat('val')) {
+        // Bounded immutable function locals; branch lifetimes and effects are
+        // not widened by this scalar slice.
+        if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
+        const localType=this.eat('int')?'int':'trapResult';
+        const name=this.name();
+        if(['val','trap','throw','raise','panic','return','guard','if','else','fi','end','int'].includes(name)||isProtectedPreludeIdentity(name))
+          fail('invalid local binding '+name,this.peek());
+        this.expect('=');
+        let init;
+        if(localType==='trapResult'){
+          if(!this.eat('trap!')&&!this.eat('trap'))fail('only trap Result inference is supported',this.peek());
+          init={kind:'trap',inner:this.expression()};
+        }else init=this.expression();
+        this.expect(';');
+        statements.push({kind:'local',name,init,localType});
       } else if(this.eat('guard')) {
         // Guard's predicate must be a bool. Reuse the typed IR's conditional
         // checker and evaluate each comma-separated predicate at most once,
@@ -622,7 +642,10 @@ class Parser {
           (this.returnsOnAllPaths(stmt.yes||[])&&this.returnsOnAllPaths(stmt.no||[]))))
         fail('unreachable statement after terminating return/if');
       if(stmt.kind==='return')result=stmt.body;
-      else {
+      else if(stmt.kind==='local'){
+        if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
+        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,body:result};
+      }else {
         const yes=this.lowerStatements(stmt.yes,result);
         const no=this.lowerStatements(stmt.no,result);
         if(!yes||!no)fail('RETURN_EXPLICIT_REQUIRED: int function requires return on every if branch');
@@ -648,7 +671,8 @@ class Parser {
       }
       switch(expr.kind){
         case 'int':case 'bool':case 'symbol':case 'variable':break;
-        case 'neg':case 'not':add(expr.inner);break;
+        case 'neg':case 'not':case 'trap':add(expr.inner);break;
+        case 'local':add(expr.init);add(expr.body);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'newClass':for(const arg of expr.args)add(arg.expr??arg);break;
@@ -784,13 +808,12 @@ class Parser {
           left={kind:'if',condition:left,yes,no};
           continue;
         }
-        if (op === '/') fail('division unsupported in provisional int profile',this.peek());
         // Word operators lower to already-validated typed comparisons and
         // lazy conditionals, never JS truthiness or eager bitwise operators.
         const compare=['<','>','<=','>=','==','!=','eq','neq'].includes(op);
         const logical=op==='and'||op==='or';
         if(op==='^')fail("E_OPERATOR_CARET: single infix '^' is invalid; use '^^' for integer XOR",token);
-        const prec=op==='*'?20:op==='+'||op==='-'?15:
+        const prec=op==='*'||op==='/'?20:op==='+'||op==='-'?15:
           op==='<<<'||op==='>>>'?12:
           ['<','>','<=','>='].includes(op)?9:compare?8:
           op==='&'?7:op==='^^'?6:op==='|'?5:op==='and'?4:op==='or'?3:-1;
@@ -1023,6 +1046,9 @@ function resolveProgram(parsed) {
   function resolvedType(expr,owner) {
     switch(expr.kind){
       case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
+      case 'trap':case 'trapCapture':return 'trapResult';
+      case 'trapMethod':return expr.name==='unwrap'?'int':'bool';
+      case 'local':case 'trapLocal':return resolvedType(expr.body,owner);
       case 'bool':case 'not':case 'compare':case 'symbolCompare':return 'bool';
       case 'symbol':return 'symbol';
       case 'param':return owner.paramTypes?.[expr.index]??'int';
@@ -1068,6 +1094,22 @@ function resolveProgram(parsed) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
       case 'int':case 'bool':case 'symbol':return expr;
+      case 'local':{
+        if(owner.ownerKind==='method'||owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))
+          fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
+        if(nextCaptureSlot>=MAX_TOKENS)fail('local slot budget exceeded');
+        const slot=nextCaptureSlot++;
+        const init=resolve(expr.init,owner,depth+1,bindings);
+        return {kind:expr.localType==='trapResult'?'trapLocal':'local',slot,init,
+          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type:expr.localType}])};
+      }
+      case 'trap':{
+        if(owner.ownerKind==='method')fail('trap in methods unsupported');
+        const inner=resolve(expr.inner,owner,depth+1,bindings);
+        const operandType=resolvedType(inner,owner);
+        if(!['int','result<int,int>','trapResult'].includes(operandType))fail('trap requires int or closed Result operand');
+        return {kind:'trap',operandType,inner};
+      }
       case 'newClass': {
         if(owner.ownerKind==='method')
           fail('class construction inside method body unsupported in convergence slice');
@@ -1100,7 +1142,7 @@ function resolveProgram(parsed) {
       }
       case 'variable': {
         const captured=bindings.findLast(b=>b.name===expr.name);
-        if(captured)return {kind:'capture',slot:captured.slot};
+        if(captured)return {kind:captured.type==='trapResult'?'trapCapture':'capture',slot:captured.slot};
         const index=owner.params.indexOf(expr.name);
         if(index<0) fail('unresolved identifier '+expr.name);
         return {kind:'param',index};
@@ -1121,6 +1163,12 @@ function resolveProgram(parsed) {
       case 'if': return {kind:'if',condition:resolve(expr.condition,owner,depth+1,bindings),
         yes:resolve(expr.yes,owner,depth+1,bindings),no:resolve(expr.no,owner,depth+1,bindings)};
       case 'call': {
+        const local=bindings.findLast(b=>b.name===expr.qualifier);
+        if(local){
+          if(local.type!=='trapResult'||!['is_ok','is_err','unwrap'].includes(expr.name)||expr.args.length!==0)
+            fail('unsupported local Result method/arity');
+          return {kind:'trapMethod',name:expr.name,receiver:{kind:'trapCapture',slot:local.slot}};
+        }
         if(expr.qualifier==='Option'||expr.qualifier==='Result'){
           const key=expr.qualifier+'.'+expr.name;
           const signatures={
@@ -1209,7 +1257,9 @@ function resolveProgram(parsed) {
     } else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
     else if(expr.kind==='binary'||expr.kind==='compare'||expr.kind==='symbolCompare') {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
-    else if(expr.kind==='neg'||expr.kind==='not') inspect(expr.inner,owner);
+    else if(expr.kind==='local'||expr.kind==='trapLocal'){inspect(expr.init,owner);inspect(expr.body,owner);}
+    else if(expr.kind==='trapMethod')inspect(expr.receiver,owner);
+    else if(expr.kind==='neg'||expr.kind==='not'||expr.kind==='trap') inspect(expr.inner,owner);
     else if(expr.kind==='match'||expr.kind==='adtMatch') {
       inspect(expr.subject,owner);expr.arms.forEach(a=>inspect(a.body,owner));
     }
@@ -1238,11 +1288,12 @@ function resolveProgram(parsed) {
 function emitProgram(program) {
   const out=[
     '// experimental Oreslang program-v2, provisional signed-64 integer model',
-    'function _check(v){if(typeof v!=="bigint")throw new TypeError("Oreslang signed i64 BigInt required");if(v<-(1n<<63n)||v>(1n<<63n)-1n)throw new RangeError("ORES_I64_OVERFLOW: checked signed 64-bit overflow");return v;}',
+    'class _ArithmeticError extends RangeError{#guest;constructor(code,message){super(message);Object.defineProperties(this,{name:{value:code==="integer_overflow"?"ArithmeticOverflowError":"DivisionByZeroError"},code:{value:code,enumerable:true},abiCode:{value:code==="integer_overflow"?65537:65538,enumerable:true}});Object.freeze(this);}static isGuest(e){return typeof e==="object"&&e!==null&&#guest in e;}}',
+    'function _check(v){if(typeof v!=="bigint")throw new TypeError("Oreslang signed i64 BigInt required");if(v<-(1n<<63n)||v>(1n<<63n)-1n)throw new _ArithmeticError("integer_overflow","ORES_I64_OVERFLOW: checked signed 64-bit overflow");return v;}',
     // Do not expose JS engine-specific "Division by zero" RangeError text as
     // an unclassified Oreslang guest failure. This is a provisional host-side
     // code, NOT the portable guest Error wire ABI or actor CONTROL signal.
-    'function _rem(a,b){_check(a);_check(b);if(b===0n)throw new RangeError("ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit remainder by zero");return _check(a%b);}'
+    'function _rem(a,b){_check(a);_check(b);if(b===0n)throw new _ArithmeticError("division_by_zero","ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit remainder by zero");return _check(a%b);}'
   ];
   function emitExpr(expr,depth=0) {
     if(depth > MAX_DEPTH) fail('codegen depth exceeded');
@@ -1251,7 +1302,10 @@ function emitProgram(program) {
       case 'symbol':return '_symbol('+JSON.stringify(expr.value)+')';
       case 'bool': return expr.value?'true':'false';
       case 'param':return '_p'+expr.index;
-      case 'capture':return '_v'+expr.slot;
+      case 'capture':case 'trapCapture':return '_v'+expr.slot;
+      case 'local':case 'trapLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
+      case 'trap':return '_trap(()=>('+emitExpr(expr.inner,depth+1)+'),'+JSON.stringify(expr.operandType)+')';
+      case 'trapMethod':return '_trapMethod('+JSON.stringify(expr.name)+','+emitExpr(expr.receiver,depth+1)+')';
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
@@ -1266,6 +1320,7 @@ function emitProgram(program) {
           const shift=expr.op==='<<<'?'a<<b':'BigInt.asUintN(64,a)>>b';
           return '((a,b)=>{_check(a);_check(b);if(b<0n||b>63n)throw new RangeError("E_GUEST_SHIFT_DISTANCE: expected 0..63");return BigInt.asIntN(64,'+shift+');})('+left+','+right+')';
         }
+        if(expr.op==='/')return '((a,b)=>{_check(a);_check(b);if(b===0n)throw new _ArithmeticError("division_by_zero","ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit division by zero");return _check(a/b);})('+emitExpr(expr.left,depth+1)+','+emitExpr(expr.right,depth+1)+')';
         if(expr.op==='%')return '_rem(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
         // Inline so programs without Integer.mod keep byte-identical output.
         if(expr.op==='mod')return '((a,b)=>{const r=_rem(a,b);return r<0n?_check(b>0n?r+b:r-b):r;})(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
@@ -1355,7 +1410,9 @@ function emitProgram(program) {
       case 'binary':case 'compare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
-      case 'neg':case 'not':return usesSymbol(expr.inner);
+      case 'neg':case 'not':case 'trap':return usesSymbol(expr.inner);
+      case 'local':case 'trapLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
+      case 'trapMethod':return usesSymbol(expr.receiver);
       case 'match':case 'adtMatch':return usesSymbol(expr.subject)||
         expr.arms.some(arm=>usesSymbol(arm.body));
       default:return false;
@@ -1384,7 +1441,8 @@ function emitProgram(program) {
   function usesPortableRuntime(expr) {
     if(expr===null)return false;
     switch(expr.kind) {
-      case 'intrinsic':return true;
+      case 'intrinsic':case 'trap':case 'trapMethod':case 'trapLocal':return true;
+      case 'local':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'newClass':return false;
       case 'methodCall':case 'namedMethodCall':
         return usesPortableRuntime(expr.receiver)||expr.args.some(usesPortableRuntime);
@@ -1419,7 +1477,11 @@ function emitProgram(program) {
       'function _is_ok(v){return _checkresult(v).kind==="Ok";}',
       'function _option_or(v,d){_check(d);const x=_checkoption(v);return x.kind==="Some"?x.value:d;}',
       'function _result_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Ok"?x.value:d;}',
-      'function _error_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Err"?x.value:d;}'
+      'function _error_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Err"?x.value:d;}',
+      // trapResult is a closed compiler-only local type, never an exported
+      // parameter/result ABI. Existing checked Result identity is preserved.
+      'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult")return v;return t==="int"?_ok(v):_checkresult(v);}catch(e){if(!_ArithmeticError.isGuest(e))throw e;return _tag("Err",e);}}',
+      'function _trapMethod(m,r){if(m==="is_ok")return r.kind==="Ok";if(m==="is_err")return r.kind==="Err";if(m==="unwrap"&&r.kind==="Ok")return _check(r.value);if(m==="unwrap"){const e=new Error("cannot unwrap Err",{cause:r.value});Object.defineProperty(e,"name",{value:"ResultUnwrapPanic"});throw Object.freeze(e);}throw new TypeError("invalid trap Result method");}'
     );
   }
   (program.classes??[]).forEach((cls,classIndex)=>{
@@ -1637,8 +1699,8 @@ export function checkProgramV2(source) {
   return true;
 }
 
-// The Java canonical AttoLang scalar-v1 source contract removes remainder
-// and does not include JS program-v2's experimental bool, ADT or match forms.
+// The Java canonical AttoLang scalar-v1 source contract uses named remainder
+// and excludes the broader program-v2 ADT/match/trap forms in this profile.
 // Keep this an explicit profile rather than silently changing legacy .ores
 // syntax or treating a broader JS-only feature as verified Java/LLVM parity.
 export function compileAttoScalarV1(source) {
@@ -1648,10 +1710,11 @@ export function compileAttoScalarV1(source) {
     fail('AttoLang scalar-v1 admits only root integer functions');
   const visit=expr=>{
     switch(expr.kind){
-      case 'int':case 'param':return;
+      case 'int':case 'param':case 'capture':return;
+      case 'local':visit(expr.init);visit(expr.body);return;
       case 'neg':return visit(expr.inner);
       case 'binary':
-        if(!['+','-','*','^','&','|','<<<','>>>'].includes(expr.op))
+        if(!['+','-','*','/','%','mod','^','&','|','<<<','>>>'].includes(expr.op))
           fail('AttoLang scalar-v1 removed or unsupported operator '+expr.op);
         visit(expr.left);visit(expr.right);return;
       case 'call':

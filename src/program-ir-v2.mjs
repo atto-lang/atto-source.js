@@ -280,6 +280,7 @@ export function validateProgramIRV2(input) {
   const graph=owners.map(()=>new Set());
   let nodes=0;
   const captureSlots=owners.map(()=>new Set());
+  const trapSlots=owners.map(()=>new Set());
   function node(expr,owner,depth=0,expected='int',active=[]){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('expression complexity exceeded');
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid expression');
@@ -295,6 +296,16 @@ export function validateProgramIRV2(input) {
     if(expected!=='symbol'&&desc.value==='symbol')
       fail('Symbol value cannot be used as non-Symbol');
     switch(desc.value) {
+      case 'trap':
+        record(expr,['kind','operandType','inner'],'typed arithmetic trap');
+        if(expected!=='trapResult'||!['int','result<int,int>','trapResult'].includes(expr.operandType))
+          fail('trap operand/result type mismatch');
+        return {kind:'trap',operandType:expr.operandType,inner:node(expr.inner,owner,depth+1,expr.operandType,active)};
+      case 'trapMethod':
+        record(expr,['kind','name','receiver'],'trap Result method');
+        if(!['is_ok','is_err','unwrap'].includes(expr.name)||expected!==(expr.name==='unwrap'?'int':'bool'))
+          fail('trap Result method type mismatch');
+        return {kind:'trapMethod',name:expr.name,receiver:node(expr.receiver,owner,depth+1,'trapResult',active)};
       case 'int':
         record(expr,['kind','value'],'int');
         if(expected!=='int')fail('boolean expected, got int');
@@ -355,13 +366,25 @@ export function validateProgramIRV2(input) {
           ...(named?{paramOrder:order}:{})
         };
       }
-      case 'capture':
+      case 'local':case 'trapLocal':{
+        record(expr,['kind','slot','init','body'],'immutable local');
+        if(owner>=headers.length||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
+           expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
+          fail('invalid or repeated local slot');
+        captureSlots[owner].add(expr.slot);
+        const t=desc.value==='trapLocal'?'trapResult':'int';
+        const init=node(expr.init,owner,depth+1,t,active);
+        if(t==='trapResult')trapSlots[owner].add(expr.slot);
+        return {kind:desc.value,slot:expr.slot,init,body:node(expr.body,owner,depth+1,expected,[...active,expr.slot])};
+      }
+      case 'capture':case 'trapCapture':
         record(expr,['kind','slot'],'capture');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
-           !active.includes(expr.slot))
-          fail('ADT capture outside its typed payload scope');
-        if(expected!=='int')fail('ADT int payload capture type mismatch');
-        return {kind:'capture',slot:expr.slot};
+           !active.includes(expr.slot))fail('ADT capture outside its typed payload scope');
+        const captureType=trapSlots[owner].has(expr.slot)?'trapResult':'int';
+        if(expected!==captureType||desc.value!==(captureType==='trapResult'?'trapCapture':'capture'))
+          fail('capture type mismatch');
+        return {kind:desc.value,slot:expr.slot};
       case 'param':
         record(expr,['kind','index'],'param');
         if(!Number.isSafeInteger(expr.index)||Object.is(expr.index,-0)||expr.index<0||expr.index>=owners[owner].params.length)
@@ -380,7 +403,7 @@ export function validateProgramIRV2(input) {
       case 'binary':
         record(expr,['kind','op','left','right'],'binary');
         if(expected!=='int')fail('arithmetic in boolean context');
-        if(!['+','-','*','%','mod','^','&','|','<<<','>>>'].includes(expr.op))fail('unsupported binary operator');
+        if(!['+','-','*','/','%','mod','^','&','|','<<<','>>>'].includes(expr.op))fail('unsupported binary operator');
         return {kind:'binary',op:expr.op,
           left:node(expr.left,owner,depth+1,'int',active),right:node(expr.right,owner,depth+1,'int',active)};
       case 'compare':
@@ -551,7 +574,7 @@ export function validateProgramIRV2(input) {
         return {kind:'not',inner:methodNode(expr.inner,method,depth+1,'bool')};
       case 'binary':
         record(expr,['kind','op','left','right'],'method binary');
-        if(expected!=='int'||!['+','-','*','%','mod','^','&','|','<<<','>>>'].includes(expr.op))
+        if(expected!=='int'||!['+','-','*','/','%','mod','^','&','|','<<<','>>>'].includes(expr.op))
           fail('unsupported method arithmetic');
         return {kind:'binary',op:expr.op,
           left:methodNode(expr.left,method,depth+1,'int'),
