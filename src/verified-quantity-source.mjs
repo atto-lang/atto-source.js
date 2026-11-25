@@ -26,7 +26,7 @@ export function lowerVerifiedQuantitySource(tokens,report){
     if(v<MIN||v>MAX)fail('E_UNIT_RANGE','integer out of range');
     return [t,v];
   };
-  const factor=()=>{const [,n]=integer();if(n<=0n)fail('E_UNIT_SCALE','positive scale required');return n;};
+  const factor=()=>{if(peek().kind!=='int')fail('E_UNIT_SCALE','positive signed-i64 scale required');const n=BigInt(peek().value.replaceAll('_',''));at++;if(n<=0n||n>MAX)fail('E_UNIT_SCALE','positive signed-i64 scale required');return n;};
   let declarations=0;
   while(take('define')){
     if(++declarations>128)fail('E_UNIT_LIMIT','too many declarations');
@@ -41,7 +41,7 @@ export function lowerVerifiedQuantitySource(tokens,report){
     let unit={powers,n:1n,d:1n};
     if(take('=')){
       let base,f=1n,divide=false;
-      if(peek().kind==='int'){f=factor();expect('*');base=lookup(name());}
+      if(peek().kind==='int'||peek().value==='-'){f=factor();expect('*');base=lookup(name());}
       else {base=lookup(name());if(take('*'))f=factor();else if(take('/')){f=factor();divide=true;}}
       if(!sameDimensions(base,unit))fail('E_UNIT_DIMENSION','derived unit dimension mismatch');
       unit=ratio(powers,base.n*(divide?1n:f),base.d*(divide?f:1n),fail);
