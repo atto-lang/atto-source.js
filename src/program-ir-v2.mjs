@@ -35,9 +35,13 @@ const GENERATOR_RESERVED=new Set([
   'Some','None','Ok','Err','using','requires','serial','critical-read','critical-write','nb-select'
 ]);
 export class ProgramIRError extends Error {
-  constructor(detail) {super('error: program IR: '+detail);this.name='ProgramIRError';}
+  constructor(detail, code=null) {
+    super('error: program IR: '+detail);
+    this.name='ProgramIRError';
+    this.code=code;
+  }
 }
-const fail=s=>{throw new ProgramIRError(s);};
+const fail=(s,code=null)=>{throw new ProgramIRError(s,code);};
 function record(v,keys,context) {
   if(v===null || typeof v!=='object' || Array.isArray(v))fail(context+': expected object');
   const proto=Object.getPrototypeOf(v);
@@ -211,7 +215,7 @@ export function validateProgramIRV2(input) {
     if(typed&&returnType==='int'&&paramTypes.every(t=>t==='int'))
       fail('redundant typed metadata on int-only function');
     const slot=(module===null?'@file/':'@module/'+module+'/')+name+'/'+params.length;
-    if(slots.has(slot))fail('duplicate caller-visible method arity '+slot);
+    if(slots.has(slot))fail('duplicate caller-visible method arity '+slot,'E_DUPLICATE');
     const family=slot.slice(0,slot.lastIndexOf('/'));
     if(symbolKinds.has(family)&&symbolKinds.get(family)!==f.kind)
       fail('fnc/routine overload kind conflict '+family);
@@ -280,9 +284,9 @@ export function validateProgramIRV2(input) {
   const graph=owners.map(()=>new Set());
   let nodes=0;
   const captureSlots=owners.map(()=>new Set());
+  const floatSlots=owners.map(()=>new Set());
   const trapSlots=owners.map(()=>new Set());
   const trapOptionSlots=owners.map(()=>new Set());
-  const floatSlots=owners.map(()=>new Set());
   function node(expr,owner,depth=0,expected='int',active=[]){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('expression complexity exceeded');
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid expression');
@@ -303,20 +307,6 @@ export function validateProgramIRV2(input) {
         if(expected!=='float'||typeof expr.value!=='string'||expr.value.length>128||
            !/^[0-9]+\.[0-9]+$/.test(expr.value)||!Number.isFinite(Number(expr.value)))fail('invalid float literal/type');
         return {kind:'float',value:expr.value};
-      case 'floatNeg':
-        record(expr,['kind','inner'],'float negation');
-        if(expected!=='float')fail('float negation type mismatch');
-        return {kind:'floatNeg',inner:node(expr.inner,owner,depth+1,'float',active)};
-      case 'floatBin':
-        record(expr,['kind','op','left','right'],'float arithmetic');
-        if(expected!=='float'||!['+','-','*','/'].includes(expr.op))fail('float arithmetic type mismatch');
-        return {kind:'floatBin',op:expr.op,left:node(expr.left,owner,depth+1,'float',active),right:node(expr.right,owner,depth+1,'float',active)};
-      case 'numericCompare':
-        record(expr,['kind','op','leftType','rightType','left','right'],'numeric comparison');
-        if(expected!=='bool'||!['<','>','<=','>=','==','!='].includes(expr.op)||
-           !['int','float'].includes(expr.leftType)||!['int','float'].includes(expr.rightType))fail('numeric comparison type mismatch');
-        return {kind:'numericCompare',op:expr.op,leftType:expr.leftType,rightType:expr.rightType,
-          left:node(expr.left,owner,depth+1,expr.leftType,active),right:node(expr.right,owner,depth+1,expr.rightType,active)};
       case 'trap':
         record(expr,['kind','operandType','inner'],'typed arithmetic trap');
         const option=['option<int>','trapOptionResult'].includes(expr.operandType);
@@ -332,6 +322,20 @@ export function validateProgramIRV2(input) {
         return {kind:desc.value,name:expr.name,
           receiver:node(expr.receiver,owner,depth+1,option?'trapOptionResult':'trapResult',active)};
       }
+      case 'floatNeg':
+        record(expr,['kind','inner'],'float negation');
+        if(expected!=='float')fail('float negation type mismatch');
+        return {kind:'floatNeg',inner:node(expr.inner,owner,depth+1,'float',active)};
+      case 'floatBin':
+        record(expr,['kind','op','left','right'],'float arithmetic');
+        if(expected!=='float'||!['+','-','*','/'].includes(expr.op))fail('float arithmetic type mismatch');
+        return {kind:'floatBin',op:expr.op,left:node(expr.left,owner,depth+1,'float',active),right:node(expr.right,owner,depth+1,'float',active)};
+      case 'numericCompare':
+        record(expr,['kind','op','leftType','rightType','left','right'],'numeric comparison');
+        if(expected!=='bool'||!['<','>','<=','>=','==','!='].includes(expr.op)||
+           !['int','float'].includes(expr.leftType)||!['int','float'].includes(expr.rightType))fail('numeric comparison type mismatch');
+        return {kind:'numericCompare',op:expr.op,leftType:expr.leftType,rightType:expr.rightType,
+          left:node(expr.left,owner,depth+1,expr.leftType,active),right:node(expr.right,owner,depth+1,expr.rightType,active)};
       case 'int':
         record(expr,['kind','value'],'int');
         if(expected!=='int')fail('boolean expected, got int');
@@ -452,6 +456,16 @@ export function validateProgramIRV2(input) {
         return {kind:'if',condition:node(expr.condition,owner,depth+1,'bool',active),
           yes:node(expr.yes,owner,depth+1,expected,active),
           no:node(expr.no,owner,depth+1,expected,active)};
+      case 'seqVoidCall': {
+        record(expr,['kind','call','value'],'void-call sequence');
+        const effectKind=expr.call&&typeof expr.call==='object'&&
+          Object.getOwnPropertyDescriptor(expr.call,'kind')?.value;
+        if(effectKind!=='call'&&effectKind!=='namedCall')
+          fail('void-call sequence requires a direct call');
+        return {kind:'seqVoidCall',
+          call:node(expr.call,owner,depth+1,'void',active),
+          value:node(expr.value,owner,depth+1,expected,active)};
+      }
       case 'call': {
         record(expr,['kind','target','args'],'call');
         if(!Number.isSafeInteger(expr.target)||Object.is(expr.target,-0)||expr.target<0||expr.target>=headers.length)

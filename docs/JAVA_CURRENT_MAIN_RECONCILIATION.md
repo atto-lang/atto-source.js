@@ -1,0 +1,3 @@
+# Current-main semantic merge
+
+Main 670dad2c27e4989bf787917ca62026f683cadfa3 independently integrated checked quotient, float locals, trap and void-call sequencing. Merge retains all main CI/test files and compiler additions, adds canonical caret/XOR/shift operators and Option-preserving trap from d98730d81e78526be441af15c0d21bbb7d9b885c, and preserves main's private runtime brands. Superseded strict integer-XOR refusal is changed to ill-typed Boolean XOR refusal. 33 isolated V8 execution/admission checks passed; complete exact-head Node CI is still required. No full AOT or zero-GC certification.

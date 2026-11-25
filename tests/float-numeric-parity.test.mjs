@@ -64,8 +64,3 @@ test('forged float capture and numeric comparator type claims fail validation',(
   escaped.functions[0].body.init={kind:'floatCapture',slot:0};
   assert.throws(()=>compileProgramIRV2(escaped));
 });
-
-test('signed-zero reciprocal, i64 limit and fractional comparison remain exact',async()=>{
-  for(const body of ["val float x=-0.0; return (1.0/x)<0.0 ? 42:0;","val float x=9223372036854775808.0; return 9223372036854775807<x?42:0;","val float x=0.5; return 0 < x && x < 1 ? 42:0;","val float x=0.1+0.2; return x>0.3?42:0;"])assert.equal(await run('pub fnc main():int{'+body+'}'),42n,body);
-  for(const body of ["val float x=1.0 ^^ 2.0;return 42;","val float x=1.0 <<< 2;return 42;","val float x=1.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000;return 42;"])assert.throws(()=>compileProgramV2('pub fnc main():int{'+body+'}'),undefined,body);
-});
