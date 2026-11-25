@@ -56,10 +56,10 @@ test('not/and/or are strict bool operators, with precedence below comparisons',a
 
 test('boolean operators short-circuit checked-i64 traps in unselected arms',async()=>{
   const m=await load([
-    'pub fnc cheap_and(bool b):bool{return b and (1 % 0 eq 0);}',
+    'pub fnc cheap_and(bool b):bool{return b and (Integer.rem(1, 0) eq 0);}',
     'pub fnc cheap_or(bool b):bool{return b or (9223372036854775807+1 eq 0);}',
-    'pub fnc literal_and():bool{return false and (1 % 0 eq 0);}',
-    'pub fnc literal_or():bool{return true or (1 % 0 eq 0);}'
+    'pub fnc literal_and():bool{return false and (Integer.rem(1, 0) eq 0);}',
+    'pub fnc literal_or():bool{return true or (Integer.rem(1, 0) eq 0);}'
   ].join('\n'));
   assert.equal(m.cheap_and(false),false);
   assert.equal(m.cheap_or(true),true);

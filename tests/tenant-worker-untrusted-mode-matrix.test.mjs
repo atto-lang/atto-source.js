@@ -7,13 +7,13 @@ test('only explicitly trusted Node/Browser worker admission is implemented',()=>
   assert.equal(requireSupportedTenantWorkerIsolation(
     {isolation:'trusted-worker',untrusted:false}),undefined);
   assert.equal(requireSupportedTenantWorkerIsolation(Object.create(null)),undefined);
-  for(const isolation of ['wasmtime-store','vm-isolate','sandboxed-process','untrusted'])
+  for(const isolation of ['tenant-vm','TenantVM','wasmtime-store','vm-isolate','sandboxed-process','untrusted'])
     assert.throws(()=>requireSupportedTenantWorkerIsolation({isolation}),
       /is not implemented|not implemented by JS Workers/);
   assert.throws(()=>requireSupportedTenantWorkerIsolation({untrusted:true}),
-    /separately verified OS sandbox/);
+    /verified TenantVM execution boundary/);
   assert.throws(()=>requireSupportedTenantWorkerIsolation(
-    {isolation:'trusted-worker',untrusted:true}),/separately verified OS sandbox/);
+    {isolation:'trusted-worker',untrusted:true}),/verified TenantVM execution boundary/);
 });
 
 test('unknown or spoofed isolation option keys cannot silently expand privileges',()=>{
