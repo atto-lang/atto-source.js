@@ -51,7 +51,10 @@ function normalize_generic_closers(tokens) {
   const nominal=new Set(['task','Mutex','Option','Future','Result','Map','Channel','ActorMail']);
   const out=[];let depth=0;
   for(const token of tokens){
-    if(token==='<'&&(depth>0||nominal.has(out.at(-1)))){depth++;out.push(token);}
+    // Constructor payload bindings are angle-delimited but are not generic
+    // type tests. Preserve the Result parser's nested-pattern diagnostics.
+    const nominalPattern=out.at(-3)==='on'&&out.at(-2)==='is'&&['Ok','Err','Some','None'].includes(out.at(-1));
+    if(token==='<'&&(depth>0||nominal.has(out.at(-1))||nominalPattern)){depth++;out.push(token);}
     else if(depth>0&&['>','>>','>>>'].includes(token)){
       const closers=Math.min(depth,token.length);
       for(let j=0;j<closers;j++)out.push('>');

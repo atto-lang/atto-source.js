@@ -440,6 +440,7 @@ export function validateProgramIRV2(input) {
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            (!active.includes(expr.slot)||caughtSlots[owner].has(expr.slot)))fail('ADT capture outside its typed payload scope');
         const captureType=trapOptionSlots[owner].has(expr.slot)?'trapOptionResult':trapSlots[owner].has(expr.slot)?'trapResult':floatSlots[owner].has(expr.slot)?'float':'int';
+        if(captureType==='int'&&expected!=='int')fail('ADT int payload capture type mismatch');
         if(expected!==captureType||desc.value!==(captureType==='trapOptionResult'?'trapOptionCapture':captureType==='trapResult'?'trapCapture':captureType==='float'?'floatCapture':'capture'))
           fail('capture type mismatch');
         return {kind:desc.value,slot:expr.slot};
