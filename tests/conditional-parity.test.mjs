@@ -13,7 +13,7 @@ const load = esm => import('data:text/javascript,' + encodeURIComponent(esm));
 const compiled = source => load(compileProgramV2(source));
 
 test('canonical ternary: lazy signed-i64 arms, strict bool guard, IR/ESM round trip',async()=>{
-  const source='pub fnc choose(bool useFast): int {return useFast ? 42 : 1 % 0;}';
+  const source='pub fnc choose(bool useFast): int {return useFast ? 42 : Integer.rem(1, 0);}';
   const ir=compileToProgramIRV2(source);
   assert.equal(ir.functions[0].body.kind,'if');
   assert.equal(ir.functions[0].body.condition.kind,'param');

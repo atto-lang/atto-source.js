@@ -25,8 +25,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           git rev-parse 'HEAD^{tree}'
           git hash-object 'src/demand-i64-port.mjs' 'tests/demand-i64-port.test.mjs'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '22'
+          node-version: '22.16.0'
       - name: Run actual selectable-channel adapter tests
         run: node --test tests/demand-i64-port.test.mjs
