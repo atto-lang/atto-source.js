@@ -35,7 +35,7 @@ test('actor literal bounds preserve signed-i64 and leading-zero semantics',async
   ]){
     const {artifact,runtime}=await run(source);
     assert.match(artifact.module_source,new RegExp('let total='+initial+'n;'));
-    assert.equal((await runtime.on_route(wire(0n))).stdout,initial+'\\n');
+    assert.equal((await runtime.on_route(wire(0n))).stdout,initial+'\n');
   }
 });
 
@@ -54,9 +54,9 @@ test('actor literal overflow fails closed before BigInt materialization',()=>{
 
 test('actor overflow panic leaves owned state unchanged after rejected message',async()=>{
   const {runtime}=await run('9223372036854775807');
-  assert.rejects(runtime.on_route(wire(1n)),error=>
+  await assert.rejects(runtime.on_route(wire(1n)),error=>
     error?.message==='E_GUEST_PANIC_1'&&
     error.actor_failure?.kind==='panic'&&
     error.actor_failure.actor_id===1&&error.actor_failure.parent_id===0);
-  assert.equal((await runtime.on_route(wire(-1n))).stdout,'9223372036854775806\\n');
+  assert.equal((await runtime.on_route(wire(-1n))).stdout,'9223372036854775806\n');
 });
