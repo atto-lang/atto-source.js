@@ -83,6 +83,14 @@ function lex(src) {
     const loc={line,col};
     if(/[A-Za-z_]/.test(src[i])){
       let s='';while(i<src.length&&/[A-Za-z0-9_]/.test(src[i])){s+=src[i];advance();}
+      // A typed Topic receiver may be a local, parameter or import. Until
+      // scalar ESM owns actor/group capabilities, share! and Result lowering,
+      // reject actual member publication before producing source/IR artifacts.
+      // Opaque strings/comments were already skipped by this lexer.
+      if(s==='try_publish' && out.at(-1)?.kind==='sym' &&
+         out.at(-1).value==='.')
+        throw new CompileError(
+          'Topic.try_publish requires checked actor/group, share! and Result lowering; JS scalar backend unsupported',loc);
       // Record the first contextual ownership bang so the typed Future
       // preflight can still diagnose its legacy and canonical spellings.
       if(['copy','take','borrow','share'].includes(s) && src[i]==='!' &&
