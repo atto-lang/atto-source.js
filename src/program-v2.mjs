@@ -229,7 +229,7 @@ function tokenize(source) {
       fail(source.startsWith('^^',pos)
         ? "'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)"
         : "'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",start);
-    } else if ('(){}:,;+-*/=.<>!?'.includes(c)) {
+    } else if ('(){}[]:,;+-*/=.<>!?'.includes(c)) {
       emit('sym',c,start); advance();
     } else fail('unsupported character',start);
   }
@@ -369,13 +369,16 @@ class Parser {
       const terminator=braced?'}':'end';
       let body=null;
       if(returnType==='void'){
-        if(this.eat('return'))this.expect(';');
+        if(this.eat('return')){
+          if(this.peek().value!==';')fail('RETURN_VOID_VALUE: void method cannot return a value',this.peek());
+          this.expect(';');
+        }
         if(this.peek().value!==terminator)
           fail('void method body unsupported in convergence slice',this.peek());
       }else{
         const statements=this.statementSequence([terminator]);
         body=this.lowerStatements(statements,null);
-        if(!body)fail('method requires a return on every path',this.peek());
+        if(!body)fail('RETURN_EXPLICIT_REQUIRED: method requires a return on every path',this.peek());
         this.checkExpandedBudget(body);
       }
       this.expect(terminator);
@@ -464,19 +467,32 @@ class Parser {
       } while(this.eat(','));
       this.expect(')');
     }
-    // Bound source-level control flow to total-returning integer functions.
-    // This is a freestanding core slice, not generic statement lowering.
+    // Bound source-level control flow to explicitly returning value functions;
+    // pure void functions may fall through. No general effect lowering yet.
     const arrow=this.eat('->');
     if(!arrow)this.expect(':');
-    const returnType=this.valueType();
+    const returnType=this.eat('void')?'void':this.valueType();
     const braced=this.eat('{');
     if(!braced&&!arrow)fail('expected { for colon function body',this.peek());
     if(!braced){if(!this.eat('as'))this.eat('::');}
-    const statements=this.statementSequence([braced?'}':'end']);
-    this.expect(braced?'}':'end');
-    const body=this.lowerStatements(statements,null);
-    if(!body)fail('int function requires a return on every path');
-    this.checkExpandedBudget(body);
+    const terminator=braced?'}':'end';
+    let body=null;
+    if(returnType==='void'){
+      // Program-v2 has no general statement/effect lowering yet. Match the
+      // existing pure-void class-method subset without fabricating a value.
+      if(this.eat('return')){
+        if(this.peek().value!==';')fail('RETURN_VOID_VALUE: void function cannot return a value',this.peek());
+        this.expect(';');
+      }
+      if(this.peek().value!==terminator)
+        fail('void function effects require checked statement lowering',this.peek());
+    }else{
+      const statements=this.statementSequence([terminator]);
+      body=this.lowerStatements(statements,null);
+      if(!body)fail('RETURN_EXPLICIT_REQUIRED: int function requires a return on every path');
+      this.checkExpandedBudget(body);
+    }
+    this.expect(terminator);
     // Exporting a routine as a module object property would make a
     // direct-call-only routine first class. Leave this for runtime/ABI design.
     if (pub && kind === 'routine') fail('public routine cannot be exported');
@@ -494,6 +510,8 @@ class Parser {
     while(this.peek().kind!=='eof'&&!terminators.includes(this.peek().value)) {
       if(++this.statementNodes>MAX_TOKENS)fail('statement budget exceeded',this.peek());
       if(this.eat('return')) {
+        if(this.peek().value===';')
+          fail('RETURN_VALUE_REQUIRED: nonvoid return requires a value',this.peek());
         const body=this.expression();
         this.expect(';');
         statements.push({kind:'return',body});
@@ -528,7 +546,7 @@ class Parser {
       else {
         const yes=this.lowerStatements(stmt.yes,result);
         const no=this.lowerStatements(stmt.no,result);
-        if(!yes||!no)fail('int function requires return on every if branch');
+        if(!yes||!no)fail('RETURN_EXPLICIT_REQUIRED: int function requires return on every if branch');
         result={kind:'if',condition:stmt.condition,yes,no};
       }
     }
@@ -569,6 +587,18 @@ class Parser {
     }
     size(root);
   }
+  exportDeclaration() {
+    this.expect('export');this.expect('pub');
+    let visibility='public';
+    if(this.eat('[')) {
+      this.expect('pkg');this.expect(']');visibility='package';
+    }
+    let kind=null;
+    if(this.eat('class'))kind='class';
+    else if(this.eat('fnc'))kind='fnc';
+    const name=this.name();this.expect(';');
+    return {name,kind,visibility};
+  }
   parse() {
     // Oreslang's flat source namespace is compile-time package metadata,
     // not a runtime module/object. It must occur only once at file start.
@@ -578,7 +608,13 @@ class Parser {
       this.expect(';');
     }
     const modules=[],functions=[],generators=[],classes=[],usedModules=new Set(),usedClasses=new Set();
+    const exportDeclarations=[];
     while(this.peek().kind!=='eof'){
+      if(this.peek().value==='export') {
+        if(exportDeclarations.length>=1024)fail('file export budget exceeded',this.peek());
+        exportDeclarations.push(this.exportDeclaration());
+        continue;
+      }
       if(this.peek().value==='import'){
         const next=this.tokens[this.i+1]?.value;
         fail(next==='namespace'
@@ -629,7 +665,7 @@ class Parser {
       }
     }
     if(!functions.length&&!generators.length&&!modules.length&&!classes.length)fail('empty program');
-    return {namespace,modules,functions,generators,classes};
+    return {namespace,modules,functions,generators,classes,exportDeclarations};
   }
   integer(negative = false) {
     const token=this.peek();
@@ -811,7 +847,24 @@ class Parser {
   }
 }
 function resolveProgram(parsed) {
-  const {modules,functions,generators=[],classes=[]}=parsed;
+  const {modules,functions,generators=[],classes=[],exportDeclarations=[]}=parsed;
+  const seenExportNames=new Set();
+  for(const entry of exportDeclarations) {
+    if(seenExportNames.has(entry.name))fail('duplicate export '+entry.name);
+    seenExportNames.add(entry.name);
+    const targetClasses=classes.filter(c=>c.name===entry.name);
+    const targetFns=functions.filter(f=>f.module===null&&f.name===entry.name);
+    if(!targetClasses.length&&!targetFns.length)fail('unknown export '+entry.name);
+    if(targetClasses.length&&targetFns.length)fail('ambiguous export '+entry.name);
+    const kind=targetClasses.length?'class':'fnc';
+    if(entry.kind!==null&&entry.kind!==kind)fail('export kind mismatch '+entry.name);
+    const targets=targetClasses.length?targetClasses:targetFns;
+    if(entry.visibility==='package'&&targets.some(t=>t.pub))
+      fail('package export conflicts with public declaration '+entry.name);
+    if(kind==='fnc'&&targets.some(t=>t.kind==='routine')&&entry.visibility==='public')
+      fail('routine is not a public exported fnc '+entry.name);
+    if(entry.visibility==='public')targets.forEach(t=>{t.pub=true;});
+  }
   const slots=new Map(),exports=new Set(),symbolKinds=new Map(),classByName=new Map();
   const classTables=classes.map((cls,classIndex)=>{
     if(classByName.has(cls.name))fail('duplicate class '+cls.name);
@@ -1021,7 +1074,7 @@ function resolveProgram(parsed) {
       default: fail('unsupported expression node');
     }
   }
-  const resolved=functions.map(fn=>({...fn,body:resolve(fn.body,fn)}));
+  const resolved=functions.map(fn=>({...fn,body:fn.body===null?null:resolve(fn.body,fn)}));
   const resolvedGenerators=generators.map(gen=>({
     ...gen,yields:gen.yields.map(expr=>resolve(expr,gen))
   }));
@@ -1036,6 +1089,7 @@ function resolveProgram(parsed) {
   }));
   const graph=resolved.map(()=>new Set());
   function inspect(expr,owner) {
+    if(expr===null)return; // Pure void bodies contain no calls or effects.
     if(expr.kind==='call'||expr.kind==='namedCall') {
       graph[owner].add(expr.target);expr.args.forEach(a=>inspect(a,owner));
     } else if(expr.kind==='methodCall'||expr.kind==='namedMethodCall') {
@@ -1063,6 +1117,10 @@ function resolveProgram(parsed) {
   resolved.forEach((_,i)=>visit(i));
   return {
     sourceNamespace:parsed.namespace,modules,functions:resolved,
+    ...(exportDeclarations.length?{fileExports:exportDeclarations.map(e=>({
+      name:e.name,kind:e.kind??(classes.some(c=>c.name===e.name)?'class':'fnc'),
+      visibility:e.visibility
+    }))}:{}),
     ...(resolvedGenerators.length?{generators:resolvedGenerators}:{}),
     ...(resolvedClasses.length?{classes:resolvedClasses}:{})
   };
@@ -1168,6 +1226,7 @@ function emitProgram(program) {
      classMethods.some(method=>method.returnType==='bool'||method.paramTypes.includes('bool')))
     out.push('function _checkbool(v){if(typeof v!=="boolean")throw new TypeError("Oreslang bool required");return v;}');
   function usesSymbol(expr) {
+    if(expr===null)return false;
     switch(expr.kind) {
       case 'symbol':return true;
       case 'newClass':return false;
@@ -1204,6 +1263,7 @@ function emitProgram(program) {
   // without appearing in its public signature. Include helpers based on
   // both typed signatures and the entire already-validated expression DAG.
   function usesPortableRuntime(expr) {
+    if(expr===null)return false;
     switch(expr.kind) {
       case 'intrinsic':return true;
       case 'newClass':return false;
@@ -1300,7 +1360,7 @@ function emitProgram(program) {
       if(!check)fail('unsupported portable parameter type');
       out.push(check+'('+p+');');
     });
-    out.push('return '+emitExpr(fn.body)+';','}');
+    out.push(fn.returnType==='void'?'return;':'return '+emitExpr(fn.body)+';','}');
   });
   let dispatcherNumber=0;
   function publicCallableGroups(module) {

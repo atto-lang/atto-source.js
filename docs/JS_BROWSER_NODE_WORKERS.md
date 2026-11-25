@@ -1,5 +1,7 @@
 # Browser/Node JavaScript workers vs Oreslang Wasm (experimental)
 
+**Canonical naming (2026-11-11): TenantVM** is the cross-backend per-tenant compartment; a JS Worker is only a possible substrate, not an automatic untrusted TenantVM. See [TenantVM naming](TENANT_VM_NAMING_V1.md). Existing Worker API and fail-closed untrusted admission are unchanged.
+
 ## Two separate targets
 
 | Property | JS ESM target (`oreslang-source.js`) | Wasm target (`oreslang-wasm`) |
