@@ -749,12 +749,11 @@ class Parser {
           left={kind:'if',condition:left,yes,no};
           continue;
         }
-        if (op === '/') fail('division unsupported in provisional int profile',this.peek());
         // Word operators lower to already-validated typed comparisons and
         // lazy conditionals, never JS truthiness or eager bitwise operators.
         const compare=['<','>','<=','>=','==','!=','eq','neq'].includes(op);
         const logical=op==='and'||op==='or';
-        const prec=op==='*'?20:op==='+'||op==='-'?10:
+        const prec=(op==='*'||op==='/')?20:op==='+'||op==='-'?10:
           compare?5:op==='and'?4:op==='or'?3:-1;
         if (prec < min) break;
         this.i++;
@@ -1219,6 +1218,8 @@ function emitProgram(program) {
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
       case 'not':return '!('+emitExpr(expr.inner,depth+1)+')';
       case 'binary':
+        // Evaluate operands once, left-to-right; do not expose engine-specific zero-divisor errors.
+        if(expr.op==='/')return '((a,b)=>{_check(a);_check(b);if(b===0n)throw new RangeError("ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit division by zero");return _check(a/b);})(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
         if(expr.op==='%')return '_rem(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
         // Inline so programs without Integer.mod keep byte-identical output.
         if(expr.op==='mod')return '((a,b)=>{const r=_rem(a,b);return r<0n?_check(b>0n?r+b:r-b):r;})(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
@@ -1507,8 +1508,8 @@ export function checkProgramV2(source) {
   return true;
 }
 
-// The Java canonical AttoLang scalar-v1 source contract removes remainder
-// and does not include JS program-v2's experimental bool, ADT or match forms.
+// The current AttoLang scalar contract admits checked truncating division and
+// named Integer.rem/mod, not raw percent syntax. Other program-v2 forms remain restricted.
 // Keep this an explicit profile rather than silently changing legacy .ores
 // syntax or treating a broader JS-only feature as verified Java/LLVM parity.
 export function compileAttoScalarV1(source) {
@@ -1521,7 +1522,7 @@ export function compileAttoScalarV1(source) {
       case 'int':case 'param':return;
       case 'neg':return visit(expr.inner);
       case 'binary':
-        if(!['+','-','*'].includes(expr.op))
+        if(!['+','-','*','/','%','mod'].includes(expr.op))
           fail('AttoLang scalar-v1 removed or unsupported operator '+expr.op);
         visit(expr.left);visit(expr.right);return;
       case 'call':
