@@ -37,6 +37,6 @@ test('inherited and symbol-bearing spawn options cannot manufacture isolation au
 test('untrusted tenants and unsupported isolation modes reject before JS Worker admission',()=>{
  for(const value of ['wasmtime-store','vm-isolate','sandboxed-process','untrusted'])
   assert.throws(()=>admit({isolation:value,untrusted:false}),/boundary is not implemented/);
- assert.throws(()=>admit({isolation:'trusted-worker',untrusted:true}),/requires a separately verified OS sandbox/);
+ assert.throws(()=>admit({isolation:'trusted-worker',untrusted:true}),/untrusted tenant requires a verified TenantVM execution boundary/);
  assert.throws(()=>admit({isolation:'trusted-worker',untrusted:'false'}),/must be a boolean/);
 });
