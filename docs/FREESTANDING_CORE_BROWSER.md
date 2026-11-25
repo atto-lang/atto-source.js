@@ -13,7 +13,13 @@ A browser is not Linux or Windows, and cannot satisfy POSIX filesystem/process A
 
 ## Current proved source subset
 
-`compileFreestandingCore(source)` in `src/freestanding-core.mjs` implements an intentionally **narrow source-effect gate**. It accepts one pure Oreslang `define module core` with integer `fnc` declarations in the program-v2 dialect. Supported functions may have bounded non-recursive integer arithmetic, comparisons, `if ...; do ... else ... fi`, total-returning branching, function calls, and scalar `match`. The exact canonical fixture is copied *unchanged* from `oreslang-source.java/stdlib/core.ores`, Git blob `d2cd9b8e0cd3e3bb3ee6a5f9cebf9ab3312c44f4`.
+`compileFreestandingCore(source)` in `src/freestanding-core.mjs` implements an intentionally **narrow source-effect gate**. It accepts either one pure Oreslang `define module core` or a single
+file-scoped `namespace core;` with root public functions. The latter is a
+compile-time source identity, not a runtime module: its functions export
+directly as named ESM exports. The existing module form exports a `core`
+object unchanged. Both modes forbid ambient imports, classes and generators.
+Only the admitted freestanding integer, boolean and concrete tagged-sum
+`fnc` subset is supported in the program-v2 dialect. Supported functions may have bounded non-recursive integer arithmetic, comparisons, `if ...; do ... else ... fi`, total-returning branching, function calls, and scalar `match`. The exact canonical fixture is copied *unchanged* from `oreslang-source.java/stdlib/core.ores`, Git blob `d2cd9b8e0cd3e3bb3ee6a5f9cebf9ab3312c44f4`.
 
 The generated ES module has no imports, host APIs, memory allocator requirements or dynamic code loading. It uses JavaScript BigInt for a provisional checked signed-i64 arithmetic model and does not promise **zero JavaScript GC**. The package path is browser-safe: `src/freestanding-core.mjs` imports only `src/program-v2.mjs` and `src/program-ir-v2.mjs`, both host-independent. This **does not** prove freestanding OS-independent behavior of arbitrary future Oreslang library files or transitive packages; those require whole-program typed effects and link-time import verification.
 
@@ -41,7 +47,12 @@ import module core from "core";
 pub fnc answer(): int {return core.clamp_int(42,0,10);}
 ```
 
-The legacy import string `"std/core"` is also admitted as a compatibility alias; it does **not** enable hosted `std`. The source-independent linker validates `coreSource` through the freestanding source compiler, combines the two inputs in one bounded closed-world compiler invocation, and resolves actual core function names, visibility and arity in typed IR. The resulting ESM has **no runtime imports** and can be executed in Node or a browser. This is a bootstrap linkage design, not a general import system: additional modules, namespaces, host API calls, cycles, reflection, dynamic loading and OS-specific `std` are rejected.
+The legacy import string `"std/core"` is also admitted as a compatibility alias; it does **not** enable hosted `std`. The source-independent linker validates `coreSource` through the freestanding source compiler, combines the two inputs in one bounded closed-world compiler invocation, and resolves actual core function names, visibility and arity in typed IR. The resulting ESM has **no runtime imports** and can be executed in Node or a browser. This is a bootstrap linkage design, not a general import system: the
+legacy linked-core API still requires an explicit `define module core`
+provider. A namespace-only source is supported for **standalone**
+freestanding compilation, not silently linked by this import API.
+Additional modules, ambient namespace imports, host API calls, cycles,
+reflection, dynamic loading and OS-specific `std` remain rejected.
 
 Node CLI:
 

@@ -117,7 +117,7 @@ test('CLI never publishes JS for rejected select source', async()=> {
 test('pointer-style source syntax and legacy mutable borrow fail closed',()=>{
  assert.throws(()=>compile('pub fnc main(): int { return rt ref value; }'),/pointer-style runtime operation/);
  assert.throws(()=>compile('pub fnc main(): int { return rt deref value; }'),/pointer-style runtime operation/);
- assert.throws(()=>compile('pub fnc main(): int { return rt borrow mut value; }'),/legacy 'rt borrow mut'/);
+ assert.throws(()=>compile('pub fnc main(): int { return rt borrow mut value; }'),/runtime ownership operation requires typed lowering/);
  assert.throws(()=>compile('pub fnc main(): int { return rt mut borrow value; }'),/runtime ownership operation requires typed lowering/);
  for(const source of [
   'pub fnc main(): int { return &value; }',
@@ -172,4 +172,43 @@ test('scalar call graph accepts forward DAGs but rejects unconditionally infinit
   'pub fnc main(): int { return 1; } fnc unused(): int { return unused(); }',
   'pub fnc main(): int { return a(); } fnc a(): int { return b(); } fnc b(): int { return a(); }'
  ])assert.throws(()=>compile(bad),/error: unconditional recursive call cycle/);
+});
+
+test('canonical .atto Topic alias denial is byte-identical to Wasm, .NET and conformance', async()=> {
+  // The same negative fixture is present under this path in Wasm/.NET and
+  // in fixtures/ under atto-platform-conformance. Exact blob:
+  // c562ad380bb283da9ffa26160653c1186ab63462
+  const source=await readFile(resolve('contracts/atto-ensemble-v1/canonical-unlowered-try-publish.atto'),'utf8');
+  for(const compileFn of [compileToIR, compile]) {
+    assert.throws(()=>compileFn(source),
+      /Topic\.try_publish requires checked actor\/group, share! and Result lowering/);
+  }
+});
+
+test('JS scalar frontend denies aliased Topic.try_publish before code emission',()=>{
+  for(const source of [
+    'pub fnc main():int { return topic.try_publish(share! event)?; }',
+    'pub fnc main():int { return alias.try_publish(rt share event); }',
+    'pub fnc main():int { return topic /* nested /* x */ y */ . try_publish(share! event); }',
+    'pub fnc main():int { return foo.bar.try_publish(42); }',
+    'pub fnc main():int { return local_topic.try_publish; }'
+  ]){
+    for(const compileFn of [compileToIR,compile])
+      assert.throws(()=>compileFn(source),
+        /Topic\.try_publish requires checked actor\/group, share! and Result lowering/,
+        source);
+  }
+});
+
+test('JS typed Topic denial leaves inert text and standalone functions untouched',()=>{
+  const source='pub fnc main():int { return 42; }';
+  for(const inert of [
+    ' // topic.try_publish(share! event)?',
+    ' /* nested /* topic.try_publish(share! event)? */ outer */',
+    ' // topic.try_publish(share! event)?\u0085',
+    ' /* topic.try_publish(rt share event) */'
+  ]) assert.equal(compile(source+inert),compile(source));
+  const alias='pub fnc try_publish(int x):int { return x; } '+
+    'pub fnc main():int { return try_publish(42); }';
+  assert.equal(typeof compile(alias),'string');
 });
