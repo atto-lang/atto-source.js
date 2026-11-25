@@ -36,3 +36,9 @@ test('forged check range and injection rejected',()=>{
   assert.throws(()=>compileProgramIRV2(bad));
  }
 });
+
+test('inferred positive quantity refinement',async()=>assert.equal((await guest('pub fnc main() -> int { val a = 42.<Second>::<Positive>; return a / 1<Second>; }'))(),42n));
+test('inferred refinement failure',async()=>assert.throws(await guest('pub fnc main() -> int { val a = 0.<Second>::<Positive>; return a / 1<Second>; }'),e=>e.code==='refinement_violation'));
+test('inferred unit erasure',()=>assert.throws(()=>compileProgramV2(pre+'pub fnc main() -> int { val a = 42.<Second>; return a; }'),/E_UNIT_ERASURE:/));
+test('inferred local proves parameter',async()=>assert.equal((await guest('fnc f(Bounded x) -> int { return x; } pub fnc main() -> int { val a = (40 + 2); return f(a); }'))(),42n));
+test('inferred local denies parameter',()=>assert.throws(()=>compileProgramV2(pre+'fnc f(Bounded x) -> int { return x; } pub fnc main() -> int { val a = 43; return f(a); }'),/E_REFINEMENT_PRECONDITION:/));
