@@ -228,6 +228,12 @@ function tokenize(source) {
         word += source[pos]; advance();
       }
       if (word.length > 128) fail('identifier limit',start);
+      // Never parse a contextual ownership bang as a macro or ordinary call;
+      // this ESM compiler lacks typechecked move/borrow/share lowering.
+      if (['copy','take','borrow','share'].includes(word) && source[pos]==='!' &&
+          source[pos+1]!=='=' &&
+          !(source.slice(pos+1,pos+3)==='eq' && !/[A-Za-z0-9_]/.test(source[pos+3]??'')))
+        fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
       emit('id',word,start);
     } else if (/[0-9]/.test(c)) {
       let number = '';
