@@ -153,3 +153,42 @@ test('legacy function-only program-v2 keeps the legacy IR shape',()=>{
   assert.doesNotMatch(esm,/_class\d+/);
   assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir))),esm);
 });
+
+test('fnc, mtd, method and bare instance declarations share the checked class method ABI',async()=>{
+  const source=[
+    'pub define class Calculator as',
+    '  pub fnc twice(int value):int{return value*2;}',
+    '  pub fnc method():int{return 1;}',
+    '  pub fnc mtd():int{return 2;}',
+    '  pub method legacy():int{return 3;}',
+    '  pub mtd canonical():int{return 4;}',
+    '  pub bare():int{return 5;}',
+    'end',
+    'pub fnc main():int{return new Calculator().twice(21);}'
+  ].join('\n');
+  const ir=compileToProgramIRV2(source);
+  assert.equal(ir.classes.length,1);
+  assert.deepEqual(ir.classes[0].methods.map(m=>m.name),
+    ['twice','method','mtd','legacy','canonical','bare']);
+  const mod=await load(source,'fnc-instance-parity');
+  const calc=new mod.Calculator();
+  assert.equal(mod.main(),42n);
+  assert.equal(calc.twice(21n),42n);
+  assert.equal(calc.method(),1n);
+  assert.equal(calc.mtd(),2n);
+  assert.equal(calc.legacy(),3n);
+  assert.equal(calc.canonical(),4n);
+  assert.equal(calc.bare(),5n);
+  assert.throws(()=>calc.twice(21),/signed i64 BigInt/);
+  assert.throws(()=>mod.Calculator.prototype.twice.call({}),/invalid Oreslang receiver/);
+});
+
+test('fnc class prefix never admits duplicate markers, static methods or duplicate arities',()=>{
+  for(const source of [
+    'define class X as fnc mtd wrong():int{return 1;} end',
+    'define class X as mtd fnc wrong():int{return 1;} end',
+    'define class X as static fnc wrong():int{return 1;} end',
+    'define class X as mtd f():int{return 1;} fnc f():int{return 2;} end',
+    'define class X as fnc f(self):int{return 1;} method f():int{return 2;} end'
+  ]) assert.throws(()=>compileProgramV2(source),/error: program v2:/,source);
+});
