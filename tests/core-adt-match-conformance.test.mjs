@@ -6,7 +6,7 @@ import {compileFreestandingCore} from '../src/freestanding-core.mjs';
 
 const sourcePath=new URL('./fixtures/conformance-option-result-match-i64-v0.ores',import.meta.url);
 const manifestPath=new URL('./fixtures/conformance-option-result-match-i64-v0.json',import.meta.url);
-const SOURCE_BLOB='248e8e95896315a203b3a729e079241d8b53d7de';
+const SOURCE_BLOB='a2d2f9ae7f2db520c3f74e1dd4e649728d2a2e88';
 const MANIFEST_BLOB='7400986b537d57bf5ae2c26988caffabf6ab6632';
 const gitBlob=bytes=>createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex');
 

@@ -154,7 +154,7 @@ export function validateScalarIR(ir) {
         return {kind: 'neg', inner: checkExpr(expr.inner, owner, depth + 1)};
       case 'binary':
         record(expr, ['kind', 'op', 'left', 'right'], 'binary');
-        if (!['+', '-', '*', '%'].includes(expr.op)) fail('unsupported binary operator');
+        if (!['+', '-', '*', '%', 'mod', '^'].includes(expr.op)) fail('unsupported binary operator');
         return {kind: 'binary', op: expr.op,
           left: checkExpr(expr.left, owner, depth + 1),
           right: checkExpr(expr.right, owner, depth + 1)};
