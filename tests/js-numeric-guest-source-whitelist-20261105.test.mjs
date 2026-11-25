@@ -33,5 +33,5 @@ test('overflow, division-by-zero and positive controls remain distinct and non-c
  assert.equal(overflow.expected_value,null);
  const zero=NUMERIC_PROBES.find(p=>p.id==='modulo-by-zero');
  assert.equal(zero.expected_kind,'division-by-zero');
- assert.ok(numericProbeGuestSource(zero.expression).includes('return 1%0;'));
+ assert.ok(numericProbeGuestSource(zero.expression).includes('return Integer.rem(1, 0);'));
 });

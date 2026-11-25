@@ -1,0 +1,3 @@
+pub fnc main(): Result<int, int> {
+  return trap Err(42);
+}
