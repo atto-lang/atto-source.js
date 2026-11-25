@@ -103,7 +103,11 @@ test('legacy integer match, bool and immutable tagged ADT remain unaffected',asy
   assert.equal(x.choose(1n),10n);
   assert.equal(x.choose(2n),20n);
   const previous=await get('./fixtures/freestanding-core-java.ores');
-  assert.equal(compileProgramV2(previous).length,1662);
+  // The nominal arithmetic error runtime adds exactly 392 bytes.
+  const emitted=compileProgramV2(previous);
+  assert.equal(emitted.length,2054);
+  assert.equal(emitted,compileProgramV2(previous));
+  assert.doesNotMatch(emitted,/const _trapBrand/);
   const v=(await load(compileFreestandingCore(await core()))).core.into_option(1n);
   assert.equal(Object.isFrozen(v),true);
   assert.equal(Object.getPrototypeOf(v),null);
