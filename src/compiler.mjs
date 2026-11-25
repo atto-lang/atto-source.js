@@ -78,6 +78,12 @@ function lex(src) {
     const loc={line,col};
     if(/[A-Za-z_]/.test(src[i])){
       let s='';while(i<src.length&&/[A-Za-z0-9_]/.test(src[i])){s+=src[i];advance();}
+      // Mandatory separator after the entire contextual keyword suffix.
+      if (['trap','throw','raise','panic','copy','take','borrow','share','pin','drop','pipe','rpipe','stop','expand'].includes(s) && src[i]==='!' &&
+          src[i+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(src.slice(i))) {
+        const after=i+(s==='copy' && src[i+1]==='!' ? 2 : 1);
+        if (!/[ \t\r\n\v\f]/.test(src[after]??'')) throw new CompileError('E_BANG_KEYWORD_WHITESPACE: whitespace required after bang keyword',loc);
+      }
       // Stage-0 JS scalar has no guest Error/Result unwind channel.
       // Deny bang effects before they can look like host JS exceptions.
       if(['trap','throw','raise','panic'].includes(s) && src[i]==='!' &&

@@ -24,9 +24,9 @@ test('all canonical exceptional-bang spellings are rejected in both unlowered JS
   // Source-only lex/admission target from atto-spec #146. A rejection means
   // safe unimplemented behavior, never a compiled guest parity PASS.
   const positive=[
-    'trap! parse_id("42")','trap!parse_id("42")',
+    'trap! parse_id("42")',
     'throw! Error("bad")','raise! Error("bad")',
-    'panic! Error("bad")','throw!Error("bad")'
+    'panic! Error("bad")'
   ];
   for(const expr of positive){
     const source='fnc main():int{return '+expr+';}';
@@ -64,3 +64,13 @@ test('quoted and commented exception spellings do not change executable JS guest
     for(const compile of [compileScalar,compileProgramV2])
       assert.doesNotThrow(()=>compile(source),'comment changed guest: '+source);
 });
+
+for (const keyword of ['trap!','throw!','raise!','panic!','copy!','copy!!','take!','borrow!','share!','pin!','drop!','pipe!','rpipe!','stop!','expand!']) {
+  test('mandatory whitespace after '+keyword,()=>{
+    for(const tail of ['value','(42)','/*comment*/ value','', '\u00a0value']) {
+      const source='fnc main():int{return '+keyword+tail+';}';
+      for(const compile of [compileScalar,compileProgramV2])
+        assert.throws(()=>compile(source),/E_BANG_KEYWORD_WHITESPACE/,source);
+    }
+  });
+}

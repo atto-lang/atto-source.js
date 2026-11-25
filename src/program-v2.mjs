@@ -213,6 +213,12 @@ function tokenize(source) {
         word += source[pos]; advance();
       }
       if (word.length > 128) fail('identifier limit',start);
+      // Mandatory separator after the entire contextual keyword suffix.
+      if (['trap','throw','raise','panic','copy','take','borrow','share','pin','drop','pipe','rpipe','stop','expand'].includes(word) && source[pos]==='!' &&
+          source[pos+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(source.slice(pos))) {
+        const after=pos+(word==='copy' && source[pos+1]==='!' ? 2 : 1);
+        if (!/[ \t\r\n\v\f]/.test(source[after]??'')) fail('E_BANG_KEYWORD_WHITESPACE: whitespace required after bang keyword',start);
+      }
       // Canonical bang exceptional control requires typed Error/Result and
       // checked guest unwind; no fallback to an ordinary JS exception.
       if(['trap','throw','raise','panic'].includes(word) && source[pos]==='!' &&
