@@ -302,6 +302,13 @@ export function validateProgramIRV2(input) {
     if(expected!=='symbol'&&desc.value==='symbol')
       fail('Symbol value cannot be used as non-Symbol');
     switch(desc.value) {
+      case 'guestEffect':
+        record(expr,['kind','effect','message'],'core guest effect');
+        if(owner>=headers.length||expected!==(headers[owner].returnType??'int')||
+           !['throw','raise','panic'].includes(expr.effect)||typeof expr.message!=='string'||
+           expr.message.length>256||!(/^[\x20-\x7e]*$/).test(expr.message))
+          fail('E_EFFECT_PROFILE: invalid core guest effect');
+        return {kind:'guestEffect',effect:expr.effect,message:expr.message};
       case 'float':
         record(expr,['kind','value'],'float');
         if(expected!=='float'||typeof expr.value!=='string'||expr.value.length>128||
