@@ -27,6 +27,6 @@ test('inherited and getter modes fail closed without calling accessors', () => {
 });
 
 test('untrusted mode never silently downgrades to trusted Worker', () => {
-  assert.throws(()=>requireSupportedTenantWorkerIsolation({untrusted:true}),/OS sandbox/);
+  assert.throws(()=>requireSupportedTenantWorkerIsolation({untrusted:true}),/untrusted tenant requires a verified TenantVM execution boundary/);
   assert.throws(()=>requireSupportedTenantWorkerIsolation({isolation:'sandboxed-process'}),/not implemented/);
 });
