@@ -1,5 +1,6 @@
 import {createScalarIR, validateScalarIR} from './scalar-ir.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
+import {rejectUnsupportedHttpActors} from './http-actor-admission.mjs';
 import {scanStringLiteral} from './string-literal-syntax.mjs';
 import {preflightCoreFutureOwnership} from './core-future-ownership.mjs';
 /** Experimental fail-closed Oreslang scalar-to-ESM compiler. */
@@ -296,6 +297,7 @@ export function compileToIR(source) {
   if(ownershipBang)
     throw new CompileError('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: checked JS ownership lowering required',ownershipBang);
   rejectExecutionDomains(tokens,(message,token)=>{throw new CompileError(message,token);});
+  rejectUnsupportedHttpActors(tokens,(message,token)=>{throw new CompileError(message,token);});
   rejectSingletonDeclarations(tokens);
   rejectUnloweredInvertedClasses(tokens);
   rejectUnsupportedSelect(tokens);
