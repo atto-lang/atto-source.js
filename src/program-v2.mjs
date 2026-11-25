@@ -1465,11 +1465,21 @@ function emitProgram(program) {
       'function _option_or(v,d){_check(d);const x=_checkoption(v);return x.kind==="Some"?x.value:d;}',
       'function _result_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Ok"?x.value:d;}',
       'function _error_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Err"?x.value:d;}',
+
+    );
+  }
+  // Validated IR is bounded plain data. Emit private trap helpers only for
+  // programs that actually use trap; keep ordinary ADT artifact overhead low.
+  function containsTrap(value){
+    if(!value||typeof value!=='object')return false;
+    if(value.kind==='trap'||value.kind==='trapMethod')return true;
+    return Object.values(value).some(containsTrap);
+  }
+  if(containsTrap(program))out.push(
       'const _trapBrand=new WeakSet();',
       'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult"){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}const result=t==="int"?_ok(v):_checkresult(v);_trapBrand.add(result);return result;}catch(e){if(!_arithmeticBrand.has(e))throw e;const result=_tag("Err",e);_trapBrand.add(result);return result;}}',
       'function _trapMethod(m,result){if(!_trapBrand.has(result))throw new TypeError("invalid trap Result");if(m==="is_ok")return result.kind==="Ok";if(m==="is_err")return result.kind==="Err";if(m==="unwrap"&&result.kind==="Ok")return _check(result.value);if(m==="unwrap"){const e=new Error("cannot unwrap Err",{cause:result.value});Object.defineProperty(e,"name",{value:"ResultUnwrapPanic"});throw Object.freeze(e);}throw new TypeError("invalid trap Result method");}'
-    );
-  }
+  );
   (program.classes??[]).forEach((cls,classIndex)=>{
     const local='_class'+classIndex;
     out.push('class '+local+' {','#oresBrand=1;',
