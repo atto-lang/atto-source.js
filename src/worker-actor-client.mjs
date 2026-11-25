@@ -155,21 +155,22 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
   } else throw new TypeError('Worker event interface unsupported');
   try {worker.postMessage({protocol: PROTOCOL,kind:'init',moduleUrl,exportName,mode,maxPending,maxPendingBytes});}
   catch (error) {shutdown(error);void terminateWorker();}
-  function send(value, reply) {
-    if (closed) return Promise.reject(new Error('actor closed'));
-    if (pending.size >= maxPending) return Promise.reject(new Error('actor mailbox capacity exceeded'));
-    if (!Number.isSafeInteger(nextId)) return Promise.reject(new Error('actor message id exhausted'));
-    // Take ownership at admission, not after the Worker startup handshake.
-    // This prevents callers from mutating an outstanding queued delivery.
-    let snapshot,bytes;
-    try {
-      ({value:snapshot,bytes}=copyOwnedValueWithBytes(value));
-    } catch (error) {return Promise.reject(error);}
-    if(bytes>maxPendingBytes-pendingBytes)
-      return Promise.reject(new Error('actor mailbox byte capacity exceeded'));
-    const id = nextId++;
+  // Synchronous, atomic host-side admission. Success reserves a private
+  // owned snapshot, not an actor execution or an acknowledged send.
+  function trySend(value, reply) {
+    if (closed) return Object.freeze({accepted:false,reason:'actor closed'});
+    if (pending.size >= maxPending)
+      return Object.freeze({accepted:false,reason:'actor mailbox capacity exceeded'});
+    if (!Number.isSafeInteger(nextId))
+      return Object.freeze({accepted:false,reason:'actor message id exhausted'});
+    // Reject invalid payloads as errors, never classify them as capacity.
+    // Snapshot before consuming message ID or byte credit.
+    const {value:snapshot,bytes}=copyOwnedValueWithBytes(value);
+    if (bytes>maxPendingBytes-pendingBytes)
+      return Object.freeze({accepted:false,reason:'actor mailbox byte capacity exceeded'});
+    const id=nextId++;
     pendingBytes+=bytes;
-    return new Promise((resolve,reject) => {
+    const completion=new Promise((resolve,reject) => {
       pending.set(id,{resolve,reject,reply,bytes});
       void readyPromise.then(() => {
         if (!pending.has(id) || closed) return;
@@ -177,6 +178,13 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
         catch (error) {release(id);reject(error);}
       },reject);
     });
+    return Object.freeze({accepted:true,completion});
+  }
+  function send(value, reply) {
+    try {
+      const attempt=trySend(value,reply);
+      return attempt.accepted ? attempt.completion : Promise.reject(new Error(attempt.reason));
+    } catch(error) {return Promise.reject(error);}
   }
   return Object.freeze({
     get ready() {return readyPromise;},
@@ -184,6 +192,9 @@ export function createWorkerActorClient({worker, moduleUrl, exportName = 'receiv
     get pendingBytes() {return pendingBytes;},
     request(value) {return send(value,true);},
     tell(value) {return send(value,false);},
+    // Explicit local admission Result. Caller must await completion on success.
+    tryRequest(value) {return trySend(value,true);},
+    tryTell(value) {return trySend(value,false);},
     async close() {shutdown(new Error('actor closed'));await terminateWorker();}
   });
 }

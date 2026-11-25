@@ -9,7 +9,7 @@ const SOURCE=DIRECTIVE+
   'pub fnc minus(int a,int b): int {return a-b;}\n'+
   'pub fnc times(int a,int b): int {return a*b;}\n'+
   'pub fnc opposite(int a): int {return -a;}\n'+
-  'pub fnc remainder(int a,int b): int {return a%b;}\n';
+  'pub fnc remainder(int a,int b): int {return Integer.rem(a, b);}\n';
 
 // Real backend codegen and real exported guest function invocations; the
 // independent BigInt oracle below does not itself certify Java/LLVM parity.
@@ -83,7 +83,7 @@ test('linked JS per-node failures cannot be masked by cancellation or modulo',as
   const overflow=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(inline));
   assert.throws(()=>overflow.main(),/ORES_I64_OVERFLOW/);
   const mod=compileProgramV2(DIRECTIVE+
-    'pub fnc main(): int {return (9223372036854775807 + 1) % 0;}\n');
+    'pub fnc main(): int {return Integer.rem((9223372036854775807 + 1), 0);}\n');
   const modOverflow=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(mod));
   assert.throws(()=>modOverflow.main(),error=>
     error instanceof RangeError&&error.message.startsWith('ORES_I64_OVERFLOW:'));
