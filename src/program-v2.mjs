@@ -225,7 +225,14 @@ function tokenize(source) {
         number += source[pos]; advance();
       }
       if (number.length > 64 || !/^[0-9]+(?:_[0-9]+)*$/.test(number)) fail('invalid int literal',start);
-      emit('int',number,start);
+      if(source[pos]==='.' && /[0-9]/.test(source[pos+1]??'')){
+        number+='.';advance();
+        while(pos<source.length && /[0-9]/.test(source[pos])){number+=source[pos];advance();}
+        if(number.length>128||!Number.isFinite(Number(number.replaceAll('_',''))))fail('invalid float literal',start);
+        emit('float',number.replaceAll('_',''),start);
+      }else emit('int',number,start);
+    } else if (source.startsWith('&&',pos)||source.startsWith('||',pos)) {
+      emit('id',source.startsWith('&&',pos)?'and':'or',start);advance();advance();
     } else if (['<=','>=','==','!='].some(op=>source.startsWith(op,pos))) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
     } else if (source.startsWith('->',pos) || source.startsWith('<-',pos) || source.startsWith('::',pos)) {
@@ -566,12 +573,12 @@ class Parser {
       } else if(this.eat('val')) {
         // This bounded slice admits only function-scope immutable int locals.
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
-        this.expect('int');
+        const localType=this.eat('float')?'float':(this.expect('int'),'int');
         const name=this.name();
         this.expect('=');
         const init=this.expression();
         this.expect(';');
-        statements.push({kind:'local',name,init});
+        statements.push({kind:'local',name,init,localType});
       } else if(this.eat('if')) {
         const condition=this.expression();
         // Canonical statement-only `if`; retain old ; do syntax.
@@ -609,7 +616,7 @@ class Parser {
       if(stmt.kind==='return')result=stmt.body;
       else if(stmt.kind==='local'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
-        result={kind:'local',name:stmt.name,init:stmt.init,body:result};
+        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,body:result};
       }
       else if(stmt.kind==='voidCall'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: void call must precede a value return');
@@ -639,7 +646,7 @@ class Parser {
         if(total>MAX_TOKENS)fail('expanded conditional IR node budget exceeded');
       }
       switch(expr.kind){
-        case 'int':case 'bool':case 'symbol':case 'variable':break;
+        case 'int':case 'float':case 'bool':case 'symbol':case 'variable':break;
         case 'neg':case 'not':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
@@ -809,6 +816,7 @@ class Parser {
     }
     if(this.eat('match')) return this.matchExpression();
     if(this.peek().kind==='int') return {kind:'int',value:this.integer()};
+    if(this.peek().kind==='float')return {kind:'float',value:this.tokens[this.i++].value};
     if(this.peek().kind==='symbol'){
       const literal=this.tokens[this.i++];
       return {kind:'symbol',value:literal.value};
@@ -986,7 +994,8 @@ function resolveProgram(parsed) {
   function resolvedType(expr,owner) {
     switch(expr.kind){
       case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
-      case 'bool':case 'not':case 'compare':case 'symbolCompare':return 'bool';
+      case 'float':case 'floatNeg':case 'floatBin':case 'floatCapture':return 'float';
+      case 'bool':case 'not':case 'compare':case 'numericCompare':case 'symbolCompare':return 'bool';
       case 'symbol':return 'symbol';
       case 'param':return owner.paramTypes?.[expr.index]??'int';
       case 'newClass':return 'class:'+expr.classIndex;
@@ -1004,7 +1013,7 @@ function resolveProgram(parsed) {
       }
       case 'if':return resolvedType(expr.yes,owner);
       case 'seqVoidCall':return resolvedType(expr.value,owner);
-      case 'local':return resolvedType(expr.body,owner);
+      case 'local':case 'floatLocal':return resolvedType(expr.body,owner);
       case 'adtMatch':return resolvedType(expr.arms[0].body,owner);
       default:fail('cannot infer resolved expression type '+expr.kind);
     }
@@ -1032,14 +1041,14 @@ function resolveProgram(parsed) {
   function resolve(expr,owner,depth=0,bindings=[]) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
-      case 'int':case 'bool':case 'symbol':return expr;
+      case 'int':case 'float':case 'bool':case 'symbol':return expr;
       case 'local': {
         if(owner.ownerKind==='method'||owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))
           fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
         if(nextCaptureSlot>=MAX_TOKENS)fail('local slot budget exceeded');
         const slot=nextCaptureSlot++;
         const init=resolve(expr.init,owner,depth+1,bindings);
-        return {kind:'local',slot,init,body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot}])};
+        return {kind:expr.localType==='float'?'floatLocal':'local',slot,init,body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type:expr.localType}])};
       }
       case 'seqVoidCall': {
         if(expr.call.kind!=='call'||expr.call.qualifier!==null)
@@ -1083,13 +1092,24 @@ function resolveProgram(parsed) {
       }
       case 'variable': {
         const captured=bindings.findLast(b=>b.name===expr.name);
-        if(captured)return {kind:'capture',slot:captured.slot};
+        if(captured)return {kind:captured.type==='float'?'floatCapture':'capture',slot:captured.slot};
         const index=owner.params.indexOf(expr.name);
         if(index<0) fail('unresolved identifier '+expr.name);
         return {kind:'param',index};
       }
-      case 'neg':case 'not':return {kind:expr.kind,inner:resolve(expr.inner,owner,depth+1,bindings)};
-      case 'binary': return {kind:'binary',op:expr.op,left:resolve(expr.left,owner,depth+1,bindings),right:resolve(expr.right,owner,depth+1,bindings)};
+      case 'neg':case 'not':{
+        const inner=resolve(expr.inner,owner,depth+1,bindings);
+        return {kind:expr.kind==='neg'&&resolvedType(inner,owner)==='float'?'floatNeg':expr.kind,inner};
+      }
+      case 'binary':{
+        const left=resolve(expr.left,owner,depth+1,bindings),right=resolve(expr.right,owner,depth+1,bindings);
+        const lt=resolvedType(left,owner),rt=resolvedType(right,owner);
+        if(lt==='float'||rt==='float'){
+          if(lt!=='float'||rt!=='float'||!['+','-','*','/'].includes(expr.op))fail('explicit float operands required');
+          return {kind:'floatBin',op:expr.op,left,right};
+        }
+        return {kind:'binary',op:expr.op,left,right};
+      }
       case 'compare': {
         const left=resolve(expr.left,owner,depth+1,bindings);
         const right=resolve(expr.right,owner,depth+1,bindings);
@@ -1098,6 +1118,10 @@ function resolveProgram(parsed) {
           if(!['==','!='].includes(expr.op)||leftType!=='symbol'||rightType!=='symbol')
             fail('Symbol comparison requires Symbol ==/!= Symbol');
           return {kind:'symbolCompare',op:expr.op,left,right};
+        }
+        if(leftType==='float'||rightType==='float'){
+          if(!['int','float'].includes(leftType)||!['int','float'].includes(rightType))fail('numeric comparison operands required');
+          return {kind:'numericCompare',op:expr.op,leftType,rightType,left,right};
         }
         return {kind:'compare',op:expr.op,left,right};
       }
@@ -1190,11 +1214,11 @@ function resolveProgram(parsed) {
     } else if(expr.kind==='newClass') {
       // fieldless construction has no call-graph edge in this slice
     } else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
-    else if(expr.kind==='binary'||expr.kind==='compare'||expr.kind==='symbolCompare') {inspect(expr.left,owner);inspect(expr.right,owner);}
+    else if(['binary','floatBin','compare','numericCompare','symbolCompare'].includes(expr.kind)) {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='seqVoidCall'){inspect(expr.call,owner);inspect(expr.value,owner);}
-    else if(expr.kind==='local'){inspect(expr.init,owner);inspect(expr.body,owner);}
-    else if(expr.kind==='neg'||expr.kind==='not') inspect(expr.inner,owner);
+    else if(expr.kind==='local'||expr.kind==='floatLocal'){inspect(expr.init,owner);inspect(expr.body,owner);}
+    else if(expr.kind==='neg'||expr.kind==='floatNeg'||expr.kind==='not') inspect(expr.inner,owner);
     else if(expr.kind==='match'||expr.kind==='adtMatch') {
       inspect(expr.subject,owner);expr.arms.forEach(a=>inspect(a.body,owner));
     }
@@ -1233,14 +1257,23 @@ function emitProgram(program) {
     if(depth > MAX_DEPTH) fail('codegen depth exceeded');
     switch(expr.kind) {
       case 'int': return expr.value+'n';
+      case 'float': return '('+String(Number(expr.value))+')';
       case 'symbol':return '_symbol('+JSON.stringify(expr.value)+')';
       case 'bool': return expr.value?'true':'false';
       case 'param':return '_p'+expr.index;
-      case 'capture':return '_v'+expr.slot;
-      case 'local':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
+      case 'capture':case 'floatCapture':return '_v'+expr.slot;
+      case 'local':case 'floatLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
+      case 'floatNeg':return '(-('+emitExpr(expr.inner,depth+1)+'))';
+      case 'floatBin':return '(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
+      case 'numericCompare':{
+        // Abstract relational comparison of BigInt and Number is exact. Equality
+        // uses both ordered comparisons, not Number(bigint) or JS loose equality.
+        const op=expr.op==='=='?'a<=b&&a>=b':expr.op==='!='?'!(a<=b&&a>=b)':'a'+expr.op+'b';
+        return '((a,b)=>('+op+'))('+emitExpr(expr.left,depth+1)+','+emitExpr(expr.right,depth+1)+')';
+      }
       case 'not':return '!('+emitExpr(expr.inner,depth+1)+')';
       case 'binary':
         // Evaluate operands once, left-to-right; do not expose engine-specific zero-divisor errors.
@@ -1334,12 +1367,12 @@ function emitProgram(program) {
       case 'methodCall':case 'namedMethodCall':
         return usesSymbol(expr.receiver)||expr.args.some(usesSymbol);
       case 'call':case 'namedCall':case 'intrinsic':return expr.args.some(usesSymbol);
-      case 'binary':case 'compare':case 'symbolCompare':
+      case 'binary':case 'floatBin':case 'compare':case 'numericCompare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
       case 'seqVoidCall':return usesSymbol(expr.call)||usesSymbol(expr.value);
-      case 'local':return usesSymbol(expr.init)||usesSymbol(expr.body);
-      case 'neg':case 'not':return usesSymbol(expr.inner);
+      case 'local':case 'floatLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
+      case 'neg':case 'floatNeg':case 'not':return usesSymbol(expr.inner);
       case 'match':case 'adtMatch':return usesSymbol(expr.subject)||
         expr.arms.some(arm=>usesSymbol(arm.body));
       default:return false;
@@ -1373,13 +1406,13 @@ function emitProgram(program) {
       case 'methodCall':case 'namedMethodCall':
         return usesPortableRuntime(expr.receiver)||expr.args.some(usesPortableRuntime);
       case 'call':case 'namedCall':return expr.args.some(usesPortableRuntime);
-      case 'binary':case 'compare':case 'symbolCompare':
+      case 'binary':case 'floatBin':case 'compare':case 'numericCompare':case 'symbolCompare':
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
       case 'if':return usesPortableRuntime(expr.condition)||
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
       case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
-      case 'local':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
-      case 'neg':case 'not':return usesPortableRuntime(expr.inner);
+      case 'local':case 'floatLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
+      case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
       case 'match':return usesPortableRuntime(expr.subject)||
         expr.arms.some(arm=>usesPortableRuntime(arm.body));
       case 'adtMatch':return true;
