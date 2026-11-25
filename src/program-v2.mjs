@@ -217,7 +217,7 @@ function tokenize(source) {
       // checked guest unwind; no fallback to an ordinary JS exception.
       if(['trap','throw','raise','panic'].includes(word) && source[pos]==='!' &&
          source[pos+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(source.slice(pos)))
-        fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: typed guest effects and Result lowering required',start);
+        {if(word!=='trap'||result.at(-1)?.value!=='=')fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: typed guest effects and Result lowering required',start);advance();word='trap!';}
       emit('id',word,start);
     } else if (/[0-9]/.test(c)) {
       let number = '';
@@ -573,10 +573,14 @@ class Parser {
       } else if(this.eat('val')) {
         // This bounded slice admits only function-scope immutable int locals.
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
-        const localType=this.eat('float')?'float':(this.expect('int'),'int');
+        const localType=this.eat('float')?'float':this.eat('int')?'int':'inferredTrap';
         const name=this.name();
         this.expect('=');
-        const init=this.expression();
+        let init;
+        if(localType==='inferredTrap'){
+          if(!this.eat('trap!')&&!this.eat('trap'))fail('only trap Result inference is supported',this.peek());
+          init={kind:'trap',inner:this.expression()};
+        }else init=this.expression();
         this.expect(';');
         statements.push({kind:'local',name,init,localType});
       } else if(this.eat('if')) {
@@ -647,7 +651,7 @@ class Parser {
       }
       switch(expr.kind){
         case 'int':case 'float':case 'bool':case 'symbol':case 'variable':break;
-        case 'neg':case 'not':add(expr.inner);break;
+        case 'neg':case 'not':case 'trap':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
@@ -995,6 +999,8 @@ function resolveProgram(parsed) {
     switch(expr.kind){
       case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
       case 'float':case 'floatNeg':case 'floatBin':case 'floatCapture':return 'float';
+      case 'trap':case 'trapCapture':return 'trapResult';
+      case 'trapMethod':return expr.name==='unwrap'?'int':'bool';
       case 'bool':case 'not':case 'compare':case 'numericCompare':case 'symbolCompare':return 'bool';
       case 'symbol':return 'symbol';
       case 'param':return owner.paramTypes?.[expr.index]??'int';
@@ -1013,7 +1019,7 @@ function resolveProgram(parsed) {
       }
       case 'if':return resolvedType(expr.yes,owner);
       case 'seqVoidCall':return resolvedType(expr.value,owner);
-      case 'local':case 'floatLocal':return resolvedType(expr.body,owner);
+      case 'local':case 'floatLocal':case 'trapLocal':return resolvedType(expr.body,owner);
       case 'adtMatch':return resolvedType(expr.arms[0].body,owner);
       default:fail('cannot infer resolved expression type '+expr.kind);
     }
@@ -1048,7 +1054,8 @@ function resolveProgram(parsed) {
         if(nextCaptureSlot>=MAX_TOKENS)fail('local slot budget exceeded');
         const slot=nextCaptureSlot++;
         const init=resolve(expr.init,owner,depth+1,bindings);
-        return {kind:expr.localType==='float'?'floatLocal':'local',slot,init,body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type:expr.localType}])};
+        const t=expr.localType==='inferredTrap'?'trapResult':expr.localType;
+        return {kind:t==='float'?'floatLocal':t==='trapResult'?'trapLocal':'local',slot,init,body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type:t}])};
       }
       case 'seqVoidCall': {
         if(expr.call.kind!=='call'||expr.call.qualifier!==null)
@@ -1092,10 +1099,17 @@ function resolveProgram(parsed) {
       }
       case 'variable': {
         const captured=bindings.findLast(b=>b.name===expr.name);
-        if(captured)return {kind:captured.type==='float'?'floatCapture':'capture',slot:captured.slot};
+        if(captured)return {kind:captured.type==='float'?'floatCapture':captured.type==='trapResult'?'trapCapture':'capture',slot:captured.slot};
         const index=owner.params.indexOf(expr.name);
         if(index<0) fail('unresolved identifier '+expr.name);
         return {kind:'param',index};
+      }
+      case 'trap':{
+        if(owner.ownerKind==='method')fail('trap in methods unsupported');
+        const inner=resolve(expr.inner,owner,depth+1,bindings);
+        const operandType=resolvedType(inner,owner);
+        if(!['int','result<int,int>','trapResult'].includes(operandType))fail('trap requires int or closed Result operand');
+        return {kind:'trap',operandType,inner};
       }
       case 'neg':case 'not':{
         const inner=resolve(expr.inner,owner,depth+1,bindings);
@@ -1128,6 +1142,11 @@ function resolveProgram(parsed) {
       case 'if': return {kind:'if',condition:resolve(expr.condition,owner,depth+1,bindings),
         yes:resolve(expr.yes,owner,depth+1,bindings),no:resolve(expr.no,owner,depth+1,bindings)};
       case 'call': {
+        const local=bindings.findLast(b=>b.name===expr.qualifier);
+        if(local?.type==='trapResult'){
+          if(!['is_ok','is_err','unwrap'].includes(expr.name)||expr.args.length!==0)fail('unsupported trap Result method/arity');
+          return {kind:'trapMethod',name:expr.name,receiver:{kind:'trapCapture',slot:local.slot}};
+        }
         if(expr.qualifier==='Option'||expr.qualifier==='Result'){
           const key=expr.qualifier+'.'+expr.name;
           const signatures={
@@ -1217,8 +1236,9 @@ function resolveProgram(parsed) {
     else if(['binary','floatBin','compare','numericCompare','symbolCompare'].includes(expr.kind)) {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='seqVoidCall'){inspect(expr.call,owner);inspect(expr.value,owner);}
-    else if(expr.kind==='local'||expr.kind==='floatLocal'){inspect(expr.init,owner);inspect(expr.body,owner);}
-    else if(expr.kind==='neg'||expr.kind==='floatNeg'||expr.kind==='not') inspect(expr.inner,owner);
+    else if(['local','floatLocal','trapLocal'].includes(expr.kind)){inspect(expr.init,owner);inspect(expr.body,owner);}
+    else if(expr.kind==='trapMethod')inspect(expr.receiver,owner);
+    else if(['neg','floatNeg','not','trap'].includes(expr.kind)) inspect(expr.inner,owner);
     else if(expr.kind==='match'||expr.kind==='adtMatch') {
       inspect(expr.subject,owner);expr.arms.forEach(a=>inspect(a.body,owner));
     }
@@ -1247,11 +1267,13 @@ function resolveProgram(parsed) {
 function emitProgram(program) {
   const out=[
     '// experimental Oreslang program-v2, provisional signed-64 integer model',
-    'function _check(v){if(typeof v!=="bigint")throw new TypeError("Oreslang signed i64 BigInt required");if(v<-(1n<<63n)||v>(1n<<63n)-1n)throw new RangeError("ORES_I64_OVERFLOW: checked signed 64-bit overflow");return v;}',
+    'const _arithmeticBrand=new WeakSet();',
+    'function _arith(code,message){const e=new RangeError(message);Object.defineProperties(e,{name:{value:code==="integer_overflow"?"ArithmeticOverflowError":"DivisionByZeroError"},code:{value:code,enumerable:true}});_arithmeticBrand.add(e);return Object.freeze(e);}',
+    'function _check(v){if(typeof v!=="bigint")throw new TypeError("Oreslang signed i64 BigInt required");if(v<-(1n<<63n)||v>(1n<<63n)-1n)throw _arith("integer_overflow","ORES_I64_OVERFLOW: checked signed 64-bit overflow");return v;}',
     // Do not expose JS engine-specific "Division by zero" RangeError text as
     // an unclassified Oreslang guest failure. This is a provisional host-side
     // code, NOT the portable guest Error wire ABI or actor CONTROL signal.
-    'function _rem(a,b){_check(a);_check(b);if(b===0n)throw new RangeError("ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit remainder by zero");return _check(a%b);}'
+    'function _rem(a,b){_check(a);_check(b);if(b===0n)throw _arith("division_by_zero","ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit remainder by zero");return _check(a%b);}'
   ];
   function emitExpr(expr,depth=0) {
     if(depth > MAX_DEPTH) fail('codegen depth exceeded');
@@ -1261,11 +1283,13 @@ function emitProgram(program) {
       case 'symbol':return '_symbol('+JSON.stringify(expr.value)+')';
       case 'bool': return expr.value?'true':'false';
       case 'param':return '_p'+expr.index;
-      case 'capture':case 'floatCapture':return '_v'+expr.slot;
-      case 'local':case 'floatLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
+      case 'capture':case 'floatCapture':case 'trapCapture':return '_v'+expr.slot;
+      case 'local':case 'floatLocal':case 'trapLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
+      case 'trap':return '_trap(()=>('+emitExpr(expr.inner,depth+1)+'),'+JSON.stringify(expr.operandType)+')';
+      case 'trapMethod':return '_trapMethod('+JSON.stringify(expr.name)+','+emitExpr(expr.receiver,depth+1)+')';
       case 'floatNeg':return '(-('+emitExpr(expr.inner,depth+1)+'))';
       case 'floatBin':return '(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
       case 'numericCompare':{
@@ -1277,7 +1301,7 @@ function emitProgram(program) {
       case 'not':return '!('+emitExpr(expr.inner,depth+1)+')';
       case 'binary':
         // Evaluate operands once, left-to-right; do not expose engine-specific zero-divisor errors.
-        if(expr.op==='/')return '((a,b)=>{_check(a);_check(b);if(b===0n)throw new RangeError("ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit division by zero");return _check(a/b);})(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
+        if(expr.op==='/')return '((a,b)=>{_check(a);_check(b);if(b===0n)throw _arith("division_by_zero","ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit division by zero");return _check(a/b);})(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
         if(expr.op==='%')return '_rem(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
         // Inline so programs without Integer.mod keep byte-identical output.
         if(expr.op==='mod')return '((a,b)=>{const r=_rem(a,b);return r<0n?_check(b>0n?r+b:r-b):r;})(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
@@ -1371,7 +1395,9 @@ function emitProgram(program) {
         return usesSymbol(expr.left)||usesSymbol(expr.right);
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
       case 'seqVoidCall':return usesSymbol(expr.call)||usesSymbol(expr.value);
-      case 'local':case 'floatLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
+      case 'local':case 'floatLocal':case 'trapLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
+      case 'trap':return usesSymbol(expr.inner);
+      case 'trapMethod':return usesSymbol(expr.receiver);
       case 'neg':case 'floatNeg':case 'not':return usesSymbol(expr.inner);
       case 'match':case 'adtMatch':return usesSymbol(expr.subject)||
         expr.arms.some(arm=>usesSymbol(arm.body));
@@ -1401,7 +1427,7 @@ function emitProgram(program) {
   function usesPortableRuntime(expr) {
     if(expr===null)return false;
     switch(expr.kind) {
-      case 'intrinsic':return true;
+      case 'intrinsic':case 'trap':case 'trapMethod':return true;
       case 'newClass':return false;
       case 'methodCall':case 'namedMethodCall':
         return usesPortableRuntime(expr.receiver)||expr.args.some(usesPortableRuntime);
@@ -1411,7 +1437,7 @@ function emitProgram(program) {
       case 'if':return usesPortableRuntime(expr.condition)||
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
       case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
-      case 'local':case 'floatLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
+      case 'local':case 'floatLocal':case 'trapLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
       case 'match':return usesPortableRuntime(expr.subject)||
         expr.arms.some(arm=>usesPortableRuntime(arm.body));
@@ -1438,7 +1464,10 @@ function emitProgram(program) {
       'function _is_ok(v){return _checkresult(v).kind==="Ok";}',
       'function _option_or(v,d){_check(d);const x=_checkoption(v);return x.kind==="Some"?x.value:d;}',
       'function _result_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Ok"?x.value:d;}',
-      'function _error_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Err"?x.value:d;}'
+      'function _error_or(v,d){_check(d);const x=_checkresult(v);return x.kind==="Err"?x.value:d;}',
+      'const _trapBrand=new WeakSet();',
+      'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult"){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}const result=t==="int"?_ok(v):_checkresult(v);_trapBrand.add(result);return result;}catch(e){if(!_arithmeticBrand.has(e))throw e;const result=_tag("Err",e);_trapBrand.add(result);return result;}}',
+      'function _trapMethod(m,result){if(!_trapBrand.has(result))throw new TypeError("invalid trap Result");if(m==="is_ok")return result.kind==="Ok";if(m==="is_err")return result.kind==="Err";if(m==="unwrap"&&result.kind==="Ok")return _check(result.value);if(m==="unwrap"&&_arithmeticBrand.has(result.value))throw result.value;throw new TypeError("cannot unwrap Err");}'
     );
   }
   (program.classes??[]).forEach((cls,classIndex)=>{
