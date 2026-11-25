@@ -127,6 +127,22 @@ function rejectUnloweredInvertedClasses(tokens) {
         tokens[at]);
   }
 }
+// Singleton is a declaration-context keyword, not a global reserved identifier.
+// This scalar JS emitter has no checked application-domain initialization, actor
+// owner provenance or fair scoped RW loans; never silently emit host JS for one.
+function rejectSingletonDeclarations(tokens) {
+  for (let i=0;i<tokens.length;i++) {
+    let at=i;
+    if(tokens[at]?.value==='pub' && tokens[at+1]?.value==='define') at++;
+    if(tokens[at]?.value!=='define') continue;
+    at++;
+    if(tokens[at]?.value==='pub') at++;
+    if(tokens[at]?.kind==='id' && tokens[at].value==='singleton')
+      throw new CompileError(
+        'ORES-SINGLETON-UNSUPPORTED: singleton requires compiler-resolved application-domain identity, exactly-once frozen publication and guarded unique-owner RW lowering',
+        tokens[at]);
+  }
+}
 function rejectUnsupportedSelect(tokens) {
   const startsStaticSelect = next =>
     next && ['{','over','first','fair','random'].includes(next.value);
@@ -280,6 +296,7 @@ export function compileToIR(source) {
   if(ownershipBang)
     throw new CompileError('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: checked JS ownership lowering required',ownershipBang);
   rejectExecutionDomains(tokens,(message,token)=>{throw new CompileError(message,token);});
+  rejectSingletonDeclarations(tokens);
   rejectUnloweredInvertedClasses(tokens);
   rejectUnsupportedSelect(tokens);
   const parsed=new Parser(tokens).parse();
