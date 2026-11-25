@@ -24,7 +24,7 @@ function tokenize(source) {
   let i=0;
   while (i < source.length) {
     const tail = source.slice(i);
-    const match = /^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)/.exec(tail);
+    const match = /^(?:[\s\u0085]+|\/\/[^\r\n\u0085\u2028\u2029]*|\/\*[\s\S]*?\*\/)/.exec(tail);
     if (match) { i += match[0].length; continue; }
     // Only the four exceptional-control words may consume a contiguous bang.
     // Never widen arbitrary identifiers to name!; preserve != / !eq boundaries.
@@ -37,13 +37,30 @@ function tokenize(source) {
       i+=bang[0].length;
       continue;
     }
-    const token = /^(?:"(?:\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})|[^"\\\x00-\x1f])*"|->|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;,+*\-.=<>?])/.exec(tail);
+    const token = /^(?:"(?:\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})|[^"\\\x00-\x1f])*"|->|<<<|>>>|<<|>>|\^\^|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;,+*\-.=<>?^&|])/.exec(tail);
     if (!token) throw new TranspileError('E_UNSUPPORTED_TOKEN');
     tokens.push(token[0]);
     if (tokens.length > MAX_TOKENS) throw new TranspileError('E_TOKEN_LIMIT');
     i += token[0].length;
   }
   return tokens;
+}
+// Only split shift-like closers in recognized type contexts. Never join
+// spaced operator tokens or reinterpret << / >> as arithmetic.
+function normalize_generic_closers(tokens) {
+  const nominal=new Set(['task','Mutex','Option','Future','Result','Map','Channel','ActorMail']);
+  const out=[];let depth=0;
+  for(const token of tokens){
+    if(token==='<'&&(depth>0||nominal.has(out.at(-1)))){depth++;out.push(token);}
+    else if(depth>0&&['>','>>','>>>'].includes(token)){
+      const closers=Math.min(depth,token.length);
+      for(let j=0;j<closers;j++)out.push('>');
+      depth-=closers;
+      const remainder=token.slice(closers);
+      if(remainder)out.push(remainder);
+    }else out.push(token);
+  }
+  return out;
 }
 // This restricted compiler has no guest mutex/lease implementation. Still
 // diagnose the stable nominal resource constructor grammar before lowering.
@@ -89,8 +106,9 @@ export function transpile_to_worker(source) {
   // Trojan Source controls can reorder displayed source invisibly.
   if (/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(source))
     throw new TranspileError('E_BIDI_CONTROL');
-  const tokens=tokenize(source);
+  const tokens=normalize_generic_closers(tokenize(source));
   reject_unsupported_mutex_constructor(tokens);
+  if(tokens.includes('<<')||tokens.includes('>>'))throw new TranspileError('E_IO_UNSUPPORTED');
   if(tokens[0]==='define')return transpile_actor_tokens(tokens);
   if(tokens.includes('Result')||tokens.includes('match')||tokens.includes('parse')) {
     try { return transpile_result_int_parse_tokens(tokens); }
@@ -129,7 +147,7 @@ export function transpile_to_worker(source) {
       }
       expect('{');
       let body=null;
-      if(peek()==='return'){
+      if(peek()==='return'||peek()==='^'){
         i++;
         // Bare return exits a void inline body; return expr produces T.
         if(peek()===';')i++;
@@ -148,7 +166,7 @@ export function transpile_to_worker(source) {
     else if(peek()==='-'){
       i++;
       if(/^\d+$/.test(peek()??'') && checked_decimal(peek(),INT_MAX+1n)===INT_MAX+1n) {left={value:INT_MIN};i++;}
-      else {const arg=parse_expression(3,depth+1);
+      else {const arg=parse_expression(7,depth+1);
         if(result_type(arg)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
         left={op:'neg',arg};}
     }
@@ -156,7 +174,7 @@ export function transpile_to_worker(source) {
       const value=checked_decimal(tokens[i++]);
       left={value};
     } else throw new TranspileError('E_UNSUPPORTED_EXPRESSION');
-    const precedence={'+':1,'-':1,'*':2};
+    const precedence={'|':0,'^^':1,'&':2,'<<<':3,'>>>':3,'+':4,'-':4,'*':5};
     while(Object.hasOwn(precedence,peek()) && precedence[peek()]>=min_prec){
       if(result_type(left)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
       const op=tokens[i++];
@@ -178,7 +196,7 @@ export function transpile_to_worker(source) {
     if(item.payload_type!=='void')throw new TranspileError('E_TASK_RETURN_TYPE');
     preludes.push(item);
     if(peek()===';')i++;
-    else if(!['return','do'].includes(peek())) {
+    else if(!['return','^','do'].includes(peek())) {
       if(peek()==='sync'&&tokens[i+1]==='task')
         throw new TranspileError('E_SYNTAX');
       throw new TranspileError('E_UNSUPPORTED_SYNTAX');
@@ -186,7 +204,7 @@ export function transpile_to_worker(source) {
   }
   if(peek()==='sync'&&tokens[i+1]==='task')
     throw new TranspileError('E_SYNTAX');
-  expect('return');
+  if(peek()==='^')i++;else expect('return');
   const ast=parse_expression();
   if(result_type(ast)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
   expect(';');expect('}');
@@ -197,12 +215,23 @@ export function transpile_to_worker(source) {
     if(Object.hasOwn(node,'value'))return `${node.value}n`;
     if(node.op==='neg')return `checked(-(${emit(node.arg)}))`;
     const op=node.op;
-    return `checked((${emit(node.left)}) ${op} (${emit(node.right)}))`;
+    const left=emit(node.left),right=emit(node.right);
+    if(op==='<<<'||op==='>>>'){
+      const static_count=Object.hasOwn(node.right,'value')?node.right.value:
+        node.right.op==='neg'&&Object.hasOwn(node.right.arg,'value')?-node.right.arg.value:null;
+      if(static_count!==null&&(static_count<0n||static_count>63n))
+        throw new TranspileError('E_SHIFT_DISTANCE');
+      return op==='<<<'
+        ? 'BigInt.asIntN(64, ('+left+') << checked_shift('+right+'))'
+        : 'BigInt.asIntN(64, BigInt.asUintN(64, ('+left+')) >> checked_shift('+right+'))';
+    }
+    return 'checked(('+left+') '+(op==='^^'?'^':op)+' ('+right+'))';
   };
   const prelude_code=preludes.map(node=>'  '+emit(node)+';\n').join('');
   const code=`// Generated by AttoLang JS subset backend; no eval or source passthrough.\n`+
     `const MAX=9223372036854775807n,MIN=-9223372036854775808n;\n`+
     `function checked(n){if(n<MIN||n>MAX)throw new Error('E_GUEST_PANIC_1');return n;}\n`+
+    `function checked_shift(n){if(n<0n||n>63n)throw new Error('E_GUEST_SHIFT_DISTANCE');return n;}\n`+
     `export async function create_tenant({tenant,generation}){\n`+
     ` let executed=false;return {async on_message(){\n`+
     `  if(executed)throw new Error('E_MAIN_ALREADY_CALLED');executed=true;\n`+
@@ -256,13 +285,13 @@ function transpile_actor_tokens(tokens) {
   expect(mail);expect('.');expect('value');expect(';');
   expect('stdio');expect('.');expect('println');expect('(');
   expect('self');expect('.');expect(field);expect(')');expect(';');
-  expect('return');expect(';');expect('}');expect('end');
+  if(peek()==='^')i++;else expect('return');expect(';');expect('}');expect('end');
   if(peek()==='pub')i++;
   expect('fnc');expect('main');expect('(');expect(')');expect(':');
   expect('int');expect('{');expect('val');
   identifier(); // The local actor binding is not exposed to JavaScript.
   expect('=');expect('spawn');expect(actor);expect('(');expect(')');
-  expect(';');expect('return');
+  expect(';');if(peek()==='^')i++;else expect('return');
   const main_value=literal();
   expect(';');expect('}');
   if(i!==tokens.length)throw new TranspileError('E_TRAILING_SOURCE');
