@@ -359,6 +359,15 @@ export function validateProgramIRV2(input) {
           ...(named?{paramOrder:order}:{})
         };
       }
+      case 'local': {
+        record(expr,['kind','slot','init','body'],'immutable int local');
+        if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
+           expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
+          fail('invalid or repeated local slot');
+        captureSlots[owner].add(expr.slot);
+        const init=node(expr.init,owner,depth+1,'int',active);
+        return {kind:'local',slot:expr.slot,init,body:node(expr.body,owner,depth+1,expected,[...active,expr.slot])};
+      }
       case 'capture':
         record(expr,['kind','slot'],'capture');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
