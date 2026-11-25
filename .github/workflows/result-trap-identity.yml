@@ -1,0 +1,43 @@
+name: JS Result-aware trap identity
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/result-int-parse-compiled-worker-v1-20261119
+permissions:
+  contents: read
+jobs:
+  compiled-guest-result:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout exact reviewed source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact HEAD, source tree, and clean checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          git rev-parse 'HEAD^{tree}'
+          git hash-object src/result-int-parse-compiler.mjs
+          git hash-object tests/result-int-parse-compiler.test.mjs
+      - name: Setup Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Syntax-check compiler and focused guest suite
+        run: |
+          node --check src/result-int-parse-compiler.mjs
+          node --check src/transpile-worker.mjs
+          node --check tests/result-int-parse-compiler.test.mjs
+      - name: Execute actual generated Result and trap-identity guests
+        run: node --test tests/result-int-parse-compiler.test.mjs tests/result-canonical-guest.test.mjs
+      - name: Run complete JS repository suite
+        run: npm test
