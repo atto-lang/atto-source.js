@@ -241,11 +241,9 @@ function tokenize(source) {
       emit('sym',c,start); advance();
     } else if (c==='%') {
       fail("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",start);
-    } else if (c==='^') {
-      fail(source.startsWith('^^',pos)
-        ? "'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)"
-        : "'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",start);
-    } else if ('(){}[]:,;+-*/=.<>!?'.includes(c)) {
+    } else if (source.startsWith('^^',pos)) {
+      emit('sym','^^',start); advance(); advance();
+    } else if ('(){}[]:,;+-*/=.<>!?^&|'.includes(c)) {
       emit('sym',c,start); advance();
     } else fail('unsupported character',start);
   }
@@ -385,7 +383,7 @@ class Parser {
       const terminator=braced?'}':'end';
       let body=null;
       if(returnType==='void'){
-        if(this.eat('return')){
+        if((this.eat('return')||this.eat('^'))){
           if(this.peek().value!==';')fail('RETURN_VOID_VALUE: void method cannot return a value',this.peek());
           this.expect(';');
         }
@@ -452,7 +450,7 @@ class Parser {
         if(this.eat('*'))fail('yield* is not implemented in JS sync generator v1',this.peek());
         if(yields.length>=MAX_TOKENS)fail('generator yield budget exceeded',this.peek());
         yields.push(this.expression());this.expect(';');
-      }else if(this.eat('return')){
+      }else if((this.eat('return')||this.eat('^'))){
         if(this.peek().value!==';')
           fail('generator return cannot carry a value; use yield',this.peek());
         this.expect(';');returned=true;
@@ -507,7 +505,7 @@ class Parser {
     if(returnType==='void'){
       // Program-v2 has no general statement/effect lowering yet. Match the
       // existing pure-void class-method subset without fabricating a value.
-      if(this.eat('return')){
+      if((this.eat('return')||this.eat('^'))){
         if(this.peek().value!==';')fail('RETURN_VOID_VALUE: void function cannot return a value',this.peek());
         this.expect(';');
       }
@@ -528,7 +526,7 @@ class Parser {
           if(node.kind==='variable')
             return params.some((name,index)=>name===node.name&&paramTypes[index]==='int');
           if(node.kind==='neg')return provenInt(node.inner);
-          if(node.kind==='binary'&&['+','*','-'].includes(node.op))
+          if(node.kind==='binary'&&['+','*','-','^','&','|'].includes(node.op))
             return provenInt(node.left)&&provenInt(node.right);
           // A direct pure-void call cannot determine the return type.
           // Resolve/validate must separately prove it returns void.
@@ -564,7 +562,7 @@ class Parser {
     const statements=[];
     while(this.peek().kind!=='eof'&&!terminators.includes(this.peek().value)) {
       if(++this.statementNodes>MAX_TOKENS)fail('statement budget exceeded',this.peek());
-      if(this.eat('return')) {
+      if((this.eat('return')||this.eat('^'))) {
         if(this.peek().value===';')
           fail('RETURN_VALUE_REQUIRED: nonvoid return requires a value',this.peek());
         const body=this.expression();
@@ -778,8 +776,12 @@ class Parser {
         // lazy conditionals, never JS truthiness or eager bitwise operators.
         const compare=['<','>','<=','>=','==','!=','eq','neq'].includes(op);
         const logical=op==='and'||op==='or';
+        // Canonical Java ordering: arithmetic > relational > equality >
+        // integer & > integer ^^ > integer | > logical and > logical or.
+        if(op==='^')fail("E_OPERATOR_CARET: single infix '^' is invalid; use '^^' for integer XOR",this.peek());
         const prec=(op==='*'||op==='/')?20:op==='+'||op==='-'?10:
-          compare?5:op==='and'?4:op==='or'?3:-1;
+          ['<','>','<=','>='].includes(op)?9:compare?8:
+          op==='&'?7:op==='^^'?6:op==='|'?5:op==='and'?4:op==='or'?3:-1;
         if (prec < min) break;
         this.i++;
         const right=this.expression(prec+1);
@@ -789,7 +791,7 @@ class Parser {
             : {kind:'if',condition:left,yes:{kind:'bool',value:true},no:right};
         }else{
           left={kind:compare?'compare':'binary',
-            op:op==='eq'?'==':op==='neq'?'!=':op,left,right};
+            op:op==='eq'?'==':op==='neq'?'!=':op==='^^'?'^':op,left,right};
         }
       }
       return left;
@@ -837,8 +839,8 @@ class Parser {
       return {kind:'variable', name:first};
     }
     const args=this.argumentsAfterOpen();
-    // Named integer operations replace the reserved %, ^ and ^^ operators.
-    // The binary ops below are internal IR names, never source syntax.
+    // Named integer operations retain their checked semantics; raw % remains reserved.
+    // Internal ^ denotes checked integer XOR; only ^^ spells it in source.
     if(qualifier==='Integer'){
       const ops={rem:'%',mod:'mod',bitXor:'^'};
       if(!Object.hasOwn(ops,symbol))fail('Integer.'+symbol+' is unsupported; use Integer.rem, Integer.mod or Integer.bitXor',token);
@@ -1612,7 +1614,7 @@ export function compileAttoScalarV1(source) {
       case 'local':visit(expr.init);visit(expr.body);return;
       case 'neg':return visit(expr.inner);
       case 'binary':
-        if(!['+','-','*','/','%','mod'].includes(expr.op))
+        if(!['+','-','*','/','%','mod','^','&','|'].includes(expr.op))
           fail('AttoLang scalar-v1 removed or unsupported operator '+expr.op);
         visit(expr.left);visit(expr.right);return;
       case 'call':

@@ -427,7 +427,7 @@ export function validateProgramIRV2(input) {
       case 'binary':
         record(expr,['kind','op','left','right'],'binary');
         if(expected!=='int')fail('arithmetic in boolean context');
-        if(!['+','-','*','/','%','mod','^'].includes(expr.op))fail('unsupported binary operator');
+        if(!['+','-','*','/','%','mod','^','&','|'].includes(expr.op))fail('unsupported binary operator');
         return {kind:'binary',op:expr.op,
           left:node(expr.left,owner,depth+1,'int',active),right:node(expr.right,owner,depth+1,'int',active)};
       case 'compare':
@@ -608,7 +608,7 @@ export function validateProgramIRV2(input) {
         return {kind:'not',inner:methodNode(expr.inner,method,depth+1,'bool')};
       case 'binary':
         record(expr,['kind','op','left','right'],'method binary');
-        if(expected!=='int'||!['+','-','*','/','%','mod','^'].includes(expr.op))
+        if(expected!=='int'||!['+','-','*','/','%','mod','^','&','|'].includes(expr.op))
           fail('unsupported method arithmetic');
         return {kind:'binary',op:expr.op,
           left:methodNode(expr.left,method,depth+1,'int'),
