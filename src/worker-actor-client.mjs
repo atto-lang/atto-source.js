@@ -8,9 +8,14 @@ const errorText = error => {
 };
 const DEFAULT_MAX_PENDING_BYTES=32*1024*1024;
 const MAX_CONFIGURED_PENDING_BYTES=256*1024*1024;
+// Single Worker per actor: fail closed on unsupported scheduling authority.
 const UNSUPPORTED_PLACEMENT_KEYS = Object.freeze([
   'placement','cpuAffinity','maxParallelTurns',
-  'accelerator','gpuDeviceId','maxGpuInFlight'
+  'accelerator','gpuDeviceId','maxGpuInFlight',
+  'maxParallelism','max_parallelism','minParallelism','min_parallelism',
+  'poolSize','pool_size','pool','threadPool','threadPolicy',
+  'affinity','threadAffinity','pinnedWorker','dedicatedWorker',
+  'schedule','actor_schedule','actorSchedule'
 ]);
 
 export function rejectUnsupportedWorkerPlacement(options) {
@@ -19,7 +24,9 @@ export function rejectUnsupportedWorkerPlacement(options) {
   for (const key of UNSUPPORTED_PLACEMENT_KEYS) {
     if (Object.prototype.hasOwnProperty.call(options,key)) {
       throw new TypeError(
-        'JavaScript Worker backend cannot guarantee CPU/GPU placement: ' + key);
+        (['placement','cpuAffinity','maxParallelTurns','accelerator','gpuDeviceId','maxGpuInFlight'].includes(key)
+          ? 'JavaScript Worker backend cannot guarantee CPU/GPU placement: '
+          : 'JavaScript Worker backend cannot guarantee elastic actor scheduling: ') + key);
     }
   }
 }
