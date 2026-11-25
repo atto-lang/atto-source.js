@@ -1,0 +1,9 @@
+guest-scalar	js	execution
+async-carrier-progress	js	execution
+cancellation-backpressure	js	execution
+inverted-index	js	execution
+ownership-task	js	execution
+export-bindings	js	execution
+generator-cleanup	js	execution
+supervisor-generation	js	execution
+negative-admission	js	rejection
