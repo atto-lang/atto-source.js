@@ -123,9 +123,11 @@ export function validateProgramIRV2(input) {
   const rawKeys=Reflect.ownKeys(input);
   const hasClasses=rawKeys.includes('classes');
   const hasGenerators=rawKeys.includes('generators');
+  const hasFileExports=rawKeys.includes('fileExports');
   const programKeys=['schemaVersion','dialect','integerModel','sourceNamespace','modules','functions'];
   if(hasGenerators)programKeys.push('generators');
   if(hasClasses)programKeys.push('classes');
+  if(hasFileExports)programKeys.push('fileExports');
   record(input,programKeys,'program');
   if(input.schemaVersion!==PROGRAM_IR_VERSION||input.dialect!==PROGRAM_IR_DIALECT||
      input.integerModel!==PROGRAM_IR_INT_MODEL)fail('unsupported IR version/dialect/model');
@@ -202,7 +204,10 @@ export function validateProgramIRV2(input) {
     if(paramTypes.length!==params.length||
        paramTypes.some(t=>!types.includes(t)))fail('unsupported function parameter type');
     const returnType=typed?f.returnType:'int';
-    if(!types.includes(returnType))fail('unsupported function return type');
+    if(returnType!=='void'&&!types.includes(returnType))fail('unsupported function return type');
+    if(returnType==='void'&&f.body!==null)fail('void function body must be null');
+    if(returnType!=='void'&&(f.body===null||typeof f.body!=='object'))
+      fail('nonvoid function requires an expression body');
     if(typed&&returnType==='int'&&paramTypes.every(t=>t==='int'))
       fail('redundant typed metadata on int-only function');
     const slot=(module===null?'@file/':'@module/'+module+'/')+name+'/'+params.length;
@@ -239,6 +244,28 @@ export function validateProgramIRV2(input) {
     if(module===null&&gen.pub)exportNames.add(name);
     return {module,name,pub:gen.pub,params,paramTypes:[...paramTypes],elementType:'int',yields};
   });
+  // Export directives are compile-time capability metadata, not permissive
+  // ESM exports. Revalidate untrusted direct IR independently of the parser.
+  const validatedFileExports=[];
+  const seenFileExports=new Set();
+  if(hasFileExports) {
+    for(const entry of sequence(input.fileExports,1024,'fileExports')) {
+      record(entry,['name','kind','visibility'],'file export');
+      const name=ident(entry.name,'export name');
+      if(seenFileExports.has(name))fail('duplicate export '+name);
+      seenFileExports.add(name);
+      if(!['class','fnc'].includes(entry.kind))fail('invalid export kind '+entry.kind);
+      if(!['public','package'].includes(entry.visibility))fail('invalid export visibility');
+      const targets=entry.kind==='class'
+        ? classHeaders.filter(c=>c.name===name)
+        : headers.filter(f=>f.module===null&&f.name===name&&f.kind==='fnc');
+      if(!targets.length)fail('unbound export '+name);
+      if(targets.some(t=>t.pub!==(entry.visibility==='public')))
+        fail('export visibility does not match symbol table '+name);
+      validatedFileExports.push({name,kind:entry.kind,visibility:entry.visibility});
+    }
+    if(!validatedFileExports.length)fail('redundant empty fileExports field');
+  }
   // Export-name collisions are legal only for overloads of the same root
   // function, and NEVER between a runtime module object and a root function.
   for(const header of [...headers,...generatorHeaders])
@@ -353,7 +380,7 @@ export function validateProgramIRV2(input) {
       case 'binary':
         record(expr,['kind','op','left','right'],'binary');
         if(expected!=='int')fail('arithmetic in boolean context');
-        if(!['+','-','*','%'].includes(expr.op))fail('unsupported binary operator');
+        if(!['+','-','*','%','mod','^'].includes(expr.op))fail('unsupported binary operator');
         return {kind:'binary',op:expr.op,
           left:node(expr.left,owner,depth+1,'int',active),right:node(expr.right,owner,depth+1,'int',active)};
       case 'compare':
@@ -524,7 +551,7 @@ export function validateProgramIRV2(input) {
         return {kind:'not',inner:methodNode(expr.inner,method,depth+1,'bool')};
       case 'binary':
         record(expr,['kind','op','left','right'],'method binary');
-        if(expected!=='int'||!['+','-','*','%'].includes(expr.op))
+        if(expected!=='int'||!['+','-','*','%','mod','^'].includes(expr.op))
           fail('unsupported method arithmetic');
         return {kind:'binary',op:expr.op,
           left:methodNode(expr.left,method,depth+1,'int'),
@@ -571,7 +598,8 @@ export function validateProgramIRV2(input) {
       default:fail('unsupported method expression kind '+desc.value);
     }
   }
-  const functions=headers.map((f,i)=>({...f,body:node(sourceFunctions[i].body,i,0,f.returnType??'int')}));
+  const functions=headers.map((f,i)=>({...f,
+    body:f.returnType==='void'?null:node(sourceFunctions[i].body,i,0,f.returnType??'int')}));
   const generators=generatorHeaders.map((gen,i)=>({
     ...gen,
     yields:gen.yields.map(expr=>node(expr,headers.length+i,0,gen.elementType))
@@ -595,7 +623,8 @@ export function validateProgramIRV2(input) {
     integerModel:PROGRAM_IR_INT_MODEL,sourceNamespace:namespace,
     modules:moduleNames,functions,
     ...(hasGenerators?{generators}:{}),
-    ...(hasClasses?{classes}:{})
+    ...(hasClasses?{classes}:{}),
+    ...(hasFileExports?{fileExports:validatedFileExports}:{})
   };
 }
 export function stringifyProgramIRV2(ir){

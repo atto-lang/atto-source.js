@@ -75,8 +75,8 @@ test('contextual mtd/method and Java callable keyword names survive convergence'
 test('named method ABI reorder preserves lexical source evaluation order',async()=>{
   const source=[
     'define class Pick as pub pick(self,int a,int b):int{return a;} end',
-    'pub fnc overflow_first():int{return new Pick().pick(b:9223372036854775807+1,a:1%0);}',
-    'pub fnc zero_first():int{return new Pick().pick(a:1%0,b:9223372036854775807+1);}'
+    'pub fnc overflow_first():int{return new Pick().pick(b:9223372036854775807+1,a:Integer.rem(1, 0));}',
+    'pub fnc zero_first():int{return new Pick().pick(a:Integer.rem(1, 0),b:9223372036854775807+1);}'
   ].join('\n');
   const mod=await load(source,'method-order');
   assert.throws(()=>mod.overflow_first(),/ORES_I64_OVERFLOW/);
@@ -152,4 +152,43 @@ test('legacy function-only program-v2 keeps the legacy IR shape',()=>{
   const esm=compileProgramV2(source);
   assert.doesNotMatch(esm,/_class\d+/);
   assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir))),esm);
+});
+
+test('fnc, mtd, method and bare instance declarations share the checked class method ABI',async()=>{
+  const source=[
+    'pub define class Calculator as',
+    '  pub fnc twice(int value):int{return value*2;}',
+    '  pub fnc method():int{return 1;}',
+    '  pub fnc mtd():int{return 2;}',
+    '  pub method legacy():int{return 3;}',
+    '  pub mtd canonical():int{return 4;}',
+    '  pub bare():int{return 5;}',
+    'end',
+    'pub fnc main():int{return new Calculator().twice(21);}'
+  ].join('\n');
+  const ir=compileToProgramIRV2(source);
+  assert.equal(ir.classes.length,1);
+  assert.deepEqual(ir.classes[0].methods.map(m=>m.name),
+    ['twice','method','mtd','legacy','canonical','bare']);
+  const mod=await load(source,'fnc-instance-parity');
+  const calc=new mod.Calculator();
+  assert.equal(mod.main(),42n);
+  assert.equal(calc.twice(21n),42n);
+  assert.equal(calc.method(),1n);
+  assert.equal(calc.mtd(),2n);
+  assert.equal(calc.legacy(),3n);
+  assert.equal(calc.canonical(),4n);
+  assert.equal(calc.bare(),5n);
+  assert.throws(()=>calc.twice(21),/signed i64 BigInt/);
+  assert.throws(()=>mod.Calculator.prototype.twice.call({}),/invalid Oreslang receiver/);
+});
+
+test('fnc class prefix never admits duplicate markers, static methods or duplicate arities',()=>{
+  for(const source of [
+    'define class X as fnc mtd wrong():int{return 1;} end',
+    'define class X as mtd fnc wrong():int{return 1;} end',
+    'define class X as static fnc wrong():int{return 1;} end',
+    'define class X as mtd f():int{return 1;} fnc f():int{return 2;} end',
+    'define class X as fnc f(self):int{return 1;} method f():int{return 2;} end'
+  ]) assert.throws(()=>compileProgramV2(source),/error: program v2:/,source);
 });
