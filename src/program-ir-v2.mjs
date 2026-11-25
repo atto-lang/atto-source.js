@@ -416,6 +416,13 @@ export function validateProgramIRV2(input) {
         if((owners[owner].paramTypes?.[expr.index]??'int')!==expected)
           fail('parameter type mismatch');
         return {kind:'param',index:expr.index};
+      case 'refinementCheck': {
+        record(expr,['kind','inner','minimum','maximum'],'checked refinement');
+        if(expected!=='int')fail('checked refinement requires signed-i64 value');
+        const minimum=int(expr.minimum),maximum=int(expr.maximum);
+        if(BigInt(minimum)>BigInt(maximum))fail('empty refinement range');
+        return {kind:'refinementCheck',inner:node(expr.inner,owner,depth+1,'int',active),minimum,maximum};
+      }
       case 'neg':
         record(expr,['kind','inner'],'neg');
         if(expected!=='int')fail('int negation in boolean context');
