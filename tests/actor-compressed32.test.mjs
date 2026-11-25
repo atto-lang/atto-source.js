@@ -2,9 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   MAX_COMPRESSED32_OFFSET,MAX_COMPRESSED32_SPAN,
+  ACTOR_REF32_STORAGE_ABI_V1,requireActorRef32StorageAbiV1,
   encodeCompressed32,decodeCompressed32,decodeStoredCompressed32,
   dereferenceCompressed32
 } from "../src/actor-compressed32.mjs";
+
+test("JS Ref32 ABI rejects incompatible .NET generation-slot reference words",()=>{
+  assert.equal(ACTOR_REF32_STORAGE_ABI_V1,"offset8_plus_one");
+  assert.doesNotThrow(()=>requireActorRef32StorageAbiV1("offset8_plus_one"));
+  for(const wrong of ["generation16_slot16","handle32_table_versioned","handle64_versioned","",null,undefined])
+    assert.throws(()=>requireActorRef32StorageAbiV1(wrong),/E_ACTOR_MEMORY_ABI/);
+});
 
 test("JS compressed32 matches cross-backend unsigned actor-offset representation",()=>{
   assert.equal(MAX_COMPRESSED32_OFFSET,34359738352n);

@@ -152,6 +152,38 @@ function rejectSingletonDeclarations(tokens) {
         tokens[at]);
   }
 }
+// The scalar JS emitter has no nominal actor/object layout or lifetime/borrow
+// admission. Reject before building IR so a .atto actor heap can never
+// accidentally produce scalar JS that looks like a successful guest compile.
+// Inspect lexed tokens only: strings and comments are not authoritative code.
+function rejectUnloweredActorHeap(tokens) {
+  for (let i=0;i<tokens.length;i++) {
+    const at=tokens[i];
+    if(at.kind!=='id')continue;
+    if(at.value==='new' && tokens[i+1]?.kind==='id' &&
+       tokens[i+2]?.value==='(') {
+      throw new CompileError(
+        'E_ACTOR_MEMORY_GUEST_UNSUPPORTED: checked actor-owned class allocation and Ref32 field lowering are unavailable in JS scalar-v1',
+        at);
+    }
+    if(at.value!=='define' && at.value!=='pub')continue;
+    let p=i;
+    if(tokens[p]?.value==='pub') p++;
+    if(tokens[p]?.value!=='define') continue;
+    p++;
+    if(tokens[p]?.value==='pub') p++;
+    if(tokens[p]?.value==='class' || tokens[p]?.value==='actor' ||
+       (tokens[p]?.value==='inverted' && tokens[p+1]?.value==='class')) {
+      // Keep the existing precise inverted-class diagnostic, which the
+      // separate inversion gate owns. Do not reinterpret it as actor heap.
+      if(tokens[p]?.value==='inverted')continue;
+      throw new CompileError(
+        'E_ACTOR_MEMORY_GUEST_UNSUPPORTED: JS scalar-v1 requires typed actor heap, nominal layout and ownership lowering',
+        tokens[p]);
+    }
+  }
+}
+
 function rejectUnsupportedSelect(tokens) {
   const startsStaticSelect = next =>
     next && ['{','over','first','fair','random'].includes(next.value);
@@ -308,6 +340,7 @@ export function compileToIR(source) {
   rejectUnsupportedHttpActors(tokens,(message,token)=>{throw new CompileError(message,token);});
   rejectSingletonDeclarations(tokens);
   rejectUnloweredInvertedClasses(tokens);
+  rejectUnloweredActorHeap(tokens);
   rejectUnsupportedSelect(tokens);
   const parsed=new Parser(tokens).parse();
   try {
