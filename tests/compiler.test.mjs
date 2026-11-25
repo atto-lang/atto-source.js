@@ -117,7 +117,7 @@ test('CLI never publishes JS for rejected select source', async()=> {
 test('pointer-style source syntax and legacy mutable borrow fail closed',()=>{
  assert.throws(()=>compile('pub fnc main(): int { return rt ref value; }'),/pointer-style runtime operation/);
  assert.throws(()=>compile('pub fnc main(): int { return rt deref value; }'),/pointer-style runtime operation/);
- assert.throws(()=>compile('pub fnc main(): int { return rt borrow mut value; }'),/legacy 'rt borrow mut'/);
+ assert.throws(()=>compile('pub fnc main(): int { return rt borrow mut value; }'),/runtime ownership operation requires typed lowering/);
  assert.throws(()=>compile('pub fnc main(): int { return rt mut borrow value; }'),/runtime ownership operation requires typed lowering/);
  for(const source of [
   'pub fnc main(): int { return &value; }',
