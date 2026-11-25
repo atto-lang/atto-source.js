@@ -85,7 +85,7 @@ test('scalar-v1 denies pointer intrinsics and legacy mutable borrow spelling', (
     ['rt deref 1', /pointer-style runtime operation rt deref/],
     ['rt unref 1', /pointer-style runtime operation rt unref/],
     ['rt raw 1', /pointer-style runtime operation rt raw/],
-    ['rt borrow mut 1', /legacy 'rt borrow mut'/]
+    ['rt borrow mut 1', /runtime ownership operation requires typed lowering/]
   ];
   for(const [expression, diagnostic] of negatives) {
     const source='pub fnc main(): int {return '+expression+';}';

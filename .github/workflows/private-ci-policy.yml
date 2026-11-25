@@ -59,13 +59,10 @@ jobs:
           test -f "$file"
           test ! -L "$file"
           test "$(stat -c %s -- "$file")" -le 65536
-          # Use one grep process: pipeline SIGPIPE can hide active destinations.
-          if grep -Evq '^[[:space:]]*(#.*)?
-            echo "PRIVATE_CI_EXPORT_REJECTED: active destination requires dedicated reviewed authorization machinery" >&2
-            exit 1
-          fi
-          echo "private CI export policy: disabled by default"
- "$file"; then
+          # Reject EVERY nonblank, noncomment entry, including destinations
+          # resembling approved owner/repository IDs. This remains DENY-ALL.
+          # A single grep avoids pipeline/SIGPIPE masking under pipefail.
+          if LC_ALL=C grep -Evq '^[[:blank:]]*(#.*)?$' "$file"; then
             echo "PRIVATE_CI_EXPORT_REJECTED: active destination requires dedicated reviewed authorization machinery" >&2
             exit 1
           fi

@@ -1,0 +1,56 @@
+name: JavaScript compiled functional pipeline guest conformance
+on:
+  pull_request:
+    paths:
+      - 'src/functional-pipelines.mjs'
+      - 'bin/atto-jsc.mjs'
+      - 'tests/functional-pipeline-*.test.mjs'
+      - 'tests/fixtures/functional-pipelines-v1/**'
+      - '.github/workflows/functional-pipelines.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compiled-js-guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Fail closed on changed source bytes
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test "$(git write-tree)" = "$(git rev-parse 'HEAD^{tree}')"
+          test -z "$(git status --porcelain)"
+          echo "ATTO_EXACT_HEAD=$EXPECTED"
+          echo "ATTO_EXACT_TREE=$(git rev-parse 'HEAD^{tree}')"
+          paths=(
+            "block-body.atto:4a2eab34e1ba39709198afda19a71cfce67f4030"
+            "inline-arrow-body.atto:ec25b1ce607afa7d30dd5315eace12ff42f0c4d6"
+            "reverse-associative.atto:e71023cd0cc258c9650167e979c45ffb5162d9f7"
+            "mixed-parenthesized.atto:0fcdce8f0b1381125d0148122441c81dfb2a0abf"
+            "reject-return-type.atto:74b2f398a72b41407039ac68cdc44b23b7ece125"
+            "reject-unterminated-body.atto:1d84e3f31fee46a73a6c111e406ebb883e5645b2"
+            "reject-ambiguous-mixed-direction.atto:7e579225f25720da5255ecb47640831be6e3a1c7"
+            "reject-reverse-mixed-unparenthesized.atto:2727d012e5482c407c2e642b3612144e67fad767"
+          )
+          for entry in "${paths[@]}"; do
+            file="${entry%%:*}"
+            want="${entry##*:}"
+            actual="$(git hash-object -- "tests/fixtures/functional-pipelines-v1/$file")"
+            test "$want" = "$actual"
+          done
+          echo "ATTO_SPEC_PIPELINE_BLOBS=8/8"
+      - name: Execute compiled Atto ESM guest and negative source matrix
+        run: |
+          set -euo pipefail
+          node --version
+          node --test tests/functional-pipeline-guest.test.mjs tests/functional-pipeline-cli.test.mjs
+      - name: Prevent regressions in existing JavaScript compiler and runtime
+        run: npm test
