@@ -21,6 +21,8 @@ function validateSourceText(src) {
   for (let i=0; i<src.length; i++) {
     const code=src.charCodeAt(i);
     if (code===0) throw new CompileError('NUL in source');
+    if (code===0x1b || code===0x7f)
+      throw new CompileError('terminal control in source at UTF-16 offset '+i);
     // Trojan Source: bidi format controls can reorder displayed source,
     // including comments and literals that the lexer would otherwise skip.
     if (code===0x061c || code===0x200e || code===0x200f ||
