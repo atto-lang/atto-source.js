@@ -65,12 +65,16 @@ test('rejects nonfinite numeric materialization and non-JSON lexical shortcuts',
     assert.throws(()=>parseStrictJsonReport('{}',maximum,'JS'),/missing or oversized/);
 });
 
-test('byte admission counts UTF-8 bytes for Unicode and unpaired surrogates',()=>{
-  for(const source of ['"😀"','"é"','"\ud800"']) {
+test('byte admission counts UTF-8 bytes and rejects malformed UTF-16',()=>{
+  for(const source of ['"😀"','"é"']) {
     const bytes=Buffer.byteLength(source,'utf8');
     assert.deepEqual(parseStrictJsonReport(source,bytes,'JS'),JSON.parse(source));
     assert.throws(()=>parseStrictJsonReport(source,bytes-1,'JS'),/missing or oversized/);
   }
+  const lone='"'+String.fromCharCode(0xd800)+'"';
+  const bytes=Buffer.byteLength(lone,'utf8');
+  assert.throws(()=>parseStrictJsonReport(lone,bytes,'JS'),/invalid JSON Unicode surrogate/);
+  assert.throws(()=>parseStrictJsonReport(lone,bytes-1,'JS'),/missing or oversized/);
 });
 
 test('bounded seeded JSON round trips agree with the platform parser',()=>{

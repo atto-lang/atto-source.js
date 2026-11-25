@@ -21,7 +21,7 @@ test('250 deterministic property vectors: arithmetic, precedence, calls and sign
     pub fnc add(int a,int b): int { return a + b; }
     pub fnc sub(int a,int b): int { return a - b; }
     pub fnc mul(int a,int b): int { return a * b; }
-    pub fnc rem(int a,int b): int { return a % b; }
+    pub fnc rem(int a,int b): int { return Integer.rem(a, b); }
     pub fnc nested(int a,int b): int { return add(mul(a,b), sub(a,b)); }
     pub fnc precedence(int a,int b): int { return a + b * a - b; }
   `;
