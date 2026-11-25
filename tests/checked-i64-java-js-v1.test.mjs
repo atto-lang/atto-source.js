@@ -32,7 +32,7 @@ async function cases(){
     assert.ok(!seen.has(id),'duplicate case '+id);
     seen.add(id);
     assert.ok(['value','overflow','zero'].includes(kind),'unknown outcome');
-    assert.match(expression,/^[A-Za-z0-9(),+\\- ]{1,160}$/,'bounded source expression');
+    assert.match(expression,/^[A-Za-z0-9(),+ -]{1,160}$/,'bounded source expression');
     if(kind==='value') assert.match(expected,/^(?:0|-?[1-9][0-9]*)$/);
     else assert.equal(expected,kind==='overflow'?'ORES_I64_OVERFLOW':'DIVISION_BY_ZERO');
     parsed.push({id,kind,expression,expected});
