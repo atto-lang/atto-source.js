@@ -28,3 +28,11 @@ test('192 deterministic signed-i64 worker XOR/shift guests',async()=>{
       assert.equal(await execute(main('^ '+expr+';')),String(expected),expr);
   }
 });
+
+test('shift support does not inject a helper into non-shift artifacts',()=>{
+  const plain=compile(main('return 42;')).module_source;
+  assert.doesNotMatch(plain,/checked_shift/);
+  assert.equal(compile(main('^42;')).module_source,plain);
+  assert.doesNotMatch(compile(main('return sync task<int> {return 42;};')).module_source,/checked_shift/);
+  assert.match(compile(main('return sync task<int> {^1 <<< 63;};')).module_source,/function checked_shift/);
+});
