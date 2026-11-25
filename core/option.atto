@@ -1,0 +1,27 @@
+// JS freestanding compiler: independently owned namespace core Option ABI.
+// Stage-1 supports Option<int> only. This is genuine Atto source, not JS code.
+// Generic T/U callbacks, affine owners and cross-module linking are not yet
+// admitted in this compiler's restricted freestanding-core dialect.
+namespace core;
+  pub fnc option_if_positive(int value): Option<int> {
+    if value > 0; do return Some(value); fi
+    return None;
+  }
+  pub fnc option_is_some(Option<int> value): bool {
+    return Option.is_some(value);
+  }
+  pub fnc option_unwrap_or(Option<int> value, int fallback): int {
+    return Option.unwrap_or(value, fallback);
+  }
+  pub fnc option_map_add(Option<int> value, int delta): Option<int> {
+    if Option.is_some(value); do
+      return Some(Option.unwrap_or(value, 0) + delta);
+    fi
+    return None;
+  }
+  pub fnc option_to_result(Option<int> value, int error): Result<int, int> {
+    if Option.is_some(value); do
+      return Ok(Option.unwrap_or(value, 0));
+    fi
+    return Err(error);
+  }

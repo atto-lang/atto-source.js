@@ -91,7 +91,7 @@ test('match literals, no fallthrough, exhaustive wildcard and subject evaluated 
   assert.equal((compileProgramV2(code).match(/const _subject=/g)||[]).length,1);
 });
 test('match else, lazy branches, and negative validations',async()=>{
-  const ns=await execute('pub fnc pick(int n): int {return match n on 1 -> {42;} else -> {1 % 0;} end;}');
+  const ns=await execute('pub fnc pick(int n): int {return match n on 1 -> {42;} else -> {Integer.rem(1, 0);} end;}');
   assert.equal(ns.pick(1n),42n);
   assert.throws(()=>ns.pick(2n),RangeError);
   for(const source of [

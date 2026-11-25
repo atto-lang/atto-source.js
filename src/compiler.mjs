@@ -1,5 +1,7 @@
 import {createScalarIR, validateScalarIR} from './scalar-ir.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
+import {scanStringLiteral} from './string-literal-syntax.mjs';
+import {preflightCoreFutureOwnership} from './core-future-ownership.mjs';
 /** Experimental fail-closed Oreslang scalar-to-ESM compiler. */
 const MAX_BYTES = 262144;
 const I64_MAX = (1n << 63n) - 1n;
@@ -19,6 +21,12 @@ function validateSourceText(src) {
   for (let i=0; i<src.length; i++) {
     const code=src.charCodeAt(i);
     if (code===0) throw new CompileError('NUL in source');
+    // Trojan Source: bidi format controls can reorder displayed source,
+    // including comments and literals that the lexer would otherwise skip.
+    if (code===0x061c || code===0x200e || code===0x200f ||
+        (code>=0x202a && code<=0x202e) ||
+        (code>=0x2066 && code<=0x2069))
+      throw new CompileError('bidirectional Unicode control in source');
     if (code>=0xd800 && code<=0xdbff) {
       const lo=src.charCodeAt(i+1);
       if (!(lo>=0xdc00 && lo<=0xdfff)) throw new CompileError('invalid UTF-16 in source');
@@ -34,6 +42,7 @@ function lex(src) {
   validateSourceText(src);
   const out = [];
   let i=0, line=1, col=1;
+  let ownershipBang;
   const lineEnd=c=>c==='\n'||c==='\r'||c==='\u0085'||c==='\u2028'||c==='\u2029';
   function advance() {
     const ch=src[i];
@@ -71,17 +80,37 @@ function lex(src) {
     const loc={line,col};
     if(/[A-Za-z_]/.test(src[i])){
       let s='';while(i<src.length&&/[A-Za-z0-9_]/.test(src[i])){s+=src[i];advance();}
+      // Record the first contextual ownership bang so the typed Future
+      // preflight can still diagnose its legacy and canonical spellings.
+      if(['copy','take','borrow','share'].includes(s) && src[i]==='!' &&
+          src[i+1]!=='=' &&
+          !(src.slice(i+1,i+3)==='eq' && !/[A-Za-z0-9_]/.test(src[i+3]??'')))
+        ownershipBang ??= loc;
       add('id',s,loc);
     }else if(/[0-9]/.test(src[i])){
       let s='';while(i<src.length&&/[0-9_]/.test(src[i])){s+=src[i];advance();}
       if(!/^[0-9]+(?:_[0-9]+)*$/.test(s))throw new CompileError('invalid integer literal',loc);
       if (s.length > 64) throw new CompileError('integer literal length limit',loc);
       add('int',s,loc);
+    }else if(src[i]==="'" || src[i]==='"' || src[i]==='\x60'){
+      // Keep a quoted literal or entire balanced backtick template opaque:
+      // keywords, braces and comments inside it are not outer-source tokens.
+      let literal;
+      try { literal=scanStringLiteral(src,i); }
+      catch(error) {
+        if(error instanceof SyntaxError)throw new CompileError(error.message,loc);
+        throw error;
+      }
+      while(i<literal.end)advance();
+      add(literal.kind,literal,loc);
     }else if(src.startsWith('->',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
-    else if('(){}:,;+-*/%=.'.includes(src[i])){add('sym',src[i],loc);advance();}
+    else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
+    else if(src[i]==='^')throw new CompileError(src.startsWith('^^',i)?"'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)":"'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",loc);
+    else if('(){}[]:,;+-*/=.!<>'.includes(src[i])){add('sym',src[i],loc);advance();}
     else throw new CompileError('unsupported character',loc);
   }
-  out.push({kind:'eof',value:'<eof>',line,col});return out;
+  out.push({kind:'eof',value:'<eof>',line,col});
+  return {tokens:out,ownershipBang};
 }
 function rejectUnloweredInvertedClasses(tokens) {
   for (let i=0; i+2<tokens.length; i++) {
@@ -132,11 +161,25 @@ class Parser {
   match(v){if(this.peek().value===v){this.pos++;return true;}return false;}
   expect(v){if(!this.match(v))throw new CompileError('expected '+v+', found '+this.peek().value,this.peek());}
   id(){const t=this.peek();if(t.kind!=='id')throw new CompileError('expected identifier',t);this.pos++;return t.value;}
+  exportDeclaration(){
+    this.expect('export');this.expect('pub');
+    let visibility='public';
+    if(this.match('[')){this.expect('pkg');this.expect(']');visibility='package';}
+    let kind=null;
+    if(this.match('class'))kind='class';
+    else if(this.match('fnc'))kind='fnc';
+    const name=this.id();this.expect(';');
+    return {name,kind,visibility};
+  }
   parse(){
     const module=this.peek().value==='define' && this.ts[this.pos+1]?.value==='module';
     if(module){this.pos++;this.expect('module');this.id();this.match('as');}
-    const functions=[];
+    const functions=[],exports=[];
     while(this.peek().kind!=='eof'&&!(module&&this.peek().value==='end')){
+      if(this.peek().value==='export'){
+        if(exports.length>=1024)throw new CompileError('file export budget',this.peek());
+        exports.push(this.exportDeclaration());continue;
+      }
       if(functions.length>=512)throw new CompileError('function limit',this.peek());
       // Accept only one define and one pub, in either canonical order.
       // Deliberately do not admit pub define module in this scalar subset.
@@ -165,7 +208,20 @@ class Parser {
     }
     if(module)this.expect('end');
     if(this.peek().kind!=='eof')throw new CompileError('trailing tokens',this.peek());
-    if(!functions.length)throw new CompileError('no functions');return functions;
+    if(!functions.length)throw new CompileError('no functions');
+    const seen=new Set();
+    for(const entry of exports){
+      if(seen.has(entry.name))throw new CompileError('duplicate export '+entry.name);
+      seen.add(entry.name);
+      if(entry.kind!==null&&entry.kind!=='fnc')
+        throw new CompileError('export kind mismatch '+entry.name);
+      const family=functions.filter(f=>f.name===entry.name);
+      if(!family.length)throw new CompileError('unbound export '+entry.name);
+      if(entry.visibility==='package'&&family.some(f=>f.pub))
+        throw new CompileError('package export conflicts with public declaration '+entry.name);
+      if(entry.visibility==='public')family.forEach(f=>{f.pub=true;});
+    }
+    return functions;
   }
   expr(min=0){
     if(++this.depth>256)throw new CompileError('expression nesting limit',this.peek());
@@ -174,7 +230,7 @@ class Parser {
       while(true){
         const op=this.peek().value;
         if(op==='/')throw new CompileError('unsupported operator '+op,this.peek());
-        const prec=op==='*'||op==='%'?20:op==='+'||op==='-'?10:-1;
+        const prec=op==='*'?20:op==='+'||op==='-'?10:-1;
         if(prec<min)break;
         this.pos++;left={kind:'binary',op,left,right:this.expr(prec+1)};
       }
@@ -195,17 +251,26 @@ class Parser {
     if(this.match('+'))return this.expr(30);
     if(this.match('(')){const v=this.expr();this.expect(')');return v;}
     if(t.kind==='int'){this.pos++;const n=BigInt(t.value.replaceAll('_',''));if(n>I64_MAX)throw new CompileError('positive int outside signed i64',t);return {kind:'int',n};}
+    if(t.kind==='string'||t.kind==='template')
+      throw new CompileError('quoted strings and template interpolation require typed String lowering; unsupported in JS scalar-v1',t);
     if(t.kind==='id' && t.value==='rt'){
       this.pos++;
       const op=this.peek();
       if(op.kind!=='id')throw new CompileError('expected runtime operation after rt',op);
       if(['ref','unref','deref','raw'].includes(op.value))
         throw new CompileError('pointer-style runtime operation rt '+op.value+' is not valid Oreslang source',op);
-      if(op.value==='borrow' && this.ts[this.pos+1]?.value==='mut')
-        throw new CompileError("legacy 'rt borrow mut' is not valid Oreslang; use 'rt mut borrow value'",op);
       if(op.value==='mut' && this.ts[this.pos+1]?.value!=='borrow')
         throw new CompileError("'rt mut' only supports borrowing; use 'rt mut borrow value'",op);
       throw new CompileError('runtime ownership operation requires typed lowering in the JS scalar backend',op);
+    }
+    if(t.kind==='id'&&t.value==='Integer'&&this.ts[this.pos+1]?.value==='.'){
+      // Named integer operations replace the reserved %, ^ and ^^ operators.
+      this.pos+=2;
+      const name=this.peek();
+      const ops={rem:'%',mod:'mod',bitXor:'^'};
+      if(name.kind!=='id'||!Object.hasOwn(ops,name.value))throw new CompileError('Integer.'+name.value+' is unsupported; use Integer.rem, Integer.mod or Integer.bitXor',name);
+      this.pos++;this.expect('(');const left=this.expr();this.expect(',');const right=this.expr();this.expect(')');
+      return {kind:'binary',op:ops[name.value],left,right};
     }
     if(t.kind==='id'){
       this.pos++;
@@ -222,7 +287,12 @@ class Parser {
 // The isolated parser is a bootstrap adapter. Future language frontends
 // should produce this versioned IR instead of duplicating parser semantics.
 export function compileToIR(source) {
-  const tokens=lex(source);
+  const {tokens,ownershipBang}=lex(source);
+  // Reject affine Future violations at the compiler core boundary before IR.
+  // Valid Future code still cannot execute in the scalar-only JS backend.
+  preflightCoreFutureOwnership(tokens,(code,message,token)=>{throw new CompileError(code+': '+message,token);});
+  if(ownershipBang)
+    throw new CompileError('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: checked JS ownership lowering required',ownershipBang);
   rejectExecutionDomains(tokens,(message,token)=>{throw new CompileError(message,token);});
   rejectSingletonDeclarations(tokens);
   rejectUnloweredInvertedClasses(tokens);
@@ -249,6 +319,10 @@ export function compileIR(input) {
     if (e.kind === 'param') return '_p' + e.index;
     if (e.kind === 'neg') return 'BigInt.asIntN(64,-(' + lower(e.inner, depth+1) + '))';
     if (e.kind === 'binary') {
+      // Inline so programs without Integer.mod keep byte-identical output.
+      if (e.op === 'mod')
+        return '((a,b)=>{if(b===0n)throw new RangeError("ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit remainder by zero");const r=a%b;return r<0n?BigInt.asIntN(64,b>0n?r+b:r-b):r;})(' +
+          lower(e.left, depth+1) + ',' + lower(e.right, depth+1) + ')';
       return 'BigInt.asIntN(64,(' + lower(e.left, depth+1) + ')' + e.op + '(' +
         lower(e.right, depth+1) + '))';
     }
@@ -259,7 +333,7 @@ export function compileIR(input) {
   }
   const out = [
     '// Oreslang JS scalar subset. Signed i64 wrapping is PROVISIONAL, not proven Java parity.',
-    'function _int(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang int requires a signed i64 BigInt");return v;}'
+    'function _int(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang int requires a signed i64 BigInt");return v;}',
   ];
   fns.forEach((f,i) => {
     const params = f.params.map((_,j) => '_p' + j);

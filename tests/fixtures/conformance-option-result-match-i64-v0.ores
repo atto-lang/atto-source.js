@@ -43,24 +43,24 @@ pub fnc nested(int x):int {
 pub fnc lazy_some(int x):int {
   return match as_option(x) over {
     on Some(n) {return n;}
-    on None {return 1 % (x - 7);}
+    on None {return Integer.rem(1, (x - 7));}
   };
 }
 pub fnc lazy_none(int x):int {
   return match as_option(x) over {
-    on Some(n) {return 1 % x;}
+    on Some(n) {return Integer.rem(1, x);}
     on None {return 7;}
   };
 }
 pub fnc lazy_ok(int x):int {
   return match as_result(x) over {
     on Ok(n) {return n;}
-    on Err(e) {return 1 % (x - 7);}
+    on Err(e) {return Integer.rem(1, (x - 7));}
   };
 }
 pub fnc lazy_err(int x):int {
   return match as_result(x) over {
-    on Ok(n) {return 1 % (x + 7);}
+    on Ok(n) {return Integer.rem(1, (x + 7));}
     on Err(e) {return e;}
   };
 }
