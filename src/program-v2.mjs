@@ -310,7 +310,7 @@ class Parser {
   }
   eatMethodMarker() {
     const marker=this.peek().value;
-    if(marker!=='mtd'&&marker!=='method')return false;
+    if(marker!=='mtd'&&marker!=='method'&&marker!=='fnc')return false;
     const next=this.tokens[this.i+1],after=this.tokens[this.i+2];
     if(!next||next.kind!=='id'||after?.value!=='(')return false;
     const value=next.value;
