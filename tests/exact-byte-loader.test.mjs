@@ -76,6 +76,6 @@ test('unapproved manifest pins, symlinks and incorrect exports fail closed',asyn
 });
 
 test('package self-reference exports the exact-byte Node loader',async()=>{
-  const mod=await import('@oreslang/source-js/load-trusted-package.node');
+  const mod=await import('@atto-lang/source-js/load-trusted-package.node');
   assert.equal(typeof mod.loadTrustedNodePackage,'function');
 });
