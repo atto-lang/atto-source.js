@@ -11,7 +11,7 @@ const source=[
   'pub fnc add(int a,int b): int {return a+b;}',
   'pub fnc sub(int a,int b): int {return a-b;}',
   'pub fnc mul(int a,int b): int {return a*b;}',
-  'pub fnc rem(int a,int b): int {return a%b;}',
+  'pub fnc rem(int a,int b): int {return Integer.rem(a, b);}',
   'pub fnc neg(int a): int {return -a;}',
   'pub fnc cancel(int a,int b): int {return a+b-b;}',
   'end'
