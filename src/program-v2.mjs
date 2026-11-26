@@ -1342,10 +1342,8 @@ class Parser {
 }
 function resolveProgram(parsed) {
   const {modules,functions,generators=[],classes=[],exportDeclarations=[]}=parsed;
-  const seenExportNames=new Set();
+  const resolvedExports=new Map();
   for(const entry of exportDeclarations) {
-    if(seenExportNames.has(entry.name))fail('duplicate export '+entry.name);
-    seenExportNames.add(entry.name);
     const targetClasses=classes.filter(c=>c.name===entry.name);
     const targetFns=functions.filter(f=>f.module===null&&f.name===entry.name);
     if(!targetClasses.length&&!targetFns.length)fail('unknown export '+entry.name);
@@ -1357,8 +1355,11 @@ function resolveProgram(parsed) {
       fail('package export conflicts with public declaration '+entry.name);
     if(kind==='fnc'&&targets.some(t=>t.kind==='routine')&&entry.visibility==='public')
       fail('routine is not a public exported fnc '+entry.name);
-    if(entry.visibility==='public')targets.forEach(t=>{t.pub=true;});
+    const prior=resolvedExports.get(entry.name);
+    if(prior&&prior.visibility!==entry.visibility)fail('conflicting export visibility '+entry.name);
+    if(!prior)resolvedExports.set(entry.name,{name:entry.name,kind,visibility:entry.visibility,targets});
   }
+  for(const entry of resolvedExports.values())if(entry.visibility==='public')entry.targets.forEach(t=>{t.pub=true;});
   const slots=new Map(),exports=new Set(),symbolKinds=new Map(),classByName=new Map();
   const classTables=classes.map((cls,classIndex)=>{
     if(classByName.has(cls.name))fail('duplicate class '+cls.name);
@@ -1786,8 +1787,8 @@ function resolveProgram(parsed) {
   resolved.forEach((_,i)=>visit(i));
   return {
     sourceNamespace:parsed.namespace,modules,functions:resolved,
-    ...(exportDeclarations.length?{fileExports:exportDeclarations.map(e=>({
-      name:e.name,kind:e.kind??(classes.some(c=>c.name===e.name)?'class':'fnc'),
+    ...(resolvedExports.size?{fileExports:[...resolvedExports.values()].map(e=>({
+      name:e.name,kind:e.kind,
       visibility:e.visibility
     }))}:{}),
     ...(resolvedGenerators.length?{generators:resolvedGenerators}:{}),

@@ -45,9 +45,37 @@ test('export directives reject bad symbols, visibility and kinds', () => {
   const cases = [
     'export pub Missing;\n' + declarations,
     'export pub fnc Foo;\n' + declarations,
-    'export pub Foo; export pub class Foo;\n' + declarations,
+    'export pub Foo; export pub[pkg] class Foo;\n' + declarations,
+    'export pub Foo; export pub fnc Foo;\n' + declarations,
     'export pub[other] Foo;\n' + declarations,
     'export pub[pkg] class Foo; pub define class Foo as end'
   ];
   for (const source of cases) assert.throws(() => compileProgramV2(source), undefined, source);
+});
+
+test('identical resolved exports deduplicate without widening package visibility', async () => {
+  for (const compile of [compileProgramV2, compileScalar]) {
+    const body='fnc compute(): int { return 42; }';
+    for (const [a,b] of [['export pub compute;','export pub fnc compute;'],['export pub fnc compute;','export pub compute;'],['export pub[pkg] compute;','export pub[pkg] fnc compute;']]) {
+      const single=compile(a+'\n'+body);
+      const repeated=compile(a+'\n'+body+'\n'+b);
+      assert.equal(repeated,single);
+      const m=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(repeated));
+      if(a.includes('[pkg]'))assert.equal(Object.hasOwn(m,'compute'),false);
+      else assert.equal(m.compute(),42n);
+    }
+    for(const [a,b] of [['export pub compute;','export pub[pkg] compute;'],['export pub[pkg] compute;','export pub compute;']])assert.throws(()=>compile(a+'\n'+body+'\n'+b),/conflict/);
+  }
+  const ir=compileToProgramIRV2('export pub Foo; export pub class Foo;\n'+declarations);
+  assert.deepEqual(ir.fileExports,[{name:'Foo',kind:'class',visibility:'public'}]);
+});
+
+test('file export cannot escape a scalar module or callable body', () => {
+  for(const compile of [compileScalar,compileProgramV2]) {
+    for(const src of [
+      'define module M as export pub fnc hidden; fnc hidden(): int { return 42; } end',
+      'define module M as fnc hidden(): int { return 42; } export pub hidden; end',
+      'fnc hidden(): int { return 42; } fnc main(): int { export pub hidden; return hidden(); }'
+    ]) assert.throws(()=>compile(src),undefined,src);
+  }
 });
