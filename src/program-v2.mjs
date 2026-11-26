@@ -1,6 +1,6 @@
 import {lowerVerifiedQuantitySource} from './verified-quantity-source.mjs';
 import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
-import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
+import {validLocalString,validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 import {TESTING_SCALAR_SOURCE, TESTING_SCALAR_EXPORTS} from './compiler-owned-testing-scalar.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
 import {rejectUnsupportedHttpActors} from './http-actor-admission.mjs';
@@ -249,17 +249,33 @@ function tokenize(source) {
       }
       if(pos>=source.length)fail('unterminated module import string',start);
       advance();emit('str',value,start);
-    } else if(c==='"'){
+    } else if(c==='"'||c==="'"){
+      const quote=c;
       advance();let value='';
-      while(pos<source.length&&source[pos]!=='"'){
-        const ch=source[pos];
-        if(ch==='\\'||sourceLineEnd(ch)||ch.charCodeAt(0)<32||ch.charCodeAt(0)>126)
-          fail('E_STRING_PROFILE: only unescaped printable ASCII local strings are admitted',start);
-        if(value.length>=256)fail('E_STRING_PROFILE: local string exceeds 256 bytes',start);
-        value+=ch;advance();
+      while(pos<source.length&&source[pos]!==quote){
+        let ch=source[pos];advance();
+        if(sourceLineEnd(ch)||ch.charCodeAt(0)<32)
+          fail('E_STRING_PROFILE: raw control in string',start);
+        if(ch==='\\'){
+          if(pos>=source.length)fail('E_STRING_ESCAPE: truncated escape',start);
+          ch=source[pos];advance();
+          if(sourceLineEnd(ch))fail('E_STRING_ESCAPE: multiline continuation unsupported',start);
+          if(ch==='u'){
+            const hex=source.slice(pos,pos+4);
+            if(!/^[0-9A-Fa-f]{4}$/.test(hex))fail('E_STRING_ESCAPE: invalid Unicode escape',start);
+            ch=String.fromCharCode(parseInt(hex,16));
+            for(let i=0;i<4;i++)advance();
+          }else ch=ch==='n'?'\n':ch==='r'?'\r':ch==='t'?'\t':ch;
+        }
+        value+=ch;
+        if(value.length>256)fail('E_STRING_PROFILE: local string exceeds 256 bytes',start);
       }
       if(pos>=source.length)fail('E_STRING_PROFILE: unterminated string',start);
-      advance();emit('localString',value,start);
+      if(!validLocalString(value))fail('E_STRING_PROFILE: invalid Unicode or byte budget',start);
+      advance();
+      // Never let quoted payload text masquerade as a keyword or delimiter.
+      emit('localString','<local-string>',start);
+      result.at(-1).literal=value;
     } else if (/[A-Za-z_]/.test(c)) {
       let word = '';
       while (pos < source.length && /[A-Za-z0-9_]/.test(source[pos])) {
@@ -727,7 +743,7 @@ class Parser {
         const isConst=this.eat('const');
         const readOnlyLet=!isConst&&this.eat('let');
         if(!isConst&&!readOnlyLet)this.expect('val');
-        // This bounded slice admits only function-scope immutable int locals.
+        // Function-scope scalar locals; only typed string let may rebind.
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
         const localType=this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
         const name=this.name();
@@ -741,19 +757,31 @@ class Parser {
         }else init=this.expression();
         this.expect(';');
         if(isConst&&(!directional||localType!=='int'))fail('only directional const int is admitted here',this.peek());
-        statements.push({kind:'local',name,init,localType:isConst?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType});
+        statements.push({kind:'local',name,init,localType:isConst?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string'});
+      } else if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
+        if(depth!==0)fail('E_STRING_VIEW_SCOPE: rebinding requires root function scope',this.peek());
+        const name=this.name();this.expect('=');
+        const init=this.expression();this.expect(';');
+        statements.push({kind:'local',name,init,localType:'string',writable:true,rebind:true});
       } else if(['if','ifnot','unless'].includes(this.peek().value)) {
         const head=this.tokens[this.i++].value;
         const predicate=this.expression();
         // Negate the predicate once using the existing typed Boolean IR.
         const condition=head==='if'?predicate:{kind:'not',inner:predicate};
-        // Canonical imperative suffix do; preserve old positive if spellings.
-        if(head!=='if')this.expect('do');
-        else if(!this.eat('do')&&!this.eat('then')){this.expect(';');this.expect('do');}
-        const yes=this.statementSequence(['else','fi'],depth+1);
-        const no=this.eat('else')?this.statementSequence(['fi'],depth+1):[];
-        this.expect('fi');
-        statements.push({kind:'branch',condition,yes,no});
+        if(this.eat('{')){
+          const yes=this.statementSequence(['}'],depth+1);this.expect('}');
+          let no=[];
+          if(this.eat('else')){this.expect('{');no=this.statementSequence(['}'],depth+1);this.expect('}');}
+          statements.push({kind:'branch',condition,yes,no});
+        }else{
+          // Keyword-delimited conditionals alone own their fi.
+          if(head!=='if')this.expect('do');
+          else if(!this.eat('do')&&!this.eat('then')){this.expect(';');this.expect('do');}
+          const yes=this.statementSequence(['else','fi'],depth+1);
+          const no=this.eat('else')?this.statementSequence(['fi'],depth+1):[];
+          this.expect('fi');
+          statements.push({kind:'branch',condition,yes,no});
+        }
        } else if(this.peek().kind==='id'||this.peek().kind==='int'||this.peek().value==='('){
         const expr=this.expression();
         if(this.takeDirection('>')){
@@ -795,7 +823,7 @@ class Parser {
       else if(stmt.kind==='tryCatch')result={kind:'tryCatch',name:stmt.name,body:this.lowerStatements(stmt.body,null),handler:this.lowerStatements(stmt.handler,null)};
       else if(stmt.kind==='local'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
-        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,body:result};
+        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,rebind:stmt.rebind===true,body:result};
       }
       else if(stmt.kind==='voidCall'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: void call must precede a value return');
@@ -1092,7 +1120,7 @@ class Parser {
       }
       return receiver;
     }
-    if(this.peek().kind==='localString')return {kind:'string',value:this.tokens[this.i++].value};
+    if(this.peek().kind==='localString')return {kind:'string',value:this.tokens[this.i++].literal};
     if(this.eat('true'))return {kind:'bool',value:true};
     if(this.eat('false'))return {kind:'bool',value:false};
     if (this.eat('-')) {
@@ -1306,7 +1334,7 @@ function resolveProgram(parsed) {
       case 'trapOptionCapture':return 'trapOptionResult';
       case 'trapMethod':return expr.name==='unwrap'?'int':'bool';
       case 'trapOptionMethod':return expr.name==='unwrap'?'option<int>':'bool';
-      case 'bool':case 'not':case 'compare':case 'boolCompare':case 'numericCompare':case 'symbolCompare':return 'bool';
+      case 'bool':case 'not':case 'compare':case 'boolCompare':case 'stringCompare':case 'numericCompare':case 'symbolCompare':return 'bool';
       case 'symbol':return 'symbol';
       case 'string':case 'stringCapture':return 'string';
       case 'boolCapture':return 'bool';
@@ -1385,8 +1413,13 @@ function resolveProgram(parsed) {
         return inner;
       }
       case 'local': {
-        if(owner.ownerKind==='method'||owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))
+        const previous=bindings.findLast(b=>b.name===expr.name);
+        if(owner.ownerKind==='method'||owner.params.includes(expr.name))
           fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
+        if(expr.rebind){
+          if(!previous||previous.type!=='string'||!previous.writable)
+            fail('E_STRING_REBIND: requires writable typed string local');
+        }else if(previous)fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
         if(nextCaptureSlot>=MAX_TOKENS)fail('local slot budget exceeded');
         const slot=nextCaptureSlot++;
         const init=resolve(expr.init,owner,depth+1,bindings);
@@ -1419,7 +1452,7 @@ function resolveProgram(parsed) {
           if(typeof fold(init)!=='bigint')fail('directional const int requires int');
         }
         return {kind:type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':type==='bool'?'boolLocal':type==='string'?'stringLocal':'local',slot,init,
-          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type}])};
+          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string'}])};
       }
       case 'seqVoidCall': {
         if(expr.call.kind!=='call'||expr.call.qualifier!==null)
@@ -1493,6 +1526,11 @@ function resolveProgram(parsed) {
         const left=resolve(expr.left,owner,depth+1,bindings);
         const right=resolve(expr.right,owner,depth+1,bindings);
         const leftType=resolvedType(left,owner),rightType=resolvedType(right,owner);
+        if(leftType==='string'||rightType==='string'){
+          if(leftType!=='string'||rightType!=='string'||!['==','!='].includes(expr.op))
+            fail('E_STRING_TYPE: string equality requires two typed string operands');
+          return {kind:'stringCompare',op:expr.op,left,right};
+        }
         if(leftType==='bool'||rightType==='bool'){
           if(leftType!=='bool'||rightType!=='bool'||!['==','!='].includes(expr.op))
             fail('Boolean comparison requires bool ==/!= bool');
@@ -1606,7 +1644,7 @@ function resolveProgram(parsed) {
     } else if(expr.kind==='newClass') {
       // fieldless construction has no call-graph edge in this slice
     } else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
-    else if(['binary','floatBin','compare','boolCompare','numericCompare','symbolCompare'].includes(expr.kind)) {inspect(expr.left,owner);inspect(expr.right,owner);}
+    else if(['binary','floatBin','compare','boolCompare','stringCompare','numericCompare','symbolCompare'].includes(expr.kind)) {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='tryCatch'){inspect(expr.body,owner);inspect(expr.handler,owner);}
     else if(expr.kind==='seqVoidCall'){inspect(expr.call,owner);inspect(expr.value,owner);}
@@ -1712,7 +1750,7 @@ function emitProgram(program) {
         if(expr.op==='mod')return '((a,b)=>{const r=_rem(a,b);return r<0n?_check(b>0n?r+b:r-b):r;})(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
         return '_check(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
       case 'compare':return '(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
-      case 'boolCompare':return '(('+emitExpr(expr.left,depth+1)+')'+
+      case 'stringCompare':case 'boolCompare':return '(('+emitExpr(expr.left,depth+1)+')'+
         (expr.op==='=='?'===':'!==')+'('+emitExpr(expr.right,depth+1)+'))';
       case 'symbolCompare': {
         const equal='_symboleq('+emitExpr(expr.left,depth+1)+','+
@@ -1798,7 +1836,7 @@ function emitProgram(program) {
       case 'methodCall':case 'namedMethodCall':
         return usesSymbol(expr.receiver)||expr.args.some(usesSymbol);
       case 'call':case 'namedCall':case 'intrinsic':return expr.args.some(usesSymbol);
-      case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'numericCompare':case 'symbolCompare':
+      case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'stringCompare':case 'numericCompare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
       case 'scalarWhileMany': {
         const visit=steps=>steps.some(s=>s.kind==='loop'?usesSymbol(s.condition)||visit(s.steps):usesSymbol(s.init??s.value));
@@ -1845,7 +1883,7 @@ function emitProgram(program) {
       case 'methodCall':case 'namedMethodCall':
         return usesPortableRuntime(expr.receiver)||expr.args.some(usesPortableRuntime);
       case 'call':case 'namedCall':return expr.args.some(usesPortableRuntime);
-      case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'numericCompare':case 'symbolCompare':
+      case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'stringCompare':case 'numericCompare':case 'symbolCompare':
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
       case 'scalarWhileMany': {
         const visit=steps=>steps.some(s=>s.kind==='loop'?usesPortableRuntime(s.condition)||visit(s.steps):usesPortableRuntime(s.init??s.value));
