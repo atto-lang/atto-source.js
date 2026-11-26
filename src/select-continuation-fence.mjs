@@ -24,15 +24,16 @@ function issueTicket(owner,index,id,generation) {
  * tryConsume(ticket) immediately before running the continuation. Advancing the
  * generation invalidates every outstanding ticket, so a completion queued by an
  * older actor incarnation cannot resume in a newer one.
- * close() permanently rejects registration and clears pending tickets; it does
- * not wait for callbacks or native workers. The scheduler must serialize
- * consume-and-invoke with lifecycle changes on the actor lane.
+ * close() rejects registration and clears pending tickets; claimed execution
+ * leases retain capacity until closed. advance() rejects while a lease lives.
+ * Legacy tryConsume is logical-only; new invocation paths must use tryClaim.
  */
 export class SelectContinuationFence {
   #generation;
   #slots;
   #nextId=1;
   #closed=false;
+  #executing=0;
 
   constructor(options={}){
     if(options===null || typeof options!=='object' || Array.isArray(options))
@@ -61,6 +62,8 @@ export class SelectContinuationFence {
   }
 
   get closed(){return this.#closed;}
+  get executing(){return this.#executing;}
+  get retirementReady(){return this.#closed&&this.#executing===0&&this.pendingTickets===0;}
 
   // Terminal shutdown is distinct from advancing to a reusable generation.
   close(){
@@ -79,6 +82,8 @@ export class SelectContinuationFence {
     if(this.#closed)throw new Error('continuation fence is closed');
     if(expectedGeneration!==this.#generation)
       throw new Error('stale actor generation');
+    if(this.pendingTickets+this.#executing>=this.#slots.length)
+      throw new Error('continuation physical capacity exhausted');
     const index=this.#slots.findIndex(slot=>!slot.active);
     if(index<0)throw new Error('continuation ticket capacity exhausted');
     if(this.#nextId>=Number.MAX_SAFE_INTEGER)
@@ -97,8 +102,25 @@ export class SelectContinuationFence {
     return true;
   }
 
+  /** Claim before invocation; close the lease in a finally block. */
+  tryClaim(ticket){
+    if(!this._matches(ticket,true)||this.#closed)return null;
+    const generation=this.#generation;
+    let active=true;
+    // Construct the lease before consuming the pending slot.
+    const lease=Object.freeze({generation,get active(){return active;},close:()=>{
+      if(!active)return false;
+      active=false;
+      this.#executing--;
+      return true;
+    }});
+    this.#clear(this.#slots[TICKETS.get(ticket).index]);
+    this.#executing++;
+    return lease;
+  }
+
   advance(expectedGeneration){
-    if(this.#closed)return false;
+    if(this.#closed||this.#executing!==0)return false;
     if(expectedGeneration!==this.#generation)return false;
     if(this.#generation>=Number.MAX_SAFE_INTEGER)
       throw new Error('actor generation exhausted');
