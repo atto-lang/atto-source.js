@@ -212,7 +212,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
     const types=['int','bool','symbol','option<int>','result<int,int>'];
     if(paramTypes.length!==params.length||
        paramTypes.some(t=>!types.includes(t)&&t!=='error'))fail('unsupported function parameter type');
-    if(paramTypes.includes('error')&&(f.pub||params.includes('Error')||seenModules.has('Error')||sourceFunctions.some(h=>h.name==='Error')||sourceGenerators.some(h=>h.name==='Error')||classHeaders.some(h=>h.name==='Error')))
+    if(paramTypes.includes('error')&&(f.pub||params.includes('Error')||seenModules.has('Error')))
       fail('E_ERROR_BINDING: Error parameters require private callable and unshadowed core Error');
     const returnType=typed?f.returnType:'int';
     if(returnType!=='void'&&!types.includes(returnType))fail('unsupported function return type');
@@ -845,7 +845,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
     if(fn.throws?.length===0&&escapes(i))
       fail('E_EFFECT: undeclared escaping ordinary throw in '+fn.name);
     // A declared Error must not resolve to a shadowed nominal type.
-    if(fn.throws?.length&&([...headers,...generatorHeaders,...classHeaders].some(h=>h.name==='Error')||seenModules.has('Error')||fn.params.includes('Error')))
+    if((fn.throws?.length||fn.paramTypes?.includes('error'))&&([...headers,...generatorHeaders,...classHeaders].some(h=>h.name==='Error')||seenModules.has('Error')||fn.params.includes('Error')))
       fail('E_EFFECT: throws(Error) requires unshadowed core Error');
   }
   return {
