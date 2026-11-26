@@ -394,20 +394,20 @@ class Parser {
   }
   generatorIdentifier() {
     const t=this.peek(),value=t.value;
-    if(t.kind!=='id'||!TOKEN_NAME.test(value)||GENERATOR_RESERVED.has(value))
+    if(t.kind!=='id'||!isIdentifier(value)||GENERATOR_RESERVED.has(value))
       fail('invalid or reserved generator identifier '+value,t);
     this.i++;return value;
   }
   classIdentifier() {
     const t=this.peek(),value=t.value;
-    if(t.kind!=='id'||!TOKEN_NAME.test(value)||CLASS_METHOD_RESERVED.has(value)||
+    if(t.kind!=='id'||!isIdentifier(value)||CLASS_METHOD_RESERVED.has(value)||
        value==='Option'||value==='Result'||value==='Integer')
       fail('invalid or reserved class/member identifier '+value,t);
     this.i++;return value;
   }
   callableName() {
     const t=this.peek(),value=t.value;
-    if(t.kind!=='id'||!TOKEN_NAME.test(value)||
+    if(t.kind!=='id'||!isIdentifier(value)||
        (CLASS_METHOD_RESERVED.has(value)&&!CLASS_METHOD_CALLABLE_KEYWORDS.has(value)))
       fail('invalid or reserved callable name '+value,t);
     this.i++;return value;
@@ -2204,7 +2204,7 @@ function lowerCompilerOwnedBooleanImports(tokens){
         tokens[i+3]?.value==='from'&&tokens[i+4]?.kind==='str'&&
         isCoreBooleanUnit(tokens[i+4].value)){
     const alias=tokens[i+2],end=tokens[i+5];
-    if(alias?.kind!=='id'||!TOKEN_NAME.test(alias.value)||end?.value!==';'||
+    if(alias?.kind!=='id'||!isIdentifier(alias.value)||end?.value!==';'||
        aliases.has(alias.value)||aliases.size>=8||
        CLASS_METHOD_RESERVED.has(alias.value)||GENERATOR_RESERVED.has(alias.value)||
        isProtectedPreludeIdentity(alias.value)||coreBooleanIntrinsic(alias.value)||
@@ -2236,7 +2236,7 @@ function lowerCompilerOwnedTestingImports(tokens) {
   };
   const identifier=()=>{
     const t=next();
-    if(t?.kind!=='id'||!TOKEN_NAME.test(t.value))
+    if(t?.kind!=='id'||!isIdentifier(t.value))
       fail('E_STD_IMPORT: expected import function identifier',t);
     i++;
     return t.value;
