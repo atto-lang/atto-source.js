@@ -296,7 +296,7 @@ function tokenize(source) {
       advance(); advance();
     } else if (['<=','>=','==','!='].some(op=>source.startsWith(op,pos))) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
-    } else if (source.startsWith('->',pos) || source.startsWith('<-',pos) || source.startsWith('::',pos)) {
+    } else if (source.startsWith('->',pos) || source.startsWith('<-',pos) || source.startsWith('::',pos) || source.startsWith('|>',pos)) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
     } else if (c==='•') {
       emit('sym',c,start); advance();
@@ -787,7 +787,7 @@ class Parser {
       switch(expr.kind){
         case 'int':case 'float':case 'bool':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':break;
         case 'tryCatch':add(expr.body);add(expr.handler);break;
-        case 'neg':case 'not':case 'trap':add(expr.inner);break;
+        case 'neg':case 'not':case 'trap':case 'immediateAwait':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
@@ -908,9 +908,31 @@ class Parser {
     if (++this.depth > MAX_DEPTH || ++this.expressions > MAX_TOKENS) fail('expression budget exceeded',this.peek());
     try {
       let left = this.primary();
+      let stages=0;
       while (true) {
         const token=this.peek();
         let op=token.value, width=1;
+        if(op==='|>' && min===0){
+          this.i++;
+          if(++stages>128)fail('pipeline exceeds 128 stages',token);
+          if(this.eat('match')){
+            // Subject injection uses the normal checked match IR, not a lambda.
+            if(++this.depth>MAX_DEPTH)fail('expression budget exceeded',token);
+            try{left=this.matchExpression(left);}finally{this.depth--;}
+          }else if(this.eat('await')){
+            if(['(','<'].includes(this.peek().value))fail('pipeline await takes only the left-hand value',this.peek());
+            left={kind:'immediateAwait',inner:left};
+          }else{
+            // Program-v2 admits named root/module calls; no computed callees.
+            const at=this.peek();
+            if(at.kind!=='id'||GENERATOR_RESERVED.has(at.value))fail('pipeline requires a named function or match',at);
+            let name=this.name(),qualifier=null;
+            if(this.eat('.')){qualifier=name;name=this.name();}
+            const args=this.eat('(')?this.argumentsAfterOpen():[];
+            left={kind:'call',qualifier,name,args:[{name:null,expr:left},...args]};
+          }
+          continue;
+        }
         // Recognize contiguous triple shifts only at expression boundaries.
         // Keep individual > tokens for nested nominal generic closers.
         if(op==='<'||op==='>'){
@@ -960,6 +982,7 @@ class Parser {
     return value;
   }
   primary() {
+    if(this.eat('await'))return {kind:'immediateAwait',inner:this.expression(30)};
     if(this.eat('!')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
     if(this.eat('new')){
       const className=this.name();
@@ -1027,13 +1050,14 @@ class Parser {
     }
     return {kind:'call',qualifier,name:symbol,args};
   }
-  matchExpression() {
+  matchExpression(injectedSubject=null) {
     // A typed scalar match is a canonical source form, not a new
     // dynamically-dispatched container or unchecked JS pattern primitive.
     const typed=this.eat('<');
     if(typed){this.expect('int');this.expect('>');}
-    const subject=this.expression();
+    const subject=injectedSubject??this.expression();
     const hasOver=this.eat('over');
+    if(injectedSubject!==null&&!hasOver)fail('pipeline match requires over and takes its subject from the left-hand value',this.peek());
     if(typed&&!hasOver)fail('typed scalar match requires over',this.peek());
     const braced=this.eat('{');
     const arms=[],seen=new Set();
@@ -1077,17 +1101,21 @@ class Parser {
       const key=tag==='integer'?'int:'+value:tag;
       if(seen.has(key))fail('duplicate match pattern '+key);
       seen.add(key);
-      if(canonicalDefault)this.expect('->');
-      else this.eat('->');
-      this.expect('{');
-      // Existing Oreslang ADT fixture uses statement-looking return bodies
-      // inside a match expression. Treat that spelling as an expression arm.
-      if(this.peek().value==='return') {
+      const arrow=this.eat('->');
+      if(!arrow&&(canonicalDefault||this.peek().value!=='{'))
+        fail("match expression arms require '->'",this.peek());
+      const block=this.eat('{');
+      // Keep the existing single-expression block subset. No arbitrary
+      // statement blocks or early-return control flow are admitted here.
+      if(block&&this.peek().value==='return') {
         if(family!=='adt')fail('return in scalar expression match is unsupported');
         this.i++;
       }
       const body=this.expression();
-      this.expect(';');this.expect('}');
+      if(block){this.expect(';');this.expect('}');}
+      const separated=this.eat(',');
+      if(!block&&!separated&&!ended()&&!['on','default','else'].includes(this.peek().value))
+        fail('expected match arm boundary',this.peek());
       arms.push({tag,bind,value,body});
       if(arms.length>256)fail('match arm limit');
     }
@@ -1101,7 +1129,7 @@ class Parser {
       if(arms.length!==2||required.some(tag=>!tags.has(tag)))
         fail('non-exhaustive ADT match; expected '+required.join('/'));
       return {kind:'adtMatch',adt:option?'option<int>':'result<int,int>',
-        subject,arms:arms.map(arm=>({tag:arm.tag,bind:arm.bind,body:arm.body}))};
+        typed,subject,arms:arms.map(arm=>({tag:arm.tag,bind:arm.bind,body:arm.body}))};
     }
     if(!wildcard)fail('scalar int match requires exhaustive wildcard/else');
     return {kind:'match',subject,arms:arms.map(arm=>({value:arm.value,body:arm.body}))};
@@ -1242,6 +1270,13 @@ function resolveProgram(parsed) {
           fail('E_EFFECT_PROFILE: explicit result type and unshadowed core Error required');
         return expr;
       case 'int':case 'float':case 'bool':case 'symbol':return expr;
+      case 'immediateAwait': {
+        const inner=resolve(expr.inner,owner,depth+1,bindings);
+        // No Future/actor readiness lowering exists in this frontend. Admit
+        // only statically typed i64 values, and erase the identity operator.
+        if(resolvedType(inner,owner)!=='int')fail('await requires immediate int in program-v2; asynchronous await unsupported');
+        return inner;
+      }
       case 'local': {
         if(owner.ownerKind==='method'||owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))
           fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
@@ -1403,6 +1438,8 @@ function resolveProgram(parsed) {
           }
           return {tag:arm.tag,slot,body:resolve(arm.body,owner,depth+1,scope)};
         });
+        if(expr.typed&&arms.some(arm=>resolvedType(arm.body,owner)!=='int'))
+          fail('explicit match<int> requires integer arm results');
         return {kind:'adtMatch',adt:expr.adt,subject,arms};
       }
       default: fail('unsupported expression node');
