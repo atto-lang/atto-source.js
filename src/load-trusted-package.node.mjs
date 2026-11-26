@@ -13,7 +13,13 @@ import {invokeTrustedNodeModule} from './host-bridge.node.mjs';
 export async function loadTrustedNodePackage(options){
   const {manifest,moduleBase64}=await readVerifiedPackage(options);
   const specifier='data:text/javascript;base64,'+moduleBase64;
-  const namespace=await import(specifier);
+  // Dynamic import resolves a Promise; a target module's exported `then`
+  // can execute during assimilation and even substitute a forged namespace.
+  // Import a fixed wrapper with one inert export instead, then inspect the
+  // actual target namespace synchronously. The target is still trusted JS:
+  // this does not prevent top-level evaluation or sandbox arbitrary code.
+  const wrapper='export * as packageNamespace from '+JSON.stringify(specifier)+';';
+  const {packageNamespace:namespace}=await import('data:text/javascript;base64,'+Buffer.from(wrapper,'utf8').toString('base64'));
   const actual=Object.getOwnPropertyNames(namespace).sort();
   const declared=[...manifest.publicEntrypoints].sort();
   if(actual.length!==declared.length || actual.some((name,i)=>name!==declared[i])){
