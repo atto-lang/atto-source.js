@@ -10,9 +10,9 @@ export class SelectExhausted extends Error {
 }
 
 export class CountedSelectI64Cursor {
-  #count; #live; #values=[]; #cursor=0; #policy;
+  #count; #live; #projectors=null; #values=[]; #cursor=0; #policy;
   #state; #round=null; #busy=false; #failure=null;
-  constructor(count,sources,policy='fair') {
+  constructor(count,sources,policy='fair',projectors=null) {
     if(!Number.isSafeInteger(count)||count<0||count>1024)throw new RangeError('SelectCountInvalid');
     if(!['fair','first'].includes(policy))throw new TypeError('unsupported counted policy');
     this.#count=count;this.#policy=policy;
@@ -32,6 +32,17 @@ export class CountedSelectI64Cursor {
         throw new TypeError('counted selection requires trusted i64 source');
       this.#live.push(source);
     }
+    if(projectors!==null){
+      if(!Array.isArray(projectors)||projectors.length!==length)
+        throw new TypeError('one counted projector per lexical arm required');
+      this.#projectors=[];
+      for(let i=0;i<length;i++){
+        const descriptor=Object.getOwnPropertyDescriptor(projectors,i);
+        if(!descriptor||!Object.hasOwn(descriptor,'value')||typeof descriptor.value!=='function')
+          throw new TypeError('counted projector must be own data function');
+        this.#projectors.push(descriptor.value);
+      }
+    }
     this.#state='ready';
   }
   get state(){return this.#state;}
@@ -42,7 +53,7 @@ export class CountedSelectI64Cursor {
     this.#busy=true;
   }
   #fail(error){
-    this.#round=null;this.#live=[];this.#values=[];this.#failure=error;this.#state='failed';
+    this.#round=null;this.#live=[];this.#projectors=null;this.#values=[];this.#failure=error;this.#state='failed';
   }
   beginRound(){
     if(this.#state!=='ready')throw new Error('round not ready');
@@ -90,7 +101,14 @@ export class CountedSelectI64Cursor {
           this.#fail(c.cell.error??new Error('selected Future cancelled'));
           return true;
         }
-        if(!eof)this.#values.push(c.cell.value);
+        if(!eof){
+          // Trusted compiler/host projection runs only on the explicit
+          // owner pump, after arbitration cleanup, never on notifications.
+          const value=this.#projectors?this.#projectors[i](c.cell.value):c.cell.value;
+          if(typeof value!=='bigint'||value<-(1n<<63n)||value>(1n<<63n)-1n)
+            throw new TypeError('counted projection requires signed i64 BigInt');
+          this.#values.push(value);
+        }
         const next=(i+1)%n;
         if(eof||!c.channel){
           // Retire source identities, including aliases. Find the next
@@ -104,10 +122,11 @@ export class CountedSelectI64Cursor {
           // source identity (another alias may precede this occurrence).
           const nextCursor=nextIndex<0?0:this.#live.slice(0,nextIndex)
             .filter(source=>source!==c.source).length;
+          if(this.#projectors)this.#projectors=this.#projectors.filter((_,index)=>this.#live[index]!==c.source);
           this.#live=this.#live.filter(source=>source!==c.source);
           this.#cursor=nextCursor;
         }else this.#cursor=next;
-        if(this.#values.length===this.#count){this.#live=[];this.#state='success';}
+        if(this.#values.length===this.#count){this.#live=[];this.#projectors=null;this.#state='success';}
         else if(!this.#live.length)this.#fail(new SelectExhausted());
         else this.#state='ready';
         return true;
@@ -123,7 +142,7 @@ export class CountedSelectI64Cursor {
     try{
       this.#round?.arbiter.cancel();
       this.#round?.arbiter.throwIfCleanupFailed();
-      this.#round=null;this.#live=[];this.#values=[];this.#state='cancelled';
+      this.#round=null;this.#live=[];this.#projectors=null;this.#values=[];this.#state='cancelled';
       return true;
     }catch(error){this.#fail(error);throw error;}
     finally{this.#busy=false;}
