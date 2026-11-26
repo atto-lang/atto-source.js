@@ -172,8 +172,11 @@ test('checked bool header is not silently widened to int or string payload', () 
 test('canonical cross-compiler bool/never .atto fixture generates and executes JS guest', async () => {
   const exactSource=readFileSync(new URL('./fixtures/actor-bool-never-parity-v1.atto',
                                             import.meta.url),'utf8');
-  assert.equal(exactSource.trim(),boolActor.trim(),
-    'compiler checks same .atto bytes pinned in all parity repositories');
+  assert.equal(createHash('sha1')
+    .update('blob '+Buffer.byteLength(exactSource,'utf8')+String.fromCharCode(0))
+    .update(exactSource,'utf8').digest('hex'),
+    'a103999dd9b047e24ae79fedd88398374bc10590',
+    'exact canonical positive fixture bytes');
   const actor=await instantiate(exactSource);
   assert.deepEqual(await actor.on_message(),{value:'0',stdout:'',actors:1});
   assert.equal((await actor.on_route(boolRoute(1))).stdout,'true\n');
@@ -242,4 +245,30 @@ test('canonical cross-backend Ensemble share! try_publish fixture fails closed b
     'pub fnc main(): int { return 42; } "topic.try_publish(share! event)?"'),
     e=>e instanceof TranspileError&&e.code==='E_TRAILING_SOURCE',
     'quoted text is opaque and cannot trigger the pubsub gate');
+});
+
+
+test('canonical bool actor negatives use exact shared fixture blobs and compiler diagnostics', () => {
+  const cases = [
+  [
+    "02-receives-handler-mismatch.atto",
+    "fe76f70ef141b7bba74254ecaf7708f881144f32",
+    "E_ACTOR_RECEIVES"
+  ],
+  [
+    "03-sends-void-invalid.atto",
+    "0f1637268858eeac654cccc7f0c925e4f9c88572",
+    "E_ACTOR_SEND_CONTRACT"
+  ],
+  [
+    "04-duplicate-sends-clause.atto",
+    "df6aa49bd474e95d7df5092cea4ff41236c286a6",
+    "E_ACTOR_CONTRACT"
+  ]
+];
+  for (const [name,sha,code] of cases) {
+    const source=readFileSync(new URL('./fixtures/typed-actor-bool-v1/'+name,import.meta.url),'utf8');
+    assert.equal(createHash('sha1').update('blob '+Buffer.byteLength(source,'utf8')+String.fromCharCode(0)).update(source,'utf8').digest('hex'),sha);
+    reject(source,code);
+  }
 });
