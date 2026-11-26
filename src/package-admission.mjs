@@ -124,6 +124,9 @@ export async function readVerifiedPackage({
   }
   const rawModule=await readBoundedRegular(join(dir,'module.mjs'),4194304);
   if(hash(rawModule)!==expectedModuleSha256)throw new PackageAdmissionError('module digest mismatch');
+  // A matching byte digest does not authorize a lossy UTF-8 decode by ESM.
+  try { new TextDecoder('utf-8',{fatal:true}).decode(rawModule); }
+  catch { throw new PackageAdmissionError('invalid package module UTF-8'); }
   const approved=Object.freeze({...manifest,
     publicEntrypoints:Object.freeze([...manifest.publicEntrypoints]),
     declaredCapabilities:Object.freeze([]),
