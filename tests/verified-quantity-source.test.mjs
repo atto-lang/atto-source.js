@@ -17,7 +17,8 @@ for(const [e,code] of [['42<Second>.<Millis>','E_UNIT_ATTACHMENT'],['(1<Second> 
 }
 test('checked scalar profile routes to validated IR',async()=>assert.equal((await guest('42.<Second> / 1<Second>',compileAttoScalarV1))(),42n));
 test('intermediate overflow survives attachment',async()=>assert.throws(await guest('(9223372036854775807 + 1).<Second> / 1<Second>'),e=>e.code==='integer_overflow'));
-test('reject unsupported refinement carrier and bare scalar division',()=>{
- assert.throws(()=>compileProgramV2(pre+' type Duration = i32 where units in Second; pub fnc main() -> int { return 42; }'));
+test('reject unsupported refinement carrier and bare untyped scalar division',()=>{
+ assert.throws(()=>compileProgramV2(pre+' type Duration = i32 where self > 2147483647 and units in Second; pub fnc main() -> int { return 42; }'),/E_REFINEMENT_EMPTY/);
+ assert.throws(()=>compileProgramV2(pre+' type Duration = float where units in Second; pub fnc main() -> int { return 42; }'),/E_REFINEMENT_BOUND/);
  assert.throws(()=>compileProgramV2(source('84 / 2')),/E_UNIT_SCALAR_DIVISION/);
 });
