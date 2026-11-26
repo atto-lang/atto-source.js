@@ -155,3 +155,28 @@ test('stacked declaration markers reject before receiver lowering',()=>{
     assert.throws(()=>compileProgramV2(s),/OBSOLETE_METHOD_INTRODUCER/);
   }
 });
+
+test('split shared receiver erases before value-formal binding and slot identity',async()=>{
+  for(const marker of ['', 'mtd ', 'fnc ']){
+    for(const name of ['ping','mtd','method']){
+      const make=form=>'pub define class C as pub '+marker+name+form+
+        ':int{return n+2;} end pub fnc main():int{return new C().'+name+'(n:40);}';
+      const ordinary=make('(int n)'), inline=make('(self,int n)'), split=make('(self)(int n)');
+      assert.deepEqual(compileToProgramIRV2(ordinary),compileToProgramIRV2(split));
+      assert.equal(compileProgramV2(ordinary),compileProgramV2(inline));
+      assert.equal(compileProgramV2(inline),compileProgramV2(split));
+      assert.equal((await load(split)).main(),42n);
+      for(const [a,b] of [['(self)(int n)','(int n)'],['(self,int n)','(self)(int n)']]){
+        assert.throws(()=>compileProgramV2('define class C as '+marker+name+a+
+          ':int{return n;} '+name+b+':int{return n;} end'),/duplicate method name\/arity/);
+      }
+    }
+  }
+  for(const invalid of ['(self)(self,int n)','(self)(int self)','(self)(int n)(int q)',
+    '(mut self)(int n)','(self,)(int n)','()(int n)','(self)(int n,int n)']){
+    assert.throws(()=>compileProgramV2('define class C as pub ping'+invalid+
+      ':int{return 42;} end'),/error: program v2/);
+  }
+  assert.equal((await load('define class C as pub ping(self)():int{return 42;} end '+
+    'pub fnc main():int{return new C().ping();}')).main(),42n);
+});

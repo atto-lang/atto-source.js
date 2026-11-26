@@ -497,6 +497,11 @@ class Parser {
         if(this.eat(',')){
           if(this.peek().value===')')fail('trailing receiver comma',this.peek());
         }else if(this.peek().value!==')')fail('unsupported self parameter spelling',this.peek());
+        else if(this.tokens[this.i+1]?.value==='('){
+          // Legacy split shared receiver: erase self before the normal value formals.
+          // Neither mut self nor a second receiver is admitted by this profile.
+          this.expect(')');this.expect('(');
+        }
       }
       const params=[],paramTypes=[];
       if(!this.eat(')')){
