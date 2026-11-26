@@ -133,11 +133,18 @@ test('trap and trap! preserve normal values, existing Err, and nested Result wit
     ['val x = trap Ok(42); val y = trap x; return y.unwrap();',42n]
   ])assert.equal((await guest(prefix+body+'}')).main(),expected);
 });
-test('ordinary trap does not intercept unwrap panic or invalid host argument',async()=>{
-  const g=await guest('fnc bad():int{val r = trap Err(7); return r.unwrap();} pub fnc main():int{val r = trap bad(); return r.is_err() ? 42 : 0;}');
-  assert.throws(()=>g.main(),e=>e.name==='ResultUnwrapPanic'&&e.cause===7n);
-  const h=await guest('fnc bad():int{val r = trap (7 / 0); return r.unwrap();} pub fnc main():int{val r = trap bad(); return r.is_err() ? 42 : 0;}');
-  assert.throws(()=>h.main(),e=>e.name==='ResultUnwrapPanic'&&e.cause.code==='division_by_zero');
+test('ordinary trap captures checked unwrap but not explicit panic or invalid host argument',async()=>{
+  for(const [source,cause] of [
+    ['fnc bad():int{val r = trap Err(7); return r.unwrap();}',e=>e===7n],
+    ['fnc bad():int{val r = trap (7 / 0); return r.unwrap();}',e=>e.code==='division_by_zero']
+  ]){
+    const guestProgram=await guest(source+' pub fnc main():int{val r=trap bad();return r.is_err()?42:0;}');
+    assert.equal(guestProgram.main(),42n);
+    const raw=await guest(source+' pub fnc main():int{return bad();}');
+    assert.throws(()=>raw.main(),e=>e.name==='ResultUnwrapError'&&cause(e.cause));
+  }
+  const panic=await guest('fnc bad():int{panic! new Error("terminal");} pub fnc main():int{val r=trap bad();return r.is_err()?42:0;}');
+  assert.throws(()=>panic.main(),e=>e.effect==='panic');
   const host=await guest('pub fnc main(int n):int{val r = trap n; return r.unwrap();}');
   assert.throws(()=>host.main({code:'division_by_zero'}),TypeError);
 });
