@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {compile,compileScalarConsumer,IncrementalSession} from '../src/compiler.mjs';
+const p=[{name:'provider',params:['x'],resultType:'int'}];
+const source='fnc helper(int x): int { return provider(x) + 1; } pub fnc main(): int { return helper(40); }';
+const load=code=>import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+test('actual source compiler shares emitter across ordinary and independent consumer sessions',async()=>{
+ const s=new IncrementalSession(),a=s.buildConsumer(source,p),b=s.buildConsumer(source,p);
+ assert.deepEqual([a.emitted,a.reused,b.emitted,b.reused],[2,0,0,2]);
+ assert.equal(a.moduleSource,compileScalarConsumer(source,p).moduleSource);
+ assert.deepEqual(a.publicInterface,compileScalarConsumer(source,p).publicInterface);
+ const changed=source.replace('+ 1','+ 2'),c=s.buildConsumer(changed,p);
+ assert.deepEqual([c.emitted,c.reused],[1,1]);assert.equal(c.moduleSource,compileScalarConsumer(changed,p).moduleSource);
+ const old=(await load(a.moduleSource)).bindProvider([x=>x+1n]);assert.equal(old.main(),42n);
+ assert.equal((await load(c.moduleSource)).bindProvider([x=>x+1n]).main(),43n);
+ assert.throws(()=>s.buildConsumer(changed,[{...p[0],params:[]}]),/arity mismatch/);
+ assert.equal(s.buildConsumer(changed,p).reused,2);
+ const closed='fnc provider(int x): int { return x + 1; } '+source;
+ const d=s.build(closed);assert.deepEqual([d.emitted,d.reused],[3,0]);assert.equal(d.code,compile(closed));assert.equal((await load(d.code)).main(),42n);
+ assert.equal(s.buildConsumer(source,p).reused,0);
+});
