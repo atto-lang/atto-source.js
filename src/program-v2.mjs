@@ -582,6 +582,12 @@ class Parser {
     if(!returnFirst&&!arrow)arrow=this.eat('->');
     if(returnFirst && ['->',':'].includes(this.peek().value))
       fail('return-first callable has a duplicate return annotation',this.peek(),'E_RETURN_ANNOTATION');
+    let throws;
+    if(this.eat('throws')){
+      this.expect('(');
+      throws=this.eat(')')?[]:['Error'];
+      if(throws.length){this.expect('Error');this.expect(')');}
+    }
     const braced=this.eat('{');
     const began=!braced&&returnFirst&&this.eat('begin');
     if(!braced&&!began&&!arrow&&!returnFirst)
@@ -636,7 +642,7 @@ class Parser {
     // Exporting a routine as a module object property would make a
     // direct-call-only routine first class. Leave this for runtime/ABI design.
     if (pub && kind === 'routine') fail('public routine cannot be exported');
-    const fn={module:moduleName, name, kind, pub, params, body};
+    const fn={module:moduleName, name, kind, pub, params, body,...(throws===undefined?{}:{throws})};
     // Keep the historical integer-only IR exactly stable for old consumers.
     // New typed fields are an all-or-nothing additive extension for bool.
     if(returnType!=='int'||paramTypes.some(type=>type!=='int')){
@@ -1602,7 +1608,7 @@ function resolveProgram(parsed) {
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='tryCatch'){inspect(expr.body,owner);inspect(expr.handler,owner);}
     else if(expr.kind==='seqVoidCall'){inspect(expr.call,owner);inspect(expr.value,owner);}
-    else if(['local','floatLocal','trapLocal','trapOptionLocal'].includes(expr.kind)){inspect(expr.init,owner);inspect(expr.body,owner);}
+    else if(['local','floatLocal','trapLocal','trapOptionLocal','optionLocal','resultLocal'].includes(expr.kind)){inspect(expr.init,owner);inspect(expr.body,owner);}
     else if(['trapMethod','trapOptionMethod'].includes(expr.kind))inspect(expr.receiver,owner);
     else if(['neg','floatNeg','not','trap'].includes(expr.kind)) inspect(expr.inner,owner);
     else if(expr.kind==='match'||expr.kind==='adtMatch') {
