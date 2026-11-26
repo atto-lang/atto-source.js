@@ -262,7 +262,12 @@ function tokenize(source) {
       if (['copy','take','move','borrow','share'].includes(word) && source[pos]==='!' &&
           source[pos+1]!=='=' &&
           !(source.slice(pos+1,pos+3)==='eq' && !/[A-Za-z0-9_]/.test(source[pos+3]??'')))
-        fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
+        {
+          if(word!=='copy')
+            fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
+          advance();word+='!';
+          if(source[pos]==='!'){advance();word+='!';}
+        }
       // Canonical bang exceptional control requires typed Error/Result and
       // checked guest unwind; no fallback to an ordinary JS exception.
       if(['trap','throw','raise','panic'].includes(word) && source[pos]==='!' &&
@@ -787,7 +792,7 @@ class Parser {
       switch(expr.kind){
         case 'int':case 'float':case 'bool':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':break;
         case 'tryCatch':add(expr.body);add(expr.handler);break;
-        case 'neg':case 'not':case 'trap':add(expr.inner);break;
+        case 'neg':case 'not':case 'trap':case 'scalarCopy':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
@@ -960,6 +965,7 @@ class Parser {
     return value;
   }
   primary() {
+    if(this.eat('copy!')||this.eat('copy!!'))return {kind:'scalarCopy',inner:this.expression(30)};
     if(this.eat('!')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
     if(this.eat('new')){
       const className=this.name();
@@ -1307,6 +1313,14 @@ function resolveProgram(parsed) {
         const operandType=resolvedType(inner,owner);
         if(!['int','option<int>','result<int,int>','trapResult','trapOptionResult'].includes(operandType))fail('trap requires int, Option<int> or closed Result operand');
         return {kind:'trap',operandType,inner};
+      }
+      case 'scalarCopy':{
+        const inner=resolve(expr.inner,owner,depth+1,bindings);
+        if(!['int','bool'].includes(resolvedType(inner,owner)))
+          fail('E_COPY_UNSUPPORTED_TYPE: reference-bearing or non-scalar copy requires typed ownership');
+        // Identity-free values need no allocation. Preserve the checked
+        // expression once, then run the existing complete typed IR validator.
+        return inner;
       }
       case 'neg':case 'not':{
         const inner=resolve(expr.inner,owner,depth+1,bindings);
