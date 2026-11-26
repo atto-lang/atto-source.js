@@ -13,14 +13,16 @@ const source = expression => 'pub fnc main(): int { return '+expression+'; }';
 test('both JS scalar frontends deny contextual ownership until typed IR', () => {
   for (const compile of [compileToIR, compileToProgramIRV2]) {
     for (const expression of [
-      'copy!42', 'copy!!42', 'take!42', 'borrow! value',
+      'copy!42', 'copy!!42', 'copy!! 42', 'take!42', 'move!42', 'move! 42', 'borrow! value',
       'borrow!mut value', 'borrow! mut value',
       'mut borrow!value', 'mut borrow! value', 'share!value',
       'borrow!\nmut value', 'borrow!/* checked loan */mut value',
       'mut borrow!\nvalue',
     ]) {
-      assert.throws(() => compile(source(expression)),
-        /OWNERSHIP_BANG_BACKEND_UNSUPPORTED/, expression);
+      const suffix = /^(?:mut )?(?:copy!!|copy!|take!|move!|borrow!|share!)/.exec(expression)[0];
+      const code = /[ \t\r\n\v\f]/.test(expression[suffix.length] ?? '')
+        ? /OWNERSHIP_BANG_BACKEND_UNSUPPORTED/ : /E_BANG_KEYWORD_WHITESPACE/;
+      assert.throws(() => compile(source(expression)), code, expression);
     }
   }
 });
@@ -32,7 +34,7 @@ test('compiler CLI denies ownership operators before ESM publication', () => {
   const output = join(dir, 'guest.mjs');
   try {
     for (const options of [[], ['--program-v2'], ['--atto-scalar-v1']]) {
-      for (const expression of ['take! 42', 'borrow! mut value', 'share! 42', 'copy! 42', 'copy!! 42']) {
+      for (const expression of ['take! 42', 'move! 42', 'borrow! mut value', 'share! 42', 'copy! 42', 'copy!! 42']) {
         writeFileSync(input, source(expression));
         const result = spawnSync(process.execPath, [cli, ...options, input, '--out='+output],
           {encoding:'utf8', timeout:10000});

@@ -1,0 +1,3 @@
+# Regression repair after executed CI
+
+Prior head 5cfa0a749e08df7e168c6b2c861da433d85b85b5 ran 1,741 npm tests (1,736 pass, five failed). Restore existing int-specific ADT diagnostic without changing typed rejection. Distinguish canonical program-v2 XOR from legacy wrapping scalar in named operator tests; preserve invalid Boolean XOR. Recognize only the on-is constructor angle context in Worker token normalization, retain typed IO refusal and delegate nested-pattern rejection to the existing Result parser. 26 isolated V8 focused checks passed; full CI must rerun. Prior failed runs 45708968022, 45708968062, 45708968211.
