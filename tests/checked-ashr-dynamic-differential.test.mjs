@@ -18,7 +18,17 @@ test('actual checked ESM and scalar-v1 arithmetic shifts preserve signed values 
   const edges=[lo,lo+1n,-9007199254740993n,-84n,-3n,-1n,0n,1n,84n,hi];
   const check=(a,n)=>{assert.equal(guest.arithmetic(a,n),floor(a,n));assert.equal(guest.logical(a,n),BigInt.asIntN(64,(a&mask)/(2n**n)));};
   for(const a of edges)for(let n=0n;n<64n;n++)check(a,n);
-  for(let i=0;i<100000;i++)check(signed(),BigInt(next()&63));
+  // Enumerate the Cartesian product of discarded low bits and shift distances.
+  // Consecutive low bits of the LCG are correlated, so deriving both from
+  // the generator would cover only 64 of these 4096 pairs.
+  const covered=new Set();
+  for(let i=0;i<100000;i++){
+    const n=BigInt(i&63);
+    const a=(signed()&~63n)|BigInt((i>>>6)&63);
+    covered.add(Number(a&63n)*64+Number(n));
+    check(a,n);
+  }
+  assert.equal(covered.size,4096);
   for(const n of [lo,-4294967296n,-65n,-1n,64n,65n,4294967296n,hi]){
     assert.throws(()=>guest.arithmetic(-1n,n),/E_GUEST_SHIFT_DISTANCE/);
     assert.throws(()=>guest.logical(-1n,n),/E_GUEST_SHIFT_DISTANCE/);

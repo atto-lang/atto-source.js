@@ -278,6 +278,8 @@ function tokenize(source) {
       // Never let quoted payload text masquerade as a keyword or delimiter.
       emit('localString','<local-string>',start);
       result.at(-1).literal=value;
+    } else if (c==='⧖'||c==='∂') {
+      emit('id','suspends',start); result.at(-1).lexeme=c; advance();
     } else if (isIdentifierStart(identifierCharAt(source,pos))) {
       let word = '';
       while (pos < source.length && isIdentifierPart(identifierCharAt(source,pos))) {
@@ -305,7 +307,8 @@ function tokenize(source) {
             fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: exceptional control must be a statement',start);
           advance();word+='!';
         }
-      emit('id',word,start);
+      emit('id',word==='susp'?'suspends':word,start);
+      if(word==='susp')result.at(-1).lexeme=word;
     } else if (/[0-9]/.test(c)) {
       let number = '';
       while (pos < source.length && /[0-9_]/.test(source[pos])) {
@@ -389,7 +392,7 @@ class Parser {
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
   name() {
     const t = this.peek();
-    if (t.kind !== 'id' || !isIdentifier(t.value) || t.value==='ifnot'||t.value==='unless') fail('identifier expected',t);
+    if (t.kind !== 'id' || !isIdentifier(t.value) || t.value==='ifnot'||t.value==='unless'||t.value==='suspends') fail('identifier expected',t);
     this.i++; return t.value;
   }
   generatorIdentifier() {
@@ -420,6 +423,7 @@ class Parser {
     const value=next.value;
     if(CLASS_METHOD_RESERVED.has(value)&&!CLASS_METHOD_CALLABLE_KEYWORDS.has(value))
       return false;
+    if(marker==='method')fail('obsolete method introducer; use mtd',this.peek());
     this.i++;return true;
   }
   argumentsAfterOpen() {
@@ -468,7 +472,7 @@ class Parser {
     }
     fail('unsupported scalar type (int, bool, Symbol, Option<int>, Result<int,int>)',this.peek());
   }
-  classDeclaration(pub) {
+  classDeclaration(pub, writtenPrivate=false) {
     const name=this.classIdentifier();
     if(isProtectedPreludeIdentity(name))
       fail('E_PRELUDE_SPOOF: cannot define compiler-owned core class '+name,this.peek());
@@ -525,7 +529,7 @@ class Parser {
       slots.add(slot);
       methods.push({name:methodName,pub:methodPub,params,paramTypes,returnType,body});
     }
-    return {name,pub,methods};
+    return {name,pub,methods,...(writtenPrivate?{writtenPrivate:true}:{})};
   }
   generatorStart() {
     let j=this.i;
@@ -587,8 +591,14 @@ class Parser {
     return {module:moduleName,name,pub,params,paramTypes,elementType,yields};
   }
 
-  functions(moduleName, declaredPub=false) {
-    const pub = declaredPub || this.eat('pub'), start=this.peek();
+  functions(moduleName, declaredPub=false, declaredPrivate=false) {
+    let pub=declaredPub, writtenPrivate=declaredPrivate;
+    while(['pub','private'].includes(this.peek().value)) {
+      if(pub||writtenPrivate)fail('conflicting visibility modifier',this.peek());
+      pub=this.eat('pub');writtenPrivate=!pub;if(writtenPrivate)this.expect('private');
+    }
+    const start=this.peek();
+    if(start.value==='suspends')fail('E_SUSPENDS_UNSUPPORTED: JS callable continuation lowering is unavailable',start);
     const fnc=this.eat('fnc'),routine=!fnc&&this.eat('routine');
     const requestedReturnType=this.peek().value;
     const returnFirst=['int','void','infer'].includes(requestedReturnType) &&
@@ -685,7 +695,7 @@ class Parser {
     // Exporting a routine as a module object property would make a
     // direct-call-only routine first class. Leave this for runtime/ABI design.
     if (pub && kind === 'routine') fail('public routine cannot be exported');
-    const fn={module:moduleName, name, kind, pub, params, body,...(throws===undefined?{}:{throws})};
+    const fn={module:moduleName, name, kind, pub, params, body,...(writtenPrivate?{writtenPrivate:true}:{}),...(throws===undefined?{}:{throws})};
     // Keep the historical integer-only IR exactly stable for old consumers.
     // New typed fields are an all-or-nothing additive extension for bool.
     if(returnType!=='int'||paramTypes.some(type=>type!=='int')){
@@ -944,19 +954,20 @@ class Parser {
           ? 'import namespace requires verified manifest package index and per-provider linker'
           : 'cross-file import requires verified source graph lowering',this.peek());
       }
-      let prefixPub=false;
-      if(this.peek().value==='pub'&&this.tokens[this.i+1]?.value==='define'){
-        this.i++;prefixPub=true;
+      let prefixVisibility=null;
+      if(['pub','private'].includes(this.peek().value)&&this.tokens[this.i+1]?.value==='define'){
+        prefixVisibility=this.peek().value;this.i++;
       }
       if(this.eat('define')){
-        const afterPub=this.eat('pub');
-        if(prefixPub&&afterPub)fail('duplicate pub modifier',this.peek());
-        const declarationPub=prefixPub||afterPub;
+        const afterVisibility=['pub','private'].includes(this.peek().value)?this.tokens[this.i++].value:null;
+        if(prefixVisibility&&afterVisibility)fail(prefixVisibility==='pub'&&afterVisibility==='pub'?'duplicate pub modifier':'duplicate/conflicting visibility modifier',this.peek());
+        const declarationPub=(prefixVisibility||afterVisibility)==='pub';
+        const declarationPrivate=(prefixVisibility||afterVisibility)==='private';
         if(this.peek().value==='symbol')
           fail('Symbol declaration/export manifest not implemented',this.peek());
         if(this.eat('class')){
           if(classes.length>=512)fail('class declaration budget exceeded',this.peek());
-          const cls=this.classDeclaration(declarationPub);
+          const cls=this.classDeclaration(declarationPub,declarationPrivate);
           if(usedClasses.has(cls.name)||usedModules.has(cls.name))
             fail('duplicate class/module name '+cls.name,this.peek());
           usedClasses.add(cls.name);classes.push(cls);
@@ -965,10 +976,10 @@ class Parser {
         if(this.peek().value==='fnc'||this.peek().value==='routine'||
            (['int','void','infer'].includes(this.peek().value)&&['<-','•'].includes(this.tokens[this.i+1]?.value))){
           if(functions.length+generators.length>=512)fail('declaration budget exceeded',this.peek());
-          functions.push(this.functions(null,declarationPub));
+          functions.push(this.functions(null,declarationPub,declarationPrivate));
           continue;
         }
-        if(declarationPub)fail('public define is only supported for classes/functions in program-v2',this.peek());
+        if(declarationPub||declarationPrivate)fail('explicit visibility define is only supported for classes/functions in program-v2',this.peek());
         this.expect('module');const name=this.name();
         if(isProtectedPreludeIdentity(name)||name==='Symbol'||name==='Integer')
           fail('E_PRELUDE_SPOOF: reserved portable intrinsic module name '+name);
@@ -1338,10 +1349,8 @@ class Parser {
 }
 function resolveProgram(parsed) {
   const {modules,functions,generators=[],classes=[],exportDeclarations=[]}=parsed;
-  const seenExportNames=new Set();
+  const resolvedExports=new Map();
   for(const entry of exportDeclarations) {
-    if(seenExportNames.has(entry.name))fail('duplicate export '+entry.name);
-    seenExportNames.add(entry.name);
     const targetClasses=classes.filter(c=>c.name===entry.name);
     const targetFns=functions.filter(f=>f.module===null&&f.name===entry.name);
     if(!targetClasses.length&&!targetFns.length)fail('unknown export '+entry.name);
@@ -1349,12 +1358,19 @@ function resolveProgram(parsed) {
     const kind=targetClasses.length?'class':'fnc';
     if(entry.kind!==null&&entry.kind!==kind)fail('export kind mismatch '+entry.name);
     const targets=targetClasses.length?targetClasses:targetFns;
+    if(targets.some(t=>t.writtenPrivate))fail('explicit private declaration cannot be exported: '+entry.name);
     if(entry.visibility==='package'&&targets.some(t=>t.pub))
       fail('package export conflicts with public declaration '+entry.name);
     if(kind==='fnc'&&targets.some(t=>t.kind==='routine')&&entry.visibility==='public')
       fail('routine is not a public exported fnc '+entry.name);
-    if(entry.visibility==='public')targets.forEach(t=>{t.pub=true;});
+    const prior=resolvedExports.get(entry.name);
+    if(prior&&prior.visibility!==entry.visibility)fail('conflicting export visibility '+entry.name);
+    if(!prior)resolvedExports.set(entry.name,{name:entry.name,kind,visibility:entry.visibility,targets});
   }
+  for(const entry of resolvedExports.values())if(entry.visibility==='public')entry.targets.forEach(t=>{t.pub=true;});
+  // Written visibility is compiler-only provenance; the checked IR schema
+  // must not acquire a new field or a serialized authority marker.
+  for(const target of [...functions,...classes])delete target.writtenPrivate;
   const slots=new Map(),exports=new Set(),symbolKinds=new Map(),classByName=new Map();
   const classTables=classes.map((cls,classIndex)=>{
     if(classByName.has(cls.name))fail('duplicate class '+cls.name);
@@ -1783,8 +1799,8 @@ function resolveProgram(parsed) {
   resolved.forEach((_,i)=>visit(i));
   return {
     sourceNamespace:parsed.namespace,modules,functions:resolved,
-    ...(exportDeclarations.length?{fileExports:exportDeclarations.map(e=>({
-      name:e.name,kind:e.kind??(classes.some(c=>c.name===e.name)?'class':'fnc'),
+    ...(resolvedExports.size?{fileExports:[...resolvedExports.values()].map(e=>({
+      name:e.name,kind:e.kind,
       visibility:e.visibility
     }))}:{}),
     ...(resolvedGenerators.length?{generators:resolvedGenerators}:{}),
