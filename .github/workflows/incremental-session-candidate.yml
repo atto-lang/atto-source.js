@@ -7,6 +7,7 @@ on:
       - 'tests/compiler-cache-envelope.test.mjs'
       - 'src/compiler-cache-envelope.node.mjs'
       - 'src/compiler-artifact-store.node.mjs'
+      - 'tests/compiler-artifact-store.test.mjs'
       - '.github/workflows/incremental-session-candidate.yml'
   workflow_dispatch:
 permissions: {contents: read}
@@ -16,8 +17,14 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Execute real compiler candidate
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -eu
-          node --test tests/compiler.test.mjs tests/incremental-session.test.mjs tests/compiler-cache-envelope.test.mjs
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git rev-parse HEAD HEAD^{tree}
+          node --version
+          node --test tests/compiler.test.mjs tests/incremental-session.test.mjs tests/compiler-cache-envelope.test.mjs tests/compiler-artifact-store.test.mjs
