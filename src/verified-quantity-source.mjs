@@ -222,7 +222,22 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
         return postfix(make(sig.result.unit,{kind:'call',target:sig.index,args},null,sig.result.range,sig.result.width),depth);
       }
       if(!locals.has(n))fail('E_UNIT_NAME','unknown binding');
-      return postfix({...locals.get(n)},depth);
+      const binding=locals.get(n);
+      if(binding.cells){
+        if(!take('['))fail('E_VERIFY_UNSUPPORTED','array cannot escape or be used as scalar');
+        const index=expr(0,depth+1);expect(']');compatible(index.unit,scalar());
+        const [lo,hi]=index.range;
+        if(lo<0n||hi>=BigInt(binding.cells.length))fail('E_VERIFY_UNPROVEN','index not proved within receiver bounds');
+        if(!['capture','param','int'].includes(index.ir.kind))fail('E_VERIFY_UNSUPPORTED','fixed index requires scalar local or literal');
+        let ir=binding.cells[Number(hi)].ir,range=binding.cells[Number(hi)].range;
+        for(let i=hi-1n;i>=lo;i--){
+          const cell=binding.cells[Number(i)];
+          ir={kind:'if',condition:{kind:'compare',op:'==',left:index.ir,right:int(i)},yes:cell.ir,no:ir};
+          range=join(range,cell.range);
+        }
+        return postfix(make(scalar(),ir,null,range,64),depth);
+      }
+      return postfix({...binding},depth);
     }
     return literal(false,depth);
   }
@@ -383,6 +398,21 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     for(const key of writes)boundary(mutable.get(key),current.get(key),'E_REFINEMENT_BINDING');
     return {states,condition:p.ir,steps,exit:p.no};
   }
+  // Fixed, nonescaping scalar arrays are scalar-replaced into immutable
+  // captures. Every initializer is evaluated exactly once, in source order.
+  function readFixedArray(key,allocate){
+    expect('Array');expect('.');expect('of');expect('(');
+    const cells=[],inits=[];
+    do{
+      if(cells.length>=16)fail('E_UNIT_LIMIT','fixed array cell budget');
+      const v=expr(0,0);compatible(scalar(),v.unit);
+      const slot=allocate();inits.push({slot,init:v.ir});
+      cells.push(make(scalar(),{kind:'capture',slot},null,v.range,64));
+    }while(take(','));
+    expect(')');expect(';');
+    const range=cells.map(c=>c.range).reduce(join);
+    return {binding:{...make(scalar(),{kind:'array-marker',key},null,range,64),cells},inits};
+  }
   function strictReturn(result,facts,mutable=new Map(),depth=0,onExit=null){
     if(depth>16||--budget<0)fail('E_UNIT_LIMIT','strict return budget');
     locals=facts;
@@ -402,7 +432,16 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       else{want=type();key=identifier();}
       if(isMutable&&want===null)fail('E_VERIFY_UNSUPPORTED','strict mutable scalar requires declared type');
       if(facts.has(key))fail('E_UNIT_DUPLICATE','duplicate local');
-      expect('=');const value=expr(0,0);expect(';');
+      expect('=');
+      if(peek().value==='Array'){
+        if(isMutable||want!==null||onExit)fail('E_VERIFY_UNSUPPORTED','fixed array requires nonescaping inferred val');
+        const p=readFixedArray(key,()=>{if(nextStrictSlot>=64)fail('E_UNIT_LIMIT','strict local slot budget');return nextStrictSlot++;});
+        const after=new Map(facts);after.set(key,p.binding);
+        let tail=strictReturn(result,after,mutable,depth+1,onExit);
+        for(let i=p.inits.length-1;i>=0;i--)tail={kind:'local',...p.inits[i],body:tail};
+        return tail;
+      }
+      const value=expr(0,0);expect(';');
       if(want!==null)boundary(want,value,'E_REFINEMENT_BINDING');
       if(nextStrictSlot>=64)fail('E_UNIT_LIMIT','strict local slot budget');
       const slot=nextStrictSlot++,after=new Map(facts),decls=new Map(mutable);
@@ -559,7 +598,14 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       else if(tokens[at+1]?.value==='='){key=identifier();}
       else{want=type();key=identifier();}
       if(locals.has(key))fail('E_UNIT_DUPLICATE','duplicate local');
-      expect('=');const value=expr(0,0);expect(';');
+      expect('=');
+      if(strict&&peek().value==='Array'){
+        if(want!==null)fail('E_VERIFY_UNSUPPORTED','fixed array requires inferred val');
+        let next=bindings.length;
+        const p=readFixedArray(key,()=>{if(next>=64)fail('E_UNIT_LIMIT','strict local slot budget');return next++;});
+        bindings.push(...p.inits);locals.set(key,p.binding);continue;
+      }
+      const value=expr(0,0);expect(';');
       if(want!==null)boundary(want,value,'E_REFINEMENT_BINDING');
       const slot=bindings.length;
       bindings.push({slot,init:value.ir});
