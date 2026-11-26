@@ -97,7 +97,7 @@ function lex(src) {
       }
       while(i<literal.end)advance();
       add(literal.kind,literal,loc);
-    }else if(src.startsWith('->',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
+    }else if(src.startsWith('->',i)||src.startsWith('::',i)||src.startsWith('|>',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
     else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
     else if(src[i]==='^')throw new CompileError(src.startsWith('^^',i)?"'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)":"'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",loc);
     else if('(){}[]|:,;+-*/=.'.includes(src[i])){add('sym',src[i],loc);advance();}
