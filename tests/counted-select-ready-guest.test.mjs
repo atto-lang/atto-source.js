@@ -75,3 +75,8 @@ test('exceptional guest exit cancels the owned pending batch before its first pu
     assert.equal(pumps,0);assert.equal(cancels,1);
   }finally{Batch.prototype.pump=pump;Batch.prototype.cancel=cancel;await rm(dir,{recursive:true,force:true});}
 });
+
+test('short-circuit conditions cannot conditionally consume Future or channel capabilities',()=>{
+  const start='suspends fnc main(): int { val Channel<int> a = Channel.new<int>(2); writech a, 42; val Future<int> f = select<int> { default: -> { return 20; } }; val Array[int] b = await select<int>(0) { when readch a: int n -> { return n; } }; ';
+  for(const c of ['(1 == 2) && ((await f) == 20)','(1 == 1) || ((readch a) == 42)'])assert.throws(()=>compileCountedReadyV1(start+'if '+c+' then return 1; fi return 42; }'),/effect in condition/);
+});
