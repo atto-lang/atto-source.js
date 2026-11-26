@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {compileProgramV2,compileToProgramIRV2,compileProgramIRV2} from '../src/program-v2.mjs';
+import {compileProgramV2,compileToProgramIRV2,compileProgramIRV2,compileVerifiedStrict} from '../src/program-v2.mjs';
 const pre='define dimension Time; define unit Second: Time; define unit Millis: Time = Second / 1000; type Duration = int where units in Second; type Positive = int where self > 0 and units in Second; type Bounded = int where self >= 1 and self <= 42; ';
 const main=e=>'pub fnc main() -> int { return '+e+'; }';
 const guest=async body=>(await import('data:text/javascript;base64,'+Buffer.from(compileProgramV2(pre+body)).toString('base64'))).main;
@@ -42,3 +42,26 @@ test('inferred refinement failure',async()=>assert.throws(await guest('pub fnc m
 test('inferred unit erasure',()=>assert.throws(()=>compileProgramV2(pre+'pub fnc main() -> int { val a = 42.<Second>; return a; }'),/E_UNIT_ERASURE:/));
 test('inferred local proves parameter',async()=>assert.equal((await guest('fnc f(Bounded x) -> int { return x; } pub fnc main() -> int { val a = (40 + 2); return f(a); }'))(),42n));
 test('inferred local denies parameter',()=>assert.throws(()=>compileProgramV2(pre+'fnc f(Bounded x) -> int { return x; } pub fnc main() -> int { val a = 43; return f(a); }'),/E_REFINEMENT_PRECONDITION:/));
+
+const strictGuest=async body=>(await import('data:text/javascript;base64,'+Buffer.from(compileVerifiedStrict(pre+body)).toString('base64'))).main;
+for(const [id,body,want] of [
+ ['literal','pub fnc main() -> int { return 40+2; }',42n],
+ ['refinement','fnc f(Bounded x) -> int { return x+1; } '+main('f(41)'),42n],
+ ['positive-denominator','fnc f(Positive x) -> int { return 42<Second> / x; } '+main('f(1<Second>)'),42n],
+ ['bounded-cast',main('42 as Bounded'),42n],
+ ['minimum',main('-9223372036854775808'),-9223372036854775808n],
+ ['scalar-div',main('84 / 2'),42n],
+])test('strict '+id,async()=>assert.equal((await strictGuest(body))(),want));
+for(const [id,body] of [
+ ['unknown-add','fnc f(int x) -> int { return x+1; } '+main('f(41)')],
+ ['unknown-mul','fnc f(int x) -> int { return x*2; } '+main('f(21)')],
+ ['unknown-neg','fnc f(int x) -> int { return -x; } '+main('f(-42)')],
+ ['zero',main('42 / 0')],
+ ['minimum-div',main('-9223372036854775808 / -1')],
+ ['unknown-cast','fnc f(int x) -> Bounded { return x as Bounded; } '+main('f(42)')],
+ ['eager-unused','pub fnc main() -> int { val int n = 9223372036854775807+1; return 42; }'],
+ ['eager-masked',main('(9223372036854775807+1)*0')],
+ ['unsafe-unused-helper','fnc f(int x) -> int { return x+1; } '+main('42')],
+])test('strict rejects '+id,()=>assert.throws(()=>compileVerifiedStrict(pre+body),/E_VERIFY_UNPROVEN:/));
+test('strict ordinary fallback rejected',()=>assert.throws(()=>compileVerifiedStrict(main('42')),/E_VERIFY_UNSUPPORTED:/));
+test('strict closed quantity fallback rejected',()=>assert.throws(()=>compileVerifiedStrict('define dimension Time; define unit Second: Time; '+main('42<Second> / 1<Second>')),/E_VERIFY_UNSUPPORTED:/));
