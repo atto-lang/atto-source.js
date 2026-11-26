@@ -87,9 +87,14 @@ test('immutable locals, guard, checked quotient and Result identity',async()=>{
 test('unsupported effects/types and invalid binding lifetimes fail before publication',()=>{
   for(const s of ["pub fnc main():int{return trap 42;}","pub fnc main():int{val x=trap true;return 42;}","pub fnc main():int{val x=trap Some(42);return x.unwrap();}","pub fnc main():int{val x=trap Ok(42);return x;}","pub fnc main():int{val x=trap Ok(42);return x.is_ok(1)?42:0;}","pub fnc main():int{val x=trap Ok(42);return x.is_ok()+1;}","pub fnc main():int{val int x=true;return 42;}","pub fnc main(int x):int{val int x=42;return x;}","pub fnc main():int{val int x=x;return x;}","pub fnc main():int{val int x=1;val int x=2;return x;}","pub fnc main():int{if true then val int x=42;return x;else return 0;fi}","pub fnc main():int{val int x=42;return throw! x;}"])assert.throws(()=>compileProgramV2(s),undefined,s);
 });
-test('trap preserves exceptional panic and host argument type failures',async()=>{
-  const g=await guest("fnc bad():int{val x=trap (7/0);return x.unwrap();} pub fnc main():int{val y=trap bad();return y.is_err()?42:0;}");
-  assert.throws(()=>g.main(),e=>e.name==='ResultUnwrapPanic'&&e.cause.abiCode===65538);
+test('trap captures checked unwrap and preserves explicit panic and host argument failures',async()=>{
+  const source="fnc bad():int{val x=trap (7/0);return x.unwrap();}";
+  const g=await guest(source+" pub fnc main():int{val y=trap bad();return y.is_err()?42:0;}");
+  assert.equal(g.main(),42n);
+  const raw=await guest(source+" pub fnc main():int{return bad();}");
+  assert.throws(()=>raw.main(),e=>e.name==='ResultUnwrapError'&&e.cause.abiCode===65538);
+  const panic=await guest('fnc bad():int{panic! new Error("terminal");} pub fnc main():int{val r=trap bad();return r.is_err()?42:0;}');
+  assert.throws(()=>panic.main(),e=>e.effect==='panic');
   const h=await guest('pub fnc main(int n):int{val x=trap n;return x.unwrap();}');
   assert.throws(()=>h.main({code:'division_by_zero'}),TypeError);
 });
