@@ -5,6 +5,8 @@ import {rejectExecutionDomains} from './execution-domain-admission.mjs';
 import {rejectUnsupportedHttpActors} from './http-actor-admission.mjs';
 import {scanStringLiteral} from './string-literal-syntax.mjs';
 import {preflightCoreFutureOwnership} from './core-future-ownership.mjs';
+import {compileVoidLambdaDirect} from './void-lambda-v1.mjs';
+import {compileIntConstLambdaDirect} from './int-const-lambda-v1.mjs';
 /** Experimental fail-closed Oreslang scalar-to-ESM compiler. */
 const MAX_BYTES = 262144;
 const I64_MAX = (1n << 63n) - 1n;
@@ -43,7 +45,7 @@ function validateSourceText(src) {
   if (new TextEncoder().encode(src).byteLength > MAX_BYTES)
     throw new CompileError('invalid or oversized source');
 }
-function lex(src) {
+function lex(src, allowLambdaBars = false) {
   validateSourceText(src);
   const out = [];
   let i=0, line=1, col=1;
@@ -118,10 +120,10 @@ function lex(src) {
       }
       while(i<literal.end)advance();
       add(literal.kind,literal,loc);
-    }else if(src.startsWith('->',i)||src.startsWith('<-',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
+    }else if(src.startsWith('->',i)||src.startsWith('<-',i)||src.startsWith('::',i)||(allowLambdaBars&&src.startsWith('|>',i))){add('sym',src.slice(i,i+2),loc);advance();advance();}
     else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
     else if(src[i]==='^')throw new CompileError(src.startsWith('^^',i)?"'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)":"'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",loc);
-    else if('(){}[]:,;+-*/=.!<>@•'.includes(src[i])){add('sym',src[i],loc);advance();}
+    else if('(){}[]:,;+-*/=.!<>@•'.includes(src[i])||(allowLambdaBars&&src[i]==='|')){add('sym',src[i],loc);advance();}
     else throw new CompileError('unsupported character',loc);
   }
   out.push({kind:'eof',value:'<eof>',line,col});
@@ -434,8 +436,8 @@ class Parser {
 }
 // The isolated parser is a bootstrap adapter. Future language frontends
 // should produce this versioned IR instead of duplicating parser semantics.
-export function compileToIR(source) {
-  const {tokens,ownershipBang}=lex(source);
+function checkedSourceTokens(source, allowLambdaBars = false) {
+  const {tokens,ownershipBang}=lex(source, allowLambdaBars);
   // Reject affine Future violations at the compiler core boundary before IR.
   // Valid Future code still cannot execute in the scalar-only JS backend.
   preflightCoreFutureOwnership(tokens,(code,message,token)=>{throw new CompileError(code+': '+message,token);});
@@ -448,6 +450,10 @@ export function compileToIR(source) {
   rejectUnloweredActorHeap(tokens);
   rejectUnsupportedSelect(tokens);
   rejectAmbiguousProductFactories(tokens);
+  return tokens;
+}
+export function compileToIR(source) {
+  const tokens=checkedSourceTokens(source);
   const parser=new Parser(tokens);
   const parsed=parser.parse();
   try {
@@ -539,6 +545,50 @@ export class IncrementalSession {
   }
 }
 export function compile(source) {
+  // Never reinterpret an unsupported lambda as a scalar expression. The
+  // dedicated closed-call v1 profile is validated before any JS emission;
+  // all other | source remains fail-closed until typed closure lowering.
+  // A const fnc without pipes still needs the dedicated parser so it
+  // produces an E_SYNTAX denial, never an accidental legacy scalar fallback.
+  // Also detect legacy anonymous fnc(...) and parenthesized (...) ->
+  // lambda heads. Inspect lexer tokens, not matches inside quoted source or
+  // comments, before imposing the canonical E_SYNTAX diagnostic.
+  const possibleLegacyHead = typeof source === 'string' &&
+    (/\bfnc\s*\(/.test(source) ||
+      /=\s*\(\s*(?:int|bool)\s+[A-Za-z_]\w*\s*\)\s*->/.test(source));
+  if (typeof source === 'string' &&
+      (source.includes('|') || /\bconst\s+fnc\b/.test(source) || possibleLegacyHead)) {
+    const tokens = checkedSourceTokens(source, true);
+    const hasConstFnc = tokens.some((t, i) =>
+      t.value === 'const' && tokens[i + 1]?.value === 'fnc');
+    const hasUnpipedAnonymous = tokens.some((t, i) =>
+      t.value === '=' && (
+        (tokens[i + 1]?.value === 'fnc' && tokens[i + 2]?.value === '(') ||
+        (tokens[i + 1]?.value === '(' && tokens[i + 2]?.kind === 'id' &&
+          tokens[i + 3]?.kind === 'id' && tokens[i + 4]?.value === ')' &&
+          tokens[i + 5]?.value === '->')
+      ));
+    // A bare bar is not evidence of a callable binding: actor state leases,
+    // conditions and unrelated pipe syntax must retain ordinary admission and
+    // diagnostics. Only the bounded const-lambda declaration opts into this
+    // profile. Token matching deliberately excludes comment/string contents.
+    const hasVoidLambda = tokens.some((t, i) =>
+      t.kind === 'id' && t.value === 'const' &&
+      tokens[i + 1]?.kind === 'id' &&
+      tokens[i + 2]?.value === '=' &&
+      tokens[i + 3]?.value === '|');
+    const hasTypedLocalCallable = tokens.some((t, i) =>
+      t.kind === 'id' && (t.value === 'val' || t.value === 'const') &&
+      tokens[i + 1]?.kind === 'id' &&
+      tokens[i + 2]?.value === ':' &&
+      tokens[i + 3]?.value === 'fnc' &&
+      tokens[i + 4]?.value === '(');
+    if (hasVoidLambda || hasConstFnc || hasUnpipedAnonymous || hasTypedLocalCallable) {
+      return hasConstFnc || hasUnpipedAnonymous || hasTypedLocalCallable
+        ? compileIntConstLambdaDirect(tokens)
+        : compileVoidLambdaDirect(tokens);
+    }
+  }
   return compileIR(compileToIR(source));
 }
 export function check(source) {
