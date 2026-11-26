@@ -22,3 +22,15 @@ test('reject unsupported refinement carrier and bare untyped scalar division',()
  assert.throws(()=>compileProgramV2(pre+' type Duration = float where units in Second; pub fnc main() -> int { return 42; }'),/E_REFINEMENT_BOUND/);
  assert.throws(()=>compileProgramV2(source('84 / 2')),/E_UNIT_SCALAR_DIVISION/);
 });
+
+
+test('contracted delimiter forms execute real equivalent ESM guests',async()=>{
+ const head=pre+' type Bounded = int where self >= 1 and self <= 42; fnc f(int x) -> int requires x >= 1 requires x <= 42';
+ const tail=' pub fnc main() -> int { return f(2); }';
+ for(const body of [' { return 84/x; }','\nbegin return 84/x; end',' :: return 84/x; end','\n:: return 84/x; end']){
+   const guest=await import('data:text/javascript;base64,'+Buffer.from(compileProgramV2(head+body+tail)).toString('base64'));
+   assert.equal(guest.main(),42n);
+ }
+ for(const body of [' begin return 84/x; end',' :: return 84/x; }',' :: return 84/x;'])
+   assert.throws(()=>compileProgramV2(head+body+tail));
+});
