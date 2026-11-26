@@ -55,7 +55,8 @@ function provesArithmetic(a,b,op){
   return false;
 }
 export function lowerVerifiedQuantitySource(tokens,report,strict=false){
-  if(tokens[0]?.value!=='type'&&(tokens[0]?.value!=='define'||!['dimension','unit'].includes(tokens[1]?.value)))return null;
+  const refinementEntry=tokens[0]?.value==='type'&&tokens[2]?.value==='='&&['int','i64','i32'].includes(tokens[3]?.value)&&tokens[4]?.value==='where';
+  if(!refinementEntry&&(tokens[0]?.value!=='define'||!['dimension','unit'].includes(tokens[1]?.value)))return null;
   let at=0,budget=256;
   const peek=()=>tokens[Math.min(at,tokens.length-1)];
   const fail=(code,msg)=>report(code+': '+msg,peek());
