@@ -1,3 +1,4 @@
+import {isIdentifier} from './portable-unicode-identifier-v1.mjs';
 // Versioned, JSON-safe Oreslang scalar IR for the experimental JS backend.
 // This contract is intentionally narrower than Oreslang's eventual shared typed IR.
 export const SCALAR_IR_VERSION = 1;
@@ -11,7 +12,6 @@ export class ScalarIRError extends Error {
   }
 }
 const fail = message => { throw new ScalarIRError(message); };
-const identifier = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const decimal = /^(?:0|[1-9][0-9]*|-[1-9][0-9]*)$/;
 const MAX_FN = 512;
 const MAX_PARAMS = 128;
@@ -34,7 +34,7 @@ function record(value, fields, context) {
   }
 }
 function name(value, context) {
-  if (typeof value !== 'string' || value.length > 128 || !identifier.test(value)) fail(context + ': invalid identifier');
+  if (typeof value !== 'string' || value.length > 128 || !isIdentifier(value)) fail(context + ': invalid identifier');
   return value;
 }
 function array(value, maximum, context) {
