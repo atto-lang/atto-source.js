@@ -116,7 +116,22 @@ export function compileIntConstLambdaDirect(tokens) {
   }
   expect('return');
   if (name() !== binding.functionName) fail('E_CONST', 'only direct calls to the closed const binding are supported');
+  // Intrinsics are admitted only after resolving the exact closed callable.
+  // Both forms enter the existing checked scalar argument binder below.
+  let tupleApply = false;
+  if (take('.')) {
+    if (take('call')) {
+      // Identical argument grammar to ordinary invocation.
+    } else if (take('apply')) {
+      tupleApply = true;
+      // This bounded profile has no first-class tuple storage. A local
+      // callable named tuple could shadow the constructor; fail closed.
+      if (binding.functionName === 'tuple')
+        fail('E_UNSUPPORTED', 'tuple constructor identity is shadowed');
+    } else fail('E_UNSUPPORTED', 'unsupported callable member');
+  }
   expect('(');
+  if (tupleApply) { expect('tuple'); expect('('); }
   const args = [];
   if (!has(')')) {
     do {
@@ -133,7 +148,9 @@ export function compileIntConstLambdaDirect(tokens) {
       args.push({type,value});
     } while (take(','));
   }
-  expect(')'); expect(';'); expect('}');
+  expect(')');
+  if (tupleApply) expect(')');
+  expect(';'); expect('}');
   if (peek()?.kind !== 'eof') fail('E_SYNTAX', 'trailing source not admitted');
   if (args.length !== binding.params.length) fail('E_ARITY', 'missing lambda arguments');
   if (binding.body.kind === 'param' && binding.params[binding.body.index].type !== 'int')
