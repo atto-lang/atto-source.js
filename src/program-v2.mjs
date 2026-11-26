@@ -278,6 +278,8 @@ function tokenize(source) {
       // Never let quoted payload text masquerade as a keyword or delimiter.
       emit('localString','<local-string>',start);
       result.at(-1).literal=value;
+    } else if (c==='⧖'||c==='∂') {
+      emit('id','suspends',start); result.at(-1).lexeme=c; advance();
     } else if (/[A-Za-z_]/.test(c)) {
       let word = '';
       while (pos < source.length && /[A-Za-z0-9_]/.test(source[pos])) {
@@ -305,7 +307,8 @@ function tokenize(source) {
             fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: exceptional control must be a statement',start);
           advance();word+='!';
         }
-      emit('id',word,start);
+      emit('id',word==='susp'?'suspends':word,start);
+      if(word==='susp')result.at(-1).lexeme=word;
     } else if (/[0-9]/.test(c)) {
       let number = '';
       while (pos < source.length && /[0-9_]/.test(source[pos])) {
@@ -389,7 +392,7 @@ class Parser {
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
   name() {
     const t = this.peek();
-    if (t.kind !== 'id' || !TOKEN_NAME.test(t.value) || t.value==='ifnot'||t.value==='unless') fail('identifier expected',t);
+    if (t.kind !== 'id' || !TOKEN_NAME.test(t.value) || t.value==='ifnot'||t.value==='unless'||t.value==='suspends') fail('identifier expected',t);
     this.i++; return t.value;
   }
   generatorIdentifier() {
@@ -589,6 +592,7 @@ class Parser {
 
   functions(moduleName, declaredPub=false) {
     const pub = declaredPub || this.eat('pub'), start=this.peek();
+    if(start.value==='suspends')fail('E_SUSPENDS_UNSUPPORTED: JS callable continuation lowering is unavailable',start);
     const fnc=this.eat('fnc'),routine=!fnc&&this.eat('routine');
     const requestedReturnType=this.peek().value;
     const returnFirst=['int','void','infer'].includes(requestedReturnType) &&
