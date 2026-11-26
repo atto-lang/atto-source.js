@@ -274,9 +274,12 @@ class Parser {
       }
       // Accept only one define and one pub, in either canonical order.
       // Deliberately do not admit pub define module in this scalar subset.
-      let pub=this.match('pub');
-      if(pub){this.match('define');}
-      else if(this.match('define')){pub=this.match('pub');}
+      let visibility=null, defined=false;
+      while(['pub','private','define'].includes(this.peek().value)) {
+        if(this.match('define')) { if(defined)throw new CompileError('duplicate define modifier',this.peek());defined=true; }
+        else { if(visibility!==null)throw new CompileError('conflicting visibility modifier',this.peek());visibility=this.peek().value;this.pos++; }
+      }
+      const pub=visibility==='pub', writtenPrivate=visibility==='private';
       const at=this.peek();
       const abbreviated=at.value==='int' && this.ts[this.pos+1]?.value==='<-';
       if(markers.size && at.value!=='fnc' && !abbreviated)
@@ -304,7 +307,7 @@ class Parser {
       if(!braced){if(!this.match('as'))this.match('::');}
       this.expect('return');
       const body=this.expr();this.expect(';');this.expect(braced?'}':'end');
-      functions.push({name,params,body,pub});
+      functions.push({name,params,body,pub,...(writtenPrivate?{writtenPrivate:true}:{})});
       for(const [marker,token] of markers)this.guarantees.push({marker,token});
     }
     if(module)this.expect('end');
@@ -316,6 +319,7 @@ class Parser {
         throw new CompileError('export kind mismatch '+entry.name);
       const family=functions.filter(f=>f.name===entry.name);
       if(!family.length)throw new CompileError('unbound export '+entry.name);
+      if(family.some(f=>f.writtenPrivate))throw new CompileError('explicit private declaration cannot be exported: '+entry.name);
       if(entry.visibility==='package'&&family.some(f=>f.pub))
         throw new CompileError('package export conflicts with public declaration '+entry.name);
       const prior=resolved.get(entry.name);
