@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {CountedSelectI64Batch as Batch} from '../src/counted-select-i64-batch.mjs';
+import {SelectExhausted} from '../src/counted-select-i64-cursor.mjs';
 import {SelectableI64Channel as Channel} from '../src/selectable-i64-channel.mjs';
 import {SelectableI64Future as Future} from '../src/selectable-i64-future.mjs';
 test('aggregate publishes immutable exact cardinality only after retirement',async()=>{
@@ -24,7 +25,7 @@ test('cancel detaches pending registrations without cancelling producer',async()
 });
 test('exhaustion and zero are distinct terminal outcomes',async()=>{
   const f=new Future();f.resolve(1n);const b=new Batch(2,[f,f]);
-  const rejected=assert.rejects(b.completion,/SelectExhausted/);
+  const rejected=assert.rejects(b.completion,SelectExhausted);
   assert.equal(b.pump(),true);assert.equal(b.pump(),true);await rejected;
   assert.equal(f.pendingWaiters,0);
   assert.deepEqual(await new Batch(0,null).completion,[]);
@@ -34,4 +35,13 @@ test('notification reentry cannot cancel a committed batch',async()=>{
   const sub=a.subscribeWritable(()=>assert.throws(()=>b.cancel(),/reentry/));
   assert.equal(b.pump(),true);assert.equal(b.pump(),true);
   assert.deepEqual(await b.completion,[42n]);assert.equal(a.notificationFailure,null);sub.close();
+});
+
+test('producer error with the same message is not counted exhaustion',async()=>{
+  const f=new Future(),b=new Batch(1,[f]);
+  const original=new Error('SelectExhausted');
+  const rejected=assert.rejects(b.completion,e=>e===original&&!(e instanceof SelectExhausted));
+  assert.equal(b.pump(),true);assert.equal(b.pump(),false);
+  f.fail(original);assert.equal(b.pump(),true);await rejected;
+  assert.equal(f.pendingWaiters,0);
 });

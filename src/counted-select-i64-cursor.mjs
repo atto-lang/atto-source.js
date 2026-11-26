@@ -5,6 +5,10 @@ import {SelectableI64Future} from './selectable-i64-future.mjs';
 // Trusted host-only, single-isolate driver. Readiness callbacks mark a
 // round dirty, never run guest code. The owner explicitly pumps a round.
 // No scheduler, cross-Worker transfer, guest arm or compiler lowering.
+export class SelectExhausted extends Error {
+  constructor(){super('SelectExhausted');this.name='SelectExhausted';}
+}
+
 export class CountedSelectI64Cursor {
   #count; #live; #values=[]; #cursor=0; #policy;
   #state; #round=null; #busy=false; #failure=null;
@@ -104,7 +108,7 @@ export class CountedSelectI64Cursor {
           this.#cursor=nextCursor;
         }else this.#cursor=next;
         if(this.#values.length===this.#count){this.#live=[];this.#state='success';}
-        else if(!this.#live.length)this.#fail(new Error('SelectExhausted'));
+        else if(!this.#live.length)this.#fail(new SelectExhausted());
         else this.#state='ready';
         return true;
       }
