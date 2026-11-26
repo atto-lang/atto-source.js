@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {compileToProgramIRV2,compileProgramV2} from '../src/program-v2.mjs';
+import {validateProgramIRV2} from '../src/program-ir-v2.mjs';
 
 const source = await readFile(new URL('../core/types.atto',import.meta.url),'utf8');
 const MIN=-(1n<<63n),MAX=(1n<<63n)-1n;
@@ -89,4 +90,20 @@ test('Boolean helper equality is strict, typed and evaluated through generated E
 test('the helper actually overflows when selected, rather than silently wrapping',async()=>{
   const mod=await guest('fnc risky(int x) -> bool { return 9223372036854775807+x eq 0; } pub fnc main() -> int { return risky(1) ? 1 : 0; }');
   assert.throws(()=>mod.main(),/ORES_I64_OVERFLOW/);
+});
+
+test('untrusted IR cannot bypass Boolean operand or result typing',()=>{
+  const ir=compileToProgramIRV2('fnc leaf(int x) -> bool { return x eq 0; } fnc middle(int x) -> bool { return leaf(x) eq false; } pub fnc main() -> int { return middle(0) ? 1 : 0; }');
+  const middle=ir.functions.findIndex(fn=>fn.name==='middle');
+  assert.ok(middle>=0);
+  assert.equal(ir.functions[middle].body.kind,'boolCompare');
+  for(const [mutate,diagnostic] of [
+    [fn=>{fn.body.right={kind:'int',value:'1'};},/boolean expression required/],
+    [fn=>{fn.body.op='<';},/unsupported Boolean comparison/],
+    [fn=>{delete fn.paramTypes;delete fn.returnType;},/boolean value cannot be used as non-bool/]
+  ]){
+    const forged=JSON.parse(JSON.stringify(ir));
+    mutate(forged.functions[middle]);
+    assert.throws(()=>validateProgramIRV2(forged),diagnostic);
+  }
 });
