@@ -2091,17 +2091,48 @@ function bindCompilerOwnedTestingImports(parsed,locals) {
   return parsed;
 }
 
+// Mixed profile: validate unused leading refinement declarations through the
+// existing quantity checker. No alias use is erased; active refinement values
+// require integrated nominal ADT/quantity typing and remain unsupported here.
+function admitUnusedRefinementsBeforeCheckedUnwrap(tokens){
+  if(!['type','declare'].includes(tokens[0]?.value)||
+     !tokens.some((t,i)=>t.value==='|>'&&tokens[i+1]?.value==='match')||
+     !tokens.some(t=>t.value==='trap!'||t.value==='trap'))return null;
+  let end=0;const aliases=new Set();
+  while(['type','declare'].includes(tokens[end]?.value)){
+    const start=end;
+    if(tokens[end].value==='declare')end++;
+    if(tokens[end]?.value!=='type')fail('expected type after declare',tokens[end]);
+    const name=tokens[end+1];
+    if(name?.kind!=='id'||isProtectedPreludeIdentity(name.value)||
+       GENERATOR_RESERVED.has(name.value)||name.value==='main'||aliases.has(name.value))
+      fail('invalid or duplicate mixed-profile refinement',name);
+    aliases.add(name.value);
+    while(end<tokens.length&&tokens[end].value!==';'&&tokens[end].kind!=='eof')end++;
+    if(tokens[end]?.value!==';'||end===start)fail('unterminated refinement declaration',tokens[end]);
+    end++;
+  }
+  const remainder=tokens.slice(end);
+  if(remainder.some(t=>t.kind==='id'&&aliases.has(t.value)))
+    fail('active refinement use requires integrated ADT proof lowering',remainder[0]);
+  const proof=lowerVerifiedQuantitySource([...tokens.slice(0,end),...tokenize('pub fnc main() -> int { return 0; }')],fail);
+  if(proof===null)fail('unsupported refinement declaration',tokens[0]);
+  validateProgramIRV2({schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,integerModel:PROGRAM_IR_INT_MODEL,...proof});
+  return remainder;
+}
+
 export function compileToProgramIRV2(source) {
   const tokens=tokenize(source);
   rejectExecutionDomains(tokens,fail);
   rejectUnsupportedHttpActors(tokens,fail);
   rejectUnsupportedStaticSelect(tokens);
   rejectUnsupportedTrapEffect(tokens);
-  const quantity=lowerVerifiedQuantitySource(tokens,fail);
+  const mixed=admitUnusedRefinementsBeforeCheckedUnwrap(tokens);
+  const quantity=mixed===null?lowerVerifiedQuantitySource(tokens,fail):null;
   if(quantity!==null)return validateProgramIRV2({
     schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,integerModel:PROGRAM_IR_INT_MODEL,...quantity
   });
-  const linked=lowerCompilerOwnedTestingImports(tokens);
+  const linked=lowerCompilerOwnedTestingImports(mixed??tokens);
   const parsed=bindCompilerOwnedTestingImports(new Parser(linked.rootTokens).parse(),linked.locals);
   const program=resolveProgram(parsed);
   return validateProgramIRV2({
