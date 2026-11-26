@@ -186,7 +186,7 @@ function rejectUnloweredActorHeap(tokens) {
 
 function rejectUnsupportedSelect(tokens) {
   const startsStaticSelect = next =>
-    next && ['{','over','first','fair','random'].includes(next.value);
+    next && ['{','<','(','over','first','fair','random'].includes(next.value);
   for (let i=0;i<tokens.length;i++) {
     const token=tokens[i];
     if (token.kind === 'id' && token.value === 'select' &&
