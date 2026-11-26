@@ -175,9 +175,9 @@ test('typed lexical task writeback and lazy scalar branches execute',async()=>{
     'let int n = 0; val bool r = true || sync task<bool> { n = 99; return false; }; return r ? n+42 : 1;',
     'let int n = 0; val bool r = true && sync task<bool> { n = 2; return true; }; return r ? n+40 : 1;',
     'let int n = 0; val bool r = false || sync task<bool> { n = 3; return false; }; return r ? 1 : n+39;',
-    'return true ^^ true && false ? 42 : 1;',
+    'return Xor(true, true && false) ? 42 : 1;',
     'return true XOR true AND false ? 42 : 1;',
-    'let int n = 0; val bool r = true ^^ sync task<bool> { n = 2; return false; }; return r ? n+40 : 1;'
+    'let int n = 0; val bool r = Xor(true, sync task<bool> { n = 2; return false; }); return r ? n+40 : 1;'
   ])assert.equal(await execute(main(body)),'42',body);
 });
 test('lexical task writeback rejects invalid scope, mutability and type',()=>{
@@ -190,5 +190,32 @@ test('lexical task writeback rejects invalid scope, mutability and type',()=>{
     ['val int n = true ? 42 : false; return n;','E_TASK_RETURN_TYPE'],
     ['val bool n = 1 && true; return 42;','E_TASK_RETURN_TYPE'],
     ['do sync task { defer {}; }; return 42;','E_UNSUPPORTED_SYNTAX']
+  ])assert.throws(()=>transpile_to_worker(main(body)),e=>e instanceof TranspileError&&e.code===code,body);
+});
+
+test('canonical compound XOR uses typed mutable lexical slots and original value',async()=>{
+  for(const [body,want] of [
+    ['let int x = 12; x ^^= 10; return x;','6'],
+    ['let int x = -9223372036854775808; x ^^= -1; return x;','9223372036854775807'],
+    ['let int x = 9223372036854775807; x ^^= -1; return x;','-9223372036854775808'],
+    ['let int x = -9223372036854775808; x ^^= x; return x;','0'],
+    ['let int x = 12; let int n = 0; x ^^= sync task<int> { n = n+1; return 10; }; return x*10+n;','61'],
+    ['let int x = 12; x ^^= sync task<int> { x = 99; return 10; }; return x;','6'],
+    ['let int x = 12; do sync task { x ^^= 10; }; return x;','6'],
+    ['let int x = 12; do sync task { let int x = 10; x ^^= 3; }; return x;','12'],
+    ['return Xor(true,false) ? 42 : 1;','42'],
+    ['return (11 ^^ 4) eq 15 ? 42 : 1;','42']
+  ])assert.equal(await execute(main(body)),want,body);
+});
+test('compound and Boolean caret rejection preserves the integer-only contract',()=>{
+  for(const [body,code] of [
+    ['val int x = 12; x ^^= 10; return x;','E_IMMUTABLE_ASSIGNMENT'],
+    ['let int x = 12; x ^^= true; return x;','E_TASK_RETURN_TYPE'],
+    ['let bool x = true; x ^^= false; return 0;','E_TASK_RETURN_TYPE'],
+    ['return true ^^ false ? 42 : 1;','E_TASK_RETURN_TYPE'],
+    ['return 11 ^^ 4 eq 15 ? 42 : 1;','E_TASK_RETURN_TYPE'],
+    ['return Xor(1,2) ? 42 : 1;','E_TASK_RETURN_TYPE'],
+    ['let int x = 12; x ^^ = 10; return x;','E_UNSUPPORTED_SYNTAX'],
+    ['let int x = 12; x ^/*gap*/^= 10; return x;','E_UNSUPPORTED_SYNTAX']
   ])assert.throws(()=>transpile_to_worker(main(body)),e=>e instanceof TranspileError&&e.code===code,body);
 });

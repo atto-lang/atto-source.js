@@ -44,7 +44,7 @@ function tokenize(source) {
       i+=bang[0].length;
       continue;
     }
-    const token = /^(?:"(?:\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})|[^"\\\x00-\x1f])*"|->|<<<|>>>|<<|>>|\^\^|&&|\|\||==|!=|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;,+*\-.=<>?^&|])/.exec(tail);
+    const token = /^(?:"(?:\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})|[^"\\\x00-\x1f])*"|->|<<<|>>>|<<|>>|\^\^=|\^\^|&&|\|\||==|!=|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;,+*\-.=<>?^&|])/.exec(tail);
     if (!token) throw new TranspileError('E_UNSUPPORTED_TOKEN');
     tokens.push(token[0]);
     if (tokens.length > MAX_TOKENS) throw new TranspileError('E_TOKEN_LIMIT');
@@ -155,7 +155,7 @@ export function transpile_to_worker(source) {
   };
   const fail_type=()=>{throw new TranspileError('E_TASK_RETURN_TYPE');};
   const typed=(node,type)=>{if(result_type(node)!==type)fail_type();return node;};
-  const precedence={'||':0,'OR':0,'&&':2,'AND':2,'XOR':1,'==':3,'!=':3,'eq':3,'|':4,'^^':5,'&':6,'<<<':7,'>>>':7,'+':8,'-':8,'*':9};
+  const precedence={'||':0,'OR':0,'&&':2,'AND':2,'XOR':1,'|':3,'^^':4,'&':5,'==':6,'!=':6,'eq':6,'<<<':7,'>>>':7,'+':8,'-':8,'*':9};
   const parse_expression=(min_prec=0,depth=0,discard_inline=false)=>{
     if(depth>=MAX_DEPTH)throw new TranspileError('E_NESTING_LIMIT');
     let left;
@@ -205,12 +205,16 @@ export function transpile_to_worker(source) {
       const value=checked_decimal(tokens[i++]);left={value,type:'int'};
     }else if(peek()==='true'||peek()==='false'){
       left={kind:'bool',value:tokens[i++]==='true',type:'bool'};
+    }else if(peek()==='Xor'&&tokens[i+1]==='('){
+      i++;expect('(');
+      const lhs=typed(parse_expression(0,depth+1),'bool');expect(',');
+      const rhs=typed(parse_expression(0,depth+1),'bool');expect(')');
+      left={kind:'boolop',op:'XOR',left:lhs,right:rhs,type:'bool'};
     }else if(/^[A-Za-z_][A-Za-z_0-9]*$/.test(peek()??'')&&!reserved.has(peek())){
       const slot=lookup(tokens[i++]);left={kind:'local',slot:slot.id,type:slot.type};
     }else throw new TranspileError('E_UNSUPPORTED_EXPRESSION');
-    const current_prec=()=>peek()==='^^'&&left.type==='bool'?1:precedence[peek()];
-    while(Object.hasOwn(precedence,peek()) && current_prec()>=min_prec){
-      const prec=current_prec();
+    while(Object.hasOwn(precedence,peek()) && precedence[peek()]>=min_prec){
+      const prec=precedence[peek()];
       const op=tokens[i++];
       const right=parse_expression(prec+1,depth+1);
       if(['&&','||','AND','OR','XOR'].includes(op)){
@@ -220,10 +224,8 @@ export function transpile_to_worker(source) {
         if(left.type==='void'||left.type!==right.type)fail_type();
         left={kind:'compare',op,left,right,type:'bool'};
       }else{
-        // Preserve existing integer bitwise operators; bool ^^ is eager XOR.
-        if(op==='^^'&&left.type==='bool'&&right.type==='bool')
-          left={kind:'boolop',op,left,right,type:'bool'};
-        else {typed(left,'int');typed(right,'int');left={op,left,right,type:'int'};}
+        // Canonical punctuation XOR is integer-only; named Xor is Boolean.
+        typed(left,'int');typed(right,'int');left={op,left,right,type:'int'};
       }
     }
     if(min_prec===0&&peek()==='?'){
@@ -247,10 +249,14 @@ export function transpile_to_worker(source) {
         if(init.type==='void'||(declared!==null&&declared!==init.type))fail_type();
         const slot={id:next_slot++,type:init.type,mutable};
         scopes.at(-1).set(name,slot);out.push({kind:'bind',slot:slot.id,mutable,init});
-      }else if(tokens[i+1]==='='){
+      }else if(tokens[i+1]==='='||tokens[i+1]==='^^='){
         const slot=lookup(identifier());
         if(!slot.mutable)throw new TranspileError('E_IMMUTABLE_ASSIGNMENT');
-        expect('=');const value=typed(parse_expression(0,depth+1),slot.type);expect(';');
+        const compound=peek()==='^^=';
+        if(compound&&slot.type!=='int')fail_type();
+        expect(compound?'^^=':'=');
+        const rhs=typed(parse_expression(0,depth+1),slot.type);expect(';');
+        const value=compound?{op:'^^',left:{kind:'local',slot:slot.id,type:'int'},right:rhs,type:'int'}:rhs;
         out.push({kind:'set',slot:slot.id,value});
       }else if(peek()==='do'){
         i++;if(peek()!=='sync')throw new TranspileError('E_TASK_UNSUPPORTED');
