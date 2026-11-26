@@ -264,6 +264,8 @@ function tokenize(source) {
       if(['trap','throw','raise','panic'].includes(word) && source[pos]==='!' &&
          source[pos+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(source.slice(pos)))
         {
+          if(!/[ \t\r\n\v\f]/.test(source[pos+1]??''))
+            fail('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+word+'!',start);
           if(word==='trap'&&result.at(-1)?.value!=='=')
             fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: typed guest effects and Result lowering required',start);
           if(word!=='trap'&&!['{',';','then','else','do'].includes(result.at(-1)?.value))

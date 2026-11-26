@@ -32,6 +32,8 @@ function tokenize(source) {
     const bang=/^(?:trap|throw|raise|panic)!/.exec(tail);
     if(bang && tail[bang[0].length]!=='=' &&
         !/^eq(?![A-Za-z_0-9])/.test(tail.slice(bang[0].length))) {
+      if(!/^[ \t\r\n\v\f]$/.test(tail[bang[0].length]??''))
+        throw new TranspileError('E_BANG_KEYWORD_WHITESPACE');
       tokens.push(bang[0]);
       if(tokens.length>MAX_TOKENS)throw new TranspileError('E_TOKEN_LIMIT');
       i+=bang[0].length;

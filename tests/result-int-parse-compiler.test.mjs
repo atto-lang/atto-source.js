@@ -346,7 +346,6 @@ test('canonical trap! compiles to the same single Result layer as migration trap
     const direct=ordinary.replace('val parsed = int.parse(text)?; return Ok(parsed);',
       'return int.parse(text);');
     const pairs=[
-      [ordinary,ordinary.replace('match parse_id(','match trap!parse_id(')],
       [ordinary,ordinary.replace('match parse_id(','match trap! parse_id(')],
       [ordinary,ordinary.replace('val parsed = int.parse(text)?;',
         'val parsed = trap! int.parse(text)?;')],
@@ -360,6 +359,8 @@ test('canonical trap! compiles to the same single Result layer as migration trap
         'trap! on already-Result must not double-wrap, catch host faults, or re-evaluate');
       assert.equal(await execute(canonical),expected);
     }
+    assert.throws(()=>transpile(ordinary.replace('match parse_id(','match trap!parse_id(')),
+      e=>e instanceof TranspileError&&e.code==='E_BANG_KEYWORD_WHITESPACE');
   }
   const direct='pub fnc main(): int { return match int.parse("invalid") over '+
     'on Ok(value) -> value, on Err() -> 7 end; }';
@@ -377,6 +378,10 @@ test('bang syntax rejects unproved exceptional effects and operator boundary con
     ['trap! throw! Error','E_TRAP_UNSUPPORTED'],
     ['trap! raise! Error','E_TRAP_UNSUPPORTED'],
     ['trap! panic! Error','E_TRAP_UNSUPPORTED'],
+    ['trap!int.parse','E_BANG_KEYWORD_WHITESPACE'],
+    ['trap!(int.parse','E_BANG_KEYWORD_WHITESPACE'],
+    ['trap!/*gap*/ int.parse','E_BANG_KEYWORD_WHITESPACE'],
+    ['trap!\u00a0int.parse','E_BANG_KEYWORD_WHITESPACE'],
     ['trap ! int.parse','E_UNSUPPORTED_TOKEN'],
     ['trap!= int.parse','E_UNSUPPORTED_TOKEN'],
     ['trap!eq int.parse','E_UNSUPPORTED_TOKEN']
