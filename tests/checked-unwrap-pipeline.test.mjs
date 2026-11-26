@@ -76,3 +76,14 @@ test('declare type also uses existing scalar refinement checks',async()=>{
  assert.equal((await load(source)).main(),42n);
  assert.throws(()=>compileProgramV2(source.replace('= 42; return','= 43; return')),/error:/);
 });
+
+test('checked unwrap refuses external lookalike and Proxy carriers rather than catching them',async()=>{
+ const guest=await load('pub fnc make():Option<int>{return None;} pub fnc choose(Option<int> x):int{return '+match('x')+';}');
+ const genuine=guest.make();
+ assert.equal(guest.choose(genuine),42n);
+ const forged=Object.freeze(Object.assign(Object.create(null),{kind:'None',value:null}));
+ assert.throws(()=>guest.choose(forged),/untrusted Option unwrap carrier/);
+ assert.throws(()=>guest.choose(new Proxy(genuine,{})),/untrusted Option unwrap carrier/);
+ const other=await load('pub fnc make():Option<int>{return None;}');
+ assert.throws(()=>guest.choose(other.make()),/untrusted Option unwrap carrier/);
+});
