@@ -1794,6 +1794,20 @@ export function compileToProgramIRV2(source) {
     ...program
   });
 }
+// Strict verification admits only the explicitly checked quantity frontend.
+ // An unverified ordinary source path must never be used as a fallback.
+export function compileVerifiedStrict(source) {
+  const tokens=tokenize(source);
+  rejectExecutionDomains(tokens,fail);
+  rejectUnsupportedHttpActors(tokens,fail);
+  rejectUnsupportedStaticSelect(tokens);
+  rejectUnsupportedTrapEffect(tokens);
+  const quantity=lowerVerifiedQuantitySource(tokens,fail,true);
+  if(quantity===null)fail('E_VERIFY_UNSUPPORTED: strict profile requires typed quantity source',tokens[0]);
+  return emitProgram(validateProgramIRV2({
+    schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,integerModel:PROGRAM_IR_INT_MODEL,...quantity
+  }));
+}
 export function compileProgramIRV2(ir) {
   return emitProgram(validateProgramIRV2(ir));
 }
