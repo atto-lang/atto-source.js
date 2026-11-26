@@ -79,3 +79,30 @@ test('file export cannot escape a scalar module or callable body', () => {
     ]) assert.throws(()=>compile(src),undefined,src);
   }
 });
+
+test('written private declarations are not eligible for file exports', async () => {
+  for(const compile of [compileScalar,compileProgramV2]) {
+    for(const header of ['private fnc','private define fnc','define private fnc']) {
+      const decl=header+' hidden(): int { return 42; }';
+      const main='pub fnc main(): int { return hidden(); }';
+      const output=compile(decl+'\n'+main);
+      const m=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(output));
+      assert.equal(m.main(),42n);
+      assert.equal(Object.hasOwn(m,'hidden'),false);
+      for(const directive of ['export pub hidden;','export pub[pkg] fnc hidden;'])
+        for(const src of [directive+'\n'+decl,decl+'\n'+directive])
+          assert.throws(()=>compile(src+'\n'+main),/explicit private declaration/);
+    }
+    assert.throws(()=>compile('private fnc hidden(): int { return 42; } fnc hidden(int x): int { return x; } export pub hidden;'),/explicit private declaration/);
+    assert.throws(()=>compile('private pub fnc hidden(): int { return 42; }'),/visibility modifier/);
+  }
+  for(const decl of ['private define class Hidden as end','define private class Hidden as end']) {
+    const output=compileProgramV2(decl+' pub fnc main(): int { return 42; }');
+    const m=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(output));
+    assert.equal(m.main(),42n);
+    assert.equal(Object.hasOwn(m,'Hidden'),false);
+    for(const directive of ['export pub Hidden;','export pub[pkg] class Hidden;'])
+      for(const source of [directive+'\n'+decl,decl+'\n'+directive])
+        assert.throws(()=>compileProgramV2(source),/explicit private declaration/);
+  }
+});
