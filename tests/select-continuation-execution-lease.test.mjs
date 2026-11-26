@@ -87,3 +87,43 @@ test('internal admission cannot be redirected by an overridden inspection method
   assert.equal(lease.close(),true);
   assert.equal(fence.pendingTickets,0);
 });
+
+test('dispatch holds lease through awaited callback and releases on settlement',async()=>{
+  const fence=new SelectContinuationFence({maxTickets:1});
+  const ticket=fence.register();
+  let finish;
+  const gate=new Promise(resolve=>{finish=resolve;});
+  let called=0;
+  const dispatched=fence.tryInvoke(ticket,async()=>{
+    called++;
+    assert.equal(fence.executing,1);
+    await gate;
+    assert.equal(fence.advance(1),false);
+  });
+  assert.equal(called,1);
+  assert.equal(fence.pendingTickets,0);
+  assert.equal(fence.executing,1);
+  assert.equal(fence.advance(1),false);
+  assert.throws(()=>fence.register(),/capacity/);
+  assert.equal(await fence.tryInvoke(ticket,()=>{throw new Error('duplicate');}),false);
+  assert.equal(fence.close(),true);
+  assert.equal(fence.retirementReady,false);
+  finish();
+  assert.equal(await dispatched,true);
+  assert.equal(fence.retirementReady,true);
+});
+
+test('dispatch validates callback before claim and retires rejected callbacks',async()=>{
+  const fence=new SelectContinuationFence({maxTickets:1});
+  const ticket=fence.register();
+  await assert.rejects(fence.tryInvoke(ticket,null),TypeError);
+  assert.equal(ticket.active,true);
+  await assert.rejects(fence.tryInvoke(ticket,()=>{throw new Error('callback failure');}),/callback failure/);
+  assert.equal(fence.executing,0);
+  assert.equal(ticket.active,false);
+  assert.equal(fence.advance(1),true);
+  const next=fence.register();
+  await assert.rejects(fence.tryInvoke(next,async()=>{throw new Error('async failure');}),/async failure/);
+  assert.equal(fence.executing,0);
+  assert.equal(fence.advance(2),true);
+});
