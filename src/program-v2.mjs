@@ -1,4 +1,5 @@
 import {lowerVerifiedQuantitySource} from './verified-quantity-source.mjs';
+import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
 import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 import {TESTING_SCALAR_SOURCE, TESTING_SCALAR_EXPORTS} from './compiler-owned-testing-scalar.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
@@ -220,6 +221,19 @@ function tokenize(source) {
         value=normalizeProcessSymbolName(value);
       }
       emit('symbol',value,start);
+    } else if(c==='"'&&result.at(-1)?.value==='('&&result.at(-2)?.value==='Error'&&
+              result.at(-3)?.value==='new'&&['throw','throw!','raise','raise!','panic','panic!'].includes(result.at(-4)?.value)){
+      // Only a bounded literal core Error message, not a general string expression.
+      advance();let message='';
+      while(pos<source.length&&source[pos]!=='"'){
+        const ch=source[pos];
+        if(ch==='\\'||sourceLineEnd(ch)||ch.charCodeAt(0)<32||ch.charCodeAt(0)>126)
+          fail('E_ERROR_MESSAGE: only unescaped printable ASCII Error literals are admitted',start);
+        if(message.length>=256)fail('E_ERROR_MESSAGE: literal exceeds 256 bytes',start);
+        message+=ch;advance();
+      }
+      if(pos>=source.length)fail('E_ERROR_MESSAGE: unterminated Error literal',start);
+      advance();emit('errorMessage',message,start);
     } else if ((c==='"' || c==="'") && result.length && result[result.length-1].value==='from') {
       // Quoted strings are *only* admissible in the compiler-owned std import
       // declaration below. General string expressions remain unsupported.
@@ -243,7 +257,9 @@ function tokenize(source) {
       if (word.length > 128) fail('identifier limit',start);
       // Never parse a contextual ownership bang as a macro or ordinary call;
       // this ESM compiler lacks typechecked move/borrow/share lowering.
-      if (['copy','take','borrow','share'].includes(word) && source[pos]==='!' &&
+      if (missingBangKeywordSeparator(word, source.slice(pos)))
+        fail('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+word+'!',start);
+      if (['copy','take','move','borrow','share'].includes(word) && source[pos]==='!' &&
           source[pos+1]!=='=' &&
           !(source.slice(pos+1,pos+3)==='eq' && !/[A-Za-z0-9_]/.test(source[pos+3]??'')))
         fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
@@ -251,7 +267,15 @@ function tokenize(source) {
       // checked guest unwind; no fallback to an ordinary JS exception.
       if(['trap','throw','raise','panic'].includes(word) && source[pos]==='!' &&
          source[pos+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(source.slice(pos)))
-        {if(word!=='trap'||result.at(-1)?.value!=='=')fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: typed guest effects and Result lowering required',start);advance();word='trap!';}
+        {
+          if(!/[ \t\r\n\v\f]/.test(source[pos+1]??''))
+            fail('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+word+'!',start);
+          if(word==='trap'&&result.at(-1)?.value!=='=')
+            fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: typed guest effects and Result lowering required',start);
+          if(word!=='trap'&&!['{',';','then','else','do'].includes(result.at(-1)?.value))
+            fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: exceptional control must be a statement',start);
+          advance();word+='!';
+        }
       emit('id',word,start);
     } else if (/[0-9]/.test(c)) {
       let number = '';
@@ -278,16 +302,9 @@ function tokenize(source) {
       emit('sym',c,start); advance();
     } else if (c==='%') {
       fail("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",start);
-    } else if (c==='^' && !source.startsWith('^^',pos) &&
-        result.at(-1)?.value==='{' && ['?',':'].includes(result.at(-2)?.value)) {
-      // Only a direct ternary block's initial result marker is admitted.
-      // The parser still validates the complete arm; no infix XOR alias.
-      emit('sym',c,start); advance();
-    } else if (c==='^') {
-      fail(source.startsWith('^^',pos)
-        ? "'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)"
-        : "'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",start);
-    } else if ('(){}[]:,;+-*/=.<>!?'.includes(c)) {
+    } else if (source.startsWith('^^',pos)) {
+      emit('sym','^^',start); advance(); advance();
+    } else if ('(){}[]:,;+-*/=.<>!?^&|'.includes(c)) {
       emit('sym',c,start); advance();
     } else fail('unsupported character',start);
   }
@@ -332,8 +349,7 @@ class Parser {
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
   name() {
     const t = this.peek();
-    if (t.kind !== 'id' || !TOKEN_NAME.test(t.value) ||
-        t.value==='ifnot'||t.value==='unless') fail('identifier expected',t);
+    if (t.kind !== 'id' || !TOKEN_NAME.test(t.value) || t.value==='ifnot'||t.value==='unless') fail('identifier expected',t);
     this.i++; return t.value;
   }
   generatorIdentifier() {
@@ -447,7 +463,7 @@ class Parser {
       const terminator=braced?'}':'end';
       let body=null;
       if(returnType==='void'){
-        if(this.eat('return')){
+        if((this.eat('return')||this.eat('^'))){
           if(this.peek().value!==';')fail('RETURN_VOID_VALUE: void method cannot return a value',this.peek());
           this.expect(';');
         }
@@ -516,7 +532,7 @@ class Parser {
         if(this.eat('*'))fail('yield* is not implemented in JS sync generator v1',this.peek());
         if(yields.length>=MAX_TOKENS)fail('generator yield budget exceeded',this.peek());
         yields.push(this.expression());this.expect(';');
-      }else if(this.eat('return')){
+      }else if((this.eat('return')||this.eat('^'))){
         if(this.peek().value!==';')
           fail('generator return cannot carry a value; use yield',this.peek());
         this.expect(';');returned=true;
@@ -573,7 +589,7 @@ class Parser {
     if(returnType==='void'){
       // Program-v2 has no general statement/effect lowering yet. Match the
       // existing pure-void class-method subset without fabricating a value.
-      if(this.eat('return')){
+      if((this.eat('return')||this.eat('^'))){
         if(this.peek().value!==';')fail('RETURN_VOID_VALUE: void function cannot return a value',this.peek());
         this.expect(';');
       }
@@ -630,12 +646,36 @@ class Parser {
     const statements=[];
     while(this.peek().kind!=='eof'&&!terminators.includes(this.peek().value)) {
       if(++this.statementNodes>MAX_TOKENS)fail('statement budget exceeded',this.peek());
-      if(this.eat('return')) {
+      if((this.eat('return')||this.eat('^'))) {
         if(this.peek().value===';')
           fail('RETURN_VALUE_REQUIRED: nonvoid return requires a value',this.peek());
         const body=this.expression();
         this.expect(';');
         statements.push({kind:'return',body});
+      } else if(['throw','throw!','raise','raise!','panic','panic!'].includes(this.peek().value)){
+        const effect=this.tokens[this.i++].value.replace(/!$/,'');
+        if(!this.eat('new')){
+          if(effect!=='throw')fail('E_EFFECT_PROFILE: only ordinary caught Error can be rethrown',this.peek());
+          const name=this.name();this.expect(';');
+          statements.push({kind:'effect',body:{kind:'rethrow',name}});
+        }else{
+          this.expect('Error');this.expect('(');
+          const literal=this.peek();
+          if(literal.kind!=='errorMessage')fail('E_ERROR_MESSAGE: expected core Error literal',literal);
+          this.i++;this.expect(')');this.expect(';');
+          statements.push({kind:'effect',body:{kind:'guestEffect',effect,message:literal.value}});
+        }
+      } else if(this.eat('try')){
+        this.expect('{');const body=this.statementSequence(['}'],depth+1);this.expect('}');
+        this.expect('catch');this.expect('(');const name=this.name();this.expect(')');
+        if(GENERATOR_RESERVED.has(name)||isProtectedPreludeIdentity(name)||name==='Error')
+          fail('E_CATCH_BINDING: invalid catch binding',this.peek());
+        this.expect('{');const handler=this.statementSequence(['}'],depth+1);this.expect('}');
+        // The expression IR has no explicit fallthrough continuation yet. Never
+        // execute a subsequent statement inside the protected catch region.
+        if(!this.returnsOnAllPaths(body)||!this.returnsOnAllPaths(handler))
+          fail('E_TRY_FALLTHROUGH_UNSUPPORTED: both protected and handler paths must terminate',this.peek());
+        statements.push({kind:'tryCatch',name,body,handler});
       } else if(this.eat('guard')) {
         // Guard's predicate must be a bool. Reuse the typed IR's conditional
         // checker and evaluate each comma-separated predicate at most once,
@@ -700,7 +740,7 @@ class Parser {
   returnsOnAllPaths(stmts) {
     if(!stmts.length)return false;
     const last=stmts[stmts.length-1];
-    return last.kind==='return'||
+    return last.kind==='return'||last.kind==='effect'||last.kind==='tryCatch'||
       (last.kind==='branch'&&this.returnsOnAllPaths(last.yes)&&this.returnsOnAllPaths(last.no));
   }
   lowerStatements(stmts,fallback) {
@@ -708,10 +748,11 @@ class Parser {
     for(let i=stmts.length-1;i>=0;i--) {
       const stmt=stmts[i];
       if(i<stmts.length-1 &&
-         (stmt.kind==='return' ||
+         (stmt.kind==='return'||stmt.kind==='effect'||stmt.kind==='tryCatch' ||
           (this.returnsOnAllPaths(stmt.yes||[])&&this.returnsOnAllPaths(stmt.no||[]))))
         fail('unreachable statement after terminating return/if');
-      if(stmt.kind==='return')result=stmt.body;
+      if(stmt.kind==='return'||stmt.kind==='effect')result=stmt.body;
+      else if(stmt.kind==='tryCatch')result={kind:'tryCatch',name:stmt.name,body:this.lowerStatements(stmt.body,null),handler:this.lowerStatements(stmt.handler,null)};
       else if(stmt.kind==='local'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
         result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,body:result};
@@ -744,7 +785,8 @@ class Parser {
         if(total>MAX_TOKENS)fail('expanded conditional IR node budget exceeded');
       }
       switch(expr.kind){
-        case 'int':case 'float':case 'bool':case 'symbol':case 'variable':break;
+        case 'int':case 'float':case 'bool':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':break;
+        case 'tryCatch':add(expr.body);add(expr.handler);break;
         case 'neg':case 'not':case 'trap':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
@@ -867,7 +909,15 @@ class Parser {
     try {
       let left = this.primary();
       while (true) {
-        const op = this.peek().value;
+        const token=this.peek();
+        let op=token.value, width=1;
+        // Recognize contiguous triple shifts only at expression boundaries.
+        // Keep individual > tokens for nested nominal generic closers.
+        if(op==='<'||op==='>'){
+          const adjacent=n=>{const t=this.tokens[this.i+n];return t?.kind==='sym'&&t.value===op&&t.line===token.line&&t.col===token.col+n;};
+          if(adjacent(1)&&adjacent(2)){op=op.repeat(3);width=3;}
+          else if(adjacent(1))fail('typed I/O requires capability and suspension lowering; not a numeric shift',token);
+        }
         if (op==='?' && min<=1) {
           this.i++;
           const yes=this.ternaryArm(0);
@@ -880,10 +930,13 @@ class Parser {
         // lazy conditionals, never JS truthiness or eager bitwise operators.
         const compare=['<','>','<=','>=','==','!=','eq','neq'].includes(op);
         const logical=op==='and'||op==='or';
-        const prec=(op==='*'||op==='/')?20:op==='+'||op==='-'?10:
-          compare?5:op==='and'?4:op==='or'?3:-1;
+        if(op==='^')fail("E_OPERATOR_CARET: single infix '^' is invalid; use '^^' for integer XOR",token);
+        const prec=op==='*'||op==='/'?20:op==='+'||op==='-'?15:
+          op==='<<<'||op==='>>>'?12:
+          ['<','>','<=','>='].includes(op)?9:compare?8:
+          op==='&'?7:op==='^^'?6:op==='|'?5:op==='and'?4:op==='or'?3:-1;
         if (prec < min) break;
-        this.i++;
+        this.i+=width;
         const right=this.expression(prec+1);
         if(logical){
           left=op==='and'
@@ -891,7 +944,7 @@ class Parser {
             : {kind:'if',condition:left,yes:{kind:'bool',value:true},no:right};
         }else{
           left={kind:compare?'compare':'binary',
-            op:op==='eq'?'==':op==='neq'?'!=':op,left,right};
+            op:op==='eq'?'==':op==='neq'?'!=':op==='^^'?'^':op,left,right};
         }
       }
       return left;
@@ -948,7 +1001,7 @@ class Parser {
       return {kind:'variable', name:first};
     }
     const args=this.argumentsAfterOpen();
-    // Named integer operations replace the reserved %, ^ and ^^ operators.
+    // Named integer operations retain their semantics; raw % remains reserved.
     // The binary ops below are internal IR names, never source syntax.
     if(qualifier==='Integer'){
       const ops={rem:'%',mod:'mod',bitXor:'^'};
@@ -1122,8 +1175,11 @@ function resolveProgram(parsed) {
     switch(expr.kind){
       case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
       case 'float':case 'floatNeg':case 'floatBin':case 'floatCapture':return 'float';
-      case 'trap':case 'trapCapture':return 'trapResult';
+      case 'trap':return ['option<int>','trapOptionResult'].includes(expr.operandType)?'trapOptionResult':'trapResult';
+      case 'trapCapture':return 'trapResult';
+      case 'trapOptionCapture':return 'trapOptionResult';
       case 'trapMethod':return expr.name==='unwrap'?'int':'bool';
+      case 'trapOptionMethod':return expr.name==='unwrap'?'option<int>':'bool';
       case 'bool':case 'not':case 'compare':case 'numericCompare':case 'symbolCompare':return 'bool';
       case 'symbol':return 'symbol';
       case 'param':return owner.paramTypes?.[expr.index]??'int';
@@ -1142,7 +1198,7 @@ function resolveProgram(parsed) {
       }
       case 'if':return resolvedType(expr.yes,owner);
       case 'seqVoidCall':return resolvedType(expr.value,owner);
-      case 'local':case 'floatLocal':case 'trapLocal':return resolvedType(expr.body,owner);
+      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return resolvedType(expr.body,owner);
       case 'adtMatch':return resolvedType(expr.arms[0].body,owner);
       default:fail('cannot infer resolved expression type '+expr.kind);
     }
@@ -1170,6 +1226,21 @@ function resolveProgram(parsed) {
   function resolve(expr,owner,depth=0,bindings=[]) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
+      case 'tryCatch':{
+        if(owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer'||owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))fail('E_CATCH_BINDING: explicit return type and nonshadowing binding required');
+        if(nextCaptureSlot>=MAX_TOKENS)fail('catch slot budget exceeded');
+        const slot=nextCaptureSlot++;
+        return {kind:'tryCatch',slot,body:resolve(expr.body,owner,depth+1,bindings),handler:resolve(expr.handler,owner,depth+1,[...bindings,{name:expr.name,slot,type:'caughtError'}])};
+      }
+      case 'rethrow':{
+        const binding=bindings.findLast(b=>b.name===expr.name);
+        if(binding?.type!=='caughtError')fail('E_EFFECT_PROFILE: rethrow requires a scoped caught Error');
+        return {kind:'rethrow',slot:binding.slot};
+      }
+      case 'guestEffect':
+        if(owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer'||owner.params.includes('Error')||bindings.some(b=>b.name==='Error')||classByName.has('Error')||modules.includes('Error')||[...functions,...generators].some(f=>f.name==='Error'))
+          fail('E_EFFECT_PROFILE: explicit result type and unshadowed core Error required');
+        return expr;
       case 'int':case 'float':case 'bool':case 'symbol':return expr;
       case 'local': {
         if(owner.ownerKind==='method'||owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))
@@ -1177,8 +1248,10 @@ function resolveProgram(parsed) {
         if(nextCaptureSlot>=MAX_TOKENS)fail('local slot budget exceeded');
         const slot=nextCaptureSlot++;
         const init=resolve(expr.init,owner,depth+1,bindings);
-        const t=expr.localType==='inferredTrap'?'trapResult':expr.localType;
-        return {kind:t==='float'?'floatLocal':t==='trapResult'?'trapLocal':'local',slot,init,body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type:t}])};
+        const type=expr.localType==='inferredTrap'?resolvedType(init,owner):expr.localType;
+        if(expr.localType==='inferredTrap'&&!['trapResult','trapOptionResult'].includes(type))fail('inferred trap local requires Result');
+        return {kind:type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':'local',slot,init,
+          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type}])};
       }
       case 'seqVoidCall': {
         if(expr.call.kind!=='call'||expr.call.qualifier!==null)
@@ -1222,7 +1295,8 @@ function resolveProgram(parsed) {
       }
       case 'variable': {
         const captured=bindings.findLast(b=>b.name===expr.name);
-        if(captured)return {kind:captured.type==='float'?'floatCapture':captured.type==='trapResult'?'trapCapture':'capture',slot:captured.slot};
+        if(captured?.type==='caughtError')fail('E_CATCH_BINDING: caught Error is only available for typed rethrow');
+        if(captured)return {kind:captured.type==='trapOptionResult'?'trapOptionCapture':captured.type==='trapResult'?'trapCapture':captured.type==='float'?'floatCapture':'capture',slot:captured.slot};
         const index=owner.params.indexOf(expr.name);
         if(index<0) fail('unresolved identifier '+expr.name);
         return {kind:'param',index};
@@ -1231,7 +1305,7 @@ function resolveProgram(parsed) {
         if(owner.ownerKind==='method')fail('trap in methods unsupported');
         const inner=resolve(expr.inner,owner,depth+1,bindings);
         const operandType=resolvedType(inner,owner);
-        if(!['int','result<int,int>','trapResult'].includes(operandType))fail('trap requires int or closed Result operand');
+        if(!['int','option<int>','result<int,int>','trapResult','trapOptionResult'].includes(operandType))fail('trap requires int, Option<int> or closed Result operand');
         return {kind:'trap',operandType,inner};
       }
       case 'neg':case 'not':{
@@ -1266,9 +1340,10 @@ function resolveProgram(parsed) {
         yes:resolve(expr.yes,owner,depth+1,bindings),no:resolve(expr.no,owner,depth+1,bindings)};
       case 'call': {
         const local=bindings.findLast(b=>b.name===expr.qualifier);
-        if(local?.type==='trapResult'){
-          if(!['is_ok','is_err','unwrap'].includes(expr.name)||expr.args.length!==0)fail('unsupported trap Result method/arity');
-          return {kind:'trapMethod',name:expr.name,receiver:{kind:'trapCapture',slot:local.slot}};
+        if(local){
+          if(!['trapResult','trapOptionResult'].includes(local.type)||!['is_ok','is_err','unwrap'].includes(expr.name)||expr.args.length!==0)fail('unsupported local Result method/arity');
+          const option=local.type==='trapOptionResult';
+          return {kind:option?'trapOptionMethod':'trapMethod',name:expr.name,receiver:{kind:option?'trapOptionCapture':'trapCapture',slot:local.slot}};
         }
         if(expr.qualifier==='Option'||expr.qualifier==='Result'){
           const key=expr.qualifier+'.'+expr.name;
@@ -1358,9 +1433,10 @@ function resolveProgram(parsed) {
     } else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
     else if(['binary','floatBin','compare','numericCompare','symbolCompare'].includes(expr.kind)) {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
+    else if(expr.kind==='tryCatch'){inspect(expr.body,owner);inspect(expr.handler,owner);}
     else if(expr.kind==='seqVoidCall'){inspect(expr.call,owner);inspect(expr.value,owner);}
-    else if(['local','floatLocal','trapLocal'].includes(expr.kind)){inspect(expr.init,owner);inspect(expr.body,owner);}
-    else if(expr.kind==='trapMethod')inspect(expr.receiver,owner);
+    else if(['local','floatLocal','trapLocal','trapOptionLocal'].includes(expr.kind)){inspect(expr.init,owner);inspect(expr.body,owner);}
+    else if(['trapMethod','trapOptionMethod'].includes(expr.kind))inspect(expr.receiver,owner);
     else if(['neg','floatNeg','not','trap'].includes(expr.kind)) inspect(expr.inner,owner);
     else if(expr.kind==='match'||expr.kind==='adtMatch') {
       inspect(expr.subject,owner);expr.arms.forEach(a=>inspect(a.body,owner));
@@ -1401,18 +1477,21 @@ function emitProgram(program) {
   function emitExpr(expr,depth=0) {
     if(depth > MAX_DEPTH) fail('codegen depth exceeded');
     switch(expr.kind) {
+      case 'tryCatch':return '(()=>{try{return '+emitExpr(expr.body,depth+1)+';}catch(_v'+expr.slot+'){if(!_isOrdinaryGuest(_v'+expr.slot+'))throw _v'+expr.slot+';return '+emitExpr(expr.handler,depth+1)+';}})()';
+      case 'rethrow':return '(()=>{throw _v'+expr.slot+';})()';
+      case 'guestEffect':return '_guestEffect('+JSON.stringify(expr.effect)+','+JSON.stringify(expr.message)+')';
       case 'int': return expr.value+'n';
       case 'float': return '('+String(Number(expr.value))+')';
       case 'symbol':return '_symbol('+JSON.stringify(expr.value)+')';
       case 'bool': return expr.value?'true':'false';
       case 'param':return '_p'+expr.index;
-      case 'capture':case 'floatCapture':case 'trapCapture':return '_v'+expr.slot;
-      case 'local':case 'floatLocal':case 'trapLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
+      case 'capture':case 'floatCapture':case 'trapCapture':case 'trapOptionCapture':return '_v'+expr.slot;
+      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
       case 'trap':return '_trap(()=>('+emitExpr(expr.inner,depth+1)+'),'+JSON.stringify(expr.operandType)+')';
-      case 'trapMethod':return '_trapMethod('+JSON.stringify(expr.name)+','+emitExpr(expr.receiver,depth+1)+')';
+      case 'trapMethod':case 'trapOptionMethod':return '_trapMethod('+JSON.stringify(expr.name)+','+emitExpr(expr.receiver,depth+1)+','+(expr.kind==='trapOptionMethod')+')';
       case 'floatNeg':return '(-('+emitExpr(expr.inner,depth+1)+'))';
       case 'floatBin':return '(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
       case 'numericCompare':{
@@ -1423,6 +1502,15 @@ function emitProgram(program) {
       }
       case 'not':return '!('+emitExpr(expr.inner,depth+1)+')';
       case 'binary':
+        if(expr.op==='<<<'||expr.op==='>>>'){
+          const staticCount=expr.right.kind==='int'?BigInt(expr.right.value):
+            expr.right.kind==='neg'&&expr.right.inner.kind==='int'?-BigInt(expr.right.inner.value):null;
+          if(staticCount!==null&&(staticCount<0n||staticCount>63n))fail('E_SHIFT_DISTANCE: expected 0..63');
+          const left=emitExpr(expr.left,depth+1),right=emitExpr(expr.right,depth+1);
+          // Evaluate both operands once; validate before shifting, never mask counts.
+          const shift=expr.op==='<<<'?'a<<b':'BigInt.asUintN(64,a)>>b';
+          return '((a,b)=>{_check(a);_check(b);if(b<0n||b>63n)throw new RangeError("E_GUEST_SHIFT_DISTANCE: expected 0..63");return BigInt.asIntN(64,'+shift+');})('+left+','+right+')';
+        }
         // Evaluate operands once, left-to-right; do not expose engine-specific zero-divisor errors.
         if(expr.op==='/')return '((a,b)=>{_check(a);_check(b);if(b===0n)throw _arith("division_by_zero","ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit division by zero");return _check(a/b);})(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
         if(expr.op==='%')return '_rem(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
@@ -1517,10 +1605,11 @@ function emitProgram(program) {
       case 'binary':case 'floatBin':case 'compare':case 'numericCompare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
+      case 'tryCatch':return usesSymbol(expr.body)||usesSymbol(expr.handler);
       case 'seqVoidCall':return usesSymbol(expr.call)||usesSymbol(expr.value);
-      case 'local':case 'floatLocal':case 'trapLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
+      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
       case 'trap':return usesSymbol(expr.inner);
-      case 'trapMethod':return usesSymbol(expr.receiver);
+      case 'trapMethod':case 'trapOptionMethod':return usesSymbol(expr.receiver);
       case 'neg':case 'floatNeg':case 'not':return usesSymbol(expr.inner);
       case 'match':case 'adtMatch':return usesSymbol(expr.subject)||
         expr.arms.some(arm=>usesSymbol(arm.body));
@@ -1550,7 +1639,7 @@ function emitProgram(program) {
   function usesPortableRuntime(expr) {
     if(expr===null)return false;
     switch(expr.kind) {
-      case 'intrinsic':case 'trap':case 'trapMethod':return true;
+      case 'intrinsic':case 'trap':case 'trapMethod':case 'trapOptionMethod':return true;
       case 'newClass':return false;
       case 'methodCall':case 'namedMethodCall':
         return usesPortableRuntime(expr.receiver)||expr.args.some(usesPortableRuntime);
@@ -1559,8 +1648,9 @@ function emitProgram(program) {
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
       case 'if':return usesPortableRuntime(expr.condition)||
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
+      case 'tryCatch':return usesPortableRuntime(expr.body)||usesPortableRuntime(expr.handler);
       case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
-      case 'local':case 'floatLocal':case 'trapLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
+      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
       case 'match':return usesPortableRuntime(expr.subject)||
         expr.arms.some(arm=>usesPortableRuntime(arm.body));
@@ -1595,13 +1685,24 @@ function emitProgram(program) {
   // programs that actually use trap; keep ordinary ADT artifact overhead low.
   function containsTrap(value){
     if(!value||typeof value!=='object')return false;
-    if(value.kind==='trap'||value.kind==='trapMethod')return true;
+    if(['trap','trapMethod','trapOptionMethod'].includes(value.kind))return true;
     return Object.values(value).some(containsTrap);
   }
+  function containsGuestEffect(value){
+    if(!value||typeof value!=='object')return false;
+    return value.kind==='guestEffect'||Object.values(value).some(containsGuestEffect);
+  }
+  const hasGuestEffect=containsGuestEffect(program);
+  if(hasGuestEffect)out.push(
+    'const _ordinaryGuestBrand=new WeakSet();',
+    'function _guestEffect(kind,message){const e=new Error(message);Object.defineProperty(e,"effect",{value:kind,enumerable:true});if(kind==="throw")_ordinaryGuestBrand.add(e);throw Object.freeze(e);}'
+  );
+  function containsCatch(value){return !!value&&typeof value==='object'&&(value.kind==='tryCatch'||Object.values(value).some(containsCatch));}
+  if(containsTrap(program)||containsCatch(program))out.push('function _isOrdinaryGuest(e){return _arithmeticBrand.has(e)||(typeof _ordinaryGuestBrand!=="undefined"&&_ordinaryGuestBrand.has(e));}');
   if(containsTrap(program))out.push(
       'const _trapBrand=new WeakSet();',
-      'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult"){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}const result=t==="int"?_ok(v):_checkresult(v);_trapBrand.add(result);return result;}catch(e){if(!_arithmeticBrand.has(e))throw e;const result=_tag("Err",e);_trapBrand.add(result);return result;}}',
-      'function _trapMethod(m,result){if(!_trapBrand.has(result))throw new TypeError("invalid trap Result");if(m==="is_ok")return result.kind==="Ok";if(m==="is_err")return result.kind==="Err";if(m==="unwrap"&&result.kind==="Ok")return _check(result.value);if(m==="unwrap"){const e=new Error("cannot unwrap Err",{cause:result.value});Object.defineProperty(e,"name",{value:"ResultUnwrapPanic"});throw Object.freeze(e);}throw new TypeError("invalid trap Result method");}'
+      'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult"||t==="trapOptionResult"){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}const result=t==="option<int>"?_tag("Ok",_checkoption(v)):t==="int"?_ok(v):_checkresult(v);_trapBrand.add(result);return result;}catch(e){if(!_isOrdinaryGuest(e))throw e;const result=_tag("Err",e);_trapBrand.add(result);return result;}}',
+      'function _trapMethod(m,result,option){if(!_trapBrand.has(result))throw new TypeError("invalid trap Result");if(m==="is_ok")return result.kind==="Ok";if(m==="is_err")return result.kind==="Err";if(m==="unwrap"&&result.kind==="Ok")return option?_checkoption(result.value):_check(result.value);if(m==="unwrap"){const e=new Error("cannot unwrap Err",{cause:result.value});Object.defineProperty(e,"name",{value:"ResultUnwrapPanic"});throw Object.freeze(e);}throw new TypeError("invalid trap Result method");}'
   );
   (program.classes??[]).forEach((cls,classIndex)=>{
     const local='_class'+classIndex;
@@ -1837,7 +1938,7 @@ export function compileAttoScalarV1(source) {
       case 'local':visit(expr.init);visit(expr.body);return;
       case 'neg':return visit(expr.inner);
       case 'binary':
-        if(!['+','-','*','/','%','mod'].includes(expr.op))
+        if(!['+','-','*','/','%','mod','^','&','|','<<<','>>>'].includes(expr.op))
           fail('AttoLang scalar-v1 removed or unsupported operator '+expr.op);
         visit(expr.left);visit(expr.right);return;
       case 'call':

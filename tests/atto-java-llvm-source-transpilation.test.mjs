@@ -140,12 +140,11 @@ test('unsupported canonical Java .atto cases remain explicit gaps, not false par
 });
 
 test('AttoLang scalar profile rejects removed operators instead of emitting wrong semantics',()=>{
-  // Canonical Java cases.json requires rejection, while legacy .ores
-  // program-v2 intentionally still admits remainder pending migration.
+  // Java strict #72 supersedes the old removed-XOR fixture. Raw percent
+  // and infix single caret remain invalid.
   const removed=[
     ['9 % 2','45d5794870e93074d9b11b90833a849e96aaa4c1','pub fnc main(): int { return 9 % 2; }\n'],
-    ['2 ^ 3','6889c7e83c8d94b906fbfe78723caee9580da6aa','pub fnc main(): int { return 2 ^ 3; }\n'],
-    ['2 ^^ 3','7ee99948018e927cce74c9ad0edc1975e4251689','pub fnc main(): int { return 2 ^^ 3; }\n']
+    ['2 ^ 3','6889c7e83c8d94b906fbfe78723caee9580da6aa','pub fnc main(): int { return 2 ^ 3; }\n']
   ];
   for(const [description,sha,source] of removed){
     const raw=Buffer.from(source,'utf8');
@@ -193,4 +192,30 @@ test('CLI --atto-scalar-v1 checks exact .atto source and emits executable ESM',a
   } finally {
     await rm(dir,{recursive:true,force:true});
   }
+});
+
+// Java strict #72 / shared operator contract: checked scalar source and IR.
+test('canonical caret, bitwise and triple shifts execute checked ESM',async()=>{
+  for(const [expression,expected] of [["2 ^^ 3","1"],["12 ^^ 10","6"],["-1 ^^ 1","-2"],["1 | 2 ^^ 3 & 2","1"],["12 & 10 | 2 ^^ 6","12"],["1 + 2 ^^ 3","0"],["1 ^^ 2 ^^ 3","0"],["-9223372036854775808 ^^ -1","9223372036854775807"],["8 <<< 2","32"],["-1 >>> 1","9223372036854775807"],["1 <<< 63","-9223372036854775808"],["(1 <<< 63) >>> 63","1"],["1 + 2 <<< 3","24"],["1 <<< 2 + 3","32"],["8 >>> 2 ^^ 1","3"]]){
+    for(const form of ['return','^']){
+      const source='pub fnc main():int{'+form+' '+expression+';}';
+      const ir=compileToProgramIRV2(source);
+      const esm=compileProgramV2(source);
+      assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir))),esm);
+      assert.equal(compileAttoScalarV1(source),esm);
+      const guest=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(esm));
+      assert.equal(guest.main(),BigInt(expected),source);
+    }
+  }
+});
+test('invalid operators and constant shifts fail before artifact publication',()=>{
+  for(const expression of ["7 ^ 3","7 ^ ^ 3","7 ^^^ 3","true ^^ false","1 ^^ true","1.5 ^^ 2","7 % 3","8 << 2","8 >> 2","1 <<< 64","1 >>> -1","1 < < < 3"]){
+    assert.throws(()=>compileProgramV2('pub fnc main():int{return '+expression+';}'),/error: program (v2|IR):/,expression);
+  }
+});
+test('computed invalid shifts do not mask the count',async()=>{
+  const source='pub fnc main(int n):int{^ 1 <<< n;}';
+  const guest=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(compileProgramV2(source)));
+  assert.equal(guest.main(63n),-9223372036854775808n);
+  for(const count of [-1n,64n,65n])assert.throws(()=>guest.main(count),/E_GUEST_SHIFT_DISTANCE/);
 });

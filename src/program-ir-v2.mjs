@@ -286,6 +286,8 @@ export function validateProgramIRV2(input) {
   const captureSlots=owners.map(()=>new Set());
   const floatSlots=owners.map(()=>new Set());
   const trapSlots=owners.map(()=>new Set());
+  const trapOptionSlots=owners.map(()=>new Set());
+  const caughtSlots=owners.map(()=>new Set());
   function node(expr,owner,depth=0,expected='int',active=[]){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('expression complexity exceeded');
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid expression');
@@ -301,6 +303,31 @@ export function validateProgramIRV2(input) {
     if(expected!=='symbol'&&desc.value==='symbol')
       fail('Symbol value cannot be used as non-Symbol');
     switch(desc.value) {
+      case 'tryCatch':{
+        record(expr,['kind','slot','body','handler'],'ordinary catch');
+        if(owner>=headers.length||expected!==(headers[owner].returnType??'int')||
+           !Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
+           expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
+          fail('E_CATCH_BINDING: invalid catch scope');
+        captureSlots[owner].add(expr.slot);
+        const body=node(expr.body,owner,depth+1,expected,active);
+        caughtSlots[owner].add(expr.slot);
+        return {kind:'tryCatch',slot:expr.slot,body,handler:node(expr.handler,owner,depth+1,expected,[...active,expr.slot])};
+      }
+      case 'rethrow':
+        record(expr,['kind','slot'],'caught Error rethrow');
+        if(owner>=headers.length||expected!==(headers[owner].returnType??'int')||
+           !Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||!active.includes(expr.slot)||!caughtSlots[owner].has(expr.slot))
+          fail('E_CATCH_BINDING: rethrow outside caught Error scope');
+        return {kind:'rethrow',slot:expr.slot};
+      case 'guestEffect':
+        record(expr,['kind','effect','message'],'core guest effect');
+        if(owner>=headers.length||expected!==(headers[owner].returnType??'int')||
+           [...headers,...generatorHeaders,...classHeaders].some(h=>h.name==='Error')||seenModules.has('Error')||headers[owner].params.includes('Error')||
+           !['throw','raise','panic'].includes(expr.effect)||typeof expr.message!=='string'||
+           expr.message.length>256||!(/^[\x20-\x7e]*$/).test(expr.message))
+          fail('E_EFFECT_PROFILE: invalid core guest effect');
+        return {kind:'guestEffect',effect:expr.effect,message:expr.message};
       case 'float':
         record(expr,['kind','value'],'float');
         if(expected!=='float'||typeof expr.value!=='string'||expr.value.length>128||
@@ -308,12 +335,19 @@ export function validateProgramIRV2(input) {
         return {kind:'float',value:expr.value};
       case 'trap':
         record(expr,['kind','operandType','inner'],'typed arithmetic trap');
-        if(expected!=='trapResult'||!['int','result<int,int>','trapResult'].includes(expr.operandType))fail('trap operand/result type mismatch');
+        const option=['option<int>','trapOptionResult'].includes(expr.operandType);
+        if(expected!==(option?'trapOptionResult':'trapResult')||
+           !['int','option<int>','result<int,int>','trapResult','trapOptionResult'].includes(expr.operandType))
+          fail('trap operand/result type mismatch');
         return {kind:'trap',operandType:expr.operandType,inner:node(expr.inner,owner,depth+1,expr.operandType,active)};
-      case 'trapMethod':
+      case 'trapMethod':case 'trapOptionMethod':{
         record(expr,['kind','name','receiver'],'trap Result method');
-        if(!['is_ok','is_err','unwrap'].includes(expr.name)||expected!==(expr.name==='unwrap'?'int':'bool'))fail('trap Result method type mismatch');
-        return {kind:'trapMethod',name:expr.name,receiver:node(expr.receiver,owner,depth+1,'trapResult',active)};
+        const option=desc.value==='trapOptionMethod';
+        if(!['is_ok','is_err','unwrap'].includes(expr.name)||expected!==(expr.name==='unwrap'?(option?'option<int>':'int'):'bool'))
+          fail('trap Result method type mismatch');
+        return {kind:desc.value,name:expr.name,
+          receiver:node(expr.receiver,owner,depth+1,option?'trapOptionResult':'trapResult',active)};
+      }
       case 'floatNeg':
         record(expr,['kind','inner'],'float negation');
         if(expected!=='float')fail('float negation type mismatch');
@@ -388,26 +422,27 @@ export function validateProgramIRV2(input) {
           ...(named?{paramOrder:order}:{})
         };
       }
-      case 'local':case 'floatLocal':case 'trapLocal': {
-        record(expr,['kind','slot','init','body'],'immutable numeric local');
-        if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
+      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':{
+        record(expr,['kind','slot','init','body'],'immutable local');
+        if(owner>=headers.length||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
           fail('invalid or repeated local slot');
         captureSlots[owner].add(expr.slot);
-        const t=desc.value==='floatLocal'?'float':desc.value==='trapLocal'?'trapResult':'int';
+        const t=desc.value==='trapOptionLocal'?'trapOptionResult':desc.value==='trapLocal'?'trapResult':desc.value==='floatLocal'?'float':'int';
         const init=node(expr.init,owner,depth+1,t,active);
-        if(t==='float')floatSlots[owner].add(expr.slot);
         if(t==='trapResult')trapSlots[owner].add(expr.slot);
+        if(t==='trapOptionResult')trapOptionSlots[owner].add(expr.slot);
+        if(t==='float')floatSlots[owner].add(expr.slot);
         return {kind:desc.value,slot:expr.slot,init,body:node(expr.body,owner,depth+1,expected,[...active,expr.slot])};
       }
-      case 'capture':case 'floatCapture':case 'trapCapture':
+      case 'capture':case 'floatCapture':case 'trapCapture':case 'trapOptionCapture':
         record(expr,['kind','slot'],'capture');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
-           !active.includes(expr.slot))
-          fail('ADT capture outside its typed payload scope');
-        const captureType=floatSlots[owner].has(expr.slot)?'float':trapSlots[owner].has(expr.slot)?'trapResult':'int';
+           (!active.includes(expr.slot)||caughtSlots[owner].has(expr.slot)))fail('ADT capture outside its typed payload scope');
+        const captureType=trapOptionSlots[owner].has(expr.slot)?'trapOptionResult':trapSlots[owner].has(expr.slot)?'trapResult':floatSlots[owner].has(expr.slot)?'float':'int';
         if(captureType==='int'&&expected!=='int')fail('ADT int payload capture type mismatch');
-        if(expected!==captureType||desc.value!==(captureType==='float'?'floatCapture':captureType==='trapResult'?'trapCapture':'capture'))fail('capture type mismatch');
+        if(expected!==captureType||desc.value!==(captureType==='trapOptionResult'?'trapOptionCapture':captureType==='trapResult'?'trapCapture':captureType==='float'?'floatCapture':'capture'))
+          fail('capture type mismatch');
         return {kind:desc.value,slot:expr.slot};
       case 'param':
         record(expr,['kind','index'],'param');
@@ -427,7 +462,7 @@ export function validateProgramIRV2(input) {
       case 'binary':
         record(expr,['kind','op','left','right'],'binary');
         if(expected!=='int')fail('arithmetic in boolean context');
-        if(!['+','-','*','/','%','mod','^'].includes(expr.op))fail('unsupported binary operator');
+        if(!['+','-','*','/','%','mod','^','&','|','<<<','>>>'].includes(expr.op))fail('unsupported binary operator');
         return {kind:'binary',op:expr.op,
           left:node(expr.left,owner,depth+1,'int',active),right:node(expr.right,owner,depth+1,'int',active)};
       case 'compare':
@@ -608,7 +643,7 @@ export function validateProgramIRV2(input) {
         return {kind:'not',inner:methodNode(expr.inner,method,depth+1,'bool')};
       case 'binary':
         record(expr,['kind','op','left','right'],'method binary');
-        if(expected!=='int'||!['+','-','*','/','%','mod','^'].includes(expr.op))
+        if(expected!=='int'||!['+','-','*','/','%','mod','^','&','|','<<<','>>>'].includes(expr.op))
           fail('unsupported method arithmetic');
         return {kind:'binary',op:expr.op,
           left:methodNode(expr.left,method,depth+1,'int'),
