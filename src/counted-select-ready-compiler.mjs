@@ -6,7 +6,7 @@ const MAX=(1n<<63n)-1n, MIN=-(1n<<63n);
 const reserved=new Set('pub suspends fnc main int bool val let const Channel Future Array new writech readch select nb await when fair first random default over end return if then fi true false and or'.split(' '));
 const expr=(type,code)=>({type,code});
 class Parser {
-  constructor(source){this.ts=tokenizeCountedProfileSource(source);this.i=0;this.slots=new Map();this.next=0;this.budget=4096;this.depth=0;this.counted=0;}
+  constructor(source){this.ts=tokenizeCountedProfileSource(source);this.i=0;this.slots=new Map();this.next=0;this.budget=4096;this.depth=0;this.counted=0;this.activeBatch=null;}
   peek(){return this.ts[this.i];}
   fail(msg){const t=this.peek();throw new Error('E_COUNTED_READY_PROFILE: '+msg+' at '+t.line+':'+t.col);}
   eat(v){if(['id','sym'].includes(this.peek().kind)&&this.peek().value===v){this.i++;return true;}return false;}
@@ -16,7 +16,7 @@ class Parser {
   literal(){const t=this.peek();if(t.kind!=='int')this.fail('integer literal required');this.i++;const v=BigInt(t.value.replaceAll('_',''));if(v>MAX)this.fail('integer literal out of range');return v;}
   small(max){const n=this.literal();if(n>BigInt(max))this.fail('bounded literal exceeds profile limit');return Number(n);}
   type(){if(this.eat('int'))return 'int';if(this.eat('Channel')){this.need('<');this.need('int');this.need('>');return 'channel';}
-    if(this.eat('Future')){this.need('<');this.need('int');this.need('>');return 'future';}
+    if(this.eat('Future')){this.need('<');if(this.eat('Array')){this.need('<');this.need('int');this.need('>');this.need('>');return 'futureArray';}this.need('int');this.need('>');return 'future';}
     if(this.eat('Array')){if(this.eat('[')){this.need('int');this.need(']');}else{this.need('<');this.need('int');this.need('>');}return 'array';}
     this.fail('unsupported lexical type');}
   check(v,t){if(v.type!==t)this.fail('expected '+t+' expression');return v.code;}
@@ -25,7 +25,7 @@ class Parser {
     try{
       let lhs=this.primary(projector);
       const prec={or:1,and:2,'==':3,'!=':3,'<':4,'>':4,'<=':4,'>=':4,'+':5,'-':5,'*':6};
-      while(Object.hasOwn(prec,this.peek().value)&&prec[this.peek().value]>=min){
+      while(['id','sym'].includes(this.peek().kind)&&Object.hasOwn(prec,this.peek().value)&&prec[this.peek().value]>=min){
         const op=this.peek().value;this.i++;
         const rhs=this.expression(prec[op]+1,projector);
         if(['+','-','*'].includes(op))lhs=expr('int','_i(('+this.check(lhs,'int')+')'+op+'('+this.check(rhs,'int')+'))');
@@ -40,12 +40,25 @@ class Parser {
     if(this.eat('-')){if(this.peek().kind==='int'){const raw=this.peek().value;this.i++;const n=-BigInt(raw.replaceAll('_',''));if(n<MIN)this.fail('literal out of range');return expr('int',n+'n');}
       return expr('int','_i(-('+this.check(this.expression(7,projector),'int')+'))');}
     if(this.peek().kind==='int')return expr('int',this.literal()+'n');
-    if(projector!==null){const n=this.name();if(n!==projector)this.fail('projection may reference only its binding');return expr('int','_x');}
+    if(projector!==null){const n=this.name();if(projector==='@count')return expr('int',this.get(n,'int').slot);if(n!==projector)this.fail('projection may reference only its binding');return expr('int','_x');}
     if(this.eat('await')){
-      if(this.eat('select'))return this.countedSelect();
-      const s=this.get(this.name(),'future');s.moved=true;return expr('int','_awaitReady('+s.slot+')');
+      const legacy=this.eat('nb');
+      if(this.eat('select')){
+        if(this.activeBatch)this.fail('await outstanding counted batch first');
+        return this.countedSelect(true);
+      }
+      if(legacy)this.fail('nb requires select');
+      const name=this.name(),s=this.slots.get(name);
+      if(s?.type==='futureArray'&&!s.moved&&this.activeBatch===s.slot){
+        s.moved=true;this.activeBatch=null;return expr('array','(await '+s.slot+')');
+      }
+      if(this.activeBatch)this.fail('await outstanding counted batch first');
+      const future=this.get(name,'future');future.moved=true;return expr('int','_awaitReady('+future.slot+')');
     }
-    if(this.eat('readch'))return expr('int','_read('+this.get(this.name(),'channel').slot+')');
+    if(this.eat('readch')){
+      if(this.activeBatch)this.fail('await outstanding counted batch before channel access');
+      return expr('int','_read('+this.get(this.name(),'channel').slot+')');
+    }
     const n=this.name(),s=this.slots.get(n);if(!s||s.moved)this.fail('unknown or moved lexical binding');
     if(s.type==='int')return expr('int',s.slot);
     if(s.type==='array'){
@@ -54,11 +67,14 @@ class Parser {
     }
     this.fail('capability cannot escape scalar expression');
   }
-  // Counted forms are directly awaited, no externally pending producer,
-  // arbitrary effects, dynamic counts or untracked handle escape.
-  countedSelect(){
+  // Bounded caller-snapshotted scalar count; one outstanding tracked batch.
+  // No external producer, arbitrary effect, or handle escape.
+  countedSelect(direct){
+    if(this.activeBatch)this.fail('await outstanding counted batch first');
     if(this.eat('<')){this.need('int');this.need('>');}
-    this.need('(');const count=this.small(16);this.need(')');
+    this.need('(');const count=this.check(this.expression(0,'@count'),'int');this.need(')');
+    const literal=/^-?[0-9]+n$/.test(count)?BigInt(count.slice(0,-1)):null;
+    if(literal!==null&&(literal<0n||literal>16n))this.fail('SelectCountInvalid');
     const policy=this.eat('fair')?'fair':(this.eat('first'),'first');
     const over=this.eat('over');if(!over)this.need('{');
     const cases=[],projects=[],futures=new Set();
@@ -76,9 +92,12 @@ class Parser {
     this.need(over?'end':'}');
     this.counted++;
     // Literal zero is static only: no source evaluation, capture or move.
-    if(count===0)return expr('array','(await _batch(0,[],[], '+JSON.stringify(policy)+'))');
-    for(const s of futures)s.moved=true;
-    return expr('array','(await _batch('+count+',['+cases.join(',')+'],['+projects.join(',')+'],'+JSON.stringify(policy)+'))');
+    // Dynamic counts are conservatively affine; runtime validates the count
+    // before materializing the source plan.
+    if(literal!==0n)for(const s of futures)s.moved=true;
+    const args=literal===0n?'0n,()=>[[],[]]':count+',()=>[['+cases.join(',')+'],['+projects.join(',')+']]';
+    const code='_startBatch('+args+','+JSON.stringify(policy)+')';
+    return direct?expr('array','(await '+code+')'):expr('futureArray',code);
   }
   defaultFuture(){
     this.need('select');this.need('<');this.need('int');this.need('>');
@@ -89,14 +108,18 @@ class Parser {
     this.need(';');this.need('}');this.need(over?'end':'}');
     return '_ready(()=>'+value+')';
   }
-  binding(){
+  binding(mutable=false){
     const type=this.type(),n=this.name();if(this.slots.has(n)||this.next>=128)this.fail('duplicate or excessive lexical binding');
+    if(mutable&&type!=='int')this.fail('only scalar int mutation is admitted');
     this.need('=');let code;
-    if(type==='channel'){this.need('Channel');this.need('.');this.need('new');this.need('<');this.need('int');this.need('>');this.need('(');
+    if(type==='channel'){if(this.activeBatch)this.fail('await outstanding counted batch first');this.need('Channel');this.need('.');this.need('new');this.need('<');this.need('int');this.need('>');this.need('(');
       const cap=this.small(64);if(cap===0)this.fail('zero channel capacity');this.need(')');code='new _Channel('+cap+')';}
-    else if(type==='future')code=this.defaultFuture();
+    else if(type==='future'){if(this.activeBatch)this.fail('await outstanding counted batch first');code=this.defaultFuture();}
+    else if(type==='futureArray'){this.eat('nb');this.need('select');code=this.check(this.countedSelect(false),type);}
     else code=this.check(this.expression(),type);
-    this.need(';');const slot='_v'+this.next++;this.slots.set(n,{slot,type,moved:false});return 'const '+slot+'='+code+';';
+    this.need(';');const slot='_v'+this.next++;this.slots.set(n,{slot,type,moved:false,mutable});
+    if(type==='futureArray')this.activeBatch=slot;
+    return (mutable?'let ':'const ')+slot+'='+code+';';
   }
   parse(){
     this.eat('pub');this.need('suspends');this.need('fnc');this.need('main');this.need('(');this.need(')');this.need(':');this.need('int');this.need('{');
@@ -104,18 +127,25 @@ class Parser {
     while(this.peek().value!=='return'){
       if(stmts.length>=256)this.fail('statement quota exceeded');
       if(this.eat('val'))stmts.push(this.binding());
+      else if(this.eat('let'))stmts.push(this.binding(true));
       else if(this.eat('writech')){
+        if(this.activeBatch)this.fail('await outstanding counted batch before channel access');
         const s=this.get(this.name(),'channel');this.need(',');const v=this.check(this.expression(),'int');this.need(';');stmts.push('_write('+s.slot+','+v+');');
       }else if(this.eat('if')){
+        if(this.activeBatch)this.fail('await outstanding counted batch before branching');
         const condition=this.check(this.expression(),'bool');this.need('then');this.need('return');
         // Conditional return cannot consume a Future on only one exit and
         // then reuse it on the fallthrough. The return path is terminal.
         const saved=new Map([...this.slots].map(([n,s])=>[n,{...s}]));
         const value=this.check(this.expression(),'int');this.need(';');this.need('fi');this.slots=saved;
         stmts.push('if('+condition+')return '+value+';');
+      }else if(this.peek().kind==='id'&&this.ts[this.i+1]?.value==='='){
+        const s=this.get(this.name(),'int');if(!s.mutable)this.fail('cannot assign immutable binding');
+        this.need('=');const value=this.check(this.expression(),'int');this.need(';');stmts.push(s.slot+'='+value+';');
       }else this.fail('unsupported statement in ready-only profile');
     }
     this.need('return');stmts.push('return '+this.check(this.expression(),'int')+';');this.need(';');this.need('}');
+    if(this.activeBatch)this.fail('outstanding counted batch must be awaited');
     if(this.peek().kind!=='eof'||this.counted===0)this.fail('requires one closed-world counted guest main');
     return stmts.join('\n');
   }
@@ -129,6 +159,13 @@ function _read(c){const r=c.tryRead();if(!r.ok)throw new Error('E_READY_ONLY: ch
 function _at(a,i){if(i<0||i>=a.length)throw new RangeError('E_ARRAY_BOUNDS');return _i(a[i]);}
 function _ready(project){const f=new _Future();try{f.resolve(_i(project()));}catch(e){f.fail(e);}return f;}
 function _awaitReady(f){const s=f.subscribeReady(()=>{});try{const c=f.createResultCell();if(!f.tryCommit(s,c))throw new Error('E_READY_ONLY: Future would suspend');if(c.status!=='value')throw c.error??new Error('Future failed');return _i(c.value);}finally{s.close();}}
+function _startBatch(count,plan,policy){
+  if(typeof count!=='bigint'||count<0n||count>16n)throw new RangeError('SelectCountInvalid');
+  const n=Number(count),[s,p]=n===0?[[],[]]:plan();
+  const completion=_batch(n,s,p,policy);
+  completion.catch(()=>{});
+  return completion;
+}
 async function _batch(n,s,p,policy){
   const b=new _Batch(n,s,policy,p);
   // Register a rejection observer before driving; preserve exact failure.
