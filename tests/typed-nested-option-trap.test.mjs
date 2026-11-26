@@ -18,3 +18,20 @@ test('typed nested trap rejects scalar, wrong payload, and forged slot type',()=
  local.kind='trapLocal';
  assert.throws(()=>compileProgramIRV2(ir),/error:/);
 });
+
+test('nested trap unwrap preserves the actual Option tag and scalar payload',async()=>{
+ const input='fnc optional(bool p):Option<int>{return p?Some(42):None;} pub fnc main(bool p):int { val Result<Option<int>, Error> r=trap! optional(p); val Option<int> x=r.unwrap(); return Option.is_some(x)?Option.unwrap_or(x,0):Option.unwrap_or(x,17); }';
+ const ir=compileToProgramIRV2(input), esm=compileProgramV2(input);
+ assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir))),esm);
+ const guest=await import('data:text/javascript,'+encodeURIComponent(esm));
+ assert.equal(guest.main(true),42n);
+ assert.equal(guest.main(false),17n);
+});
+test('nested trap verifier rejects retagging the captured payload as a scalar',()=>{
+ const ir=compileToProgramIRV2(source);
+ const local=ir.functions.find(f=>f.name==='main').body;
+ assert.equal(local.kind,'trapOptionLocal');
+ assert.equal(local.init.operandType,'option<int>');
+ local.init.operandType='int';
+ assert.throws(()=>compileProgramIRV2(ir),/error:/);
+});
