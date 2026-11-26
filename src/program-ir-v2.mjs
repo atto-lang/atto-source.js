@@ -211,7 +211,9 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
     const paramTypes=typed?sequence(f.paramTypes,128,'paramTypes'):params.map(()=>'int');
     const types=['int','bool','symbol','option<int>','result<int,int>'];
     if(paramTypes.length!==params.length||
-       paramTypes.some(t=>!types.includes(t)))fail('unsupported function parameter type');
+       paramTypes.some(t=>!types.includes(t)&&t!=='error'))fail('unsupported function parameter type');
+    if(paramTypes.includes('error')&&(f.pub||params.includes('Error')||seenModules.has('Error')||sourceFunctions.some(h=>h.name==='Error')||sourceGenerators.some(h=>h.name==='Error')||classHeaders.some(h=>h.name==='Error')))
+      fail('E_ERROR_BINDING: Error parameters require private callable and unshadowed core Error');
     const returnType=typed?f.returnType:'int';
     if(returnType!=='void'&&!types.includes(returnType))fail('unsupported function return type');
     if(returnType==='void'&&f.body!==null)fail('void function body must be null');
@@ -295,6 +297,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
   const trapSlots=owners.map(()=>new Set());
   const trapOptionSlots=owners.map(()=>new Set());
   const caughtSlots=owners.map(()=>new Set());
+  const errorSlots=owners.map(()=>new Set());
   function node(expr,owner,depth=0,expected='int',active=[]){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('expression complexity exceeded');
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid expression');
@@ -327,6 +330,15 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
            !Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||!active.includes(expr.slot)||!caughtSlots[owner].has(expr.slot))
           fail('E_CATCH_BINDING: rethrow outside caught Error scope');
         return {kind:'rethrow',slot:expr.slot};
+      case 'throwError':
+        record(expr,['kind','value'],'typed Error throw');
+        if(owner>=headers.length||expected!==(headers[owner].returnType??'int'))fail('E_EFFECT_PROFILE: invalid typed Error throw');
+        return {kind:'throwError',value:node(expr.value,owner,depth+1,'error',active)};
+      case 'errorCapture':
+        record(expr,['kind','slot'],'typed Error capture');
+        if(expected!=='error'||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||!active.includes(expr.slot)||!errorSlots[owner].has(expr.slot))
+          fail('E_ERROR_BINDING: invalid Error capture');
+        return {kind:'errorCapture',slot:expr.slot};
       case 'guestEffect':
         record(expr,['kind','effect','message'],'core guest effect');
         if(owner>=headers.length||expected!==(headers[owner].returnType??'int')||
@@ -507,7 +519,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
       case 'capture':case 'floatCapture':case 'trapCapture':case 'trapOptionCapture':case 'optionCapture':case 'resultCapture':
         record(expr,['kind','slot'],'capture');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
-           (!active.includes(expr.slot)||caughtSlots[owner].has(expr.slot)))fail('ADT capture outside its typed payload scope');
+           (!active.includes(expr.slot)||caughtSlots[owner].has(expr.slot)||errorSlots[owner].has(expr.slot)))fail('ADT capture outside its typed payload scope');
         const captureType=optionSlots[owner].has(expr.slot)?'option<int>':resultSlots[owner].has(expr.slot)?'result<int,int>':trapOptionSlots[owner].has(expr.slot)?'trapOptionResult':trapSlots[owner].has(expr.slot)?'trapResult':floatSlots[owner].has(expr.slot)?'float':'int';
         if(captureType==='int'&&expected!=='int')fail('ADT int payload capture type mismatch');
         if(expected!==captureType||desc.value!==(captureType==='option<int>'?'optionCapture':captureType==='result<int,int>'?'resultCapture':captureType==='trapOptionResult'?'trapOptionCapture':captureType==='trapResult'?'trapCapture':captureType==='float'?'floatCapture':'capture'))
@@ -651,14 +663,16 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           if(!variants.includes(arm.tag)||seen.has(arm.tag))
             fail('ADT match has duplicate or inappropriate variant');
           seen.add(arm.tag);
-          const discardedError=expr.adt==='trapResult'&&arm.tag==='Err';
-          if(discardedError&&arm.slot!==null)fail('checked Error binding is not supported');
-          const payload=arm.tag!=='None'&&!discardedError;
+          const errorArm=expr.adt==='trapResult'&&arm.tag==='Err';
+          if(errorArm&&arm.slot!==null&&!(subject.kind==='trap'&&subject.operandType==='int'))
+            fail('E_ERROR_BINDING: mixed returned Err payload cannot be bound as Error');
+          const payload=arm.tag!=='None'&&(!errorArm||arm.slot!==null);
           if(payload) {
             if(!Number.isSafeInteger(arm.slot)||Object.is(arm.slot,-0)||arm.slot<0||
                arm.slot>=LIMIT_NODES||captureSlots[owner].has(arm.slot)||active.includes(arm.slot))
               fail('invalid or repeated ADT payload slot');
             captureSlots[owner].add(arm.slot);
+            if(errorArm)errorSlots[owner].add(arm.slot);
           } else if(arm.slot!==null)fail('discarded variant cannot bind a payload');
           const scopes=payload?[...active,arm.slot]:active;
           checked.push({tag:arm.tag,slot:arm.slot,
@@ -816,7 +830,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
       case 'trap':return false;
       case 'tryCatch':return ordinary(n.handler);
       case 'guestEffect':return n.effect==='throw';
-      case 'rethrow':return true;
+      case 'rethrow':case 'throwError':return true;
       case 'call':case 'namedCall':return n.args.some(ordinary)||escapes(n.target);
       case 'trapMethod':case 'trapOptionMethod':return n.name==='unwrap'||ordinary(n.receiver);
       case 'intrinsic':return ['Option.unwrap','Result.unwrap'].includes(n.name)||n.args.some(ordinary);
