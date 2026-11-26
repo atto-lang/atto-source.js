@@ -276,7 +276,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     }
     function conjunction(facts,d){
       let p=predicate(facts,d);
-      while(take('&&')){
+      while(take('and')){
         const q=predicate(p.yes,d);
         p={ir:{kind:'if',condition:p.ir,yes:q.ir,no:{kind:'bool',value:false}},yes:q.yes,no:joinFacts(p.no,q.no)};
       }
@@ -284,7 +284,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     }
     function disjunction(facts,d){
       let p=conjunction(facts,d);
-      while(take('||')){
+      while(take('or')){
         const q=conjunction(p.no,d);
         p={ir:{kind:'if',condition:p.ir,yes:{kind:'bool',value:true},no:q.ir},yes:joinFacts(p.yes,q.yes),no:q.no};
       }
