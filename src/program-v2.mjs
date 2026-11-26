@@ -708,7 +708,7 @@ class Parser {
         if(!isConst)this.expect('val');
         // This bounded slice admits only function-scope immutable int locals.
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
-        const localType=this.eat('float')?'float':this.eat('int')?'int':'inferredTrap';
+        const localType=['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':'inferredTrap';
         const name=this.name();
         const directional=this.takeDirection('<');
         if(!directional)this.expect('=');
@@ -1283,6 +1283,8 @@ function resolveProgram(parsed) {
       case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
       case 'float':case 'floatNeg':case 'floatBin':case 'floatCapture':return 'float';
       case 'trap':return ['option<int>','trapOptionResult'].includes(expr.operandType)?'trapOptionResult':'trapResult';
+      case 'optionCapture':return 'option<int>';
+      case 'resultCapture':return 'result<int,int>';
       case 'trapCapture':return 'trapResult';
       case 'trapOptionCapture':return 'trapOptionResult';
       case 'trapMethod':return expr.name==='unwrap'?'int':'bool';
@@ -1305,7 +1307,7 @@ function resolveProgram(parsed) {
       }
       case 'if':return resolvedType(expr.yes,owner);
       case 'seqVoidCall':return resolvedType(expr.value,owner);
-      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return resolvedType(expr.body,owner);
+      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return resolvedType(expr.body,owner);
       case 'adtMatch':return resolvedType(expr.arms[0].body,owner);
       default:fail('cannot infer resolved expression type '+expr.kind);
     }
@@ -1397,7 +1399,7 @@ function resolveProgram(parsed) {
           };
           if(typeof fold(init)!=='bigint')fail('directional const int requires int');
         }
-        return {kind:type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':'local',slot,init,
+        return {kind:type==='option<int>'?'optionLocal':type==='result<int,int>'?'resultLocal':type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':'local',slot,init,
           body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type}])};
       }
       case 'seqVoidCall': {
@@ -1443,7 +1445,7 @@ function resolveProgram(parsed) {
       case 'variable': {
         const captured=bindings.findLast(b=>b.name===expr.name);
         if(captured?.type==='caughtError')fail('E_CATCH_BINDING: caught Error is only available for typed rethrow');
-        if(captured)return {kind:captured.type==='trapOptionResult'?'trapOptionCapture':captured.type==='trapResult'?'trapCapture':captured.type==='float'?'floatCapture':'capture',slot:captured.slot};
+        if(captured)return {kind:captured.type==='option<int>'?'optionCapture':captured.type==='result<int,int>'?'resultCapture':captured.type==='trapOptionResult'?'trapOptionCapture':captured.type==='trapResult'?'trapCapture':captured.type==='float'?'floatCapture':'capture',slot:captured.slot};
         const index=owner.params.indexOf(expr.name);
         if(index<0) fail('unresolved identifier '+expr.name);
         return {kind:'param',index};
@@ -1488,6 +1490,11 @@ function resolveProgram(parsed) {
       case 'call': {
         const local=bindings.findLast(b=>b.name===expr.qualifier);
         if(local){
+          if(['option<int>','result<int,int>'].includes(local.type)){
+            if(expr.name!=='unwrap'||expr.args.length!==0)fail('unsupported typed local method/arity');
+            const option=local.type==='option<int>';
+            return {kind:'intrinsic',name:option?'Option.unwrap':'Result.unwrap',args:[{kind:option?'optionCapture':'resultCapture',slot:local.slot}]};
+          }
           if(!['trapResult','trapOptionResult'].includes(local.type)||!['is_ok','is_err','unwrap'].includes(expr.name)||expr.args.length!==0)fail('unsupported local Result method/arity');
           const option=local.type==='trapOptionResult';
           return {kind:option?'trapOptionMethod':'trapMethod',name:expr.name,receiver:{kind:option?'trapOptionCapture':'trapCapture',slot:local.slot}};
@@ -1659,8 +1666,8 @@ function emitProgram(program) {
         const v='_v'+expr.slot;
         return '(('+v+')=>{while('+emitExpr(expr.condition,depth+1)+'){'+v+'='+emitExpr(expr.update,depth+1)+';}return '+emitExpr(expr.body,depth+1)+';})('+emitExpr(expr.init,depth+1)+')';
       }
-      case 'capture':case 'floatCapture':case 'trapCapture':case 'trapOptionCapture':return '_v'+expr.slot;
-      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
+      case 'capture':case 'floatCapture':case 'trapCapture':case 'trapOptionCapture':case 'optionCapture':case 'resultCapture':return '_v'+expr.slot;
+      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'i32Check':
@@ -1790,7 +1797,7 @@ function emitProgram(program) {
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
       case 'tryCatch':return usesSymbol(expr.body)||usesSymbol(expr.handler);
       case 'seqVoidCall':return usesSymbol(expr.call)||usesSymbol(expr.value);
-      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
+      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
       case 'trap':return usesSymbol(expr.inner);
       case 'trapMethod':case 'trapOptionMethod':return usesSymbol(expr.receiver);
       case 'i32Check':case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesSymbol(expr.inner);
@@ -1838,7 +1845,7 @@ function emitProgram(program) {
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
       case 'tryCatch':return usesPortableRuntime(expr.body)||usesPortableRuntime(expr.handler);
       case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
-      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
+      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'i32Check':case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
       case 'match':return usesPortableRuntime(expr.subject)||
         expr.arms.some(arm=>usesPortableRuntime(arm.body));
