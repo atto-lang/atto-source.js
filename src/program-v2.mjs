@@ -1,3 +1,4 @@
+import {lowerVerifiedQuantitySource} from './verified-quantity-source.mjs';
 import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
 import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 import {TESTING_SCALAR_SOURCE, TESTING_SCALAR_EXPORTS} from './compiler-owned-testing-scalar.mjs';
@@ -17,7 +18,7 @@ const CLASS_METHOD_RESERVED=new Set([
   'default','new','class','export','import','null','this','super','extends','static',
   'constructor','prototype','__proto__','define','pub','as','end','self','int',
   'void','return','mut','private','actor','fnc','routine','bool','Symbol','let',
-  'val','const','if','fi','then','else','guard','await','task','spawn','module','trait',
+  'val','const','if','ifnot','unless','fi','then','else','guard','await','task','spawn','module','trait',
   'interface','type','rt','gen','generator','async','suspend','suspends','yield',
   'Iterator','AsyncIterator'
 ]);
@@ -27,7 +28,7 @@ const CLASS_METHOD_CALLABLE_KEYWORDS=new Set([
 ]);
 const GENERATOR_RESERVED=new Set([
   'import','from','as','extends','implements','try','catch','throw','raise','panic',
-  'recover','finally','end','fi','if','do','else','then','new','spawn','stop','done',
+  'recover','finally','end','fi','if','ifnot','unless','do','else','then','new','spawn','stop','done',
   'await','rt','async','suspend','suspends','critical','gen','generator','nlex','trap',
   'actor','isoactor','def','fnc','routine','while','for','of','loop','block','break',
   'continue','yield','guard','super','elseif','elif','switch','match','matches','is','default',
@@ -348,7 +349,7 @@ class Parser {
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
   name() {
     const t = this.peek();
-    if (t.kind !== 'id' || !TOKEN_NAME.test(t.value)) fail('identifier expected',t);
+    if (t.kind !== 'id' || !TOKEN_NAME.test(t.value) || t.value==='ifnot'||t.value==='unless') fail('identifier expected',t);
     this.i++; return t.value;
   }
   generatorIdentifier() {
@@ -712,10 +713,14 @@ class Parser {
         }else init=this.expression();
         this.expect(';');
         statements.push({kind:'local',name,init,localType});
-      } else if(this.eat('if')) {
-        const condition=this.expression();
-        // Canonical statement-only `if`; retain old ; do syntax.
-        if(!this.eat('then')){this.expect(';');this.expect('do');}
+      } else if(['if','ifnot','unless'].includes(this.peek().value)) {
+        const head=this.tokens[this.i++].value;
+        const predicate=this.expression();
+        // Negate the predicate once using the existing typed Boolean IR.
+        const condition=head==='if'?predicate:{kind:'not',inner:predicate};
+        // Canonical imperative suffix do; preserve old positive if spellings.
+        if(head!=='if')this.expect('do');
+        else if(!this.eat('do')&&!this.eat('then')){this.expect(';');this.expect('do');}
         const yes=this.statementSequence(['else','fi'],depth+1);
         const no=this.eat('else')?this.statementSequence(['fi'],depth+1):[];
         this.expect('fi');
@@ -915,9 +920,9 @@ class Parser {
         }
         if (op==='?' && min<=1) {
           this.i++;
-          const yes=this.expression();
+          const yes=this.ternaryArm(0);
           this.expect(':');
-          const no=this.expression(1); // right associative, branches remain lazy
+          const no=this.ternaryArm(1); // right associative, branches remain lazy
           left={kind:'if',condition:left,yes,no};
           continue;
         }
@@ -944,6 +949,15 @@ class Parser {
       }
       return left;
     } finally {this.depth--;}
+  }
+  ternaryArm(min) {
+    if(!this.eat('{'))return this.expression(min);
+    if(!this.eat('return')&&!this.eat('^'))
+      fail('ternary block requires an explicit result; lexical prefixes are unsupported',this.peek(),'E_VALUE_ARM');
+    const value=this.expression();
+    this.eat(';');
+    if(!this.eat('}'))fail("single-result ternary block requires closing '}'",this.peek(),'E_VALUE_ARM');
+    return value;
   }
   primary() {
     if(this.eat('!')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
@@ -1884,6 +1898,10 @@ export function compileToProgramIRV2(source) {
   rejectUnsupportedHttpActors(tokens,fail);
   rejectUnsupportedStaticSelect(tokens);
   rejectUnsupportedTrapEffect(tokens);
+  const quantity=lowerVerifiedQuantitySource(tokens,fail);
+  if(quantity!==null)return validateProgramIRV2({
+    schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,integerModel:PROGRAM_IR_INT_MODEL,...quantity
+  });
   const linked=lowerCompilerOwnedTestingImports(tokens);
   const parsed=bindCompilerOwnedTestingImports(new Parser(linked.rootTokens).parse(),linked.locals);
   const program=resolveProgram(parsed);
