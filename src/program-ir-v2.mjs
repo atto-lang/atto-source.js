@@ -388,6 +388,21 @@ export function validateProgramIRV2(input) {
           ...(named?{paramOrder:order}:{})
         };
       }
+      case 'scalarWhile': {
+        // Checked i64 state only. This validates structural/type safety,
+        // not a source-level proof or termination certificate.
+        record(expr,['kind','slot','init','condition','update','body'],'scalar while');
+        if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
+           expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
+          fail('invalid or repeated loop slot');
+        captureSlots[owner].add(expr.slot);
+        const init=node(expr.init,owner,depth+1,'int',active);
+        const scoped=[...active,expr.slot];
+        return {kind:'scalarWhile',slot:expr.slot,init,
+          condition:node(expr.condition,owner,depth+1,'bool',scoped),
+          update:node(expr.update,owner,depth+1,'int',scoped),
+          body:node(expr.body,owner,depth+1,expected,scoped)};
+      }
       case 'local':case 'floatLocal':case 'trapLocal': {
         record(expr,['kind','slot','init','body'],'immutable numeric local');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
