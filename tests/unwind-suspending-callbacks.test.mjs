@@ -66,3 +66,32 @@ test('outer catch still outranks recover after suspended inner cleanup',async()=
   assert.equal(r.kind,'caught');assert.equal(r.value,42);
   assert.deepEqual(trace,['cleanup','catch']);assert.equal(c.return_frame(0).value,0);
 });
+
+test('external cancellation during suspended return seals outcome and drains outer cleanup',async()=>{
+  const c=context(),stop=Error('stop'),cause=Error('late cleanup failure'),trace=[];
+  let release;const gate=new Promise(r=>{release=r;});
+  c.push_frame(1);c.register_defer(()=>trace.push('outer'));
+  c.push_frame(2);c.register_susp_defer(async()=>{await gate;c.signal_failure('raise',cause);});
+  const pending=c.return_frame_async(42);
+  assert.equal(c.request_cancel(stop),true);
+  assert.equal(c.request_cancel(Error('duplicate')),false);
+  assert.throws(()=>c.retire(),/E_UNWIND_REENTRANT/);
+  release();
+  const r=await pending;
+  assert.equal(r.failure_kind,'cancel');assert.equal(r.error,stop);
+  assert.deepEqual(r.suppressed,[cause]);assert.deepEqual(r.suppressed_kinds,['panic']);
+  assert.deepEqual(trace,['outer']);assert.equal(c.depth,0);
+  assert.throws(()=>c.request_cancel(Error('stale')),/E_NO_SUSPENDED_UNWIND/);
+  c.retire();
+});
+test('cancellation during suspended recovery ignores recovered success and older handlers',async()=>{
+  const c=context(),original=Error('original'),stop=Error('stop'),trace=[];
+  let release;const gate=new Promise(r=>{release=r;});
+  c.push_frame(1);c.register_recover(()=>{trace.push('BAD');return c.recovered(9);});
+  c.register_susp_recover(async()=>{await gate;return c.recovered(42);});
+  const pending=c.dispatch_failure_async('raise',original);
+  assert.equal(c.request_cancel(stop),true);release();
+  const r=await pending;
+  assert.equal(r.failure_kind,'cancel');assert.equal(r.error,stop);
+  assert.deepEqual(r.suppressed,[original]);assert.deepEqual(trace,[]);
+});
