@@ -337,7 +337,9 @@ class Parser {
       while(this.peek().value==='const'&&['Record','Tuple','struct'].includes(this.ts[this.pos+1]?.value))
         this.aggregateConst(params);
       this.expect('return');
-      const body=this.expr();this.expect(';');this.expect(braced?'}':'end');
+      const body=this.peek().value==='seq' && this.ts[this.pos+1]?.value!=='('
+        ? (this.pos++,this.sequence(false)) : this.expr();
+      this.expect(';');this.expect(braced?'}':'end');
       functions.push({name,params,body,pub});
     }
     if(module)this.expect('end');
@@ -371,8 +373,21 @@ class Parser {
       return left;
     }finally{this.depth--;}
   }
+  sequence(parenthesized){
+    const items=[];
+    do {
+      if(items.length>=128)throw new CompileError('sequence item limit',this.peek());
+      items.push(this.expr());
+    }while(this.match(','));
+    if(parenthesized)this.expect(')');
+    return {kind:'seq',items};
+  }
   primary(){
     const t=this.peek();
+    if(t.kind==='id'&&t.value==='seq'&&this.ts[this.pos+1]?.value==='('){
+      this.pos+=2;
+      return this.sequence(true);
+    }
     if(this.match('-')){
       // The absolute magnitude 2^63 is legal only as a negated literal.
       // All other positive literals must remain within signed i64.
@@ -463,6 +478,9 @@ export function compileIR(input) {
           lower(e.left, depth+1) + ',' + lower(e.right, depth+1) + ')';
       return 'BigInt.asIntN(64,(' + lower(e.left, depth+1) + ')' + e.op + '(' +
         lower(e.right, depth+1) + '))';
+    }
+    if (e.kind === 'seq') {
+      return '(' + e.items.map(item => lower(item, depth+1)).join(',') + ')';
     }
     if (e.kind === 'call') {
       return '_f' + e.target + '(' + e.args.map(arg => lower(arg, depth+1)).join(',') + ')';
