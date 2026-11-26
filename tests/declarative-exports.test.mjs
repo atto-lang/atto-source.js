@@ -69,3 +69,13 @@ test('identical resolved exports deduplicate without widening package visibility
   const ir=compileToProgramIRV2('export pub Foo; export pub class Foo;\n'+declarations);
   assert.deepEqual(ir.fileExports,[{name:'Foo',kind:'class',visibility:'public'}]);
 });
+
+test('file export cannot escape a scalar module or callable body', () => {
+  for(const compile of [compileScalar,compileProgramV2]) {
+    for(const src of [
+      'define module M as export pub fnc hidden; fnc hidden(): int { return 42; } end',
+      'define module M as fnc hidden(): int { return 42; } export pub hidden; end',
+      'fnc hidden(): int { return 42; } fnc main(): int { export pub hidden; return hidden(); }'
+    ]) assert.throws(()=>compile(src),undefined,src);
+  }
+});
