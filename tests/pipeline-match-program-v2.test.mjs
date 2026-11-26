@@ -42,3 +42,8 @@ test('invalid match stages are rejected before ESM emission',()=>{
     'result |> match over { on Ok(v) v, on Err(e) -> 0, }'
   ])assert.throws(()=>compileProgramV2(program(expr)),/error:/,expr);
 });
+
+test('explicit result type cannot silently become bool in ADT match',()=>{
+  const source='pub fnc f(Result<int,int> result):bool { return result |> match<int> over { on Ok(v) -> true, on Err(e) -> false, }; }';
+  assert.throws(()=>compileProgramV2(source),/explicit match<int> requires integer arm results/);
+});
