@@ -320,7 +320,7 @@ function rejectUnsupportedStaticSelect(tokens) {
   }
 }
 class Parser {
-  constructor(tokens) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;}
+  constructor(tokens) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.scalarGenericNames = new Set();}
   peek() {return this.tokens[this.i];}
   eat(s) {if(this.peek().value === s) {this.i++; return true;} return false;}
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
@@ -536,6 +536,35 @@ class Parser {
       fail('E_PRELUDE_SPOOF: cannot define compiler-owned core name '+name,start);
     // Xor(a, b) is a builtin; a user function could never be called by that name.
     if(name==='Xor')fail("'Xor' is a reserved builtin name",start);
+    // Bounded source-local generic identity profile. Admit only the exact
+    // parametric body, so specializing T=int cannot conceal an unproved
+    // operation on T. No exported, module, method, or runtime generic ABI.
+    if(this.eat('<')){
+      if(!fnc||returnFirst||pub||moduleName!==null)
+        fail('generic identity profile requires a private root fnc',start,'E_GENERIC_UNSUPPORTED');
+      if(this.scalarGenericNames.size>=16||this.scalarGenericNames.has(name))
+        fail('generic template budget or duplicate name',start,'E_GENERIC_UNSUPPORTED');
+      const genericParameter=this.name();
+      if(genericParameter===name||GENERATOR_RESERVED.has(genericParameter)||CLASS_METHOD_RESERVED.has(genericParameter))
+        fail('invalid generic type binder',start,'E_GENERIC_BINDER');
+      this.expect('>');
+      this.expect('(');
+      let param;
+      if(this.peek().value===genericParameter&&this.tokens[this.i+1]?.value!==':'){
+        this.expect(genericParameter);param=this.name();
+      }else{
+        param=this.name();this.expect(':');this.expect(genericParameter);
+      }
+      if(param===genericParameter||param===name||GENERATOR_RESERVED.has(param)||CLASS_METHOD_RESERVED.has(param))
+        fail('invalid generic value binder',start,'E_GENERIC_BINDER');
+      this.expect(')');
+      if(!this.eat('->'))this.expect(':');
+      this.expect(genericParameter);
+      this.expect('{');this.expect('return');this.expect(param);this.expect(';');this.expect('}');
+      this.scalarGenericNames.add(name);
+      return {module:null,name,kind:'fnc',pub:false,params:[param],
+        body:{kind:'variable',name:param},genericParameter};
+    }
     this.expect('(');
     const params = [], paramTypes = [];
     if (!this.eat(')')) {
@@ -921,13 +950,24 @@ class Parser {
     const first=this.name();
     let qualifier=null, symbol=first;
     if(this.eat('.')) {qualifier=first; symbol=this.name();}
-    if (!this.eat('(')) {
+    // Restrict generic-call lookahead to earlier, admitted root declarations.
+    // Do not globally reinterpret a < b > (c) as a generic invocation.
+    let genericLabel=null,explicitGeneric=false;
+    if(qualifier===null&&this.scalarGenericNames.has(symbol)&&this.eat('<')){
+      explicitGeneric=true;
+      if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
+        genericLabel=this.name();this.expect('=');
+      }
+      this.expect('int');this.expect('>');this.expect('(');
+    }
+    if (!explicitGeneric&&!this.eat('(')) {
       if (qualifier) fail('bare module properties not yet supported',token);
       // Existing Oreslang Option constructor spelling: bare None.
       if(first==='None')return {kind:'call',qualifier:'Option',name:'none',args:[]};
       return {kind:'variable', name:first};
     }
     const args=this.argumentsAfterOpen();
+    if(explicitGeneric)return {kind:'call',qualifier,name:symbol,args,explicitGeneric,genericLabel};
     // Named integer operations replace the reserved %, ^ and ^^ operators.
     // The binary ops below are internal IR names, never source syntax.
     if(qualifier==='Integer'){
@@ -1047,6 +1087,8 @@ function resolveProgram(parsed) {
     const kind=targetClasses.length?'class':'fnc';
     if(entry.kind!==null&&entry.kind!==kind)fail('export kind mismatch '+entry.name);
     const targets=targetClasses.length?targetClasses:targetFns;
+    if(targets.some(t=>t.genericParameter!==undefined))
+      fail('generic identity template cannot be exported',null,'E_GENERIC_UNSUPPORTED');
     if(entry.visibility==='package'&&targets.some(t=>t.pub))
       fail('package export conflicts with public declaration '+entry.name);
     if(kind==='fnc'&&targets.some(t=>t.kind==='routine')&&entry.visibility==='public')
@@ -1065,6 +1107,12 @@ function resolveProgram(parsed) {
     });
     return {methodSlots,methodFamilies};
   });
+  for(const fn of functions.filter(f=>f.genericParameter!==undefined)){
+    if(functions.filter(f=>f.module===null&&f.name===fn.name).length!==1||
+       generators.some(g=>g.module===null&&g.name===fn.name)||
+       modules.includes(fn.name)||classes.some(c=>c.name===fn.name))
+      fail('generic template name conflicts with a declaration',null,'E_GENERIC_BINDER');
+  }
   functions.forEach((fn,i)=>{
     const qualified=(fn.module===null?'@file/':'@module/'+fn.module+'/')+fn.name;
     const slot=qualified+'/'+fn.params.length;
@@ -1283,6 +1331,19 @@ function resolveProgram(parsed) {
         if(typeof target!=='number')
           fail('generator values are not source-callable in JS sync generator v1; consume them through the iterator ABI');
         if(expr.qualifier!==null && mod!==owner.module && !functions[target].pub) fail('private module member '+key);
+        const genericParameter=functions[target].genericParameter;
+        if(expr.explicitGeneric&&genericParameter===undefined)
+          fail('generic specialization requires a generic declaration',null,'E_GENERIC_BINDER');
+        if(genericParameter!==undefined){
+          if(owner.module!==null||expr.qualifier!==null||
+             owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))
+            fail('generic callable scope or shadowing unsupported',null,'E_GENERIC_BINDER');
+          if(expr.genericLabel!=null&&expr.genericLabel!==genericParameter)
+            fail('unknown named generic parameter '+expr.genericLabel,null,'E_GENERIC_BINDER');
+          // The existing checked IR call validates int arguments in both
+          // positional and named formal-slot order. The single int instance
+          // has no runtime type argument, dynamic dispatch, or erased fallback.
+        }
         const bound=bindArguments(functions[target].params,expr.args,key,
           owner,depth,bindings);
         return bound.hasNamed?{kind:'namedCall',target,args:bound.args,paramOrder:bound.paramOrder}:
@@ -1313,7 +1374,10 @@ function resolveProgram(parsed) {
       default: fail('unsupported expression node');
     }
   }
-  const resolved=functions.map(fn=>({...fn,body:fn.body===null?null:resolve(fn.body,fn)}));
+  const resolved=functions.map(fn=>{
+    const {genericParameter,...concrete}=fn;
+    return {...concrete,body:fn.body===null?null:resolve(fn.body,fn)};
+  });
   const resolvedGenerators=generators.map(gen=>({
     ...gen,yields:gen.yields.map(expr=>resolve(expr,gen))
   }));
