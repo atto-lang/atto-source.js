@@ -1522,7 +1522,7 @@ function resolveProgram(parsed) {
         const init=optionBoolInit?{kind:'intrinsic',name:expr.init.name==='some'?'Option.boolSome':'Option.boolNone',args:expr.init.args.map(a=>{if(a.name!==null)fail('named Option constructor argument');return resolve(a.expr,owner,depth+1,bindings);})}:resolve(expr.init,owner,depth+1,bindings);
         const type=['inferredTrap','directionalInferred'].includes(expr.localType)?resolvedType(init,owner):expr.localType==='constInt'?'int':expr.localType;
         if(['trapResult','trapOptionResult','trapBoolResult'].includes(expr.localType)&&(init.kind!=='trap'||resolvedType(init,owner)!==expr.localType))fail('E_TRAP_TYPE: typed Result local requires matching checked trap initializer');
-        if(expr.localType==='inferredTrap'&&!['trapResult','trapOptionResult','trapBoolResult'].includes(type))fail('inferred trap local requires Result');
+        if(expr.localType==='inferredTrap'&&!['trapResult','trapOptionResult'].includes(type))fail('inferred trap local requires Result');
         if(expr.localType==='directionalInferred'&&!['int','float','trapResult','trapOptionResult'].includes(type))fail('directional binding requires supported scalar or trapped Result');
         if(expr.localType==='constInt'){
           // Narrow, fail-closed constant-expression subset: evaluate only
@@ -1973,7 +1973,10 @@ function emitProgram(program) {
     }
   }
   const classMethods=(program.classes??[]).flatMap(cls=>cls.methods);
-  if(JSON.stringify(program).includes('"trapBoolLocal"')||program.functions.some(fn=>fn.returnType==='bool'||fn.paramTypes?.includes('bool'))||
+  function containsKind(value,kind){return !!value&&typeof value==='object'&&(value.kind===kind||Object.values(value).some(v=>containsKind(v,kind)));}
+  const hasBoolTrap=containsKind(program,'trapBoolLocal');
+  const hasBoolOption=containsKind(program,'optionBoolLocal');
+  if(hasBoolTrap||program.functions.some(fn=>fn.returnType==='bool'||fn.paramTypes?.includes('bool'))||
      classMethods.some(method=>method.returnType==='bool'||method.paramTypes.includes('bool')))
     out.push('function _checkbool(v){if(typeof v!=="boolean")throw new TypeError("Oreslang bool required");return v;}');
   function usesSymbol(expr) {
@@ -2070,7 +2073,7 @@ function emitProgram(program) {
       'function _checkresult(v){return _checktag(v,["Ok","Err"]);}',
       'function _some(v){return _tag("Some",_check(v));}',
       'function _none(){return _tag("None",null);}',
-      'function _boolSome(v){if(typeof v!=="boolean")throw new TypeError("bool required");return _tag("Some",v);}',
+      ...(hasBoolOption?['function _boolSome(v){if(typeof v!=="boolean")throw new TypeError("bool required");return _tag("Some",v);}']:[]),
       'function _ok(v){return _tag("Ok",_check(v));}',
       'function _err(v){return _tag("Err",_check(v));}',
       'function _is_some(v){return _checkoption(v).kind==="Some";}',
@@ -2111,7 +2114,7 @@ function emitProgram(program) {
       ...(hasCheckedUnwrap?[
       'function _unwrapFailure(name,message,original){const e=new Error(message,{cause:original});Object.defineProperty(e,"name",{value:name});_checkedUnwrapBrand.add(e);throw Object.freeze(e);}',
       'function _optionUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Option unwrap carrier");const x=_checkoption(v);if(x.kind==="Some")return x.value;return _unwrapFailure("OptionUnwrapError","cannot unwrap None",undefined);}',
-      'function _boolOptionUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted bool Option");if(v.kind==="Some"&&typeof v.value==="boolean")return v.value;if(v.kind!=="None"||v.value!==null)throw new TypeError("invalid bool Option");return _unwrapFailure("OptionUnwrapError","cannot unwrap None",undefined);}',
+      ...(hasBoolOption?['function _boolOptionUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted bool Option");if(v.kind==="Some"&&typeof v.value==="boolean")return v.value;if(v.kind!=="None"||v.value!==null)throw new TypeError("invalid bool Option");return _unwrapFailure("OptionUnwrapError","cannot unwrap None",undefined);}']:[]),
       'function _resultUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Result unwrap carrier");const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",x.value);}',
       ...(program.functions.some(fn=>fn.returnType==='result<int,string>')?['function _stringResultUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Result unwrap carrier");if(v.kind==="Ok")return _check(v.value);if(v.kind!=="Err"||typeof v.value!=="string")throw new TypeError("invalid typed Result payload");return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",v.value);}']:[]),
       'function _expectPanic(message,cause){if(typeof message!=="string")throw new TypeError("expect message must be string");const e=new Error(message,{cause});Object.defineProperty(e,"effect",{value:"panic",enumerable:true});throw Object.freeze(e);}',
