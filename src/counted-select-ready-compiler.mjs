@@ -43,6 +43,18 @@ class Parser {
     if(projector!==null){const n=this.name();if(projector==='@count')return expr('int',this.get(n,'int').slot);if(n!==projector)this.fail('projection may reference only its binding');return expr('int','_x');}
     if(this.eat('await')){
       if(this.pureCondition)this.fail('effect in condition');
+      // A closed zero-arg scalar lambda may be invoked directly, without
+      // allocating a Future or scheduling a task. Retain the lexical token
+      // spelling: the word "or" must not become callable syntax.
+      const grouped=this.peek().value==='('&&this.ts[this.i+1]?.spelling==='||';
+      if(grouped||this.peek().spelling==='||'){
+        if(this.activeBatch)this.fail('await outstanding counted batch first');
+        if(grouped)this.need('(');
+        this.need('or');this.need('->');
+        const value=this.check(this.expression(0,'$no_binding'),'int');
+        if(grouped)this.need(')');
+        return expr('int','(()=>'+value+')()');
+      }
       const legacy=this.eat('nb');
       if(this.eat('select')){
         if(this.activeBatch)this.fail('await outstanding counted batch first');
