@@ -1704,6 +1704,7 @@ function emitProgram(program) {
           if(d>MAX_DEPTH)fail('loop codegen depth exceeded');
           if(step.kind==='bind')return (step.mutable?'let ':'const ')+'_v'+step.slot+'='+emitExpr(step.init,d+1)+';';
           if(step.kind==='set')return '_v'+step.slot+'='+emitExpr(step.value,d+1)+';';
+          if(step.kind==='loopExit')return 'if('+emitExpr(step.condition,d+1)+'){'+step.exit+';}';
           return 'while('+emitExpr(step.condition,d+1)+'){'+emitSteps(step.steps,d+1)+'}';
         }).join('');
         return '(()=>{'+expr.states.map(s=>'let _v'+s.slot+'='+emitExpr(s.init,depth+1)+';').join('')+
@@ -1839,7 +1840,7 @@ function emitProgram(program) {
       case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'stringCompare':case 'numericCompare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
       case 'scalarWhileMany': {
-        const visit=steps=>steps.some(s=>s.kind==='loop'?usesSymbol(s.condition)||visit(s.steps):usesSymbol(s.init??s.value));
+        const visit=steps=>steps.some(s=>s.kind==='loop'?usesSymbol(s.condition)||visit(s.steps):s.kind==='loopExit'?usesSymbol(s.condition):usesSymbol(s.init??s.value));
         return expr.states.some(s=>usesSymbol(s.init))||usesSymbol(expr.condition)||visit(expr.steps)||usesSymbol(expr.body);
       }
       case 'scalarWhile':return [expr.init,expr.condition,expr.update,expr.body].some(usesSymbol);
@@ -1886,7 +1887,7 @@ function emitProgram(program) {
       case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'stringCompare':case 'numericCompare':case 'symbolCompare':
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
       case 'scalarWhileMany': {
-        const visit=steps=>steps.some(s=>s.kind==='loop'?usesPortableRuntime(s.condition)||visit(s.steps):usesPortableRuntime(s.init??s.value));
+        const visit=steps=>steps.some(s=>s.kind==='loop'?usesPortableRuntime(s.condition)||visit(s.steps):s.kind==='loopExit'?usesPortableRuntime(s.condition):usesPortableRuntime(s.init??s.value));
         return expr.states.some(s=>usesPortableRuntime(s.init))||usesPortableRuntime(expr.condition)||visit(expr.steps)||usesPortableRuntime(expr.body);
       }
       case 'scalarWhile':return [expr.init,expr.condition,expr.update,expr.body].some(usesPortableRuntime);
