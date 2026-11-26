@@ -1,3 +1,4 @@
+import {isIdentifier} from './portable-unicode-identifier-v1.mjs';
 /**
  * Strict JSON-safe resolved IR contract for the experimental program-v2 backend.
  * This is a backend-local migration seam, NOT yet the shared canonical Oreslang IR.
@@ -5,7 +6,6 @@
 export const PROGRAM_IR_VERSION=2;
 export const PROGRAM_IR_DIALECT='oreslang.program';
 export const PROGRAM_IR_INT_MODEL='signed-i64-checked-provisional';
-const ID=/^[A-Za-z_Α-ΡΣ-Ωα-ω][A-Za-z0-9_Α-ΡΣ-Ωα-ω]{0,127}$/;
 const DEC=/^(?:0|[1-9][0-9]*|-[1-9][0-9]*)$/;
 const MIN=-(1n<<63n), MAX=(1n<<63n)-1n;
 const LIMIT_NODES=30000,LIMIT_DEPTH=192;
@@ -81,7 +81,7 @@ function sequence(v,max,context){
   return v;
 }
 function ident(s,where) {
-  if(typeof s!=='string'||!ID.test(s))fail(where+': invalid identifier');
+  if(typeof s!=='string'||!isIdentifier(s))fail(where+': invalid identifier');
   return s;
 }
 function classIdent(s,where){
