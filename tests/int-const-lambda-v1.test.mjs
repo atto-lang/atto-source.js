@@ -221,3 +221,33 @@ test('parenthesized apply rejects scalar grouping and bad tuple shapes', () => {
     ['(41,true) |> v.apply()', 'E_SYNTAX'],
   ]) assert.throws(() => compile(local(head, 'return ' + expression + ';')), {code}, expression);
 });
+
+test('portable explicit local callable signature preserves direct/call/apply bytes', async () => {
+  for (const [sig,lambda,args,tuple] of [
+    ['fnc(int,int)->int','|a,b| : int -> a+2','40,22','(40,22)'],
+    ['fnc(int,bool)->int','|a,b| : int -> a+2','40,true','(40,true)'],
+    ['fnc(int)->int','|a| : int -> a+2','40','(40,)'],
+    ['fnc()->int','|| : int -> 42','','()'],
+  ]) {
+    for (const binding of ['val','const']) {
+      const prefix = 'pub fnc main():int { '+binding+' f: '+sig+' = '+lambda+'; return ';
+      const direct = compile(prefix+'f('+args+'); }');
+      for (const expr of ['f('+args+')','f.call('+args+')','f.apply('+tuple+')']) {
+        const source = prefix+expr+'; }';
+        assert.equal(compile(source),direct,source);
+        assert.equal(await guest(source),42n,source);
+      }
+    }
+  }
+});
+
+test('explicit callable signature cannot hide arity, mutable binding or type mismatch', () => {
+  for (const [binding,code] of [
+    ['val f: fnc(int,int)->int = |a| : int -> a;', 'E_ARITY'],
+    ['val f: fnc(int)->int = |bool a| : int -> 42;', 'E_TYPE'],
+    ['const f: fnc(bool)->int = |a| : int -> a;', 'E_TYPE'],
+    ['val f: fnc(int)->bool = |a| : int -> a;', 'E_SYNTAX'],
+    ['val f: fnc(int)->int = |a| : int -> outside;', 'E_CONST'],
+  ]) assert.throws(() => compile('pub fnc main():int { '+binding+' return f(42); }'),{code},binding);
+  assert.throws(() => compile('pub fnc main():int { let f: fnc(int)->int = |a| : int -> a; return f(42); }'));
+});
