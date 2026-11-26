@@ -36,6 +36,11 @@ const sharedQuotients = [
     "name": "215-checked-literal-quotient-endpoints.atto",
     "source": "// expect-exit: 42\npub fnc main(): int {\n  return (9007199254740993 / 1 eq 9007199254740993) &&\n         (-9223372036854775808 / 1 eq -9223372036854775808) &&\n         (9223372036854775807 / 2 eq 4611686018427387903)\n         ? 42 : 1;\n}\n",
     "blob": "09baea8bbd05b4a3ff9e35433214a035d4b74f65"
+  },
+  {
+    "name": "215-checked-literal-quotient-endpoints-v2.atto",
+    "source": "// expect-exit: 42\npub fnc main(): int {\n  return (9007199254740993 / 1 eq 9007199254740993) &&\n         (-9223372036854775808 / 1 eq -9223372036854775808) &&\n         (9223372036854775807 / 2 eq 4611686018427387903) &&\n         (-1 / 2 eq 0) && (1 / -2 eq 0) &&\n         (0 / -9223372036854775808 eq 0) &&\n         (-9223372036854775808 / -9223372036854775808 eq 1) &&\n         (-9223372036854775808 / 3 eq -3074457345618258602) &&\n         (9223372036854775807 / -1 eq -9223372036854775807)\n         ? 42 : 1;\n}\n",
+    "blob": "02108bee34fe4bcd051c22fbfdae0ef950e7c502"
   }
 ];
 for (const f of sharedQuotients) test('shared Rust/Forge quotient: '+f.name, async()=>{
