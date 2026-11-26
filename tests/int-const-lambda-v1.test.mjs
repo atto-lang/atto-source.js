@@ -187,3 +187,37 @@ test('scalar tuple pipeline admission rejects shadowing, escape and wrong shape'
     ['val args = tuple(41,true); args = tuple(0,false); return v.apply(args);', 'E_SYNTAX'],
   ]) assert.throws(() => compile(local(head, call)), {code}, call);
 });
+
+test('explicit parenthesized tuples use the same call lowering, including zero and singleton arity', async () => {
+  for (const [head, args, tuple] of [
+    ['|| : int -> 42;', '', '()'],
+    ['|int x| : int -> x + 1;', '41', '(41,)'],
+    ['|int x,bool _| : int -> x + 1;', '41,true', '(41,true)'],
+    ['|int x,bool _| : int -> x + 1;', '41,true', '(41,true,)'],
+  ]) {
+    const direct = compile(local(head, 'return v(' + args + ');'));
+    for (const body of [
+      'return v.apply(' + tuple + ');',
+      'return ' + tuple + ' |> v.apply;',
+      'val args = ' + tuple + '; return v.apply(args);',
+      'val args = ' + tuple + '; return args |> v.apply;',
+    ]) {
+      const source = local(head, body);
+      assert.equal(compile(source), direct, source);
+      assert.equal(await guest(source), 42n, source);
+    }
+  }
+});
+
+test('parenthesized apply rejects scalar grouping and bad tuple shapes', () => {
+  assert.throws(() => compile(local('|int x| : int -> x + 1;', 'return v.apply((41));')), {code:'E_SYNTAX'});
+  const head = '|int x,bool _| : int -> x + 1;';
+  for (const [expression, code] of [
+    ['v.apply((41,))', 'E_ARITY'],
+    ['v.apply((41,true,0))', 'E_ARITY'],
+    ['v.apply((41,42))', 'E_TYPE'],
+    ['v.apply((41,true),0)', 'E_SYNTAX'],
+    ['(41,true) |> v.bind', 'E_SYNTAX'],
+    ['(41,true) |> v.apply()', 'E_SYNTAX'],
+  ]) assert.throws(() => compile(local(head, 'return ' + expression + ';')), {code}, expression);
+});
