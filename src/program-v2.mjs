@@ -1485,6 +1485,16 @@ function emitProgram(program) {
       case 'symbol':return '_symbol('+JSON.stringify(expr.value)+')';
       case 'bool': return expr.value?'true':'false';
       case 'param':return '_p'+expr.index;
+      case 'scalarWhileMany': {
+        const emitSteps=(steps,d)=>steps.map(step=>{
+          if(d>MAX_DEPTH)fail('loop codegen depth exceeded');
+          if(step.kind==='bind')return (step.mutable?'let ':'const ')+'_v'+step.slot+'='+emitExpr(step.init,d+1)+';';
+          if(step.kind==='set')return '_v'+step.slot+'='+emitExpr(step.value,d+1)+';';
+          return 'while('+emitExpr(step.condition,d+1)+'){'+emitSteps(step.steps,d+1)+'}';
+        }).join('');
+        return '(()=>{'+expr.states.map(s=>'let _v'+s.slot+'='+emitExpr(s.init,depth+1)+';').join('')+
+          'while('+emitExpr(expr.condition,depth+1)+'){'+emitSteps(expr.steps,depth+1)+'}return '+emitExpr(expr.body,depth+1)+';})()';
+      }
       case 'scalarWhile': {
         const v='_v'+expr.slot;
         return '(('+v+')=>{while('+emitExpr(expr.condition,depth+1)+'){'+v+'='+emitExpr(expr.update,depth+1)+';}return '+emitExpr(expr.body,depth+1)+';})('+emitExpr(expr.init,depth+1)+')';
@@ -1612,6 +1622,10 @@ function emitProgram(program) {
       case 'call':case 'namedCall':case 'intrinsic':return expr.args.some(usesSymbol);
       case 'binary':case 'floatBin':case 'compare':case 'numericCompare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
+      case 'scalarWhileMany': {
+        const visit=steps=>steps.some(s=>s.kind==='loop'?usesSymbol(s.condition)||visit(s.steps):usesSymbol(s.init??s.value));
+        return expr.states.some(s=>usesSymbol(s.init))||usesSymbol(expr.condition)||visit(expr.steps)||usesSymbol(expr.body);
+      }
       case 'scalarWhile':return [expr.init,expr.condition,expr.update,expr.body].some(usesSymbol);
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
       case 'tryCatch':return usesSymbol(expr.body)||usesSymbol(expr.handler);
@@ -1655,6 +1669,10 @@ function emitProgram(program) {
       case 'call':case 'namedCall':return expr.args.some(usesPortableRuntime);
       case 'binary':case 'floatBin':case 'compare':case 'numericCompare':case 'symbolCompare':
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
+      case 'scalarWhileMany': {
+        const visit=steps=>steps.some(s=>s.kind==='loop'?usesPortableRuntime(s.condition)||visit(s.steps):usesPortableRuntime(s.init??s.value));
+        return expr.states.some(s=>usesPortableRuntime(s.init))||usesPortableRuntime(expr.condition)||visit(expr.steps)||usesPortableRuntime(expr.body);
+      }
       case 'scalarWhile':return [expr.init,expr.condition,expr.update,expr.body].some(usesPortableRuntime);
       case 'if':return usesPortableRuntime(expr.condition)||
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
