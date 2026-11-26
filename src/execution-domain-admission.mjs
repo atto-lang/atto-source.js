@@ -23,6 +23,9 @@ export function rejectExecutionDomains(tokens, fail) {
     if (token.kind !== 'id') continue;
     const next = tokens[i + 1];
     const opensBlock = next?.kind === 'sym' && next.value === '{';
+    if (token.value === 'unsafe') {
+      fail('E_UNSAFE_UNSUPPORTED: unsafe effects and native grants are unavailable in JS guest code', token);
+    }
     if (DOMAIN_WORDS.has(token.value)) {
       fail('execution domain \'' + token.value + '\' is reserved and not lowered by the JS backend;'
         + ' no implicit CPU fallback', token);

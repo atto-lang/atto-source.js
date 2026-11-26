@@ -84,6 +84,7 @@ function lex(src) {
     const loc={line,col};
     if(/[A-Za-z_]/.test(src[i])){
       let s='';while(i<src.length&&/[A-Za-z0-9_]/.test(src[i])){s+=src[i];advance();}
+      if(s==='unsafe') throw new CompileError('E_UNSAFE_UNSUPPORTED: unsafe effects and native grants are unavailable in JS guest code',loc);
       // A typed Topic receiver may be a local, parameter or import. Until
       // scalar ESM owns actor/group capabilities, share! and Result lowering,
       // reject actual member publication before producing source/IR artifacts.

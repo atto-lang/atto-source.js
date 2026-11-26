@@ -284,6 +284,7 @@ function tokenize(source) {
         word += source[pos]; advance();
       }
       if (word.length > 128) fail('identifier limit',start);
+      if (word==='unsafe') fail('E_UNSAFE_UNSUPPORTED: unsafe effects and native grants are unavailable in JS guest code',start);
       // Never parse a contextual ownership bang as a macro or ordinary call;
       // this ESM compiler lacks typechecked move/borrow/share lowering.
       if (missingBangKeywordSeparator(word, source.slice(pos)))

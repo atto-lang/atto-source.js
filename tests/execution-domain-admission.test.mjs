@@ -60,3 +60,15 @@ for (const [frontend, compileSource] of Object.entries(FRONTENDS)) {
     assert.doesNotThrow(() => compileSource(CONTROLS[frontend]));
   });
 }
+
+for (const [frontend, compileSource] of Object.entries(FRONTENDS)) {
+  for (const source of [
+    'pub unsafe fnc main(): int { return 42; }',
+    'pub fnc main(): int { unsafe { } return 42; }',
+    'pub fnc unsafe(): int { return 42; }',
+    'pub fnc main(): int { return 42; } // inert\runsafe',
+  ]) test(frontend+' denies unsafe before lowering: '+source, () =>
+    assert.throws(() => compileSource(source), /E_UNSAFE_UNSUPPORTED/));
+  test(frontend+' permits longer unsafe-like identifier and inert comment', () =>
+    assert.doesNotThrow(() => compileSource(CONTROLS[frontend].replaceAll('gpu','unsafe_tools'))));
+}
