@@ -44,3 +44,35 @@ test('typed match and checked unwrap reject invalid source and forged IR',()=>{
   assert.throws(()=>compileProgramIRV2(ir),/error: program IR:/);
  }
 });
+
+const exact = `declare type Bounded = int where self >= 1 and self <= 42;
+
+pub fnc main() -> int {
+    val Option<int> x = None;
+
+    return trap! x.unwrap() |> match<int>  over
+        on Ok(n): int -> n,
+        on Err(): int -> 42,
+    end;
+}
+`;
+test('exact user source and local dynamic Some/None compile and execute',async()=>{
+ assert.equal((await load(exact)).main(),42n);
+ assert.equal((await load(exact.replace('= None;','= Some(7);'))).main(),7n);
+ const dynamic=exact.replace('pub fnc main()','pub fnc main(bool present)').replace('= None;','= present ? Some(7) : None;');
+ const guest=await load(dynamic);assert.equal(guest.main(true),7n);assert.equal(guest.main(false),42n);
+ const result=exact.replace('Option<int> x = None','Result<int,int> x = Err(9)');
+ assert.equal((await load(result)).main(),42n);
+});
+test('refinements are validated, not erased when active or invalid; locals are typed',()=>{
+ for(const s of [exact.replace('<= 42','<= 0'),exact.replace('Bounded','Option'),exact.replace('Option<int> x','Option<Bounded> x'),exact.replace('= None;','= 42;'),exact.replace('= None;','= Err(7);'),exact.replace('val Option','let Option')])
+  assert.throws(()=>compileProgramV2(s),/error:/,s);
+ const ir=compileToProgramIRV2(exact);
+ ir.functions[0].body.body.subject.inner.args[0].slot=99;
+ assert.throws(()=>compileProgramIRV2(ir),/error: program IR:/);
+});
+test('declare type also uses existing scalar refinement checks',async()=>{
+ const source='declare type Bounded = int where self >= 1 and self <= 42; pub fnc main() -> int { val Bounded n = 42; return n; }';
+ assert.equal((await load(source)).main(),42n);
+ assert.throws(()=>compileProgramV2(source.replace('= 42; return','= 43; return')),/error:/);
+});
