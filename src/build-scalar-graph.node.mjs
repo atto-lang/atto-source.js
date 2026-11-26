@@ -3,10 +3,11 @@
 import {compileScalarConsumer} from './compiler.mjs';
 import {scalarInterface} from './scalar-package-interface.mjs';
 import {canonicalDependencyPlan,verifyDependencyInterface,hashText} from './scalar-dependency-plan.mjs';
-export function buildScalarGraph({source,providers}={}){
-  if(typeof source!=='string'||source.length>262144||Buffer.byteLength(source)>262144||
+export function planScalarGraph({source,providers}={}){
+  if(typeof source!=='string'||source.length>262144||!source.isWellFormed()||Buffer.byteLength(source)>262144||
      !Array.isArray(providers)||!providers.length||providers.length>32)throw Error('invalid graph build input');
   const entries=providers.map(p=>{
+    if(!p||!Array.isArray(p.imports)||!p.imports.length||p.imports.length>128)throw Error('invalid provider imports');
     const abi=scalarInterface(p.publicInterface,'edge-js');
     return {packageId:p.packageId,interfaceSha256:abi.sha256,imports:p.imports.map(i=>{
       const e=abi.entries.find(e=>e.name===i.exportName);
@@ -16,6 +17,10 @@ export function buildScalarGraph({source,providers}={}){
   });
   const plan=canonicalDependencyPlan(entries);
   for(const d of plan.dependencies)verifyDependencyInterface(d,providers.find(p=>p.packageId===d.packageId).publicInterface);
+  return plan;
+}
+export function buildScalarGraph({source,providers}={}){
+  const plan=planScalarGraph({source,providers});
   const external=plan.dependencies.flatMap(d=>d.imports.map(i=>({name:i.alias,params:i.params,resultType:'int'})));
   const compiled=compileScalarConsumer(source,external),abi=scalarInterface(compiled.publicInterface,'edge-js');
   const moduleSource='export const dependencySha256='+JSON.stringify(plan.sha256)+';\n'+compiled.moduleSource;
