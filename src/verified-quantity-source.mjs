@@ -293,13 +293,37 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     return disjunction(incoming,depth);
   }
   // Closed returning conditionals with scalar assignments lowered to fresh
-  // lexical SSA-like slots. No merge of live branch states, loops, aliases,
-  // nonlocal mutation, effects or suspension is admitted.
+  // lexical SSA-like slots and single-state iterative while. No live branch
+  // merges, aliases, nonlocal mutation, effects or suspension are admitted.
   function strictReturn(result,facts,mutable=new Map(),depth=0){
     if(depth>16||--budget<0)fail('E_UNIT_LIMIT','strict return budget');
     locals=facts;
-    if(['while','loop','for','break','continue'].includes(peek().value))
-      fail('E_VERIFY_UNSUPPORTED','strict loop proof not implemented');
+    if(take('while')){
+      // Single direct scalar assignment per backedge. Locate the candidate
+      // target without consuming the guard; the real parser validates every
+      // token below. This scan cannot admit additional statements.
+      let brace=at;
+      while(brace<tokens.length&&tokens[brace].value!=='{'&&tokens[brace].kind!=='eof')brace++;
+      const key=tokens[brace+1]?.value;
+      if(tokens[brace+1]?.kind!=='id'||tokens[brace+2]?.value!=='='||!mutable.has(key))
+        fail('E_VERIFY_UNSUPPORTED','strict while requires one direct mutable scalar update');
+      const declared=mutable.get(key),initial=facts.get(key);
+      boundary(declared,initial,'E_REFINEMENT_BINDING');
+      if(nextStrictSlot>=64)fail('E_UNIT_LIMIT','strict local slot budget');
+      const slot=nextStrictSlot++,header=new Map(facts);
+      // The new slot represents every iteration, including entry. Forget
+      // only the assigned variable's transient range, not other bindings.
+      header.set(key,make(declared.unit,{kind:'capture',slot},null,declared.range));
+      const p=condition(header);
+      expect('{');if(identifier()!==key)fail('E_VERIFY_UNSUPPORTED','unexpected loop update');
+      expect('=');locals=p.yes;const update=expr(0,0);expect(';');
+      boundary(declared,update,'E_REFINEMENT_BINDING');
+      if(!take('}'))fail('E_VERIFY_UNSUPPORTED','strict while supports one direct assignment');
+      return {kind:'scalarWhile',slot,init:initial.ir,condition:p.ir,update:update.ir,
+        body:strictReturn(result,p.no,mutable,depth+1)};
+    }
+    if(['loop','for','break','continue'].includes(peek().value))
+      fail('E_VERIFY_UNSUPPORTED','strict loop form not implemented');
     if(peek().value==='let'||peek().value==='val'){
       const isMutable=take('let');if(!isMutable)expect('val');
       let key,want=null;
