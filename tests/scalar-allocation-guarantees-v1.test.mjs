@@ -34,3 +34,25 @@ test('abbreviated unannotated headers retain identical emitted bytes',()=>{
     for(const header of ['define int <- process(int data)','int <- process(int data)'])assert.equal(compile(marker+header+suffix),expected);
   }
 });
+
+test('warm incremental cache cannot launder an unproven guarantee or poison subsequent builds',async()=>{
+  const session=new IncrementalSession();
+  const admitted=source(headers[0]);
+  const plain=source(headers[0],'');
+  const baseline=session.build(admitted).code;
+  assert.equal(session.build(plain).code,baseline);
+  const denied=[
+    [source(headers[0],'@noalloc'),'E_NOALLOC'],
+    [source(headers[0],'@nocopy\n@noalloc'),'E_NOALLOC'],
+    [admitted.replace('return x;','return x+1;'),'E_NOCOPY'],
+    [admitted.replace('pub fnc main()', 'fnc hidden(int x):int{return x*2;} pub fnc main()'),'E_NOCOPY'],
+  ];
+  for(const [src,diagnostic] of denied){
+    assert.throws(()=>session.build(src),new RegExp(diagnostic));
+    const recovered=session.build(admitted);
+    assert.equal(recovered.code,baseline);
+    assert.equal(recovered.emitted,0,'rejection must not poison admitted cache');
+    const guest=await import('data:text/javascript;base64,'+Buffer.from(recovered.code).toString('base64'));
+    assert.equal(guest.main(),42n);
+  }
+});
