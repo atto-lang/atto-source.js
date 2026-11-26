@@ -77,3 +77,16 @@ test('shared Boolean call composition executes generated ESM',async()=>{
   assert.equal(typeof mod.main,'function');
   assert.equal(mod.main(),0n,'shared Boolean call composition guest failed');
 });
+
+test('Boolean helper equality is strict, typed and evaluated through generated ESM',async()=>{
+  const mod=await guest('fnc leaf(int x) -> bool { return x eq 0; } pub fnc main() -> int { return (leaf(0) eq true) && (leaf(1) neq true) && (leaf(0) neq leaf(1)) ? 42 : 7; }');
+  assert.equal(mod.main(),42n);
+  for(const comparison of ['leaf(0) eq 1','0 neq leaf(1)','leaf(0) < false']){
+    const bad='fnc leaf(int x) -> bool { return x eq 0; } pub fnc main() -> int { return ('+comparison+') ? 42 : 7; }';
+    assert.throws(()=>compileProgramV2(bad),/Boolean comparison requires bool/);
+  }
+});
+test('the helper actually overflows when selected, rather than silently wrapping',async()=>{
+  const mod=await guest('fnc risky(int x) -> bool { return 9223372036854775807+x eq 0; } pub fnc main() -> int { return risky(1) ? 1 : 0; }');
+  assert.throws(()=>mod.main(),/ORES_I64_OVERFLOW/);
+});
