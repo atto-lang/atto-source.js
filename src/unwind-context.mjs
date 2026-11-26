@@ -61,12 +61,15 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
   let active_pending = null;
   let awaiting_callback = false;
   let cancel_requested = false;
+  let scheduled_admission = false;
+  let scheduled_driver = false;
+  const issued_steps = new WeakSet();
 
   // Tokens are valid only for the current trusted callback invocation.
   // Not a guest-visible ABI: compiler provenance and isolation are still required.
   function enter_callback(recovery = false) {
     if (active_callback) throw new Error('E_CALLBACK_REENTRANT');
-    active_callback = {signals:new WeakMap(), recovered:new WeakSet(), recovery};
+    active_callback = {signals:new WeakMap(), recovered:new WeakSet(), steps:new WeakMap(), recovery};
   }
   function signal_failure(kind, error) {
     if (!active_callback) throw new Error('E_NO_ACTIVE_CALLBACK');
@@ -87,7 +90,7 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
   }
 
   function check_available() {
-    if (busy || retired) throw new Error(busy ? 'E_UNWIND_REENTRANT' : 'E_CONTEXT_RETIRED');
+    if (busy || scheduled_admission || retired) throw new Error(busy || scheduled_admission ? 'E_UNWIND_REENTRANT' : 'E_CONTEXT_RETIRED');
   }
   function current_frame() {
     check_available();
@@ -305,11 +308,135 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
   }
   // Trusted host reference only: scheduler authentication and bounded
   // cancellation deadlines remain compiler/runtime integration gates.
+  function legacy_async_preflight() {
+    check_available();
+    if (frames.some(f => [...f.defers,...f.recovers].some(c => c?.scheduled)))
+      throw new Error('E_SCHEDULED_UNWIND_REQUIRED');
+  }
   function return_frame_async(value) {
+    legacy_async_preflight();
     return run_async(return_frame_steps(value));
   }
   function dispatch_failure_async(kind,error) {
+    legacy_async_preflight();
     return run_async(dispatch_failure_steps(kind,error));
+  }
+
+  // Trusted compiler-emitted synchronous quanta only. Native async callbacks
+  // must be rejected BEFORE invocation, not after their Promise escapes.
+  const excluded_prototypes = new Set([
+    Object.getPrototypeOf(async function(){}),
+    Object.getPrototypeOf(function*(){}),
+    Object.getPrototypeOf(async function*(){}),
+  ]);
+  function require_quantum(fn) {
+    require_function(fn);
+    for (let p=Object.getPrototypeOf(fn), n=0; p!==null; p=Object.getPrototypeOf(p), n++)
+      if (n>=32 || excluded_prototypes.has(p)) throw new TypeError('E_SYNC_QUANTUM_REQUIRED');
+    const tag=Object.prototype.toString.call(fn);
+    if (tag==='[object AsyncFunction]' || tag==='[object GeneratorFunction]' ||
+        tag==='[object AsyncGeneratorFunction]') throw new TypeError('E_SYNC_QUANTUM_REQUIRED');
+  }
+  function reject_thenable(value) {
+    if (value && typeof value.then==='function') {
+      if (value instanceof Promise) value.catch(()=>{});
+      throw new TypeError('E_SCHEDULED_PROMISE_FORBIDDEN');
+    }
+  }
+  // arm is a trusted reactor registration callback; it may publish completion
+  // synchronously, but never runs guest code. resume is a generated quantum.
+  function suspend_step(arm,resume) {
+    if (!scheduled_driver || !active_callback || awaiting_callback)
+      throw new Error('E_NO_ACTIVE_SCHEDULED_CALLBACK');
+    require_quantum(arm); require_quantum(resume);
+    const token=Object.freeze(Object.create(null));
+    active_callback.steps.set(token,{arm,resume});
+    issued_steps.add(token);
+    return token;
+  }
+  // Reuse the exact same unwind state machine as the host reference driver.
+  // The caller must retain the owning scheduler generation until quiescence.
+  // Scheduler shutdown/retirement coordination is a separate integration gate:
+  // dropping a ticket must NOT be reported as successful cleanup.
+  function start_scheduled(steps,scheduler,owner_key,on_done) {
+    check_available(); require_quantum(on_done);
+    if (frames.some(f => [...f.defers,...f.recovers].some(c => c?.suspends&&!c.scheduled)))
+      throw new Error('E_LEGACY_ASYNC_UNWIND_FORBIDDEN');
+    if (!scheduler || !['admitData','beginSuspension','complete','cancel'].every(k=>typeof scheduler[k]==='function'))
+      throw new TypeError('E_SCHEDULER_REQUIRED');
+    const epoch=owner.generation;
+    let step, action;
+    function finish(value) {
+      scheduled_driver=false;
+      on_done(value);
+    }
+    function drive(result,failed=false,has_result=false) {
+      // Every call is on the scheduler lane, including resume after a wakeup.
+      while (true) {
+        if (has_result && !failed) {
+          try {
+            reject_thenable(result);
+            if (issued_steps.has(result)) {
+              const wait=active_callback?.steps.get(result);
+              if (!action.scheduled || !wait) throw new Error('E_INVALID_SUSPENSION_STEP');
+              active_callback.steps.delete(result);
+              const ticket=scheduler.beginSuspension(owner_key,epoch,completion=>{
+                awaiting_callback=false;
+                let next, error=false;
+                try {
+                  if (!completion.ok) throw completion.value;
+                  next=wait.resume(completion.value);
+                } catch (e) { next=e; error=true; }
+                drive(next,error,true);
+              });
+              if (!ticket) throw new Error('E_SUSPENSION_ADMISSION');
+              awaiting_callback=true;
+              try {
+                reject_thenable(wait.arm(
+                  value=>scheduler.complete(ticket,{ok:true,value}),
+                  error=>scheduler.complete(ticket,{ok:false,value:error})
+                ));
+              } catch (e) {
+                scheduler.cancel(ticket);
+                awaiting_callback=false;
+                throw e;
+              }
+              return; // Never resume a parked callback from this turn.
+            }
+          } catch(e) { result=e; failed=true; }
+        }
+        step=has_result ? (failed ? steps.throw(result) : steps.next(result)) : steps.next();
+        if (step.done) { finish(step.value); return; }
+        action=step.value;
+        has_result=true; failed=false;
+        try {
+          require_quantum(action.handler);
+          result=action.handler(...action.args);
+        } catch(e) { result=e; failed=true; }
+      }
+    }
+    scheduled_admission=true;
+    let admitted=false;
+    try {
+      admitted=scheduler.admitData(owner_key,epoch,()=>{
+        scheduled_admission=false;
+        scheduled_driver=true;
+        try { drive(undefined); }
+        catch(e) { scheduled_driver=false; throw e; }
+      });
+      return admitted;
+    } finally {
+      if (!admitted) scheduled_admission=false;
+    }
+  }
+  function return_frame_scheduled(value,scheduler,owner_key,on_done) {
+    if (!frames.length) throw new Error('E_NO_ACTIVE_FRAME');
+    return start_scheduled(return_frame_steps(value),scheduler,owner_key,on_done);
+  }
+  function dispatch_failure_scheduled(kind,error,scheduler,owner_key,on_done) {
+    if (!failure_kinds.has(kind)) throw new TypeError('E_INVALID_FAILURE_KIND');
+    require_error(error);
+    return start_scheduled(dispatch_failure_steps(kind,error),scheduler,owner_key,on_done);
   }
   return Object.freeze({
     owner,
@@ -336,6 +463,14 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
       const frame = current_frame(); require_function(handler); reserve();
       frame.recovers.push({handler,suspends:true});
     },
+    register_scheduled_defer(handler) {
+      const frame=current_frame(); require_quantum(handler); reserve();
+      frame.defers.push({handler,suspends:true,scheduled:true});
+    },
+    register_scheduled_recover(handler) {
+      const frame=current_frame(); require_quantum(handler); reserve();
+      frame.recovers.push({handler,suspends:true,scheduled:true});
+    },
     register_catch(error_type, handler) {
       const frame = current_frame(); require_function(handler);
       if (typeof error_type !== 'function' ||
@@ -349,6 +484,10 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     return_frame_async,
     dispatch_failure_async,
     request_cancel,
+    return_frame_scheduled,
+    dispatch_failure_scheduled,
+    suspend_step,
+    get unwind_busy() { return busy || scheduled_admission; },
     recovered,
     signal_failure,
     retire() {
