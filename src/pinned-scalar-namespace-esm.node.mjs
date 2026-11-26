@@ -1,8 +1,8 @@
 // Experimental Node trusted-host adapter: exact v2 fixture manifest subset,
-// one pinned package and one selected namespace, public literal providers.
+// one pinned package and one selected namespace, public bounded integer providers.
 // This is not the general Atto parser/linker or persistent artifact store.
 import {createHash} from 'node:crypto';
-import {compile} from './compiler.mjs';
+import {compileToIR,compileIR} from './compiler.mjs';
 
 const deny=(s)=>{throw Error('E_NAMESPACE_PROFILE: '+s)};
 const sha=s=>createHash('sha256').update(s,'utf8').digest('hex');
@@ -29,23 +29,41 @@ function consumerManifest(s){
   if(m[3]!==m[4])deny('manifest locator');
   return {consumer:m[1],alias:m[2],packageName:m[4],manifestPin:m[5],sourcesPin:m[6]};
 }
+// Validate the actual compiler IR; do not interpret expressions in the host.
+// Every authenticated changed provider, even unselected ones, is checked.
+function closedInteger(e,depth,budget,params){
+  if(depth>32||++budget.n>256)deny('integer expression budget');
+  if(e.kind==='int')return;
+  if(e.kind==='param'&&params)return;
+  if(e.kind==='neg'){closedInteger(e.inner,depth+1,budget,params);return;}
+  if(e.kind==='binary'&&['+','-','*'].includes(e.op)){
+    closedInteger(e.left,depth+1,budget,params);closedInteger(e.right,depth+1,budget,params);return;
+  }
+  deny('closed integer expression required');
+}
 function classify(source){
   const m=exactMatch(new RegExp('^(?:namespace ('+namespace+');\\n)?(pub fnc ('+name+')\\(([^\\n()]*)\\): int \\{ return ([^\\n{};]+); \\})\\n$'),source);
-  if(m[4]!=='')throw Error('E_NAMESPACE_ARITY: zero-argument provider required');
-  if(!/^-?(?:0|[1-9][0-9]{0,18})$/.test(m[5]))deny('integer literal provider required');
-  return {namespace:m[1]??null,declaration:m[2],symbol:m[3]};
+  if(m[2].length>4096)deny('provider budget');
+  const ir=compileToIR(m[2]);
+  if(ir.functions.length!==1)deny('one provider function required');
+  const f=ir.functions[0];
+  if(f.name!==m[3]||!f.pub||f.params.length>16)deny('ordinary bounded public provider required');
+  closedInteger(f.body,0,{n:0},true);
+  return {namespace:m[1]??null,symbol:m[3],arity:f.params.length,ir};
 }
 function consumerSource(source){
   bounded(source,65536);
   const m=exactMatch(new RegExp('^namespace '+namespace+';\\nimport namespace ('+namespace+') as ('+name+') from "('+name+')";\\npub fnc main\\(\\): void \\{\\n([\\s\\S]*)  return;\\n\\}\\n$'),source);
-  const calls=m[4].split('\n');
-  if(calls.pop()!==''||!calls.length||calls.length>128)deny('consumer calls');
-  const symbols=calls.map(line=>{
-    const x=exactMatch(new RegExp('^  stdio\\.println\\(('+name+')\\.('+name+')\\(\\)\\);$'),line);
+  const lines=m[4].split('\n');
+  if(lines.pop()!==''||!lines.length||lines.length>128)deny('consumer calls');
+  const calls=lines.map(line=>{
+    const x=exactMatch(new RegExp('^  stdio\\.println\\(('+name+')\\.('+name+')\\(([^;{}\\n]*)\\)\\);$'),line);
     if(x[1]!==m[2])deny('foreign alias');
-    return x[2];
+    const args=x[3]===''?[]:x[3].split(',');
+    if(args.length>16||args.some(a=>!a.trim()||a.length>1024||!/^[0-9+*() \t-]+$/.test(a)))deny('closed integer argument required');
+    return {symbol:x[2],args};
   });
-  return {namespace:m[1],alias:m[3],symbols};
+  return {namespace:m[1],alias:m[3],calls};
 }
 const data=code=>'data:text/javascript;base64,'+Buffer.from(code).toString('base64');
 
@@ -76,23 +94,36 @@ export class PinnedScalarNamespaceEsmSession {
         if(exports.has(entry.info.symbol))deny('duplicate selected symbol');
         // Actual Atto scalar compiler, not a host evaluator. Stage output
         // before updating any memo; failed validation cannot publish it.
-        if(entry.code===null){entry={...entry,code:compile(entry.info.declaration)};compiled++;}
+        if(entry.code===null){entry={...entry,code:compileIR(entry.info.ir)};compiled++;}
         else artifactReused++;
-        exports.set(entry.info.symbol,entry.code);
+        exports.set(entry.info.symbol,entry);
       }
       next.set(p,entry);
     }
-    const imports=[],calls=[],aliases=new Map();
-    for(const symbol of selector.symbols){
+    const imports=[],calls=[],aliases=new Map(),argDecls=[];
+    for(const {symbol,args} of selector.calls){
       if(!exports.has(symbol))throw Error('E_NAMESPACE_SYMBOL: unavailable selected public symbol '+symbol);
+      const entry=exports.get(symbol);
+      if(args.length!==entry.info.arity)throw Error('E_NAMESPACE_ARITY: incompatible selected call: '+symbol);
       if(!aliases.has(symbol)){
         const local='_provider'+aliases.size;aliases.set(symbol,local);
-        imports.push('import * as '+local+' from '+JSON.stringify(data(exports.get(symbol)))+';');
+        imports.push('import * as '+local+' from '+JSON.stringify(data(entry.code))+';');
       }
-      calls.push(aliases.get(symbol)+'['+JSON.stringify(symbol)+']()');
+      const names=args.map(expr=>{
+        const n='arg'+argDecls.length;
+        argDecls.push('pub fnc '+n+'(): int { return '+expr+'; }');
+        return '_args.'+n+'()';
+      });
+      calls.push(aliases.get(symbol)+'['+JSON.stringify(symbol)+']('+names.join(',')+')');
+    }
+    if(argDecls.length){
+      const ir=compileToIR(argDecls.join('\n'));
+      const budget={n:0};
+      for(const f of ir.functions)closedInteger(f.body,0,budget,false);
+      imports.push('import * as _args from '+JSON.stringify(data(compileIR(ir)))+';');
     }
     // Host-generated narrow adapter returns the observed values, not stdout.
-    // No provider literal is evaluated by the adapter itself.
+    // No provider or argument expression is evaluated by the adapter itself.
     const code=imports.join('\n')+'\nexport function main(){return ['+calls.join(',')+'];}\n';
     const relinked=domain===this.#domain&&code===this.#linked?0:1;
     this.#domain=domain;this.#prior=next;this.#linked=code;
