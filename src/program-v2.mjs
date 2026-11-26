@@ -428,6 +428,9 @@ class Parser {
   valueType() {
     if(this.eat('int'))return 'int';
     if(this.eat('bool'))return 'bool';
+    if(this.peek().value==='boolean') {
+      this.booleanAliasToken??=this.peek();this.i++;return 'bool';
+    }
     if(this.eat('Symbol'))return 'symbol';
     if(this.eat('Error'))return 'error';
     if(this.eat('Option')){
@@ -741,7 +744,8 @@ class Parser {
         if(!isConst&&!readOnlyLet)this.expect('val');
         // This bounded slice admits only function-scope immutable int locals.
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
-        const localType=['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
+        // Keep existing Option, Result, string, bool, and directional bindings.
+        const localType=(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
         const name=this.name();
         if(this.peek().value===';')fail('E_MISSING_INITIALIZER: explicit initializer required',this.peek());
         const directional=this.takeDirection('<');
@@ -945,6 +949,8 @@ class Parser {
         else functions.push(this.functions(null));
       }
     }
+    if(this.booleanAliasToken&&(usedClasses.has('boolean')||usedModules.has('boolean')))
+      fail('E_TYPE_ALIAS_SHADOWED: boolean requires nominal type resolution',this.booleanAliasToken);
     if(!functions.length&&!generators.length&&!modules.length&&!classes.length)fail('empty program');
     return {namespace,modules,functions,generators,classes,exportDeclarations};
   }
