@@ -92,7 +92,7 @@ function reject_unsupported_mutex_constructor(tokens) {
     throw new TranspileError('E_LOCK_UNSUPPORTED');
   }
 }
-export function transpile_to_worker(source) {
+function checked_tokens(source) {
   if (typeof source !== 'string' || new TextEncoder().encode(source).byteLength > MAX_SOURCE) throw new TranspileError('E_SOURCE_LIMIT');
   // Raw terminal controls and NUL must not be hidden in comments or
   // visually interfere with reviewing source code before compilation.
@@ -117,6 +117,10 @@ export function transpile_to_worker(source) {
     throw new TranspileError('E_BIDI_CONTROL');
   const tokens=normalize_generic_closers(tokenize(source));
   reject_unsupported_mutex_constructor(tokens);
+  return tokens;
+}
+export function transpile_to_worker(source) {
+  const tokens=checked_tokens(source);
   if(tokens.includes('<<')||tokens.includes('>>'))throw new TranspileError('E_IO_UNSUPPORTED');
   if(tokens[0]==='define')return transpile_actor_tokens(tokens);
   if(tokens.includes('Result')||tokens.includes('match')||tokens.includes('parse')) {
@@ -341,4 +345,62 @@ function transpile_actor_tokens(tokens) {
     ''
   ].join('\n');
   return {backend:'js',trusted:true,guest_abi:'atto.js.browser.actor-subset.v1',module_source:code};
+}
+
+// Opt-in broker-only profile, identical bounded transition domain to Rust
+// --durable-counter-actor-v1. It never creates a volatile worker actor.
+export function compile_durable_counter_actor_v1(source) {
+  const tokens=checked_tokens(source);
+  let i=0;
+  const fail=()=>{throw new TranspileError('E_DURABLE_COUNTER_ACTOR_ABI');};
+  const expect=t=>{if(tokens[i++]!==t)fail();};
+  const id=()=>{
+    const t=tokens[i++];
+    if(!/^[A-Za-z_][A-Za-z_0-9]*$/.test(t??'') ||
+       ['self','define','durable','persistent','actor','as','state','receive','int','void','end','return','let','val','pub','fnc','true','false','sync','susp','await','new'].includes(t))fail();
+    return t;
+  };
+  expect('define');expect('durable');expect('actor');expect('Counter');expect('as');
+  expect('state');const field=id();expect(':');expect('int');expect('=');expect('0');expect(';');
+  expect('receive');expect('(');expect('ActorMail');expect('<');expect('int');expect('>');
+  const mail=id();expect(')');expect('->');expect('void');expect('{');
+  expect('self');expect('.');expect(field);expect('=');expect('self');expect('.');expect(field);
+  expect('+');expect(mail);expect('.');expect('value');expect(';');expect('}');expect('end');
+  if(i!==tokens.length)fail();
+  const encoder=new TextEncoder(), actorBytes=encoder.encode('Counter'), fieldBytes=encoder.encode(field);
+  const fnv=bytes=>{
+    let h=0xcbf29ce484222325n;
+    for(const b of bytes)h=BigInt.asUintN(64,(h^BigInt(b))*0x100000001b3n);
+    return h;
+  };
+  const sized=bytes=>{
+    const a=new Uint8Array(4+bytes.length);
+    new DataView(a.buffer).setUint32(0,bytes.length,true);a.set(bytes,4);return a;
+  };
+  const schema=fnv([...encoder.encode('atto.actor.state.schema.v1'),0,...sized(actorBytes),...sized(fieldBytes),1]);
+  const snapshot=new Uint8Array(36),view=new DataView(snapshot.buffer);
+  snapshot.set(encoder.encode('ATTOST01'));snapshot[8]=1;
+  view.setBigUint64(9,schema,true);view.setUint16(17,1,true);snapshot[19]=1;
+  view.setBigUint64(28,fnv(snapshot.subarray(0,28)),true);
+  const metadata=[1];
+  const append=bytes=>{
+    let n=bytes.length;
+    do{const b=n&127;n>>>=7;metadata.push(n?b|128:b);}while(n);
+    metadata.push(...bytes);
+  };
+  append(actorBytes);append(fieldBytes);metadata.push(1);append(snapshot);
+  // Only fixed code and validated descriptor bytes are emitted. No source
+  // splice, eval, dynamic imports or persistence permissions in the guest.
+  const code=[
+    'export function atto_durable_state_v1(){return Uint8Array.of('+metadata.join(',')+');}',
+    'export function atto_durable_transition_v1(state,op,delta){',
+    " if(typeof state!=='bigint'||typeof op!=='bigint'||typeof delta!=='bigint')throw new TypeError('E_DURABLE_COUNTER_ACTOR_ABI');",
+    ' if(state<0n||state>1000000000n)return -1n;',
+    ' if(op===2n)return delta===0n?state:-1n;',
+    ' if(op!==1n||delta<=0n||delta>1000000000n||state>1000000000n-delta)return -1n;',
+    ' return state+delta;',
+    '}',
+    ''
+  ].join('\n');
+  return {backend:'js',guest_abi:'atto.js.durable.counter.v1',module_source:code};
 }
