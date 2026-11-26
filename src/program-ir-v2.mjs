@@ -611,6 +611,8 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           'Option.none':[[],'option<int>'],
           'Option.is_some':[['option<int>'],'bool'],
           'Option.unwrap_or':[['option<int>','int'],'int'],
+          'Option.unwrap':[['option<int>'],'int'],
+          'Result.unwrap':[['result<int,int>'],'int'],
           'Result.ok':[['int'],'result<int,int>'],
           'Result.err':[['int'],'result<int,int>'],
           'Result.is_ok':[['result<int,int>'],'bool'],
@@ -628,7 +630,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
       }
       case 'adtMatch': {
         record(expr,['kind','adt','subject','arms'],'ADT match');
-        if(expr.adt!=='option<int>'&&expr.adt!=='result<int,int>')
+        if(!['option<int>','result<int,int>','trapResult'].includes(expr.adt))
           fail('unknown ADT match type');
         const subject=node(expr.subject,owner,depth+1,expr.adt,active);
         const variants=expr.adt==='option<int>'?['Some','None']:['Ok','Err'];
@@ -640,13 +642,15 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           if(!variants.includes(arm.tag)||seen.has(arm.tag))
             fail('ADT match has duplicate or inappropriate variant');
           seen.add(arm.tag);
-          const payload=arm.tag!=='None';
+          const discardedError=expr.adt==='trapResult'&&arm.tag==='Err';
+          if(discardedError&&arm.slot!==null)fail('checked Error binding is not supported');
+          const payload=arm.tag!=='None'&&!discardedError;
           if(payload) {
             if(!Number.isSafeInteger(arm.slot)||Object.is(arm.slot,-0)||arm.slot<0||
                arm.slot>=LIMIT_NODES||captureSlots[owner].has(arm.slot)||active.includes(arm.slot))
               fail('invalid or repeated ADT payload slot');
             captureSlots[owner].add(arm.slot);
-          } else if(arm.slot!==null)fail('None arm cannot bind a payload');
+          } else if(arm.slot!==null)fail('discarded variant cannot bind a payload');
           const scopes=payload?[...active,arm.slot]:active;
           checked.push({tag:arm.tag,slot:arm.slot,
             body:node(arm.body,owner,depth+1,expected,scopes)});
