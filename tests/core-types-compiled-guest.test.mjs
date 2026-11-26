@@ -70,3 +70,10 @@ test('namespace placement, duplicate namespace and malformed boolean operators f
   ];
   for(const bad of examples)assert.throws(()=>compileProgramV2(bad),/error:/);
 });
+
+test('shared Boolean call composition executes generated ESM',async()=>{
+  const fixture=await readFile(new URL('./fixtures/core-types-v1/bool-call-composition-positive.atto',import.meta.url),'utf8');
+  const mod=await guest(fixture);
+  assert.equal(typeof mod.main,'function');
+  assert.equal(mod.main(),0n,'shared Boolean call composition guest failed');
+});
