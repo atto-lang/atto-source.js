@@ -106,3 +106,49 @@ test('bounded scalar direct-call differential oracles and signed i64 boundaries'
     assert.throws(() => mod.main(), /E_OVERFLOW/);
   }
 });
+
+test('call and literal tuple apply emit exactly the direct callable ESM', async () => {
+  const cases = [
+    ['|| : int -> 42;', '', 42n],
+    ['|int x| : int -> x + 1;', '41', 42n],
+    ['|int x, bool _| : int -> x + 1;', '41, true', 42n],
+    ['|_, _| : int -> 5;', '41, false', 5n],
+    ['|int x| : int -> x + 0;', '-9223372036854775808', -(1n << 63n)],
+  ];
+  for (const [head,args,result] of cases) {
+    const direct = local(head, 'return v(' + args + ');');
+    for (const call of ['return v.call(' + args + ');', 'return v.apply(tuple(' + args + '));']) {
+      const source = local(head, call);
+      assert.equal(compile(source), compile(direct), source);
+      assert.equal(await guest(source), result, source);
+    }
+  }
+  const head = '|int x, bool _| : int -> x + 1;';
+  assert.equal(compile(moduleScope(head, 'return v.call(41, true);')),
+    compile(moduleScope(head, 'return v.apply(tuple(41, true));')));
+});
+
+test('intrinsic invocation rejects bad arity, wrong types and unsupported forms', () => {
+  const head = '|int x, bool _| : int -> x + 1;';
+  for (const [call,code] of [
+    ['v.call(41)', 'E_ARITY'],
+    ['v.call(0, 41, true)', 'E_TYPE'],
+    ['v.apply(tuple(41))', 'E_ARITY'],
+    ['v.apply(tuple(41, 42))', 'E_TYPE'],
+    ['v.apply(tuple(41, true, 0))', 'E_ARITY'],
+    ['v.apply(41, true)', 'E_SYNTAX'],
+    ['v.apply(tuple(41, true), 0)', 'E_SYNTAX'],
+    ['v.apply(args)', 'E_SYNTAX'],
+    ['v.bind(41)', 'E_UNSUPPORTED'],
+    ['other.call(41, true)', 'E_CONST'],
+  ]) assert.throws(() => compile(local(head, 'return ' + call + ';')), {code}, call);
+  assert.throws(() => compile('pub fnc main(): int { const fnc tuple = |int x| : int -> x; return tuple.apply(tuple(42)); }'), {code:'E_UNSUPPORTED'});
+});
+
+test('call and apply preserve checked arithmetic overflow', async () => {
+  for (const call of ['v.call(9223372036854775807)', 'v.apply(tuple(9223372036854775807))']) {
+    const code = compile(local('|int x| : int -> x + 1;', 'return ' + call + ';'));
+    const mod = await import('data:text/javascript;charset=utf-8,' + encodeURIComponent(code));
+    assert.throws(() => mod.main(), /E_OVERFLOW/);
+  }
+});
