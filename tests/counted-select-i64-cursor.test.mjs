@@ -68,8 +68,22 @@ test('notification-induced reentry is rejected and cannot consume extra data',()
   const a=new Channel(1);
   a.tryWrite(7n);
   const c=new Cursor(1,[a]);
-  const sub=a.subscribeWritable(()=>assert.throws(()=>c.pump(),/reentry/));
+  let notices=0;
+  const sub=a.subscribeWritable(()=>{notices++;assert.throws(()=>c.pump(),/reentry/);});
   round(c);
+  assert.equal(notices,1);
+  assert.equal(a.notificationFailure,null);
   assert.deepEqual(c.result(),[7n]);sub.close();
   assert.equal(a.pendingReaders,0);
+});
+test('fair rotation preserves exact surviving lexical occurrence after Future retirement',()=>{
+  const a=new Channel(1),b=new Channel(2),d=new Channel(1),f=new Future();
+  f.resolve(99n);
+  const c=new Cursor(3,[a,b,f,b,d]);
+  round(c);
+  a.tryWrite(1n);b.tryWrite(2n);b.tryWrite(3n);d.tryWrite(4n);
+  round(c);round(c);
+  assert.deepEqual(c.result(),[99n,2n,4n]);
+  assert.equal(b.tryRead().value,3n);
+  assert.equal(a.tryRead().value,1n);
 });

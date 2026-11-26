@@ -83,10 +83,17 @@ export class CountedSelectI64Cursor {
         if(eof||!c.channel){
           // Retire source identities, including aliases. Find the next
           // surviving lexical case from the previous cursor rotation.
-          const nextSource=Array.from({length:n},(_,j)=>this.#live[(next+j)%n])
-            .find(source=>source!==c.source);
+          let nextIndex=-1;
+          for(let j=0;j<n;j++){
+            const index=(next+j)%n;
+            if(this.#live[index]!==c.source){nextIndex=index;break;}
+          }
+          // Keep the exact surviving lexical occurrence, not indexOf its
+          // source identity (another alias may precede this occurrence).
+          const nextCursor=nextIndex<0?0:this.#live.slice(0,nextIndex)
+            .filter(source=>source!==c.source).length;
           this.#live=this.#live.filter(source=>source!==c.source);
-          this.#cursor=Math.max(0,this.#live.indexOf(nextSource));
+          this.#cursor=nextCursor;
         }else this.#cursor=next;
         if(this.#values.length===this.#count){this.#live=[];this.#state='success';}
         else if(!this.#live.length)this.#fail(new Error('SelectExhausted'));
