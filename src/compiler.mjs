@@ -188,17 +188,54 @@ function rejectUnloweredActorHeap(tokens) {
 }
 
 function rejectUnsupportedSelect(tokens) {
-  const startsStaticSelect = next =>
+  const bodyStart = next =>
     next && ['{','over','first','fair','random'].includes(next.value);
+  // Compute matching parentheses once. A bare select(args) call remains
+  // legal; a count followed by the static body is a contextual keyword.
+  const stack=[], matching=new Map();
+  for(let i=0;i<tokens.length;i++) {
+    if(tokens[i].kind !== 'sym') continue;
+    if(tokens[i].value==='(') stack.push(i);
+    if(tokens[i].value===')' && stack.length) matching.set(stack.pop(),i);
+  }
+  function startsStaticSelect(i) {
+    const next=tokens[i+1];
+    if(!next) return false;
+    if(bodyStart(next) || next.value==='<') return true;
+    if(next.kind!=='sym' || next.value!=='(') return false;
+    const end=matching.get(i+1);
+    return end!==undefined && bodyStart(tokens[end+1]);
+  }
   for (let i=0;i<tokens.length;i++) {
     const token=tokens[i];
-    if (token.kind === 'id' && token.value === 'select' &&
-        startsStaticSelect(tokens[i+1])) {
+    const declaration=['fnc','routine','mtd'].includes(tokens[i-1]?.value);
+    if (token.kind === 'id' && token.value === 'select' && !declaration &&
+        startsStaticSelect(i)) {
       throw new CompileError(
         'static select requires checked Channel/Future arbitration, actor-lane continuation, ownership and cancellation lowering in the JS backend',
         token
       );
     }
+  }
+}
+// In this scalar-only parser, no product may escape to a dynamic JS object.
+// Check the entire lexed compilation unit before recognizing an intrinsic,
+// including forward function declarations and parameters with the same name.
+function productFactoryAt(tokens, i) {
+  return tokens[i]?.kind==='id' && ['Pair','Entry'].includes(tokens[i].value)
+    && tokens[i+1]?.value==='.' && tokens[i+2]?.value==='of';
+}
+function rejectAmbiguousProductFactories(tokens) {
+  const active=new Set(tokens.filter((_,i)=>productFactoryAt(tokens,i)).map(t=>t.value));
+  if(!active.size)return;
+  for(let i=0;i<tokens.length;i++){
+    const t=tokens[i];
+    if(t.kind!=='id')continue;
+    if(active.has(t.value) && (!productFactoryAt(tokens,i)
+       || ['.','::'].includes(tokens[i-1]?.value)))
+      throw new CompileError('E_PRODUCT_SCOPE_UNSUPPORTED: competing '+t.value+' reference',t);
+    if(['import','use','macro'].includes(t.value))
+      throw new CompileError('E_PRODUCT_SCOPE_UNSUPPORTED: scalar factory requires a source-local identity',t);
   }
 }
 class Parser {
@@ -283,8 +320,57 @@ class Parser {
       return left;
     }finally{this.depth--;}
   }
+  pureProductInt(){
+    const negative=this.match('-');
+    const t=this.peek();
+    if(t.kind!=='int')throw new CompileError('E_PRODUCT_LITERAL_UNSUPPORTED: expected pure int literal',t);
+    this.pos++;
+    const n=BigInt(t.value.replaceAll('_',''));
+    if(n>I64_MAX+(negative?1n:0n))throw new CompileError('integer outside signed i64',t);
+    return negative?-n:n;
+  }
+  productProjection(){
+    const at=this.peek(), pair=at.value==='Pair';
+    this.pos+=3;
+    if(this.match('<')){
+      if(pair && this.match('string')){this.expect(',');this.expect('int');}
+      else{
+        this.expect('int');
+        if(pair && this.peek().value===',')
+          throw new CompileError('E_PAIR_KEY_TYPE: Pair first generic argument must be string',this.peek());
+        if(!pair){this.expect(',');this.expect('int');}
+      }
+      this.expect('>');
+    }
+    this.expect('(');
+    let first;
+    if(pair){
+      const key=this.peek();
+      if(key.kind!=='string')throw new CompileError('E_PAIR_KEY_TYPE: Pair requires a string key',key);
+      // Lexer validates quoted source syntax. Only plain static keys are
+      // admitted here: no interpolation, escaped or allocated runtime values.
+      const raw=key.value.raw.slice(1,-1);
+      if(!/^[\x20-\x7e]*$/.test(raw) || /[\\$]/.test(raw))
+        throw new CompileError('E_PAIR_KEY_UNSUPPORTED: scalar projection requires plain static string',key);
+      this.pos++;
+    }else first=this.pureProductInt();
+    this.expect(',');
+    // A proven pure static string key has no guest effects or owned
+    // resources to discard. Keep the second expression in checked scalar
+    // IR; never evaluate or duplicate it at compile time. Entry still
+    // requires pure integer literals until both eager operands can lower.
+    const second=pair?this.expr():this.pureProductInt();
+    this.expect(')');
+    if(!this.match('.'))throw new CompileError('E_PRODUCT_ESCAPE_UNSUPPORTED: owned product ABI unavailable',at);
+    const field=this.id();
+    if(pair && field==='second')return second;
+    if(!pair && field==='key')return {kind:'int',n:first};
+    if(!pair && field==='value')return {kind:'int',n:second};
+    throw new CompileError('E_PRODUCT_PROJECTION_UNSUPPORTED: incompatible or non-scalar member',at);
+  }
   primary(){
     const t=this.peek();
+    if(productFactoryAt(this.ts,this.pos))return this.productProjection();
     if(this.match('-')){
       // The absolute magnitude 2^63 is legal only as a negated literal.
       // All other positive literals must remain within signed i64.
@@ -345,6 +431,7 @@ export function compileToIR(source) {
   rejectUnloweredInvertedClasses(tokens);
   rejectUnloweredActorHeap(tokens);
   rejectUnsupportedSelect(tokens);
+  rejectAmbiguousProductFactories(tokens);
   const parsed=new Parser(tokens).parse();
   try {
     return createScalarIR(parsed);
