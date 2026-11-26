@@ -19,6 +19,8 @@ test('rejects torn, corrupt, noncanonical and aliased input',async()=>{
  for(let i=0;i<b.length;i++){assert.throws(()=>dec(b.slice(0,i)));for(let bit=0;bit<8;bit++){const bad=b.slice();bad[i]^=1<<bit;assert.throws(()=>dec(bad));}}
  const bad=b.slice();bad[29]=2;rehash(bad);assert.throws(()=>dec(bad));
  assert.throws(()=>dec(new Uint8Array(b.length+1)));assert.throws(()=>dec(new Proxy(b,{})));assert.throws(()=>dec(new Uint8Array(new SharedArrayBuffer(b.length))));
+ let traps=0;assert.throws(()=>dec(new Proxy(b,{getPrototypeOf(){traps++;return Uint8Array.prototype;}})));assert.equal(traps,0);
+ const forged=new Uint8ClampedArray(b);Object.setPrototypeOf(forged,Uint8Array.prototype);assert.throws(()=>dec(forged));
  assert.throws(()=>dec(new Uint16Array(b.length)));assert.throws(()=>dec({byteLength:b.length}));
  for(const v of [[0,true,0n],[0n,1,0n],[min-1n,true,0n],[0n,false,max+1n],[0n,true]])assert.throws(()=>m.atto_encode_state_v1(...v));
  const offset=new Uint8Array(b.length+2);offset.set(b,1);assert.deepEqual(dec(offset.subarray(1,-1)),[min,true,max]);
@@ -29,4 +31,13 @@ test('schema source is bounded and complete; 256 fields and empty schema work',a
  const fields=Array.from({length:256},(_,i)=>`state f${i}: int = ${i};`).join(' ');
  const large=await guest('define durable actor Maximum as '+fields+' end');assert.equal(large.m.atto_initial_state_v1().length,2331);assert.deepEqual(large.m.atto_decode_state_v1(large.m.atto_initial_state_v1()),Array.from({length:256},(_,i)=>BigInt(i)));
  assert.throws(()=>compile('define durable actor Maximum as '+fields+' state extra: bool = true; end'));
+});
+
+test('all four shared wire vectors match emitted code',async()=>{
+ for(const [s,expected] of [
+  ['define durable actor Counter as state count: int = 100; state enabled: bool = true; end','4154544f5354303101c9a1af17fc8684bd020001640000000000000002018fd7fcf2f2744e29'],
+  ['define durable actor Counter as state count: int = -9223372036854775808; state enabled: bool = false; end','4154544f5354303101c9a1af17fc8684bd0200010000000000000080020058ebbfc357901b30'],
+  ['define durable actor EmptyActor as end','4154544f5354303101c3fbc65066197bff0000b3c015f0f5029da5'],
+  ['define durable actor OtherCounter as state count: int = 100; end','4154544f53543031010201d7f4b9c36b6c0100016400000000000000eb0202552d636527']
+ ]){const {m}=await guest(s);const b=m.atto_initial_state_v1();assert.equal(hex(b),expected);assert.equal(hex(m.atto_encode_state_v1(...m.atto_decode_state_v1(b))),expected);}
 });
