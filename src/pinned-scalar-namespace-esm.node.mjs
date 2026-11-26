@@ -68,7 +68,7 @@ function consumerSource(source){
 const data=code=>'data:text/javascript;base64,'+Buffer.from(code).toString('base64');
 
 export class PinnedScalarNamespaceEsmSession {
-  #prior=new Map();#domain=null;#linked=null;
+  #prior=new Map();#domain=null;#linked=null;#argKey=null;#argCode=null;
   build({consumer,consumerManifest:cm,providerManifest:pm,sources}={}){
     const dep=consumerManifest(cm),pkg=providerManifest(pm),selector=consumerSource(consumer);
     if(dep.alias!==selector.alias||dep.packageName!==pkg.packageName||sha(pm)!==dep.manifestPin)deny('manifest pin or identity mismatch');
@@ -116,17 +116,24 @@ export class PinnedScalarNamespaceEsmSession {
       });
       calls.push(aliases.get(symbol)+'['+JSON.stringify(symbol)+']('+names.join(',')+')');
     }
+    const argKey=argDecls.join('\n');
+    let argCode=null,argumentCompiled=0,argumentReused=0;
     if(argDecls.length){
-      const ir=compileToIR(argDecls.join('\n'));
-      const budget={n:0};
-      for(const f of ir.functions)closedInteger(f.body,0,budget,false);
-      imports.push('import * as _args from '+JSON.stringify(data(compileIR(ir)))+';');
+      if(domain===this.#domain&&argKey===this.#argKey){
+        argCode=this.#argCode;argumentReused=1;
+      }else{
+        const ir=compileToIR(argKey);
+        const budget={n:0};
+        for(const f of ir.functions)closedInteger(f.body,0,budget,false);
+        argCode=compileIR(ir);argumentCompiled=1;
+      }
+      imports.push('import * as _args from '+JSON.stringify(data(argCode))+';');
     }
     // Host-generated narrow adapter returns the observed values, not stdout.
     // No provider or argument expression is evaluated by the adapter itself.
     const code=imports.join('\n')+'\nexport function main(){return ['+calls.join(',')+'];}\n';
     const relinked=domain===this.#domain&&code===this.#linked?0:1;
-    this.#domain=domain;this.#prior=next;this.#linked=code;
-    return {code,classified,classificationReused,compiled,artifactReused,relinked,domain};
+    this.#domain=domain;this.#prior=next;this.#linked=code;this.#argKey=argKey;this.#argCode=argCode;
+    return {code,classified,classificationReused,compiled,artifactReused,relinked,domain,argumentCompiled,argumentReused};
   }
 }
