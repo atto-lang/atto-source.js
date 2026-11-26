@@ -417,6 +417,7 @@ class Parser {
     if(this.eat('int'))return 'int';
     if(this.eat('bool'))return 'bool';
     if(this.eat('Symbol'))return 'symbol';
+    if(this.eat('Error'))return 'error';
     if(this.eat('Option')){
       this.expect('<');this.expect('int');this.expect('>');
       return 'option<int>';
@@ -1289,6 +1290,7 @@ function resolveProgram(parsed) {
       case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
       case 'float':case 'floatNeg':case 'floatBin':case 'floatCapture':return 'float';
       case 'trap':return ['option<int>','trapOptionResult'].includes(expr.operandType)?'trapOptionResult':'trapResult';
+      case 'errorCapture':return 'error';
       case 'optionCapture':return 'option<int>';
       case 'resultCapture':return 'result<int,int>';
       case 'trapCapture':return 'trapResult';
@@ -1349,8 +1351,12 @@ function resolveProgram(parsed) {
       }
       case 'rethrow':{
         const binding=bindings.findLast(b=>b.name===expr.name);
-        if(binding?.type!=='caughtError')fail('E_EFFECT_PROFILE: rethrow requires a scoped caught Error');
-        return {kind:'rethrow',slot:binding.slot};
+        if(binding?.type==='caughtError')return {kind:'rethrow',slot:binding.slot};
+        if(binding?.type==='error')return {kind:'throwError',value:{kind:'errorCapture',slot:binding.slot}};
+        const index=owner.params.indexOf(expr.name);
+        if(!binding&&index>=0&&owner.paramTypes?.[index]==='error'&&owner.ownerKind!=='method')
+          return {kind:'throwError',value:{kind:'param',index}};
+        fail('E_EFFECT_PROFILE: rethrow requires a scoped caught or typed Error');
       }
       case 'guestEffect':
         if(owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer'||owner.params.includes('Error')||bindings.some(b=>b.name==='Error')||classByName.has('Error')||modules.includes('Error')||[...functions,...generators].some(f=>f.name==='Error'))
@@ -1451,7 +1457,7 @@ function resolveProgram(parsed) {
       case 'variable': {
         const captured=bindings.findLast(b=>b.name===expr.name);
         if(captured?.type==='caughtError')fail('E_CATCH_BINDING: caught Error is only available for typed rethrow');
-        if(captured)return {kind:captured.type==='option<int>'?'optionCapture':captured.type==='result<int,int>'?'resultCapture':captured.type==='trapOptionResult'?'trapOptionCapture':captured.type==='trapResult'?'trapCapture':captured.type==='float'?'floatCapture':'capture',slot:captured.slot};
+        if(captured)return {kind:captured.type==='error'?'errorCapture':captured.type==='option<int>'?'optionCapture':captured.type==='result<int,int>'?'resultCapture':captured.type==='trapOptionResult'?'trapOptionCapture':captured.type==='trapResult'?'trapCapture':captured.type==='float'?'floatCapture':'capture',slot:captured.slot};
         const index=owner.params.indexOf(expr.name);
         if(index<0) fail('unresolved identifier '+expr.name);
         return {kind:'param',index};
@@ -1561,8 +1567,9 @@ function resolveProgram(parsed) {
         const subject=resolve(expr.subject,owner,depth+1,bindings);
         const subjectType=resolvedType(subject,owner);
         const adt=expr.adt==='result<int,int>'&&subjectType==='trapResult'?'trapResult':expr.adt;
-        if(adt==='trapResult'&&expr.arms.some(arm=>arm.tag==='Err'&&arm.bind!==null))
-          fail('checked Error binding unsupported in this profile; use Err()');
+        if(adt==='trapResult'&&expr.arms.some(arm=>arm.tag==='Err'&&arm.bind!==null)&&
+           !(subject.kind==='trap'&&subject.operandType==='int'))
+          fail('E_ERROR_BINDING: typed Error binding requires a proven scalar trap; mixed returned Err payload is not Error');
         const arms=expr.arms.map(arm=>{
           let slot=null,scope=bindings;
           if(arm.bind!==null){
@@ -1570,7 +1577,7 @@ function resolveProgram(parsed) {
               fail('ADT payload binding shadows an existing name '+arm.bind);
             if(nextCaptureSlot>=MAX_TOKENS)fail('ADT capture slot budget exceeded');
             slot=nextCaptureSlot++;
-            scope=[...bindings,{name:arm.bind,slot}];
+            scope=[...bindings,{name:arm.bind,slot,type:adt==='trapResult'&&arm.tag==='Err'?'error':'int'}];
           }
           return {tag:arm.tag,slot,body:resolve(arm.body,owner,depth+1,scope)};
         });
@@ -1652,6 +1659,7 @@ function emitProgram(program) {
     switch(expr.kind) {
       case 'tryCatch':return '(()=>{try{return '+emitExpr(expr.body,depth+1)+';}catch(_v'+expr.slot+'){if(!_isOrdinaryGuest(_v'+expr.slot+'))throw _v'+expr.slot+';return '+emitExpr(expr.handler,depth+1)+';}})()';
       case 'rethrow':return '(()=>{throw _v'+expr.slot+';})()';
+      case 'throwError':return '(()=>{throw _checkGuestError('+emitExpr(expr.value,depth+1)+');})()';
       case 'guestEffect':return '_guestEffect('+JSON.stringify(expr.effect)+','+JSON.stringify(expr.message)+')';
       case 'int': return expr.value+'n';
       case 'float': return '('+String(Number(expr.value))+')';
@@ -1672,7 +1680,7 @@ function emitProgram(program) {
         const v='_v'+expr.slot;
         return '(('+v+')=>{while('+emitExpr(expr.condition,depth+1)+'){'+v+'='+emitExpr(expr.update,depth+1)+';}return '+emitExpr(expr.body,depth+1)+';})('+emitExpr(expr.init,depth+1)+')';
       }
-      case 'capture':case 'floatCapture':case 'trapCapture':case 'trapOptionCapture':case 'optionCapture':case 'resultCapture':return '_v'+expr.slot;
+      case 'capture':case 'floatCapture':case 'trapCapture':case 'trapOptionCapture':case 'optionCapture':case 'resultCapture':case 'errorCapture':return '_v'+expr.slot;
       case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
@@ -1906,7 +1914,9 @@ function emitProgram(program) {
     'function _guestEffect(kind,message){const e=new Error(message);Object.defineProperty(e,"effect",{value:kind,enumerable:true});if(kind==="throw")_ordinaryGuestBrand.add(e);throw Object.freeze(e);}'
   );
   function containsCatch(value){return !!value&&typeof value==='object'&&(value.kind==='tryCatch'||Object.values(value).some(containsCatch));}
-  if(containsTrap(program)||containsCatch(program))out.push('function _isOrdinaryGuest(e){return _arithmeticBrand.has(e)||(typeof _ordinaryGuestBrand!=="undefined"&&_ordinaryGuestBrand.has(e))||(typeof _checkedUnwrapBrand!=="undefined"&&_checkedUnwrapBrand.has(e));}');
+  const hasErrorParameter=program.functions.some(fn=>fn.paramTypes?.includes('error'));
+  if(containsTrap(program)||containsCatch(program)||hasErrorParameter)out.push('function _isOrdinaryGuest(e){return _arithmeticBrand.has(e)||(typeof _ordinaryGuestBrand!=="undefined"&&_ordinaryGuestBrand.has(e))||(typeof _checkedUnwrapBrand!=="undefined"&&_checkedUnwrapBrand.has(e));}');
+  if(hasErrorParameter)out.push('function _checkGuestError(e){if(!_isOrdinaryGuest(e))throw new TypeError("untrusted guest Error");return e;}');
   if(containsTrap(program))out.push(
       'const _trapBrand=new WeakSet(),_checkedUnwrapBrand=new WeakSet();',
       ...(hasCheckedUnwrap?[
@@ -1970,7 +1980,7 @@ function emitProgram(program) {
     out.push('function _f'+i+'('+params.join(',')+'){');
     params.forEach((p,j)=>{
       const type=fn.paramTypes?.[j]??'int';
-      const check={int:'_check',bool:'_checkbool',symbol:'_checksymbol',
+      const check={int:'_check',bool:'_checkbool',symbol:'_checksymbol',error:'_checkGuestError',
         'option<int>':'_checkoption','result<int,int>':'_checkresult'}[type];
       if(!check)fail('unsupported portable parameter type');
       out.push(check+'('+p+');');
