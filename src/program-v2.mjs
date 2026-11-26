@@ -355,7 +355,7 @@ function rejectUnsupportedTrapEffect(tokens) {
       // All other contexts retain the existing fail-closed admission.
       if(tokens[i-3]?.value==='val'&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='='){admitted.add(i);continue;}
       // Closed typed Result<int,Error> locals are the same validated trap IR.
-      if(tokens.slice(i-9,i-2).map(t=>t.value).join(' ')==='val Result < int , Error >'&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='='){admitted.add(i);continue;}
+      if((tokens.slice(i-9,i-2).map(t=>t.value).join(' ')==='val Result < int , Error >'||tokens.slice(i-12,i-2).map(t=>t.value).join(' ')==='val Result < Option < int > , Error >')&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='='){admitted.add(i);continue;}
       // A nested trap may only follow the opening parentheses of an already
       // admitted trap operand. The typed parser still validates the whole tree.
       let outer=i-1;
@@ -771,8 +771,10 @@ class Parser {
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
         // Keep existing Option, Result, string, bool, and directional bindings.
         const typedTrapResult=this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')==='Result < int , Error >';
+        const typedTrapOption=this.tokens.slice(this.i,this.i+9).map(t=>t.value).join(' ')==='Result < Option < int > , Error >';
         if(typedTrapResult)this.i+=6;
-        const localType=typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
+        else if(typedTrapOption)this.i+=9;
+        const localType=typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
         const name=this.name();
         if(this.peek().value===';')fail('E_MISSING_INITIALIZER: explicit initializer required',this.peek());
         const directional=this.takeDirection('<');
@@ -1506,7 +1508,7 @@ function resolveProgram(parsed) {
         const slot=nextCaptureSlot++;
         const init=resolve(expr.init,owner,depth+1,bindings);
         const type=['inferredTrap','directionalInferred'].includes(expr.localType)?resolvedType(init,owner):expr.localType==='constInt'?'int':expr.localType;
-        if(expr.localType==='trapResult'&&(init.kind!=='trap'||resolvedType(init,owner)!=='trapResult'))fail('E_TRAP_TYPE: typed Result<int,Error> local requires checked trap initializer');
+        if(['trapResult','trapOptionResult'].includes(expr.localType)&&(init.kind!=='trap'||resolvedType(init,owner)!==expr.localType))fail('E_TRAP_TYPE: typed Result local requires matching checked trap initializer');
         if(expr.localType==='inferredTrap'&&!['trapResult','trapOptionResult'].includes(type))fail('inferred trap local requires Result');
         if(expr.localType==='directionalInferred'&&!['int','float','trapResult','trapOptionResult'].includes(type))fail('directional binding requires supported scalar or trapped Result');
         if(expr.localType==='constInt'){
