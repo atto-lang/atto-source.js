@@ -128,7 +128,8 @@ class Parser {
     const stmts=[];
     while(this.peek().value!=='return'){
       if(stmts.length>=256)this.fail('statement quota exceeded');
-      if(this.eat('val'))stmts.push(this.binding());
+      // Canonical immutable const and compatibility val share the same typed slot.
+      if(this.eat('const')||this.eat('val'))stmts.push(this.binding());
       else if(this.eat('let'))stmts.push(this.binding(true));
       else if(this.eat('writech')){
         if(this.activeBatch)this.fail('await outstanding counted batch before channel access');
