@@ -1,4 +1,5 @@
-// Bounded Atto pure-i64 functional pipeline source compiler -> executable ESM.
+// Bounded Atto i64 functional pipeline source compiler -> executable ESM.
+// Pure by default; explicit capability profile allows main-only i64 println.
 // Source is lexed, parsed and checked; no eval, dynamic import, ambient I/O or
 // raw input splice occurs in generated guest module.
 const MAX_SOURCE = 16 * 1024;
@@ -17,16 +18,17 @@ export class FunctionalPipelineSourceError extends Error {
 }
 const deny = code => { throw new FunctionalPipelineSourceError(code); };
 function tokenize(src) {
-  if (typeof src !== 'string' || new TextEncoder().encode(src).length > MAX_SOURCE || !/^[\x09\x0a\x0d\x20-\x7e]*$/.test(src)) deny('E_SOURCE');
+  if (typeof src !== 'string' || new TextEncoder().encode(src).length > MAX_SOURCE || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(src)) deny('E_SOURCE');
   const tokens=[]; let i=0;
   while (i<src.length) {
-    if (/\s/.test(src[i])) { i++; continue; }
+    if (/[\t\n\r ]/.test(src[i])) { i++; continue; }
     if (src.startsWith('//',i)) { i+=2; while(i<src.length && src[i]!=='\n') i++; continue; }
     if (src.startsWith('/*',i)) {
       i+=2; const end=src.indexOf('*/',i); if (end<0) deny('E_LEX'); i=end+2;continue;
     }
+    if (src.charCodeAt(i)>0x7e) deny('E_SOURCE');
     if (tokens.length>=MAX_TOKENS) deny('E_TOKEN_LIMIT');
-    const m=/^(?:[A-Za-z_][A-Za-z_0-9]*|[0-9]+|\|>|<\||->|[(){}:,;+*\/=\-])/.exec(src.slice(i));
+    const m=/^(?:[A-Za-z_][A-Za-z_0-9]*|[0-9]+|\|>|<\||->|[(){}:.,;+*\/=\-])/.exec(src.slice(i));
     if (!m) deny('E_LEX');
     tokens.push(m[0]);i+=m[0].length;
   }
@@ -34,7 +36,7 @@ function tokenize(src) {
 }
 const node = (kind,...args) => ({kind,args});
 class Parser {
-  constructor(text) { this.tokens=tokenize(text);this.pos=0;this.nodes=0; }
+  constructor(text,allowStdio) { this.tokens=tokenize(text);this.pos=0;this.nodes=0;this.allowStdio=allowStdio; }
   get token() { return this.tokens[this.pos]; }
   eat(x) { if(this.token!==x) return false;this.pos++;return true; }
   need(x) { if(!this.eat(x)) deny('E_PARSE'); }
@@ -85,10 +87,16 @@ class Parser {
     }
     return lhs;
   }
-  body(locals) {
+  body(locals,prints,name) {
     while(this.eat('val')) {
       const name=this.name();this.need('=');const init=this.expr();this.need(';');
       if(locals.length>=4) deny('E_LIMIT');locals.push({name,init});
+    }
+    while(this.eat('stdio')) {
+      if(!this.allowStdio||name!=='main') deny('E_PERMISSION');
+      this.need('.');if(!this.eat('println')) deny('E_STDIO');
+      this.need('(');const value=this.expr();this.need(')');this.need(';');
+      if(prints.length>=4) deny('E_LIMIT');prints.push(value);
     }
     this.need('return');const e=this.expr();this.need(';');this.need('}');return e;
   }
@@ -102,13 +110,13 @@ class Parser {
         params.push(arg);if(params.length>8) deny('E_LIMIT');
       } while(this.eat(','));
       this.need(')');const colon=this.eat(':');if(!colon)this.need('->');this.need('int');
-      const locals=[];let result;
-      if(this.eat('{')) result=this.body(locals);
+      const locals=[],prints=[];let result;
+      if(this.eat('{')) result=this.body(locals,prints,name);
       else if(colon&&this.eat('->')) {
-        if(this.eat('{'))result=this.body(locals);
+        if(this.eat('{'))result=this.body(locals,prints,name);
         else {result=this.expr();this.need(';');}
       } else deny('E_PARSE');
-      functions.push({name,params,locals,result});if(functions.length>64) deny('E_LIMIT');
+      functions.push({name,params,locals,prints,result});if(functions.length>64) deny('E_LIMIT');
     }
     return functions;
   }
@@ -128,6 +136,7 @@ function check(functions) {
       case 'call': {
         const [name,args]=e.args,callee=symbols.get(name);
         if(!callee) deny('E_SYMBOL');if(args.length!==callee.params.length)deny('E_ARITY');
+        if(name==='main'&&callee.prints.length)deny('E_EFFECT_CALL');
         for(const arg of args) expr(arg,scope);
         fn(name);return;
       }
@@ -138,6 +147,7 @@ function check(functions) {
     if(state.get(name)===2)return;if(state.get(name)===1)deny('E_CYCLE');
     state.set(name,1);const f=symbols.get(name),scope=new Set(f.params);
     for(const local of f.locals){expr(local.init,scope);if(scope.has(local.name))deny('E_DUP_LOCAL');scope.add(local.name);}
+    for(const value of f.prints)expr(value,scope);
     expr(f.result,scope);state.set(name,2);
   }
   for(const name of symbols.keys())fn(name);
@@ -159,14 +169,17 @@ function emitExpr(e,fn) {
     default:deny('E_AST');
   }
 }
-export function compileFunctionalPipelineSource(source) {
-  const functions=new Parser(source).parse();check(functions);
+export function compileFunctionalPipelineSource(source,{allowStdio=false}={}) {
+  if(typeof allowStdio!=='boolean')deny('E_PERMISSION');
+  const functions=new Parser(source,allowStdio).parse();check(functions);
+  const effectful=functions.find(f=>f.name==='main').prints.length>0;
   let out=`// Checked and compiled Atto int64 guest; no dynamic host evaluator.\n${checkedGuest}`;
   for(const f of functions) {
-    out+=`function f_${f.name}(${f.params.map(x=>'p_'+x).join(',')}){\n`;
+    out+=`function f_${f.name}(${f.name==='main'&&effectful?'print_i64':f.params.map(x=>'p_'+x).join(',')}){\n`;
     for(const b of f.locals) out+=`const v_${b.name}=${emitExpr(b.init,f)};\n`;
+    for(const value of f.prints)out+=`print_i64(${emitExpr(value,f)});\n`;
     out+=`return ${emitExpr(f.result,f)};\n}\n`;
     if(out.length>65536)deny('E_OUTPUT_LIMIT');
   }
-  out+='export function main(){return f_main();}\n';return out;
+  out+=effectful?'export function main(print_i64){if(typeof print_i64!=="function")throw Error("E_PERMISSION");return f_main(print_i64);}\n':'export function main(){return f_main();}\n';return out;
 }

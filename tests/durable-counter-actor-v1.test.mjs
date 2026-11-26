@@ -89,3 +89,19 @@ test('unsupported durable syntax rejects with no guest and normal worker cannot 
   assert.throws(()=>transpile_to_worker(source));
   assert.throws(()=>compile_durable_counter_actor_v1(source+'//\u0000'),/E_RAW_SOURCE_CONTROL/);
 });
+
+test('durable Counter identifiers obey the reserved-word floor before schema emission',async()=>{
+  for(const name of ['if','while','select','match','throw','raise','panic','return',
+    'break','continue','class','type','unsafe','shared','spawn','trap','defer','null']){
+    for(const original of ['count','mail'])
+      assert.throws(()=>compile_durable_counter_actor_v1(source.replaceAll(original,name)),
+        /E_DURABLE_COUNTER_ACTOR_ABI/,name+' in '+original);
+  }
+  // Do not narrow this backend to the native literal-name whitelist.
+  const renamed=await guest(source.replaceAll('count','total').replaceAll('mail','message'));
+  verify(renamed.m,'total');
+  assert.equal(renamed.m.atto_durable_transition_v1(11n,1n,37n),48n);
+  const caseSensitive=await guest(source.replaceAll('count','While'));
+  verify(caseSensitive.m,'While');
+  assert.equal(caseSensitive.m.atto_durable_transition_v1(0n,1n,42n),42n);
+});
