@@ -11,7 +11,7 @@ export class ScalarIRError extends Error {
   }
 }
 const fail = message => { throw new ScalarIRError(message); };
-const identifier = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const identifier = /^[A-Za-z_Α-ΡΣ-Ωα-ω][A-Za-z0-9_Α-ΡΣ-Ωα-ω]*$/;
 const decimal = /^(?:0|[1-9][0-9]*|-[1-9][0-9]*)$/;
 const MAX_FN = 512;
 const MAX_PARAMS = 128;
