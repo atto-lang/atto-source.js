@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {compile,compileToIR,IncrementalSession} from '../src/compiler.mjs';
 import {compileToProgramIRV2} from '../src/program-v2.mjs';
-const headers=['define fnc int • forward(int x)','define fnc int <- forward(int x)','define fnc forward(int x) -> int','define fnc forward(int x): int','define fnc forward(int x) : int ->'];
+const headers=['define fnc int • forward(int x)','define fnc int <- forward(int x)','define fnc forward(int x) -> int','define fnc forward(int x): int','define fnc forward(int x) : int ->','define int <- forward(int x)','int <- forward(int x)'];
 const source=(header,marker='@nocopy')=>marker+'\n'+header+' { return x; }\npub fnc main():int { return forward(42); }';
 test('five annotated canonical scalar headers emit equivalent executable ESM',async()=>{
   const code=headers.map(h=>compile(source(h)));
@@ -25,4 +25,12 @@ test('copy guarantee fails closed on unsupported effects and malformed annotatio
   assert.throws(()=>compile('pub fnc main():int { @nocopy return 42; }'));
   assert.throws(()=>compile('@nocopy export pub fnc main; fnc main():int{return 42;}'));
   assert.doesNotThrow(()=>compile('pub fnc main():int { /* @noalloc */ return 42; }'));
+});
+
+test('abbreviated unannotated headers retain identical emitted bytes',()=>{
+  const suffix=' { return data; } pub fnc main():int { return process(42); }';
+  for(const marker of ['', '@nocopy\n']){
+    const expected=compile(marker+'define fnc int <- process(int data)'+suffix);
+    for(const header of ['define int <- process(int data)','int <- process(int data)'])assert.equal(compile(marker+header+suffix),expected);
+  }
 });

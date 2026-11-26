@@ -277,9 +277,10 @@ class Parser {
       if(pub){this.match('define');}
       else if(this.match('define')){pub=this.match('pub');}
       const at=this.peek();
-      if(markers.size && at.value!=='fnc')
-        throw new CompileError('E_ANNOTATION: guarantee requires named fnc',at);
-      if(!this.match('fnc')&&!this.match('routine'))throw new CompileError('unsupported declaration',at);
+      const abbreviated=at.value==='int' && this.ts[this.pos+1]?.value==='<-';
+      if(markers.size && at.value!=='fnc' && !abbreviated)
+        throw new CompileError('E_ANNOTATION: guarantee requires named callable',at);
+      if(!abbreviated&&!this.match('fnc')&&!this.match('routine'))throw new CompileError('unsupported declaration',at);
       const returnFirst=this.peek().value==='int' && ['•','<-'].includes(this.ts[this.pos+1]?.value);
       if(returnFirst){this.expect('int');this.pos++;}
       const name=this.id();this.expect('(');const params=[];
