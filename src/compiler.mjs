@@ -260,6 +260,7 @@ class Parser {
     const functions=[],exports=[];
     while(this.peek().kind!=='eof'&&!(module&&this.peek().value==='end')){
       if(this.peek().value==='export'){
+        if(module)throw new CompileError('file export requires file-root scope',this.peek());
         if(exports.length>=1024)throw new CompileError('file export budget',this.peek());
         exports.push(this.exportDeclaration());continue;
       }
