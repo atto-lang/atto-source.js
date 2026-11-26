@@ -2,7 +2,7 @@
 // program-v2 emitter; do not route quantities through wrapping scalar-v1.
 const MIN=-(1n<<63n),MAX=(1n<<63n)-1n,LIMIT=(1n<<256n)-1n;
 const scalar=()=>({powers:new Map(),n:1n,d:1n});
-const FULL=[MIN,MAX];
+const FULL=[MIN,MAX],NARROW=[-(1n<<31n),(1n<<31n)-1n];
 const max=(a,b)=>a>b?a:b,min=(a,b)=>a<b?a:b;
 // A bounded exclusion domain: only 0 and -1 are represented as holes.
 const bit=n=>n===0n?1:n===-1n?2:0;
@@ -55,7 +55,7 @@ function provesArithmetic(a,b,op){
   return false;
 }
 export function lowerVerifiedQuantitySource(tokens,report,strict=false){
-  if(tokens[0]?.value!=='define'||!['dimension','unit'].includes(tokens[1]?.value))return null;
+  if(tokens[0]?.value!=='type'&&(tokens[0]?.value!=='define'||!['dimension','unit'].includes(tokens[1]?.value)))return null;
   let at=0,budget=256;
   const peek=()=>tokens[Math.min(at,tokens.length-1)];
   const fail=(code,msg)=>report(code+': '+msg,peek());
@@ -104,7 +104,8 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
   };
   const type=()=>{
     const n=name();
-    if(n==='int'||n==='i64')return {unit:scalar(),range:FULL};
+    if(n==='int'||n==='i64')return {unit:scalar(),range:FULL,width:64};
+    if(n==='i32')return {unit:scalar(),range:NARROW,width:32};
     if(!aliases.has(n))fail('E_UNIT_NAME','unknown refinement type');
     return aliases.get(n);
   };
@@ -118,10 +119,12 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
   };
   while(take('type')){
     if(aliases.size>=128)fail('E_UNIT_LIMIT','too many aliases');
+    if(['int','i64','i32'].includes(peek().value))fail('E_REFINEMENT_DUPLICATE','reserved carrier');
     const n=identifier();
     if(aliases.has(n)||dims.has(n)||units.has(n))fail('E_UNIT_DUPLICATE','duplicate alias');
-    expect('=');expect('int');expect('where');
-    let unit=null,range=FULL;
+    expect('=');const carrier=name();if(!['int','i64','i32'].includes(carrier))fail('E_REFINEMENT_BOUND','unsupported carrier');expect('where');
+    const width=carrier==='i32'?32:64;
+    let unit=null,range=width===32?NARROW:FULL;
     do{
       if(take('units')){
         if(unit!==null)fail('E_UNIT_DUPLICATE','duplicate unit clause');
@@ -135,10 +138,15 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
         if(range===null)fail('E_REFINEMENT_EMPTY','contradictory refinement');
       }
     }while(take('and'));
-    expect(';');aliases.set(n,{unit:unit??scalar(),range});
+    expect(';');aliases.set(n,{unit:unit??scalar(),range,width});
   }
   if(strict&&!aliases.size)fail('E_VERIFY_UNSUPPORTED','strict profile requires typed quantity aliases');
-  const make=(unit,ir,literal=null,range=literal===null?FULL:[literal,literal])=>({unit,ir,literal,range});
+  const make=(unit,ir,literal=null,range=literal===null?FULL:[literal,literal],width=literal===null?64:0)=>({unit,ir,literal,range,width});
+  function checkedWidth(v,width){
+    if(width!==32)return {...v,width};
+    if(strict&&!contains(NARROW,v.range))fail('E_VERIFY_UNPROVEN','i32 operation may overflow');
+    return make(v.unit,{kind:'i32Check',inner:v.ir},null,intersect(v.range,NARROW)??NARROW,32);
+  }
   const int=v=>({kind:'int',value:String(v)});
   function attach(value,target){
     if(!same(value.unit,scalar()))fail('E_UNIT_ATTACHMENT','attachment requires dimensionless scale one');
@@ -149,12 +157,12 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       const want=aliases.get(target);
       compatible(want.unit,value.unit);
       if(strict&&!contains(want.range,value.range))fail('E_VERIFY_UNPROVEN','refinement cast may fail');
-      return make(want.unit,{kind:'refinementCheck',inner:value.ir,minimum:String(want.range[0]),maximum:String(want.range[1])},null,intersect(value.range,want.range)??want.range);
+      return make(want.unit,{kind:'refinementCheck',inner:value.ir,minimum:String(want.range[0]),maximum:String(want.range[1])},null,intersect(value.range,want.range)??want.range,want.width);
     }
     if(legacy&&units.has(target))return attach(value,target);
     if(!['int','i64'].includes(target))fail('E_UNSUPPORTED_CAST','only signed-i64 identity casts in closed quantities');
     if(!same(value.unit,scalar()))fail('E_UNIT_ERASURE','scalar cast cannot erase units');
-    return value;
+    return {...value,width:64};
   }
   function combine(a,b,divide){
     const powers=new Map(a.powers);
@@ -173,7 +181,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     if(n%d!==0n)fail('E_UNIT_INEXACT','nonintegral conversion');
     const result=n/d;
     if(result<MIN||result>MAX)fail('E_UNIT_RANGE','conversion out of range');
-    return make(target,int(result),result);
+    return make(target,int(result),result,undefined,v.width);
   }
   function postfix(v,depth){
     while(peek().value==='::'||(peek().value==='.'&&tokens[at+1]?.value==='<')){
@@ -196,20 +204,21 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       if(peek().kind==='int'&&BigInt(peek().value.replaceAll('_',''))===-MIN)return literal(true,depth);
       const v=atom(depth+1);
       if(strict&&v.range[0]===MIN)fail('E_VERIFY_UNPROVEN','signed negation may overflow');
-      return make(v.unit,{kind:'neg',inner:v.ir},null,normal(-v.range[1],-v.range[0]));
+      return checkedWidth(make(v.unit,{kind:'neg',inner:v.ir},null,normal(-v.range[1],-v.range[0])),v.width);
     }
     if(take('(')){const v=expr(0,depth+1);expect(')');return postfix({...v,literal:null},depth);}
     if(peek().kind==='id'){
       const n=identifier();
       if(take('(')){
-        if(!signatures.has(n))fail('E_UNIT_NAME','unknown or forward private function');
+        if(!signatures.has(n))fail('E_REFINEMENT_CALL','unknown or forward private function');
         const sig=signatures.get(n),args=[];
         for(const want of sig.params){
           if(args.length)expect(',');
+          if(peek().value===')')fail('E_REFINEMENT_CALL','missing argument');
           const arg=expr(0,depth+1);boundary(want,arg,'E_REFINEMENT_PRECONDITION');args.push(arg.ir);
         }
-        expect(')');
-        return postfix(make(sig.result.unit,{kind:'call',target:sig.index,args},null,sig.result.range),depth);
+        if(!take(')'))fail('E_REFINEMENT_CALL','arity mismatch');
+        return postfix(make(sig.result.unit,{kind:'call',target:sig.index,args},null,sig.result.range,sig.result.width),depth);
       }
       if(!locals.has(n))fail('E_UNIT_NAME','unknown binding');
       return postfix({...locals.get(n)},depth);
@@ -234,13 +243,15 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
         if(!same(left.unit,right.unit))fail('E_UNIT_SCALE','mixed scales');
         unit=left.unit;
       }else{
-        if(!strict&&op==='/'&&same(left.unit,scalar())&&same(right.unit,scalar()))fail('E_UNIT_SCALAR_DIVISION','plain scalar division outside quantity profile');
+        if(!strict&&!aliases.size&&op==='/'&&same(left.unit,scalar())&&same(right.unit,scalar()))fail('E_UNIT_SCALAR_DIVISION','plain scalar division outside quantity profile');
         unit=combine(left.unit,right.unit,op==='/');
       }
       if(strict&&!provesArithmetic(left.range,right.range,op))fail('E_VERIFY_UNPROVEN','signed arithmetic may overflow or divide by zero');
-      left=make(unit,{kind:'binary',op,left:left.ir,right:right.ir},null,arithmeticRange(left.range,right.range,op));
+      const width=left.width===64||right.width===64?64:left.width===32||right.width===32?32:64;
+      if(width===32&&[left,right].some(v=>v.width===0&&!contains(NARROW,v.range)))fail('E_I32_RANGE','literal operand outside i32');
+      left=checkedWidth(make(unit,{kind:'binary',op,left:left.ir,right:right.ir},null,arithmeticRange(left.range,right.range,op)),width);
     }
-    if(min===0&&take('as'))left=cast(left,name(),true);
+    while(min===0&&take('as')){if(take('?'))fail('E_REFINEMENT_CAST','optional casts not admitted');left=cast(left,name(),true);}
     return left;
   }
   function joinFacts(a,b){
@@ -313,7 +324,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       const slot=nextStrictSlot++,header=new Map(facts);
       // The new slot represents every iteration, including entry. Forget
       // only the assigned variable's transient range, not other bindings.
-      header.set(key,make(declared.unit,{kind:'capture',slot},null,declared.range));
+      header.set(key,make(declared.unit,{kind:'capture',slot},null,declared.range,declared.width));
       const p=condition(header);
       expect('{');if(identifier()!==key)fail('E_VERIFY_UNSUPPORTED','unexpected loop update');
       expect('=');locals=p.yes;const update=expr(0,0);expect(';');
@@ -336,7 +347,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       if(want!==null)boundary(want,value,'E_REFINEMENT_BINDING');
       if(nextStrictSlot>=64)fail('E_UNIT_LIMIT','strict local slot budget');
       const slot=nextStrictSlot++,after=new Map(facts),decls=new Map(mutable);
-      after.set(key,make(value.unit,{kind:'capture',slot},null,value.range));
+      after.set(key,make(value.unit,{kind:'capture',slot},null,value.range,want?.width??(value.width||64)));
       if(isMutable)decls.set(key,want);
       return {kind:'local',slot,init:value.ir,body:strictReturn(result,after,decls,depth+1)};
     }
@@ -348,7 +359,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       if(nextStrictSlot>=64)fail('E_UNIT_LIMIT','strict local slot budget');
       const slot=nextStrictSlot++,after=new Map(facts);
       // New binding identity and replacement range, never union with stale fact.
-      after.set(key,make(value.unit,{kind:'capture',slot},null,value.range));
+      after.set(key,make(value.unit,{kind:'capture',slot},null,value.range,mutable.get(key).width));
       return {kind:'local',slot,init:value.ir,body:strictReturn(result,after,mutable,depth+1)};
     }
     if(take('if')){
@@ -363,10 +374,68 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     boundary(result,v,'E_REFINEMENT_RETURN');
     return v.ir;
   }
+  function readContracts(params,types,result,pub){
+    const checks=[];let count=0;
+    const cmp=()=>{const op=({'eq':'==','gte':'>=','lte':'<='})[peek().value]??peek().value;
+      if(!['==','<','<=','>','>='].includes(op))fail('E_REFINEMENT_CONTRACT','expected comparison');at++;return op;};
+    const bound=want=>{
+      const [,n]=integer(take('-'));let u=scalar();
+      const dot=take('.');
+      if(dot||peek().value==='<'){expect('<');u=lookup(name());expect('>');}
+      compatible(want.unit,u);return n;
+    };
+    while(['requires','ensures'].includes(peek().value)){
+      if(pub||++count>16)fail('E_REFINEMENT_CONTRACT','contract budget or entrypoint');
+      const require=take('requires');if(!require)expect('ensures');
+      const key=name(),op=cmp();
+      if(require){
+        const i=params.indexOf(key);if(i<0)fail('E_REFINEMENT_CONTRACT','unknown parameter');
+        const p=types[i],n=bound(p);
+        const b=op==='<'?[MIN,n-1n]:op==='<='?[MIN,n]:op==='>'?[n+1n,MAX]:op==='>='?[n,MAX]:[n,n];
+        const range=intersect(p.range,b);if(!range)fail('E_REFINEMENT_EMPTY','contradictory requires');
+        types[i]={...p,range};locals.set(key,{...locals.get(key),range});
+      }else{
+        if(key!=='result')fail('E_REFINEMENT_CONTRACT','ensures must constrain result');
+        if(peek().kind==='id'){
+          const i=params.indexOf(name());if(i<0)fail('E_REFINEMENT_CONTRACT','unknown parameter');
+          compatible(result.unit,types[i].unit);checks.push({op,param:i});
+        }else checks.push({op,n:bound(result)});
+      }
+    }
+    return checks;
+  }
+  // Prove only identity, checked casts, positive division and already
+  // established earlier helper postconditions. Never sample a caller.
+  function provesRelation(ir,param,nonnegative,bindings,depth=0){
+    if(depth>=64)return false;
+    const sub=e=>provesRelation(e,param,nonnegative,bindings,depth+1);
+    if(ir.kind==='param')return ir.index===param;
+    if(ir.kind==='capture')return !!bindings[ir.slot]&&sub(bindings[ir.slot].init);
+    if(ir.kind==='refinementCheck'||ir.kind==='i32Check')return sub(ir.inner);
+    if(ir.kind==='binary'&&ir.op==='/'&&nonnegative&&ir.right.kind==='int'&&BigInt(ir.right.value)>=1n)return sub(ir.left);
+    if(ir.kind==='call'){
+      const sig=[...signatures.values()].find(s=>s.index===ir.target);
+      return !!sig&&sig.checks.some(c=>c.op==='<='&&c.param!==undefined&&sub(ir.args[c.param]));
+    }
+    return false;
+  }
+  function proveContracts(checks,value,types,bindings){
+    const [lo,hi]=value.range;
+    for(const c of checks){
+      let yes=false;
+      if(c.n!==undefined){const n=c.n;yes=c.op==='=='?lo===n&&hi===n:c.op==='<'?hi<n:c.op==='<='?hi<=n:c.op==='>'?lo>n:lo>=n;}
+      else{
+        const [a,b]=types[c.param].range;
+        yes=c.op==='=='?lo===hi&&a===b&&lo===a:c.op==='<'?hi<a:c.op==='<='?hi<=a||provesRelation(value.ir,c.param,a>=0n,bindings):c.op==='>'?lo>b:lo>=b;
+      }
+      if(!yes)fail('E_REFINEMENT_POSTCONDITION','unproved ensures');
+    }
+  }
   const functions=[];
   for(;;){
     if(functions.length>=32)fail('E_UNIT_LIMIT','too many functions');
     const pub=take('pub');expect('fnc');const n=identifier();
+    if(pub&&n!=='main'&&aliases.size)fail('E_REFINEMENT_EXPORT','private refinement helper required');
     if(pub!==(n==='main')||signatures.has(n)||aliases.has(n)||units.has(n)||dims.has(n))fail('E_UNIT_NAME','invalid function name or visibility');
     if(!aliases.size&&!pub)fail('E_UNSUPPORTED','closed profile admits only main');
     locals=new Map();const params=[],types=[];
@@ -376,13 +445,14 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
         if(params.length>=16)fail('E_UNIT_LIMIT','too many parameters');
         const want=type(),p=identifier();
         if(locals.has(p))fail('E_UNIT_DUPLICATE','duplicate parameter');
-        locals.set(p,make(want.unit,{kind:'param',index:params.length},null,want.range));
+        locals.set(p,make(want.unit,{kind:'param',index:params.length},null,want.range,want.width));
         params.push(p);types.push(want);
       }while(take(','));
       expect(')');
     }
     expect('->');const result=type();
     if(pub&&(params.length||!same(result.unit,scalar())||!contains(result.range,FULL)))fail('E_UNIT_ERASURE','main requires zero arguments and plain int result');
+    const checks=readContracts(params,types,result,pub);
     expect('{');
     const bindings=[];
     while(take('val')){
@@ -396,14 +466,16 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       if(want!==null)boundary(want,value,'E_REFINEMENT_BINDING');
       const slot=bindings.length;
       bindings.push({slot,init:value.ir});
-      locals.set(key,make(value.unit,{kind:'capture',slot},null,value.range));
+      locals.set(key,make(value.unit,{kind:'capture',slot},null,value.range,want?.width??(value.width||64)));
     }
     let body;
-    if(strict){nextStrictSlot=bindings.length;body=strictReturn(result,locals);expect('}');}
+    if(strict){if(checks.length)fail('E_VERIFY_UNSUPPORTED','strict ensures with control flow require separate proof');nextStrictSlot=bindings.length;body=strictReturn(result,locals);expect('}');}
     else {
+      if(peek().value==='let')fail('E_REFINEMENT_BODY','mutable binding not admitted');
       expect('return');const v=expr(0,0);expect(';');expect('}');
       if(pub&&!same(v.unit,scalar()))fail('E_UNIT_ERASURE','main requires scale-one scalar');
       boundary(result,v,'E_REFINEMENT_RETURN');
+      proveContracts(checks,v,types,bindings);
       body=v.ir;
     }
     for(let i=bindings.length-1;i>=0;i--)body={kind:'local',...bindings[i],body};
@@ -413,6 +485,6 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       if(peek().kind!=='eof')fail('E_SYNTAX','unexpected trailing source');
       return {sourceNamespace:null,modules:[],functions};
     }
-    signatures.set(n,{index,params:types,result});
+    signatures.set(n,{index,params:types,result,checks});
   }
 }

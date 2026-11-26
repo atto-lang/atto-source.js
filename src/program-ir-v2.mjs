@@ -432,6 +432,11 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         if((owners[owner].paramTypes?.[expr.index]??'int')!==expected)
           fail('parameter type mismatch');
         return {kind:'param',index:expr.index};
+      case 'i32Check': {
+        record(expr,['kind','inner'],'checked i32');
+        if(expected!=='int')fail('checked i32 requires integer');
+        return {kind:'i32Check',inner:node(expr.inner,owner,depth+1,'int',active)};
+      }
       case 'refinementCheck': {
         record(expr,['kind','inner','minimum','maximum'],'checked refinement');
         if(expected!=='int')fail('checked refinement requires signed-i64 value');

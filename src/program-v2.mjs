@@ -1395,6 +1395,8 @@ function emitProgram(program) {
       case 'local':case 'floatLocal':case 'trapLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
+      case 'i32Check':
+        return '((v)=>{_check(v);if(v<-2147483648n||v>2147483647n){const e=new RangeError("E_I32_OVERFLOW: checked signed 32-bit overflow");Object.defineProperty(e,"code",{value:"i32_overflow",enumerable:true});throw Object.freeze(e);}return v;})('+emitExpr(expr.inner,depth+1)+')';
       case 'refinementCheck':
         return '((v)=>{_check(v);if(v<'+expr.minimum+'n||v>'+expr.maximum+'n){const e=new RangeError("E_REFINEMENT_CHECK_FAILED: checked refinement violated");Object.defineProperty(e,"code",{value:"refinement_violation",enumerable:true});throw Object.freeze(e);}return v;})('+emitExpr(expr.inner,depth+1)+')';
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
@@ -1509,7 +1511,7 @@ function emitProgram(program) {
       case 'local':case 'floatLocal':case 'trapLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
       case 'trap':return usesSymbol(expr.inner);
       case 'trapMethod':return usesSymbol(expr.receiver);
-      case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesSymbol(expr.inner);
+      case 'i32Check':case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesSymbol(expr.inner);
       case 'match':case 'adtMatch':return usesSymbol(expr.subject)||
         expr.arms.some(arm=>usesSymbol(arm.body));
       default:return false;
@@ -1550,7 +1552,7 @@ function emitProgram(program) {
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
       case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
       case 'local':case 'floatLocal':case 'trapLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
-      case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
+      case 'i32Check':case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
       case 'match':return usesPortableRuntime(expr.subject)||
         expr.arms.some(arm=>usesPortableRuntime(arm.body));
       case 'adtMatch':return true;
@@ -1838,7 +1840,7 @@ export function compileAttoScalarV1(source) {
     switch(expr.kind){
       case 'int':case 'param':case 'capture':return;
       case 'local':visit(expr.init);visit(expr.body);return;
-      case 'refinementCheck':case 'neg':return visit(expr.inner);
+      case 'i32Check':case 'refinementCheck':case 'neg':return visit(expr.inner);
       case 'binary':
         if(!['+','-','*','/','%','mod'].includes(expr.op))
           fail('AttoLang scalar-v1 removed or unsupported operator '+expr.op);
