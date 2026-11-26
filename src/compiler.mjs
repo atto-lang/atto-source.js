@@ -229,9 +229,8 @@ class Parser {
       throw new CompileError('E_TYPE_NAME: reserved or oversized aggregate identifier',at);
     return name;
   }
-  // Restricted compile-time scalar aggregate profile. Only immutable literal
-  // locals and integer projections are admitted; no runtime aggregate ABI,
-  // escaping values, nested products or general expression inference.
+  // Restricted scalar aggregate profile: immutable literals and direct int
+  // parameter reads only. No aggregate ABI, escaping values or effectful inference.
   aggregateConst(params){
     const at=this.peek();this.expect('const');
     const kind=this.id();
@@ -284,7 +283,11 @@ class Parser {
       }else if(token.kind==='string'){
         // A lexed, non-interpolated string has no evaluation effects.
         this.pos++;type='string';
-      }else throw new CompileError('E_TYPE_INFER_AMBIGUOUS: scalar literal required in JS profile',token);
+      }else if(token.kind==='id'&&params.includes(token.value)){
+        // Scalar parameters are immutable and pure to read. Reuse the
+        // actual argument through the normal IR parameter node.
+        this.pos++;type='int';value={kind:'var',name:token.value};
+      }else throw new CompileError('E_TYPE_INFER_AMBIGUOUS: literal or immutable int parameter required',token);
       fields.set(key,{type,value});
     } while(this.match(','));
     this.expect(close);this.expect(';');
@@ -315,8 +318,7 @@ class Parser {
     const field=aggregate.fields.get(key);
     if(!field)throw new CompileError('E_NO_FIELD: '+key,at);
     if(field.type!=='int')throw new CompileError('JS scalar aggregate profile supports only int projections',at);
-    // Immutable scalar literal, constant-folded through normal typed scalar IR.
-    return {kind:'int',n:field.value};
+    return typeof field.value==='bigint' ? {kind:'int',n:field.value} : {...field.value};
   }
   exportDeclaration(){
     this.expect('export');this.expect('pub');
@@ -332,6 +334,15 @@ class Parser {
     const module=this.peek().value==='define' && this.ts[this.pos+1]?.value==='module';
     if(module){this.pos++;this.expect('module');this.id();this.match('as');}
     const functions=[],exports=[];
+    // Module prefix: named immutable literal Record/Tuple exemplars.
+    // No module struct identity or full aggregate ABI is admitted.
+    this.aggregateTypes=new Map();this.aggregateLocals=new Map();
+    while(this.peek().value==='const'&&['Record','Tuple','struct'].includes(this.ts[this.pos+1]?.value)){
+      if(this.ts[this.pos+1].value==='struct'||this.ts[this.pos+2]?.value!=='<')
+        throw new CompileError('E_MODULE_AGGREGATE_INFER_UNSUPPORTED: expected named Record or Tuple',this.peek());
+      this.aggregateConst([]);
+    }
+    const moduleTypes=this.aggregateTypes,moduleLocals=this.aggregateLocals;
     while(this.peek().kind!=='eof'&&!(module&&this.peek().value==='end')){
       if(this.peek().value==='export'){
         if(exports.length>=1024)throw new CompileError('file export budget',this.peek());
@@ -345,7 +356,9 @@ class Parser {
       else if(this.match('define')){pub=this.match('pub');}
       const at=this.peek();
       if(!this.match('fnc')&&!this.match('routine'))throw new CompileError('unsupported declaration',at);
-      const name=this.id();this.expect('(');const params=[];
+      const name=this.id();
+      if(moduleLocals.has(name))throw new CompileError('duplicate module binding '+name,at);
+      this.expect('(');const params=[];
       if(!this.match(')')){
         do{if(params.length>=128)throw new CompileError('parameter limit');this.expect('int');const v=this.id();if(params.includes(v))throw new CompileError('duplicate parameter '+v);params.push(v);}while(this.match(','));
         this.expect(')');
@@ -359,7 +372,8 @@ class Parser {
       const braced=this.match('{');
       if(!braced&&!arrow)throw new CompileError('expected { for colon function body',this.peek());
       if(!braced){if(!this.match('as'))this.match('::');}
-      this.aggregateTypes=new Map();this.aggregateLocals=new Map();
+      this.aggregateTypes=new Map(moduleTypes);this.aggregateLocals=new Map(moduleLocals);
+      for(const param of params)this.aggregateLocals.delete(param);
       while(this.peek().value==='const'&&['Record','Tuple','struct'].includes(this.ts[this.pos+1]?.value))
         this.aggregateConst(params);
       this.expect('return');
