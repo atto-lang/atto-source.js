@@ -147,7 +147,7 @@ export function createWorkerControlLoop({
     if (queue.length >= limit) return false;
     queue.push({owner, epoch, run, value});
     schedule();
-    return true;
+    return !closed;
   }
 
   return Object.freeze({
@@ -204,7 +204,7 @@ export function createWorkerControlLoop({
         ready.push({owner: entry.owner, epoch: entry.epoch, run: entry.resume, value, entry});
         schedule();
       }
-      return true;
+      return !closed;
     },
     cancel(ticket) {
       if (!ticket || typeof ticket !== 'object') return false;
