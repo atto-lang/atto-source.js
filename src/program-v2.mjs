@@ -569,8 +569,10 @@ class Parser {
     if(name==='init')fail('init lifecycle requires once-only reachable initialization lowering',start);
     if(isProtectedPreludeIdentity(name))
       fail('E_PRELUDE_SPOOF: cannot define compiler-owned core name '+name,start);
-    // Xor(a, b) is a builtin; a user function could never be called by that name.
-    if(name==='Xor')fail("'Xor' is a reserved builtin name",start);
+    // This bounded profile reserves unqualified intrinsic names. Qualified
+    // user And/Or declarations keep ordinary call dispatch.
+    if(name==='Xor'||(moduleName===null&&['And','Or'].includes(name)))
+      fail("'"+name+"' is a reserved builtin name",start);
     this.expect('(');
     const params = [], paramTypes = [];
     if (!this.eat(')')) {
@@ -1121,6 +1123,8 @@ class Parser {
       if(first==='None')return {kind:'call',qualifier:'Option',name:'none',args:[]};
       return {kind:'variable', name:first};
     }
+    if(qualifier===null&&['And','Or','Xor'].includes(symbol))
+      return this.namedBooleanReduction(symbol,token);
     const args=this.argumentsAfterOpen();
     // Named integer operations retain their semantics; raw % remains reserved.
     // The binary ops below are internal IR names, never source syntax.
@@ -1130,12 +1134,6 @@ class Parser {
       if(args.length!==2)fail('Integer.'+symbol+' requires two arguments',token);
       if(args.some(a=>a.name!==null))fail('Integer.'+symbol+' takes positional arguments',token);
       return {kind:'binary',op:ops[symbol],left:args[0].expr,right:args[1].expr};
-    }
-    // Xor(a, b) evaluates a, then b exactly once on either branch.
-    if(qualifier===null&&symbol==='Xor'){
-      if(args.length!==2)fail('Xor requires two arguments',token);
-      if(args.some(a=>a.name!==null))fail('Xor takes positional arguments',token);
-      return {kind:'if',condition:args[0].expr,yes:{kind:'not',inner:args[1].expr},no:args[1].expr};
     }
     // Canonical Oreslang constructors also work as pure aliases for the
     // same statically checked intrinsics; don't introduce any new host API.
@@ -1147,6 +1145,48 @@ class Parser {
       }
     }
     return {kind:'call',qualifier,name:symbol,args};
+  }
+  namedBooleanReduction(name, token) {
+    // Literal packs are private scalar temporaries, never first-class arrays.
+    const pack=this.eat('['), identity=name==='And';
+    let values=[];
+    if(pack){
+      if(!this.eat(']')){
+        do {
+          if(values.length>=32)fail('Boolean reduction operand limit',token);
+          values.push(this.expression());
+        } while(this.eat(','));
+        this.expect(']');
+      }
+      this.expect(')');
+    }else{
+      const args=this.argumentsAfterOpen();
+      if(args.length<2||args.length>32)fail(name+' requires 2..32 scalar operands',token);
+      if(args.some(arg=>arg.name!==null))fail(name+' takes positional arguments',token);
+      values=args.map(arg=>arg.expr);
+    }
+    const bool=value=>({kind:'bool',value});
+    const strict=inner=>({kind:'not',inner:{kind:'not',inner}});
+    // The existing typed conditional and comparison IR checks both operands,
+    // including unreachable runtime branches. XOR uses strict bool operands,
+    // not the integer comparison overload.
+    const fold=items=>{
+      if(!items.length)return bool(identity);
+      return items.slice(1).reduce((left,right)=>{
+        if(name==='And')return {kind:'if',condition:left,yes:right,no:bool(false)};
+        if(name==='Or')return {kind:'if',condition:left,yes:bool(true),no:right};
+        return {kind:'compare',op:'!=',left,right:strict(right)};
+      },strict(items[0]));
+    };
+    if(!pack)return fold(values);
+    const prefix='@bool-pack:'+this.i+':';
+    const names=values.map((_,i)=>prefix+i);
+    // Evaluate each input exactly once, in order, even when the reduction
+    // result is already determined. Internal names cannot be source-spelled.
+    let body=fold(names.map(name=>({kind:'variable',name})));
+    for(let i=values.length-1;i>=0;i--)
+      body={kind:'local',name:names[i],localType:'bool',init:values[i],body};
+    return body;
   }
   matchExpression(injectedSubject=null) {
     // A typed scalar match is a canonical source form, not a new
