@@ -48,9 +48,21 @@ export function compileIntConstLambdaDirect(tokens) {
     if (v < MIN_I64 || v > MAX_I64) fail('E_TYPE', 'integer outside signed i64', n);
     return v;
   };
-  const parseHead = () => {
-    expect('const'); expect('fnc');
-    const functionName = name();
+  const typedLocalHead = () => (has('val') || has('const')) && tokens[i+1]?.kind === 'id' && tokens[i+2]?.value === ':' && tokens[i+3]?.value === 'fnc';
+  const parseHead = (explicit = false) => {
+    let functionName, signature = null;
+    if (explicit) {
+      if (!take('val')) expect('const');
+      functionName = name(); expect(':'); expect('fnc'); expect('(');
+      signature = [];
+      if (!has(')')) do {
+        if (signature.length >= MAX_PARAMS) fail('E_UNSUPPORTED', 'too many callable signature parameters');
+        signature.push(scalarType());
+      } while (take(','));
+      expect(')'); expect('->'); expect('int');
+    } else {
+      expect('const'); expect('fnc'); functionName = name();
+    }
     expect('='); expect('|');
     const params = [];
     if (!has('|')) {
@@ -68,7 +80,15 @@ export function compileIntConstLambdaDirect(tokens) {
         params.push({name:n,type});
       } while (take(','));
     }
-    expect('|'); expect(':'); expect('int'); expect('->');
+    expect('|');
+    if (signature !== null) {
+      if (params.length !== signature.length) fail('E_ARITY', 'lambda signature arity mismatch');
+      params.forEach((p,k) => {
+        if (p.type !== null && p.type !== signature[k]) fail('E_TYPE', 'lambda signature parameter mismatch');
+        p.type = signature[k];
+      });
+    }
+    expect(':'); expect('int'); expect('->');
     // Body is a single signed literal or an int parameter optionally plus a
     // signed literal. No external reads, member access, arbitrary statements.
     let body;
@@ -100,7 +120,7 @@ export function compileIntConstLambdaDirect(tokens) {
     parseMainHeader();
   } else {
     parseMainHeader();
-    if (has('val') || has('let')) {
+    if (!typedLocalHead() && (has('val') || has('let'))) {
       // A legacy anonymous function head is a syntax error, NOT a runtime
       // capture. Keep canonical diagnostics stable for mandatory |...|.
       const startsUnpiped = tokens[i + 2]?.value === '=' &&
@@ -112,7 +132,7 @@ export function compileIntConstLambdaDirect(tokens) {
         fail('E_SYNTAX', 'anonymous function expressions require |...| parameter delimiters');
       fail('E_CONST', 'runtime captures unsupported in closed const fnc profile');
     }
-    binding = parseHead();
+    binding = parseHead(typedLocalHead());
   }
   // Scalarize only literal, immutable tuples in this closed source profile.
   // No general tuple object, ownership-sensitive projection or adapter ABI.
