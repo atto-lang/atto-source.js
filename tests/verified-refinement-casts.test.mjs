@@ -65,3 +65,21 @@ for(const [id,body] of [
 ])test('strict rejects '+id,()=>assert.throws(()=>compileVerifiedStrict(pre+body),/E_VERIFY_UNPROVEN:/));
 test('strict ordinary fallback rejected',()=>assert.throws(()=>compileVerifiedStrict(main('42')),/E_VERIFY_UNSUPPORTED:/));
 test('strict closed quantity fallback rejected',()=>assert.throws(()=>compileVerifiedStrict('define dimension Time; define unit Second: Time; '+main('42<Second> / 1<Second>')),/E_VERIFY_UNSUPPORTED:/));
+
+for(const [id,body,want] of [
+ ['nonzero-true','fnc f(int x) -> int { if x != 0 { return 42/x; } return 0; } '+main('f(1)'),42n],
+ ['nonzero-false','fnc f(int x) -> int { if x != 0 { return 42/x; } return 0; } '+main('f(0)'),0n],
+ ['lazy-and','fnc f(int x) -> int { if x != 0 && 42/x > 0 { return 1; } return 42; } '+main('f(0)'),42n],
+ ['lazy-or','fnc f(int x) -> int { if x == 0 || 42/x > 0 { return 42; } return 0; } '+main('f(0)'),42n],
+ ['two-holes','fnc f(int x) -> int { if x != 0 && x != -1 { return -9223372036854775808/x; } return 0; } '+main('f(2)'),-4611686018427387904n],
+ ['join-holes','fnc f(int x) -> int { if x < 0 || x > 0 { return 42/x; } return 0; } '+main('f(-1)'),-42n],
+ ['not','fnc f(int x) -> int { if !(x == 0) { return 42/x; } else { return 42; } } '+main('f(0)'),42n],
+ ['nested','fnc f(int x) -> int { if x != 0 { if x != -1 { return -9223372036854775808/x; } return 0; } return 0; } '+main('f(2)'),-4611686018427387904n],
+])test('strict control flow '+id,async()=>assert.equal((await strictGuest(body))(),want));
+for(const [id,body] of [
+ ['reversed','fnc f(int x) -> int { if 42/x > 0 && x != 0 { return 42; } return 0; } '+main('f(1)')],
+ ['min-overflow','fnc f(int x) -> int { if x != 0 { return -9223372036854775808/x; } return 0; } '+main('f(2)')],
+ ['bad-or','fnc f(int x) -> int { if x != 0 || 42/x > 0 { return 42; } return 0; } '+main('f(0)')],
+ ['wrong-binding','fnc f(int x,int y) -> int { if x != 0 { return 42/y; } return 0; } '+main('f(1,1)')],
+ ['lost-fact','fnc f(int x) -> int { if x != 0 || x == 0 { return 42/x; } return 0; } '+main('f(1)')],
+])test('strict control flow rejects '+id,()=>assert.throws(()=>compileVerifiedStrict(pre+body),/E_VERIFY_UNPROVEN:/));
