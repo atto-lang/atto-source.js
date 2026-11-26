@@ -129,3 +129,25 @@ test('entry projection IR rejects forged fields and validates both operands',()=
   assert.throws(()=>compileIR(replace(forged)),/accessor/);
   assert.equal(accessed,0);
 });
+
+test('nested Entry projections and distinguishable first faults retain source order',async()=>{
+  const load=async expr=>import('data:text/javascript;base64,'+Buffer.from(compile(program(expr))).toString('base64'));
+  const nested=await load('Entry.of(Entry.of(20,21).value,Entry.of(21,22).key).key+21');
+  assert.equal(nested.main(),42n);
+  // scalar-v1 has provisional wrapping arithmetic, so distinguish the native
+  // division fault from the explicit remainder diagnostic, not overflow.
+  const fault=async expr=>{
+    const m=await load(expr);
+    let thrown;
+    try { m.main(); } catch(error) { thrown=error; }
+    assert.ok(thrown instanceof RangeError,expr);
+    return thrown.message;
+  };
+  const a='1/0', b='Integer.mod(1,0)';
+  const first=await fault(a), second=await fault(b);
+  assert.notEqual(first,second,'fault witnesses must be distinguishable');
+  for(const field of ['key','value']){
+    assert.equal(await fault('Entry.of('+a+','+b+').'+field),first);
+    assert.equal(await fault('Entry.of('+b+','+a+').'+field),second);
+  }
+});
