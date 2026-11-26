@@ -1093,7 +1093,7 @@ class Parser {
         const logical=op==='and'||op==='or';
         if(op==='^')fail("E_OPERATOR_CARET: single infix '^' is invalid; use '^^' for integer XOR",token);
         const prec=op==='*'||op==='/'?20:op==='+'||op==='-'?15:
-          op==='<<<'||op==='>>>'?12:
+          op==='<<<'||op==='>>>'||op==='ashr'?12:
           ['<','>','<=','>='].includes(op)?9:compare?8:
           op==='&'?7:op==='^^'?6:op==='|'?5:op==='and'?4:op==='or'?3:-1;
         if (prec < min) break;
@@ -1850,13 +1850,13 @@ function emitProgram(program) {
       }
       case 'not':return '!('+emitExpr(expr.inner,depth+1)+')';
       case 'binary':
-        if(expr.op==='<<<'||expr.op==='>>>'){
+        if(expr.op==='<<<'||expr.op==='>>>'||expr.op==='ashr'){
           const staticCount=expr.right.kind==='int'?BigInt(expr.right.value):
             expr.right.kind==='neg'&&expr.right.inner.kind==='int'?-BigInt(expr.right.inner.value):null;
           if(staticCount!==null&&(staticCount<0n||staticCount>63n))fail('E_SHIFT_DISTANCE: expected 0..63');
           const left=emitExpr(expr.left,depth+1),right=emitExpr(expr.right,depth+1);
           // Evaluate both operands once; validate before shifting, never mask counts.
-          const shift=expr.op==='<<<'?'a<<b':'BigInt.asUintN(64,a)>>b';
+          const shift=expr.op==='<<<'?'a<<b':expr.op==='ashr'?'a>>b':'BigInt.asUintN(64,a)>>b';
           return '((a,b)=>{_check(a);_check(b);if(b<0n||b>63n)throw new RangeError("E_GUEST_SHIFT_DISTANCE: expected 0..63");return BigInt.asIntN(64,'+shift+');})('+left+','+right+')';
         }
         // Evaluate operands once, left-to-right; do not expose engine-specific zero-divisor errors.
@@ -2395,7 +2395,7 @@ export function compileAttoScalarV1(source) {
       case 'local':visit(expr.init);visit(expr.body);return;
       case 'i32Check':case 'refinementCheck':case 'neg':return visit(expr.inner);
       case 'binary':
-        if(!['+','-','*','/','%','mod','^','&','|','<<<','>>>'].includes(expr.op))
+        if(!['+','-','*','/','%','mod','^','&','|','<<<','>>>','ashr'].includes(expr.op))
           fail('AttoLang scalar-v1 removed or unsupported operator '+expr.op);
         visit(expr.left);visit(expr.right);return;
       case 'call':
