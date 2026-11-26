@@ -582,7 +582,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
       case 'binary':
         record(expr,['kind','op','left','right'],'binary');
         if(expected!=='int')fail('arithmetic in boolean context');
-        if(!['+','-','*','/','%','mod','^','&','|','<<<','>>>'].includes(expr.op))fail('unsupported binary operator');
+        if(!['+','-','*','/','%','mod','^','&','|','<<<','>>>','ashr'].includes(expr.op))fail('unsupported binary operator');
         return {kind:'binary',op:expr.op,
           left:node(expr.left,owner,depth+1,'int',active),right:node(expr.right,owner,depth+1,'int',active)};
       case 'compare':
@@ -675,6 +675,8 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           'Option.unwrap_or':[['option<int>','int'],'int'],
           'Option.unwrap':[['option<int>'],'int'],
           'Result.unwrap':[['result<int,int>'],'int'],
+          'Option.expect':[['option<int>','string'],'int'],
+          'Result.expect':[['result<int,int>','string'],'int'],
           'Result.ok':[['int'],'result<int,int>'],
           'Result.err':[['int'],'result<int,int>'],
           'Result.is_ok':[['result<int,int>'],'bool'],
@@ -783,7 +785,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         return {kind:'not',inner:methodNode(expr.inner,method,depth+1,'bool')};
       case 'binary':
         record(expr,['kind','op','left','right'],'method binary');
-        if(expected!=='int'||!['+','-','*','/','%','mod','^','&','|','<<<','>>>'].includes(expr.op))
+        if(expected!=='int'||!['+','-','*','/','%','mod','^','&','|','<<<','>>>','ashr'].includes(expr.op))
           fail('unsupported method arithmetic');
         return {kind:'binary',op:expr.op,
           left:methodNode(expr.left,method,depth+1,'int'),
@@ -883,7 +885,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
       case 'trapMethod':case 'trapOptionMethod':return n.name==='unwrap'||ordinary(n.receiver);
       case 'intrinsic':return ['Option.unwrap','Result.unwrap'].includes(n.name)||n.args.some(ordinary);
       case 'methodCall':case 'namedMethodCall':return true; // no method effect summaries yet
-      case 'binary':return ['+','-','*','/','%','mod','<<','>>','<<<','>>>'].includes(n.op)||ordinary(n.left)||ordinary(n.right);
+      case 'binary':return ['+','-','*','/','%','mod','<<','>>','<<<','>>>','ashr'].includes(n.op)||ordinary(n.left)||ordinary(n.right);
       case 'neg':case 'i32Check':case 'refinementCheck':return true;
       default:return Object.values(n).some(v=>Array.isArray(v)?v.some(ordinary):ordinary(v));
     }
