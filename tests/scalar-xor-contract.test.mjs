@@ -137,6 +137,29 @@ test('raw source bidi, NUL, ESC, DEL and lone surrogates still fail closed',()=>
   }
 });
 
+// Independent arithmetic oracle: do not use the same native BigInt XOR
+// operation as the generated guest when computing the expected result.
+const TWO64=2n**64n,TWO63=2n**63n;
+function arithmeticXor(a,b){
+  let x=a<0n?a+TWO64:a;
+  let y=b<0n?b+TWO64:b;
+  let bit=1n,result=0n;
+  for(let i=0;i<64;i++){
+    if(x%2n!==y%2n)result+=bit;
+    x/=2n;y/=2n;bit*=2n;
+  }
+  return result>=TWO63?result-TWO64:result;
+}
+
+test('generated XOR guests preserve all signed bits across boundary pairs',async()=>{
+  const edges=[-TWO63,-TWO63+1n,-(2n**53n+1n),-4294967296n,-1n,
+    0n,1n,4294967296n,2n**53n+1n,TWO63-1n];
+  for(const a of edges)for(const b of edges){
+    const expr=`(${a}) ^^ (${b})`;
+    assert.equal(await guest(expr),String(arithmeticXor(a,b)),expr);
+  }
+});
+
 test('deterministic 64-bit XOR and shift property corpus executes emitted guest ESM',async()=>{
   let seed=0x53747a21;
   const next=()=>{
@@ -147,7 +170,7 @@ test('deterministic 64-bit XOR and shift property corpus executes emitted guest 
   for(let i=0;i<64;i++){
     const a=signed(),b=signed(),count=BigInt(next() & 63);
     const cases=[
-      [`(${a}) ^^ (${b})`,BigInt.asIntN(64,a^b)],
+      [`(${a}) ^^ (${b})`,arithmeticXor(a,b)],
       [`(${a}) <<< (${count})`,BigInt.asIntN(64,a << count)],
       [`(${a}) >>> (${count})`,BigInt.asIntN(64,BigInt.asUintN(64,a) >> count)]
     ];
