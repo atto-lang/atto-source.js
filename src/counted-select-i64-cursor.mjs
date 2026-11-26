@@ -20,8 +20,10 @@ export class CountedSelectI64Cursor {
     const length=sources.length;
     this.#live=[];
     for(let i=0;i<length;i++){
-      if(!Object.hasOwn(sources,i))throw new TypeError('counted source list must be dense');
-      const source=sources[i];
+      const descriptor=Object.getOwnPropertyDescriptor(sources,i);
+      if(!descriptor)throw new TypeError('counted source list must be dense');
+      if(!Object.hasOwn(descriptor,'value'))throw new TypeError('counted source must be own data');
+      const source=descriptor.value;
       if(!(source instanceof SelectableI64Channel)&&!(source instanceof SelectableI64Future))
         throw new TypeError('counted selection requires trusted i64 source');
       this.#live.push(source);

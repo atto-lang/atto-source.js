@@ -117,3 +117,10 @@ test('sparse and unsupported source positions fail before registration; zero ign
   a.tryWrite(42n);
   const c=new Cursor(1,dense);round(c);assert.deepEqual(c.result(),[42n]);
 });
+
+test('accessor source position rejected without invoking caller getter',()=>{
+  const a=new Channel(1);let invoked=false;
+  const sources=[a];Object.defineProperty(sources,0,{get(){invoked=true;return a;}});
+  assert.throws(()=>new Cursor(1,sources),/own data/);
+  assert.equal(invoked,false);assert.equal(a.pendingReaders,0);
+});
