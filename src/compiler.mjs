@@ -217,7 +217,14 @@ class Parser {
     if(this.match('<')){
       binder=this.match('infer');
       alias=this.id(); // bare infer cannot consume the closing angle
-      if(['infer','Record','Tuple','struct','int','bool','string','const','let','val','fnc','return','true','false'].includes(alias))
+      if(['infer','Record','Tuple','struct','int','bool','string','const','let','val',
+          'fnc','return','true','false','void','null','self','float','decimal','bigint','uint',
+          'i8','i16','i32','i64','u8','u16','u32','u64','f32','f64','String','Bool','Integer',
+          'boolean','Any','Unknown','Object','Error','Symbol','Array','List','Vector','Slice',
+          'FixedArray','FixedList','Map','OrderedMap','Set','Pair','Entry','Option','Result',
+          'Future','Channel','ActorId','ActorKind','ActorRef','Mutex','MutexGuard','SharedMutex',
+          'Generator','AsyncGenerator','Iterator','AsyncIterator','Fnc','Function','define',
+          'type','module','class','actor','pub','new','if','else','end','routine'].includes(alias))
         throw new CompileError('E_TYPE_NAME: reserved type name',at);
       this.expect('>');
       if(binder&&this.aggregateTypes.has(alias))
