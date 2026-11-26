@@ -1,5 +1,6 @@
 import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
 import {createScalarIR, validateScalarIR} from './scalar-ir.mjs';
+import {startsBareSequence, readSequence, readCallArguments} from './sequence-syntax.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
 import {rejectUnsupportedHttpActors} from './http-actor-admission.mjs';
 import {scanStringLiteral} from './string-literal-syntax.mjs';
@@ -337,7 +338,7 @@ class Parser {
       while(this.peek().value==='const'&&['Record','Tuple','struct'].includes(this.ts[this.pos+1]?.value))
         this.aggregateConst(params);
       this.expect('return');
-      const body=this.peek().value==='seq' && this.ts[this.pos+1]?.value!=='('
+      const body=startsBareSequence(this)
         ? (this.pos++,this.sequence(false)) : this.expr();
       this.expect(';');this.expect(braced?'}':'end');
       functions.push({name,params,body,pub});
@@ -374,13 +375,10 @@ class Parser {
     }finally{this.depth--;}
   }
   sequence(parenthesized){
-    const items=[];
-    do {
-      if(items.length>=128)throw new CompileError('sequence item limit',this.peek());
-      items.push(this.expr());
-    }while(this.match(','));
-    if(parenthesized)this.expect(')');
-    return {kind:'seq',items};
+    return readSequence(this,parenthesized,(message,at)=>{throw new CompileError(message,at);});
+  }
+  callArguments(){
+    return readCallArguments(this,(message,at)=>{throw new CompileError(message,at);});
   }
   primary(){
     const t=this.peek();
@@ -398,7 +396,10 @@ class Parser {
       return {kind:'neg',inner:this.expr(30)};
     }
     if(this.match('+'))return this.expr(30);
-    if(this.match('(')){const v=this.expr();this.expect(')');return v;}
+    if(this.match('(')){
+      if(this.match('>'))return this.sequence(true);
+      const v=this.expr();this.expect(')');return v;
+    }
     if(t.kind==='int'){this.pos++;const n=BigInt(t.value.replaceAll('_',''));if(n>I64_MAX)throw new CompileError('positive int outside signed i64',t);return {kind:'int',n};}
     if(t.kind==='string'||t.kind==='template')
       throw new CompileError('quoted strings and template interpolation require typed String lowering; unsupported in JS scalar-v1',t);
@@ -418,17 +419,16 @@ class Parser {
       const name=this.peek();
       const ops={rem:'%',mod:'mod',bitXor:'^'};
       if(name.kind!=='id'||!Object.hasOwn(ops,name.value))throw new CompileError('Integer.'+name.value+' is unsupported; use Integer.rem, Integer.mod or Integer.bitXor',name);
-      this.pos++;this.expect('(');const left=this.expr();this.expect(',');const right=this.expr();this.expect(')');
-      return {kind:'binary',op:ops[name.value],left,right};
+      this.pos++;this.expect('(');const args=this.callArguments();
+      if(args.length!==2)throw new CompileError('Integer.'+name.value+' requires two arguments',name);
+      return {kind:'binary',op:ops[name.value],left:args[0],right:args[1]};
     }
     if(t.kind==='id'&&this.aggregateLocals?.has(t.value))
       return this.aggregateProjection();
     if(t.kind==='id'){
       this.pos++;
       if(this.match('(')){
-        const args=[];
-        if(!this.match(')')){do{if(args.length>=128)throw new CompileError('argument limit');args.push(this.expr());}while(this.match(','));this.expect(')');}
-        return {kind:'call',name:t.value,args};
+        return {kind:'call',name:t.value,args:this.callArguments()};
       }
       return {kind:'var',name:t.value};
     }

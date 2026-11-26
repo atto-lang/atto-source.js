@@ -38,3 +38,16 @@ test('scalar IR v1 unchanged and v2 sequences structurally validated',()=>{
   const invalid=structuredClone(seq); invalid.functions[0].body.items[0]={kind:'param',index:0};
   assert.throws(()=>validateScalarIR(invalid));
 });
+
+test('scoped sequence and bare final call argument compile and execute',async()=>{
+  const defs='fnc id(int x): int { return x; } fnc add(int x,int y): int { return x+y; } ';
+  for(const expr of ['(>1,2,42)','id(seq 1,2,42)','add(2,seq 9,40)','add(seq(7,2),40)','add((>7,2),40)','id(seq add(1,2),42)','Integer.rem(99,seq 1,57)']){
+    const js=compileIR(compileToIR(defs+source('return '+expr+';')));
+    assert.equal((await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'))).main(),42n,expr);
+  }
+  for(const expr of ['add(seq 1,42)','id(seq 1,)','id(seq ,42)','id(seq 1;42)','(>1,)','Integer.rem(seq 1,2)'])
+    assert.throws(()=>compileToIR(defs+source('return '+expr+';')),undefined,expr);
+  const trapped=compileIR(compileToIR(defs+source('return id(seq Integer.rem(1,0),42);')));
+  const guest=await import('data:text/javascript;base64,'+Buffer.from(trapped).toString('base64'));
+  assert.throws(()=>guest.main(),/DIVISION_BY_ZERO|division by zero/i);
+});
