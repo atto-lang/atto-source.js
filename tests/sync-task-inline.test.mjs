@@ -92,7 +92,7 @@ test('unsupported spawned/suspending/ill-typed task input fails before an artifa
     'return sync task { return 1; return 2; };',
     'return sync task { await task<int> { return 1; } };',
     'return sync task { using guard = new Mutex<int>(0); return 1; };',
-    'return sync task { val x = 2; return x; };',
+    'return sync task { val x = 2; x = 3; return x; };',
     'sync task {}; return 42;',
     'sync task {} return 42;',
     'sync task { return 1; }; return 42;',
@@ -144,7 +144,7 @@ test('inline task fail-closed syntax, nesting and budget limits',()=>{
     'do sync task<Future<int>> {}; return 0;',
     'do sync task { await task<int>{return 1;}; }; return 0;',
     'sync task{}; return 0;',
-    'do sync task<void> { val x = 1; }; return 0;',
+    'do sync task<void> { val x = 1; x = 2; }; return 0;',
     'do sync task<void> { return; return; }; return 0;',
     'do sync task<void> { return; }; return sync task<void> {};'
   ])assert.throws(()=>transpile_to_worker(main(body)),TranspileError,body);
@@ -161,4 +161,34 @@ test('inline task fail-closed syntax, nesting and budget limits',()=>{
   }
   assert.throws(()=>transpile_to_worker(main(
     'return sync task<int> {return 42;}; import("host")')),TranspileError);
+});
+
+test('typed lexical task writeback and lazy scalar branches execute',async()=>{
+  for(const body of [
+    'let int n = 0; val int r = sync task<int> { n = 2; return 40; }; return r+n;',
+    'let int n = 40; do sync task<void> { n = n+2; return; }; return n;',
+    'let int n = 42; do sync task { val int n = 1; }; return n;',
+    'val int r = sync task<int> { val x = 40; return x+2; }; return r;',
+    'let int n = 0; val int r = true ? sync task<int> { n = 2; return 40; } : sync task<int> { n = 99; return 1; }; return r+n;',
+    'let int n = 0; val int r = if false then sync task<int> { n = 99; return 1; } else sync task<int> { n = 3; return 39; } fi; return r+n;',
+    'let int n = 0; val bool r = false && sync task<bool> { n = 99; return true; }; return r ? 1 : n+42;',
+    'let int n = 0; val bool r = true || sync task<bool> { n = 99; return false; }; return r ? n+42 : 1;',
+    'let int n = 0; val bool r = true && sync task<bool> { n = 2; return true; }; return r ? n+40 : 1;',
+    'let int n = 0; val bool r = false || sync task<bool> { n = 3; return false; }; return r ? 1 : n+39;',
+    'return true ^^ true && false ? 42 : 1;',
+    'return true XOR true AND false ? 42 : 1;',
+    'let int n = 0; val bool r = true ^^ sync task<bool> { n = 2; return false; }; return r ? n+40 : 1;'
+  ])assert.equal(await execute(main(body)),'42',body);
+});
+test('lexical task writeback rejects invalid scope, mutability and type',()=>{
+  for(const [body,code] of [
+    ['val int n = 0; do sync task { n = 2; }; return n;','E_IMMUTABLE_ASSIGNMENT'],
+    ['let int n = 0; do sync task { n = true; }; return n;','E_TASK_RETURN_TYPE'],
+    ['do sync task { val x = 42; }; return x;','E_UNBOUND'],
+    ['let int n = 0; val int n = 42; return n;','E_DUPLICATE_LOCAL'],
+    ['val int n = sync task<void> {}; return n;','E_TASK_RETURN_TYPE'],
+    ['val int n = true ? 42 : false; return n;','E_TASK_RETURN_TYPE'],
+    ['val bool n = 1 && true; return 42;','E_TASK_RETURN_TYPE'],
+    ['do sync task { defer {}; }; return 42;','E_UNSUPPORTED_SYNTAX']
+  ])assert.throws(()=>transpile_to_worker(main(body)),e=>e instanceof TranspileError&&e.code===code,body);
 });

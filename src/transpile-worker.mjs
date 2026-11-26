@@ -154,7 +154,7 @@ export function transpile_to_worker(source) {
   };
   const fail_type=()=>{throw new TranspileError('E_TASK_RETURN_TYPE');};
   const typed=(node,type)=>{if(result_type(node)!==type)fail_type();return node;};
-  const precedence={'||':0,'OR':0,'&&':1,'AND':1,'XOR':2,'==':3,'!=':3,'eq':3,'|':4,'^^':5,'&':6,'<<<':7,'>>>':7,'+':8,'-':8,'*':9};
+  const precedence={'||':0,'OR':0,'&&':2,'AND':2,'XOR':1,'==':3,'!=':3,'eq':3,'|':4,'^^':5,'&':6,'<<<':7,'>>>':7,'+':8,'-':8,'*':9};
   const parse_expression=(min_prec=0,depth=0,discard_inline=false)=>{
     if(depth>=MAX_DEPTH)throw new TranspileError('E_NESTING_LIMIT');
     let left;
@@ -207,9 +207,11 @@ export function transpile_to_worker(source) {
     }else if(/^[A-Za-z_][A-Za-z_0-9]*$/.test(peek()??'')&&!reserved.has(peek())){
       const slot=lookup(tokens[i++]);left={kind:'local',slot:slot.id,type:slot.type};
     }else throw new TranspileError('E_UNSUPPORTED_EXPRESSION');
-    while(Object.hasOwn(precedence,peek()) && precedence[peek()]>=min_prec){
+    const current_prec=()=>peek()==='^^'&&left.type==='bool'?1:precedence[peek()];
+    while(Object.hasOwn(precedence,peek()) && current_prec()>=min_prec){
+      const prec=current_prec();
       const op=tokens[i++];
-      const right=parse_expression(precedence[op]+1,depth+1);
+      const right=parse_expression(prec+1,depth+1);
       if(['&&','||','AND','OR','XOR'].includes(op)){
         typed(left,'bool');typed(right,'bool');
         left={kind:'boolop',op,left,right,type:'bool'};
