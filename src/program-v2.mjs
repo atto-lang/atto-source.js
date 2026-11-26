@@ -1812,7 +1812,7 @@ export function compileVerifiedStrict(source) {
   if(quantity===null)fail('E_VERIFY_UNSUPPORTED: strict profile requires typed quantity source',tokens[0]);
   return emitProgram(validateProgramIRV2({
     schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,integerModel:PROGRAM_IR_INT_MODEL,...quantity
-  }));
+  },true));
 }
 export function compileProgramIRV2(ir) {
   return emitProgram(validateProgramIRV2(ir));
