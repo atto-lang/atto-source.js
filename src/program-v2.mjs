@@ -592,8 +592,10 @@ class Parser {
 
   functions(moduleName, declaredPub=false, declaredPrivate=false) {
     let pub=declaredPub, writtenPrivate=declaredPrivate;
-    if(this.eat('pub')) { if(pub||writtenPrivate)fail('conflicting visibility modifier',this.peek());pub=true; }
-    if(this.eat('private')) { if(pub||writtenPrivate)fail('conflicting visibility modifier',this.peek());writtenPrivate=true; }
+    while(['pub','private'].includes(this.peek().value)) {
+      if(pub||writtenPrivate)fail('conflicting visibility modifier',this.peek());
+      pub=this.eat('pub');writtenPrivate=!pub;if(writtenPrivate)this.expect('private');
+    }
     const start=this.peek();
     if(start.value==='suspends')fail('E_SUSPENDS_UNSUPPORTED: JS callable continuation lowering is unavailable',start);
     const fnc=this.eat('fnc'),routine=!fnc&&this.eat('routine');
@@ -1365,6 +1367,9 @@ function resolveProgram(parsed) {
     if(!prior)resolvedExports.set(entry.name,{name:entry.name,kind,visibility:entry.visibility,targets});
   }
   for(const entry of resolvedExports.values())if(entry.visibility==='public')entry.targets.forEach(t=>{t.pub=true;});
+  // Written visibility is compiler-only provenance; the checked IR schema
+  // must not acquire a new field or a serialized authority marker.
+  for(const target of [...functions,...classes])delete target.writtenPrivate;
   const slots=new Map(),exports=new Set(),symbolKinds=new Map(),classByName=new Map();
   const classTables=classes.map((cls,classIndex)=>{
     if(classByName.has(cls.name))fail('duplicate class '+cls.name);
