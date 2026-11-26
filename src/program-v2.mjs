@@ -299,7 +299,7 @@ function tokenize(source) {
         {
           if(!/[ \t\r\n\v\f]/.test(source[pos+1]??''))
             fail('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+word+'!',start);
-          if(word==='trap'&&!['=','|>','return'].includes(result.at(-1)?.value))
+          if(word==='trap'&&!['=','|>','return','('].includes(result.at(-1)?.value))
             fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: typed guest effects and Result lowering required',start);
           if(word!=='trap'&&!['{',';','then','else','do'].includes(result.at(-1)?.value))
             fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: exceptional control must be a statement',start);
@@ -347,12 +347,20 @@ function tokenize(source) {
  * Match lexer tokens, never raw text: comments containing 'trap' are inert.
  */
 function rejectUnsupportedTrapEffect(tokens) {
+  const admitted = new Set();
   for (let i=0;i<tokens.length;i++) {
     const token=tokens[i];
     if (token.kind==='id' && (token.value==='trap'||token.value==='trap!')) {
       // Only the statically validated inferred local binding slice is admitted.
       // All other contexts retain the existing fail-closed admission.
-      if(tokens[i-3]?.value==='val'&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='=')continue;
+      if(tokens[i-3]?.value==='val'&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='='){admitted.add(i);continue;}
+      // Closed typed Result<int,Error> locals are the same validated trap IR.
+      if(tokens.slice(i-9,i-2).map(t=>t.value).join(' ')==='val Result < int , Error >'&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='='){admitted.add(i);continue;}
+      // A nested trap may only follow the opening parentheses of an already
+      // admitted trap operand. The typed parser still validates the whole tree.
+      let outer=i-1;
+      while(tokens[outer]?.value==='(')outer--;
+      if(outer<i-1&&admitted.has(outer)){admitted.add(i);continue;}
       if(token.value==='trap!'&&tokens[i-1]?.value==='|>')continue;
       if(tokens[i-1]?.value==='return'&&tokens[i+1]?.kind==='id'&&
          tokens.slice(i+2,i+10).map(t=>t.value).join(' ')==='. unwrap ( ) |> match < int'&&tokens[i+10]?.value==='>'&&tokens[i+11]?.value==='over')continue;
@@ -762,7 +770,9 @@ class Parser {
         // Function-scope scalar locals; only typed string let may rebind.
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
         // Keep existing Option, Result, string, bool, and directional bindings.
-        const localType=(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
+        const typedTrapResult=this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')==='Result < int , Error >';
+        if(typedTrapResult)this.i+=6;
+        const localType=typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
         const name=this.name();
         if(this.peek().value===';')fail('E_MISSING_INITIALIZER: explicit initializer required',this.peek());
         const directional=this.takeDirection('<');
@@ -1496,6 +1506,7 @@ function resolveProgram(parsed) {
         const slot=nextCaptureSlot++;
         const init=resolve(expr.init,owner,depth+1,bindings);
         const type=['inferredTrap','directionalInferred'].includes(expr.localType)?resolvedType(init,owner):expr.localType==='constInt'?'int':expr.localType;
+        if(expr.localType==='trapResult'&&(init.kind!=='trap'||resolvedType(init,owner)!=='trapResult'))fail('E_TRAP_TYPE: typed Result<int,Error> local requires checked trap initializer');
         if(expr.localType==='inferredTrap'&&!['trapResult','trapOptionResult'].includes(type))fail('inferred trap local requires Result');
         if(expr.localType==='directionalInferred'&&!['int','float','trapResult','trapOptionResult'].includes(type))fail('directional binding requires supported scalar or trapped Result');
         if(expr.localType==='constInt'){
