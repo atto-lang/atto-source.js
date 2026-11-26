@@ -1,0 +1,7 @@
+# Java-first checked arithmetic and bounded Result capture
+
+Current-main forward-port of the integer/Result slice from JS #73 and Java #1704/#1736. Signed i64 division truncates toward zero; MIN / -1 is checked overflow. Raw percent remains invalid; Integer.rem and Integer.mod retain their semantics. Nominal guest arithmetic IDs: 65537 overflow, 65538 zero divisor. Host RangeError is only a carrier. A private compiler-owned error brand class distinguishes arithmetic failures without a WeakSet allocation for every artifact.
+
+Function-scope immutable val int and val name = trap / trap! are implemented. Result captures preserve existing closed Result identity and existing nested trap Results; no catch-all host exception or unwrap panic interception. TrapResult cannot escape as public ABI or be forged through typed IR. Branch locals, method locals, arbitrary guest throw/raise/panic, Option payload trap, asynchronous effects and float lowering remain outside this bounded slice. Existing unsupported direct trap contexts continue to reject. Worker and legacy wrapping scalar frontends unchanged by this commit.
+
+39 scoped checks executed in import-adapted isolated V8 preflight; seven original integer/trap source fixtures preserved from #73. Exact-head Node/Worker CI and native AOT evidence remain required. ESM closures, boxed host BigInt, tagged Result and Error objects may allocate; no zero-GC claim. Full AOT target requires statically typed MIR, deterministic drop, fixed-size value/error representations and bounded continuations, not a mandatory host GC.
