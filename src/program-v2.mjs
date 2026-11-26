@@ -258,9 +258,16 @@ class Parser {
     const marker=this.peek().value;
     if(marker!=='mtd'&&marker!=='method'&&marker!=='fnc')return false;
     const next=this.tokens[this.i+1],after=this.tokens[this.i+2];
-    if(!next||next.kind!=='id'||after?.value!=='(')return false;
-    // The literal callable method() remains valid; only the old introducer is obsolete.
-    if(marker==='method')fail('OBSOLETE_METHOD_INTRODUCER: use mtd or a bare method name',this.peek());
+    const isMarker=value=>value==='mtd'||value==='method'||value==='fnc';
+    const following=this.tokens[this.i+3];
+    if(next?.kind==='id'&&isMarker(next.value)&&after?.kind==='id'&&
+       (following?.value==='('||following?.value==='<'))
+      fail('DUPLICATE_METHOD_INTRODUCER: use one instance marker',this.peek());
+    if(!next||next.kind!=='id')return false;
+    // Reject obsolete generic-looking declarations too, without enabling generic methods.
+    if(marker==='method'&&(after?.value==='('||after?.value==='<'))
+      fail('OBSOLETE_METHOD_INTRODUCER: use mtd or a bare method name',this.peek());
+    if(after?.value!=='(')return false;
     const value=next.value;
     if(CLASS_METHOD_RESERVED.has(value)&&!CLASS_METHOD_CALLABLE_KEYWORDS.has(value))
       return false;
