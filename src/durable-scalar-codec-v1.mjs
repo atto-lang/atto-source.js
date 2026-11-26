@@ -50,7 +50,7 @@ const MIN=-(1n<<63n),MAX=(1n<<63n)-1n;
 const deny=()=>{throw new Error('E_DURABLE_SCALAR_CHECKPOINT_V1');};
 const typed=Object.getPrototypeOf(Uint8Array.prototype);
 const get=(p,k)=>Function.prototype.call.bind(Object.getOwnPropertyDescriptor(p,k).get);
-const length=get(typed,'byteLength'),buffer=get(typed,'buffer'),offset=get(typed,'byteOffset'),ordinary=get(ArrayBuffer.prototype,'byteLength');
+const length=get(typed,'byteLength'),buffer=get(typed,'buffer'),offset=get(typed,'byteOffset'),ordinary=get(ArrayBuffer.prototype,'byteLength'),kind=get(typed,Symbol.toStringTag);
 function fnv(bytes){let h=0xcbf29ce484222325n;for(const b of bytes)h=BigInt.asUintN(64,(h^BigInt(b))*0x100000001b3n);return h;}
 export function atto_encode_state_v1(...values){
  if(values.length!==TAGS.length)deny();
@@ -63,7 +63,7 @@ export function atto_encode_state_v1(...values){
 export function atto_decode_state_v1(input){
  // Physical length/offset/buffer intrinsics; reject shared storage and proxies.
  // Read an owned copy before validation. Only trusted same-realm byte inputs.
- let b;try{if(Object.getPrototypeOf(input)!==Uint8Array.prototype||length(input)!==SIZE)deny();const backing=buffer(input);ordinary(backing);b=new Uint8Array(new Uint8Array(backing,offset(input),SIZE));}catch{deny();}
+ let b;try{if(length(input)!==SIZE||kind(input)!=='Uint8Array'||Object.getPrototypeOf(input)!==Uint8Array.prototype)deny();const backing=buffer(input);ordinary(backing);b=new Uint8Array(new Uint8Array(backing,offset(input),SIZE));}catch{deny();}
  const v=new DataView(b.buffer);if([65,84,84,79,83,84,48,49,1].some((x,i)=>b[i]!==x)||v.getBigUint64(9,true)!==SCHEMA||v.getUint16(17,true)!==TAGS.length||v.getBigUint64(SIZE-8,true)!==fnv(b.subarray(0,SIZE-8)))deny();
  const out=[];let p=19;for(const tag of TAGS){if(b[p++]!==tag)deny();if(tag===1){out.push(v.getBigInt64(p,true));p+=8;}else{const x=b[p++];if(x>1)deny();out.push(x===1);}}
  if(p!==SIZE-8)deny();return out;
