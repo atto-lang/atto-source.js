@@ -1,3 +1,4 @@
+import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
 import {createScalarIR, validateScalarIR} from './scalar-ir.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
 import {rejectUnsupportedHttpActors} from './http-actor-admission.mjs';
@@ -91,9 +92,11 @@ function lex(src) {
          out.at(-1).value==='.')
         throw new CompileError(
           'Topic.try_publish requires checked actor/group, share! and Result lowering; JS scalar backend unsupported',loc);
+      if (missingBangKeywordSeparator(s, src.slice(i)))
+        throw new CompileError('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+s+'!',loc);
       // Record the first contextual ownership bang so the typed Future
       // preflight can still diagnose its legacy and canonical spellings.
-      if(['copy','take','borrow','share'].includes(s) && src[i]==='!' &&
+      if(['copy','take','move','borrow','share'].includes(s) && src[i]==='!' &&
           src[i+1]!=='=' &&
           !(src.slice(i+1,i+3)==='eq' && !/[A-Za-z0-9_]/.test(src[i+3]??'')))
         ownershipBang ??= loc;
@@ -215,6 +218,26 @@ function rejectUnsupportedSelect(tokens) {
     }
   }
 }
+// In this scalar-only parser, no product may escape to a dynamic JS object.
+// Check the entire lexed compilation unit before recognizing an intrinsic,
+// including forward function declarations and parameters with the same name.
+function productFactoryAt(tokens, i) {
+  return tokens[i]?.kind==='id' && ['Pair','Entry'].includes(tokens[i].value)
+    && tokens[i+1]?.value==='.' && tokens[i+2]?.value==='of';
+}
+function rejectAmbiguousProductFactories(tokens) {
+  const active=new Set(tokens.filter((_,i)=>productFactoryAt(tokens,i)).map(t=>t.value));
+  if(!active.size)return;
+  for(let i=0;i<tokens.length;i++){
+    const t=tokens[i];
+    if(t.kind!=='id')continue;
+    if(active.has(t.value) && (!productFactoryAt(tokens,i)
+       || ['.','::'].includes(tokens[i-1]?.value)))
+      throw new CompileError('E_PRODUCT_SCOPE_UNSUPPORTED: competing '+t.value+' reference',t);
+    if(['import','use','macro'].includes(t.value))
+      throw new CompileError('E_PRODUCT_SCOPE_UNSUPPORTED: scalar factory requires a source-local identity',t);
+  }
+}
 class Parser {
   constructor(tokens){this.ts=tokens;this.pos=0;this.depth=0;}
   peek(){return this.ts[this.pos];}
@@ -297,8 +320,53 @@ class Parser {
       return left;
     }finally{this.depth--;}
   }
+  pureProductInt(){
+    const negative=this.match('-');
+    const t=this.peek();
+    if(t.kind!=='int')throw new CompileError('E_PRODUCT_LITERAL_UNSUPPORTED: expected pure int literal',t);
+    this.pos++;
+    const n=BigInt(t.value.replaceAll('_',''));
+    if(n>I64_MAX+(negative?1n:0n))throw new CompileError('integer outside signed i64',t);
+    return negative?-n:n;
+  }
+  productProjection(){
+    const at=this.peek(), pair=at.value==='Pair';
+    this.pos+=3;
+    if(this.match('<')){
+      if(pair && this.match('string')){this.expect(',');this.expect('int');}
+      else{
+        this.expect('int');
+        if(pair && this.peek().value===',')
+          throw new CompileError('E_PAIR_KEY_TYPE: Pair first generic argument must be string',this.peek());
+        if(!pair){this.expect(',');this.expect('int');}
+      }
+      this.expect('>');
+    }
+    this.expect('(');
+    let first;
+    if(pair){
+      const key=this.peek();
+      if(key.kind!=='string')throw new CompileError('E_PAIR_KEY_TYPE: Pair requires a string key',key);
+      // Lexer validates quoted source syntax. Only plain static keys are
+      // admitted here: no interpolation, escaped or allocated runtime values.
+      const raw=key.value.raw.slice(1,-1);
+      if(!/^[\x20-\x7e]*$/.test(raw) || /[\\$]/.test(raw))
+        throw new CompileError('E_PAIR_KEY_UNSUPPORTED: scalar projection requires plain static string',key);
+      this.pos++;
+    }else first=this.pureProductInt();
+    this.expect(',');
+    const second=this.pureProductInt();
+    this.expect(')');
+    if(!this.match('.'))throw new CompileError('E_PRODUCT_ESCAPE_UNSUPPORTED: owned product ABI unavailable',at);
+    const field=this.id();
+    if(pair && field==='second')return {kind:'int',n:second};
+    if(!pair && field==='key')return {kind:'int',n:first};
+    if(!pair && field==='value')return {kind:'int',n:second};
+    throw new CompileError('E_PRODUCT_PROJECTION_UNSUPPORTED: incompatible or non-scalar member',at);
+  }
   primary(){
     const t=this.peek();
+    if(productFactoryAt(this.ts,this.pos))return this.productProjection();
     if(this.match('-')){
       // The absolute magnitude 2^63 is legal only as a negated literal.
       // All other positive literals must remain within signed i64.
@@ -359,6 +427,7 @@ export function compileToIR(source) {
   rejectUnloweredInvertedClasses(tokens);
   rejectUnloweredActorHeap(tokens);
   rejectUnsupportedSelect(tokens);
+  rejectAmbiguousProductFactories(tokens);
   const parsed=new Parser(tokens).parse();
   try {
     return createScalarIR(parsed);
