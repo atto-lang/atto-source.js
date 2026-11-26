@@ -34,6 +34,7 @@ function tokenize(source) {
     // Never widen arbitrary identifiers to name!; preserve != / !eq boundaries.
     // Full effects stay fail-closed in this trusted checked-Result subset.
     const bang=/^(?:trap|throw|raise|panic)!/.exec(tail);
+    if(bang&&tail[bang[0].length]==='=')throw new TranspileError('E_UNSUPPORTED_TOKEN');
     if(bang && tail[bang[0].length]!=='=' &&
         !/^eq(?![A-Za-z_0-9])/.test(tail.slice(bang[0].length))) {
       if(!/^[ \t\r\n\v\f]$/.test(tail[bang[0].length]??''))
@@ -145,7 +146,7 @@ export function transpile_to_worker(source) {
     for(let j=scopes.length-1;j>=0;j--)if(scopes[j].has(name))return scopes[j].get(name);
     throw new TranspileError('E_UNBOUND');
   };
-  const reserved=new Set(['let','val','int','bool','void','true','false','return','sync','task','do','if','then','else','fi','await','defer','new','match','spawn','end','fnc','pub','AND','OR','XOR','eq','!eq']);
+  const reserved=new Set(['let','val','int','bool','void','true','false','return','sync','task','do','if','then','else','fi','await','defer','new','match','spawn','end','fnc','pub','trap','throw','raise','panic','AND','OR','XOR','eq','!eq']);
   const identifier=()=>{
     const n=tokens[i++];
     if(!/^[A-Za-z_][A-Za-z_0-9]*$/.test(n??'')||reserved.has(n))
