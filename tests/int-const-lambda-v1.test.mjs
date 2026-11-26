@@ -152,3 +152,38 @@ test('call and apply preserve checked arithmetic overflow', async () => {
     assert.throws(() => mod.main(), /E_OVERFLOW/);
   }
 });
+
+test('immutable literal tuples and immediate apply pipelines scalarize to the same ESM', async () => {
+  const head = '|int x, bool _| : int -> x + 1;';
+  for (let n = -20; n <= 20; n++) {
+    const args = n + ', ' + (n % 2 === 0);
+    const direct = local(head, 'return v(' + args + ');');
+    const prefix = 'val args = tuple(' + args + '); ';
+    for (const call of [
+      'return tuple(' + args + ') |> v.apply;',
+      prefix + 'return v.apply(args);',
+      prefix + 'return args |> v.apply;',
+    ]) {
+      const source = local(head, call);
+      assert.equal(compile(source), compile(direct), source);
+      assert.equal(await guest(source), BigInt(n + 1), source);
+    }
+  }
+});
+
+test('scalar tuple pipeline admission rejects shadowing, escape and wrong shape', () => {
+  const head = '|int x, bool _| : int -> x + 1;';
+  for (const [call,code] of [
+    ['return tuple(41) |> v.apply;', 'E_ARITY'],
+    ['return tuple(41,42) |> v.apply;', 'E_TYPE'],
+    ['return tuple(41,true) |> v.bind;', 'E_SYNTAX'],
+    ['return tuple(41,true) |> other.apply;', 'E_CONST'],
+    ['return tuple(41,true) |> v.apply();', 'E_SYNTAX'],
+    ['return args |> v.apply;', 'E_CONST'],
+    ['val v = tuple(41,true); return v.apply(args);', 'E_DUPLICATE'],
+    ['val tuple = tuple(41,true); return v.apply(args);', 'E_DUPLICATE'],
+    ['val args = tuple(41,true); return v.call(41,true);', 'E_UNSUPPORTED'],
+    ['val args = tuple(41,true); return v.apply(tuple(41,true));', 'E_UNSUPPORTED'],
+    ['val args = tuple(41,true); args = tuple(0,false); return v.apply(args);', 'E_SYNTAX'],
+  ]) assert.throws(() => compile(local(head, call)), {code}, call);
+});
