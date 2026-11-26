@@ -75,3 +75,28 @@ test('no ambient lookup, substituted namespace, hosted code or module wrapper',a
   assert.throws(()=>compileCoreNamespace({source:src,expectedNamespace:'missing'}),CoreNamespaceError);
   assert.throws(()=>compileCoreNamespace({source:src,expectedNamespace:'slice'}),CoreNamespaceError);
 });
+
+test('compiled Atto scalar slice/iter/cmp agree with widened i64 boundary oracle',async()=>{
+  const {guest:s}=await execute('slice',await source('slice'));
+  const {guest:t}=await execute('iter',await source('iter'));
+  const {guest:c}=await execute('cmp',await source('cmp'));
+  const max=(1n<<63n)-1n,min=-(1n<<63n);
+  const values=[min,-1n,0n,1n,2n,max-1n,max];
+  for(const offset of values) for(const count of values) for(const total of values){
+    const valid=offset>=0n&&count>=0n&&total>=0n&&offset+count<=total;
+    assert.equal(s.valid_range(offset,count,total),valid);
+    assert.equal(t.valid_range(offset,count,total),valid);
+    for(const used of values){
+      const live=valid&&used>=0n&&used<count;
+      assert.equal(t.next_index_or_negative_one(offset,count,used,total),live?offset+used:-1n);
+      assert.equal(t.next_back_index_or_negative_one(offset,count,used,total),live?offset+count-1n-used:-1n);
+    }
+  }
+  for(const a of values) for(const b of values){
+    assert.equal(s.valid_index(a,b),a>=0n&&a<b);
+    assert.equal(s.can_split_at(a,b),b>=0n&&b<=a);
+    assert.equal(c.compare_int(a,b),a<b?-1n:a>b?1n:0n);
+    assert.equal(c.min_int(a,b),a<=b?a:b);
+    assert.equal(c.max_int(a,b),a>=b?a:b);
+  }
+});
