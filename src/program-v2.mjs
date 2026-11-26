@@ -413,6 +413,12 @@ class Parser {
   valueType() {
     if(this.eat('int'))return 'int';
     if(this.eat('bool'))return 'bool';
+    // Resolve the exact compatibility spelling only in scalar type position.
+    // Keep the canonical IR identity and the existing strict bool ABI.
+    if(this.peek().value==='boolean') {
+      this.booleanAliasToken??=this.peek();
+      this.i++;return 'bool';
+    }
     if(this.eat('Symbol'))return 'symbol';
     if(this.eat('Option')){
       this.expect('<');this.expect('int');this.expect('>');
@@ -893,6 +899,10 @@ class Parser {
         else functions.push(this.functions(null));
       }
     }
+    // A named declaration must not silently resolve to the intrinsic alias.
+    // This slice has no nominal type resolution for callable signatures.
+    if(this.booleanAliasToken&&(usedClasses.has('boolean')||usedModules.has('boolean')))
+      fail('E_TYPE_ALIAS_SHADOWED: boolean requires nominal type resolution',this.booleanAliasToken);
     if(!functions.length&&!generators.length&&!modules.length&&!classes.length)fail('empty program');
     return {namespace,modules,functions,generators,classes,exportDeclarations};
   }
