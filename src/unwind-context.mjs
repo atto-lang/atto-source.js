@@ -13,6 +13,8 @@ const failure_rank = new Map([['return',0],['throw',1],['raise',2],['panic',3],[
 
 const failure_kinds = new Set(['throw', 'raise', 'panic', 'cancel', 'host-fatal']);
 const recoverable_kinds = new Set(['throw', 'raise']);
+// Weak branding spans contexts so foreign tokens cannot masquerade as results.
+const issued_steps = new WeakSet();
 
 function require_function(value) {
   if (typeof value !== 'function') throw new TypeError('E_TRUSTED_CALLBACK_REQUIRED');
@@ -63,7 +65,6 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
   let cancel_requested = false;
   let scheduled_admission = false;
   let scheduled_driver = false;
-  const issued_steps = new WeakSet();
 
   // Tokens are valid only for the current trusted callback invocation.
   // Not a guest-visible ABI: compiler provenance and isolation are still required.
@@ -314,11 +315,11 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
       throw new Error('E_SCHEDULED_UNWIND_REQUIRED');
   }
   function return_frame_async(value) {
-    legacy_async_preflight();
+    try { legacy_async_preflight(); } catch(error) { return Promise.reject(error); }
     return run_async(return_frame_steps(value));
   }
   function dispatch_failure_async(kind,error) {
-    legacy_async_preflight();
+    try { legacy_async_preflight(); } catch(error) { return Promise.reject(error); }
     return run_async(dispatch_failure_steps(kind,error));
   }
 
@@ -345,12 +346,13 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
   }
   // arm is a trusted reactor registration callback; it may publish completion
   // synchronously, but never runs guest code. resume is a generated quantum.
-  function suspend_step(arm,resume) {
+  function suspend_step(arm,resume,reject) {
     if (!scheduled_driver || !active_callback || awaiting_callback)
       throw new Error('E_NO_ACTIVE_SCHEDULED_CALLBACK');
     require_quantum(arm); require_quantum(resume);
+    if (reject!==undefined) require_quantum(reject);
     const token=Object.freeze(Object.create(null));
-    active_callback.steps.set(token,{arm,resume});
+    active_callback.steps.set(token,{arm,resume,reject});
     issued_steps.add(token);
     return token;
   }
@@ -368,7 +370,7 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     let step, action;
     function finish(value) {
       scheduled_driver=false;
-      on_done(value);
+      reject_thenable(on_done(value));
     }
     function drive(result,failed=false,has_result=false) {
       // Every call is on the scheduler lane, including resume after a wakeup.
@@ -384,8 +386,9 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
                 awaiting_callback=false;
                 let next, error=false;
                 try {
-                  if (!completion.ok) throw completion.value;
-                  next=wait.resume(completion.value);
+                  if (completion.ok) next=wait.resume(completion.value);
+                  else if (wait.reject) next=wait.reject(completion.value);
+                  else throw completion.value;
                 } catch (e) { next=e; error=true; }
                 drive(next,error,true);
               });
