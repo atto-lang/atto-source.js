@@ -43,7 +43,9 @@ try {
   const args=process.argv.slice(2);
   const mode=args.shift();
   if(mode!=='--structural-source'&&mode!=='--structural-ir'&&mode!=='--functional-source')
-    throw Error('usage: atto-jsc --structural-source|--structural-ir|--functional-source [--portable] [--check] input.atto|input.json [--out=/absolute/output.mjs]');
+    throw Error('usage: atto-jsc --structural-source|--structural-ir|--functional-source [--allow-stdio (functional only)] [--portable] [--check] input.atto|input.json [--out=/absolute/output.mjs]');
+  const allowStdio=args[0]==='--allow-stdio';
+  if(allowStdio){if(mode!=='--functional-source')throw Error('E_PERMISSION');args.shift();}
   const portable=args[0]==='--portable';
   if(portable)args.shift();
   const checkOnly=args[0]==='--check';
@@ -57,7 +59,7 @@ try {
     throw Error('functional source mode requires .atto input');
   const text=await boundedText(resolve(input));
   const result=mode==='--functional-source'
-    ?compileFunctionalPipelineSource(text)
+    ?compileFunctionalPipelineSource(text,{allowStdio})
     :mode==='--structural-ir'
     ?compileStructuralProjectionIR(parseStrictJsonReport(text,MAX_BYTES,'Atto typed IR'),{portable})
     :compileStructuralProjectionSource(text,{portable});
