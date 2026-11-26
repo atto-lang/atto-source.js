@@ -23,7 +23,17 @@ function ratio(powers,n,d,fail){
   if(n<1n||d<1n||n>LIMIT||d>LIMIT)fail('E_UNIT_LIMIT','normalized scale exceeds 256 bits');
   return {powers,n,d};
 }
-export function lowerVerifiedQuantitySource(tokens,report){
+// Prove the operation itself, not merely the range after successful execution.
+function provesArithmetic(a,b,op){
+  const [l,h]=a,[r,s]=b;
+  const fits=(lo,hi)=>lo>=MIN&&hi<=MAX;
+  if(op==='+')return fits(l+r,h+s);
+  if(op==='-')return fits(l-s,h-r);
+  if(op==='*'){const v=[l*r,l*s,h*r,h*s];return fits(v.reduce(min),v.reduce(max));}
+  if(op==='/')return (r>0n||s<0n)&&!(l===MIN&&r<=-1n&&s>=-1n);
+  return false;
+}
+export function lowerVerifiedQuantitySource(tokens,report,strict=false){
   if(tokens[0]?.value!=='define'||!['dimension','unit'].includes(tokens[1]?.value))return null;
   let at=0,budget=256;
   const peek=()=>tokens[Math.min(at,tokens.length-1)];
@@ -106,6 +116,7 @@ export function lowerVerifiedQuantitySource(tokens,report){
     }while(take('and'));
     expect(';');aliases.set(n,{unit:unit??scalar(),range});
   }
+  if(strict&&!aliases.size)fail('E_VERIFY_UNSUPPORTED','strict profile requires typed quantity aliases');
   const make=(unit,ir,literal=null,range=literal===null?FULL:[literal,literal])=>({unit,ir,literal,range});
   const int=v=>({kind:'int',value:String(v)});
   function attach(value,target){
@@ -116,6 +127,7 @@ export function lowerVerifiedQuantitySource(tokens,report){
     if(aliases.has(target)){
       const want=aliases.get(target);
       compatible(want.unit,value.unit);
+      if(strict&&!contains(want.range,value.range))fail('E_VERIFY_UNPROVEN','refinement cast may fail');
       return make(want.unit,{kind:'refinementCheck',inner:value.ir,minimum:String(want.range[0]),maximum:String(want.range[1])},null,intersect(value.range,want.range)??want.range);
     }
     if(legacy&&units.has(target))return attach(value,target);
@@ -161,7 +173,9 @@ export function lowerVerifiedQuantitySource(tokens,report){
     if(take('+'))return atom(depth+1);
     if(take('-')){
       if(peek().kind==='int'&&BigInt(peek().value.replaceAll('_',''))===-MIN)return literal(true,depth);
-      const v=atom(depth+1);return make(v.unit,{kind:'neg',inner:v.ir},null,normal(-v.range[1],-v.range[0]));
+      const v=atom(depth+1);
+      if(strict&&v.range[0]===MIN)fail('E_VERIFY_UNPROVEN','signed negation may overflow');
+      return make(v.unit,{kind:'neg',inner:v.ir},null,normal(-v.range[1],-v.range[0]));
     }
     if(take('(')){const v=expr(0,depth+1);expect(')');return postfix({...v,literal:null},depth);}
     if(peek().kind==='id'){
@@ -199,9 +213,10 @@ export function lowerVerifiedQuantitySource(tokens,report){
         if(!same(left.unit,right.unit))fail('E_UNIT_SCALE','mixed scales');
         unit=left.unit;
       }else{
-        if(op==='/'&&same(left.unit,scalar())&&same(right.unit,scalar()))fail('E_UNIT_SCALAR_DIVISION','plain scalar division outside quantity profile');
+        if(!strict&&op==='/'&&same(left.unit,scalar())&&same(right.unit,scalar()))fail('E_UNIT_SCALAR_DIVISION','plain scalar division outside quantity profile');
         unit=combine(left.unit,right.unit,op==='/');
       }
+      if(strict&&!provesArithmetic(left.range,right.range,op))fail('E_VERIFY_UNPROVEN','signed arithmetic may overflow or divide by zero');
       left=make(unit,{kind:'binary',op,left:left.ir,right:right.ir},null,arithmeticRange(left.range,right.range,op));
     }
     if(min===0&&take('as'))left=cast(left,name(),true);
