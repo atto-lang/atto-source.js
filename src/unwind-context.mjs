@@ -10,7 +10,7 @@ const MAX_FRAMES = 128;
 const MAX_REGISTRATIONS = 1024;
 const MAX_SUPPRESSED = 16;
 const NEXT = Symbol('private recovery delegation');
-const RECOVERED = new WeakSet();
+const failure_rank = new Map([['return',0],['throw',1],['raise',2],['panic',3],['cancel',4],['host-fatal',5]]);
 
 const failure_kinds = new Set(['throw', 'raise', 'panic', 'cancel', 'host-fatal']);
 const recoverable_kinds = new Set(['throw', 'raise']);
@@ -21,8 +21,21 @@ function require_function(value) {
 function require_error(value) {
   if (!(value instanceof Error)) throw new TypeError('E_ERROR_REQUIRED');
 }
-function append_suppressed(pending, error) {
-  if (pending.suppressed.length < MAX_SUPPRESSED) pending.suppressed.push(error);
+function append_suppressed(pending, error, kind = pending.kind) {
+  if (pending.suppressed.length < MAX_SUPPRESSED) {
+    pending.suppressed.push(error);
+    pending.suppressed_kinds.push(kind);
+  } else pending.suppressed_overflow++;
+}
+function pending_outcome(kind, error) {
+  return {kind,error,suppressed:[],suppressed_kinds:[],suppressed_overflow:0};
+}
+function merge_failure(pending, kind, error) {
+  if (failure_rank.get(kind) > failure_rank.get(pending.kind)) {
+    if (pending.kind !== 'return') append_suppressed(pending,pending.error,pending.kind);
+    pending.kind = kind;
+    pending.error = error;
+  } else append_suppressed(pending,error,kind);
 }
 function terminal_view(pending) {
   return Object.freeze({
@@ -30,6 +43,8 @@ function terminal_view(pending) {
     failure_kind: pending.kind,
     error: pending.error,
     suppressed: Object.freeze([...pending.suppressed]),
+    suppressed_kinds: Object.freeze([...pending.suppressed_kinds]),
+    suppressed_overflow: pending.suppressed_overflow,
   });
 }
 
@@ -43,6 +58,31 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
   let registrations = 0;
   let busy = false;
   let retired = false;
+  let active_callback = null;
+
+  // Tokens are valid only for the current trusted callback invocation.
+  // Not a guest-visible ABI: compiler provenance and isolation are still required.
+  function enter_callback(recovery = false) {
+    if (active_callback) throw new Error('E_CALLBACK_REENTRANT');
+    active_callback = {signals:new WeakMap(), recovered:new WeakSet(), recovery};
+  }
+  function signal_failure(kind, error) {
+    if (!active_callback) throw new Error('E_NO_ACTIVE_CALLBACK');
+    if (!['throw','raise','panic','cancel'].includes(kind)) throw new TypeError('E_INVALID_FAILURE_KIND');
+    require_error(error);
+    const token = Object.freeze(Object.create(null));
+    active_callback.signals.set(token,{kind,error});
+    throw token;
+  }
+  function callback_failure(pending, error, fallback) {
+    const signal = active_callback?.signals.get(error);
+    if (signal) {
+      active_callback.signals.delete(error);
+      merge_failure(pending, recoverable_kinds.has(signal.kind) ? 'panic' : signal.kind, signal.error);
+    } else {
+      merge_failure(pending,'host-fatal',error instanceof Error ? error : new Error(fallback));
+    }
+  }
 
   function check_available() {
     if (busy || retired) throw new Error(busy ? 'E_UNWIND_REENTRANT' : 'E_CONTEXT_RETIRED');
@@ -63,20 +103,15 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
       const callback = frame.defers[i];
       frame.defers[i] = null;
       registrations--;
+      enter_callback();
       try {
         const result = callback();
         if (result && typeof result.then === 'function')
           throw new TypeError('E_ASYNC_CLEANUP_UNSUPPORTED');
       } catch (error) {
-        // A host exception is never silently retagged as a guest throw/raise.
-        const host_error = error instanceof Error ? error : new Error('E_HOST_CALLBACK_FAILED');
-        if (pending.kind !== 'host-fatal') {
-          if (pending.kind !== 'return') append_suppressed(pending,pending.error);
-          pending.kind = 'host-fatal';
-          pending.error = host_error;
-        } else {
-          append_suppressed(pending,host_error);
-        }
+        callback_failure(pending,error,'E_HOST_CALLBACK_FAILED');
+      } finally {
+        active_callback = null;
       }
     }
     frame.defers.length = 0;
@@ -90,16 +125,17 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     return frame;
   }
   function recovered(value) {
-    // This creates a compiler-host-only result token, not a guest-accessible API.
+    // A decision belongs to this invocation, not another context or callback.
+    if (!active_callback?.recovery) throw new Error('E_NO_ACTIVE_RECOVERY');
     const token = Object.freeze({value});
-    RECOVERED.add(token);
+    active_callback.recovered.add(token);
     return token;
   }
   function dispatch_failure(kind, error) {
     check_available();
     if (!failure_kinds.has(kind)) throw new TypeError('E_INVALID_FAILURE_KIND');
     require_error(error);
-    const pending = {kind, error, suppressed: []};
+    const pending = pending_outcome(kind,error);
     busy = true;
     try {
       // Phase 1: search *all* dynamic frames for an ordinary catch/trap.
@@ -115,9 +151,7 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
                 break find_catch;
               }
             } catch (host_error) {
-              pending.kind = 'host-fatal';
-              append_suppressed(pending,error);
-              pending.error = host_error instanceof Error ? host_error : new Error('E_HOST_CATCH_MATCH_FAILED');
+              merge_failure(pending,'host-fatal',host_error instanceof Error ? host_error : new Error('E_HOST_CATCH_MATCH_FAILED'));
               break find_catch;
             }
           }
@@ -132,9 +166,7 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
             if (result && typeof result.then === 'function') throw new TypeError('E_ASYNC_CATCH_UNSUPPORTED');
             return Object.freeze({kind:'caught', value:result, error});
           } catch (host_error) {
-            pending.kind = 'host-fatal';
-            append_suppressed(pending,error);
-            pending.error = host_error instanceof Error ? host_error : new Error('E_HOST_CATCH_FAILED');
+            merge_failure(pending,'host-fatal',host_error instanceof Error ? host_error : new Error('E_HOST_CATCH_FAILED'));
           }
         }
       }
@@ -156,19 +188,19 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
             },
           }));
           const error_view = Object.freeze({message:pending.error.message, is_raise:pending.kind==='raise'});
+          enter_callback(true);
           try {
             const result = handler(error_view, cursor);
-            if (delegated || !result || !RECOVERED.has(result))
+            if (delegated || !result || !active_callback.recovered.has(result))
               throw new TypeError('E_RECOVERY_DECISION_REQUIRED');
             return Object.freeze({kind:'recovered', value:result.value, error:pending.error});
           } catch (callback_error) {
             if (callback_error === NEXT && delegated) continue;
-            append_suppressed(pending,pending.error);
-            pending.kind = 'host-fatal';
-            pending.error = callback_error instanceof Error ? callback_error : new Error('E_HOST_RECOVER_FAILED');
+            callback_failure(pending,callback_error,'E_HOST_RECOVER_FAILED');
             break;
           } finally {
             valid = false;
+            active_callback = null;
           }
         }
       }
@@ -181,7 +213,7 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     check_available();
     if (!frames.length) throw new Error('E_NO_ACTIVE_FRAME');
     // Preserve the evaluated return slot before callbacks run.
-    const pending = {kind:'return',error:null,suppressed:[]};
+    const pending = pending_outcome('return',null);
     busy = true;
     try {
       pop_clean(pending);
@@ -218,6 +250,7 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     return_frame,
     dispatch_failure,
     recovered,
+    signal_failure,
     retire() {
       check_available();
       if (frames.length) throw new Error('E_CONTEXT_NOT_QUIESCENT');
