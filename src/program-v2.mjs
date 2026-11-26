@@ -14,7 +14,7 @@ import {coreBooleanIntrinsic,isCoreBooleanUnit} from './core-boolean-intrinsics.
  */
 const MAX_BYTES = 262144, MAX_TOKENS = 30000, MAX_DEPTH = 192;
 const MIN = -(1n << 63n), MAX = (1n << 63n) - 1n;
-const TOKEN_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const TOKEN_NAME = /^[A-Za-z_Α-ΡΣ-Ωα-ω][A-Za-z0-9_Α-ΡΣ-Ωα-ω]*$/;
 const CLASS_METHOD_RESERVED=new Set([
   'default','new','class','export','import','null','this','super','extends','static',
   'constructor','prototype','__proto__','define','pub','as','end','self','int',
@@ -278,9 +278,9 @@ function tokenize(source) {
       // Never let quoted payload text masquerade as a keyword or delimiter.
       emit('localString','<local-string>',start);
       result.at(-1).literal=value;
-    } else if (/[A-Za-z_]/.test(c)) {
+    } else if (/[A-Za-z_Α-ΡΣ-Ωα-ω]/.test(c)) {
       let word = '';
-      while (pos < source.length && /[A-Za-z0-9_]/.test(source[pos])) {
+      while (pos < source.length && /[A-Za-z0-9_Α-ΡΣ-Ωα-ω]/.test(source[pos])) {
         word += source[pos]; advance();
       }
       if (word.length > 128) fail('identifier limit',start);
@@ -290,12 +290,12 @@ function tokenize(source) {
         fail('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+word+'!',start);
       if (['copy','take','move','borrow','share'].includes(word) && source[pos]==='!' &&
           source[pos+1]!=='=' &&
-          !(source.slice(pos+1,pos+3)==='eq' && !/[A-Za-z0-9_]/.test(source[pos+3]??'')))
+          !(source.slice(pos+1,pos+3)==='eq' && !/[A-Za-z0-9_Α-ΡΣ-Ωα-ω]/.test(source[pos+3]??'')))
         fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
       // Canonical bang exceptional control requires typed Error/Result and
       // checked guest unwind; no fallback to an ordinary JS exception.
       if(['trap','throw','raise','panic'].includes(word) && source[pos]==='!' &&
-         source[pos+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(source.slice(pos)))
+         source[pos+1]!=='=' && !/^!eq(?![A-Za-z0-9_Α-ΡΣ-Ωα-ω])/.test(source.slice(pos)))
         {
           if(!/[ \t\r\n\v\f]/.test(source[pos+1]??''))
             fail('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+word+'!',start);
