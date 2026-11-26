@@ -34,10 +34,12 @@ test('pipe and rpipe contextual forms cannot become a generated JS guest',()=>{
 });
 
 test('graceful stop! is explicit unsupported, never silent force-stop',()=>{
-  for(const spacing of ['stop! worker','stop!worker']){
+  for(const spacing of ['stop! worker','stop!\tworker']){
     fail('pub fnc main(): int { '+spacing+'; return 0; }',
       'E_STOP_BACKEND_UNSUPPORTED');
   }
+  fail('pub fnc main(): int { stop!worker; return 0; }',
+    'E_BANG_KEYWORD_WHITESPACE');
   // Separated stop ! has no contextual bang meaning.
   fail('pub fnc main(): int { stop ! worker; return 0; }',
     'E_UNSUPPORTED_SYNTAX');
