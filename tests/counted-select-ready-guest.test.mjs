@@ -80,3 +80,20 @@ test('short-circuit conditions cannot conditionally consume Future or channel ca
   const start='suspends fnc main(): int { val Channel<int> a = Channel.new<int>(2); writech a, 42; val Future<int> f = select<int> { default: -> { return 20; } }; val Array[int] b = await select<int>(0) { when readch a: int n -> { return n; } }; ';
   for(const c of ['(1 == 2) && ((await f) == 20)','(1 == 1) || ((readch a) == 42)'])assert.throws(()=>compileCountedReadyV1(start+'if '+c+' then return 1; fi return 42; }'),/effect in condition/);
 });
+
+test('canonical const Future is non-awaited until explicit await; immutable bindings cannot be reassigned',async()=>{
+  const prefix='suspends fnc main(): int { const Channel<int> a = Channel.new<int>(1); writech a, 42; ';
+  const select='const Future<Array<int>> pending = select<int>(1) { when readch a: int n -> { return n; } }; ';
+  const source=prefix+select+'const Array[int] b = await pending; return b[0]; }';
+  const dir=await mkdtemp(join(process.cwd(),'.counted-ready-'));
+  try {
+    const path=join(dir,'const-future.mjs');await writeFile(path,compileCountedReadyV1(source));
+    assert.equal(await (await import(pathToFileURL(path))).main(),42n);
+    const direct=prefix+'const Array[int] b = await select<int>(1) { when readch a: int n -> { return n; } }; return b[0]; }';
+    const directPath=join(dir,'const-direct.mjs');await writeFile(directPath,compileCountedReadyV1(direct));
+    assert.equal(await (await import(pathToFileURL(directPath))).main(),42n);
+    for(const body of ['return 42; }','const Array[int] b = await pending; const Array[int] c = await pending; return b[0]; }'])
+      assert.throws(()=>compileCountedReadyV1(prefix+select+body),/E_COUNTED_READY_PROFILE/);
+    assert.throws(()=>compileCountedReadyV1(prefix+'const int k = 1; k = 2; const Array[int] b = await select<int>(1) { when readch a: int n -> { return n; } }; return b[0]; }'),/immutable binding/);
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
