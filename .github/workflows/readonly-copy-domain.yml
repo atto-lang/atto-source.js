@@ -1,0 +1,26 @@
+name: Read-only copy domain (host runtime only)
+on:
+  pull_request:
+    paths:
+      - 'src/readonly-copy-domain.mjs'
+      - 'tests/readonly-copy-domain.test.mjs'
+      - '.github/workflows/readonly-copy-domain.yml'
+permissions:
+  contents: read
+jobs:
+  runtime-component:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify source identity and run component
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          echo "SOURCE_TREE=$(git rev-parse 'HEAD^{tree}')"
+          node --test tests/readonly-copy-domain.test.mjs
+          echo "HOST_COMPONENT_ONLY"
