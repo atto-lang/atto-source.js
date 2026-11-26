@@ -646,6 +646,15 @@ class Parser {
     const statements=[];
     while(this.peek().kind!=='eof'&&!terminators.includes(this.peek().value)) {
       if(++this.statementNodes>MAX_TOKENS)fail('statement budget exceeded',this.peek());
+      // Recognize missing initializers at the declaration boundary, even for
+      // declared types outside this ordinary scalar slice. Do not synthesize
+      // an implicit value or reinterpret a declaration as a void call.
+      const bindingTokens=this.tokens.slice(this.i,this.i+4);
+      const qualifier=['let','val','const'].includes(bindingTokens[0]?.value);
+      const localHead=qualifier?1:0;
+      const builtin=['int','i64','i32','float','bool','string','Symbol'].includes(bindingTokens[localHead]?.value);
+      if(builtin&&bindingTokens[localHead+1]?.kind==='id'&&bindingTokens[localHead+2]?.value===';')
+        fail('E_MISSING_INITIALIZER: explicit initializer required',bindingTokens[localHead+2]);
       if((this.eat('return')||this.eat('^'))) {
         if(this.peek().value===';')
           fail('RETURN_VALUE_REQUIRED: nonvoid return requires a value',this.peek());
@@ -700,11 +709,13 @@ class Parser {
           fail('E_GUARD: every failure path must explicitly return from the function',this.peek());
         statements.push({kind:'branch',condition:{kind:'not',inner:condition},
           yes:failure,no:[]});
-      } else if(this.eat('val')) {
-        // This bounded slice admits only function-scope immutable int locals.
+      } else if(this.eat('val')||(this.peek().value==='let'&&this.tokens[this.i+1]?.value==='int'&&this.eat('let'))) {
+        // Ordinary scalar slice: initialized, read-only int let is admitted.
+        // Rebinding remains unsupported here; never silently discard writes.
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
         const localType=this.eat('float')?'float':this.eat('int')?'int':'inferredTrap';
         const name=this.name();
+        if(this.peek().value===';')fail('E_MISSING_INITIALIZER: explicit initializer required',this.peek());
         this.expect('=');
         let init;
         if(localType==='inferredTrap'){
