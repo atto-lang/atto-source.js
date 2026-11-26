@@ -25,5 +25,8 @@ test('CLI scalar inline tasks reject escaping or unsupported effects',()=>{
     'pub fnc main():int{val int z=sync task<int>{val int x=42;return x;};return x;}',
     'pub fnc main():int{return sync task<int>{return helper();};} fnc helper():int{return 42;}',
     'pub fnc main():int{return sync task<void>{return 42;};}',
+    'pub fnc main():int{return task { return 42; };}',
+    'pub fnc main():int{return sync gpu task { return 42; };}',
+    'pub fnc main():int{return sync task { return await 42; };}',
   ])assert.throws(()=>compileToProgramIRV2(source),undefined,source);
 });

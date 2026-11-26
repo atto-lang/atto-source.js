@@ -2114,7 +2114,7 @@ function bindCompilerOwnedTestingImports(parsed,locals) {
 
 export function compileToProgramIRV2(source) {
   const tokens=tokenize(source);
-  rejectExecutionDomains(tokens,fail);
+  rejectExecutionDomains(tokens,fail,{inlineScalarTasks:true});
   rejectUnsupportedHttpActors(tokens,fail);
   rejectUnsupportedStaticSelect(tokens);
   rejectUnsupportedTrapEffect(tokens);

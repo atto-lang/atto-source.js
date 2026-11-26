@@ -17,7 +17,7 @@ const DOMAIN_WORDS = new Set(EXECUTION_DOMAIN_WORDS);
  * @param {{kind:string,value:string}[]} tokens lexer output; identifiers have kind 'id'
  * @param {(message:string, token:object)=>never} fail frontend error reporter
  */
-export function rejectExecutionDomains(tokens, fail) {
+export function rejectExecutionDomains(tokens, fail, {inlineScalarTasks=false}={}) {
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
     if (token.kind !== 'id') continue;
@@ -28,7 +28,8 @@ export function rejectExecutionDomains(tokens, fail) {
         + ' no implicit CPU fallback', token);
     }
     // `task` stays a contextual identifier; only the block form is a Task.
-    if (token.value === 'task' && opensBlock) {
+    const explicitInline = inlineScalarTasks && tokens[i-1]?.kind === 'id' && tokens[i-1].value === 'sync';
+    if (token.value === 'task' && opensBlock && !explicitInline) {
       fail('execution task requires scheduler-aware Future lowering; no implicit inline execution', token);
     }
     if (token.value === 'nb' && opensBlock) {
