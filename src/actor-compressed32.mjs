@@ -41,7 +41,8 @@ export function dereferenceCompressed32(storedWord,logicalSpanBytes,accessBytes)
   const offset=decodeStoredCompressed32(storedWord);
   if (offset === null) throw new Error("null compressed32 reference");
   if (typeof logicalSpanBytes !== "bigint" || typeof accessBytes !== "bigint" ||
-      logicalSpanBytes < 0n || accessBytes <= 0n ||
+      logicalSpanBytes < 0n || logicalSpanBytes > MAX_COMPRESSED32_SPAN ||
+      accessBytes <= 0n ||
       offset > logicalSpanBytes || accessBytes > logicalSpanBytes-offset) {
     throw new RangeError("compressed32 access outside logical actor span");
   }

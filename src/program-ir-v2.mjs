@@ -1,3 +1,4 @@
+import {isIdentifier} from './portable-unicode-identifier-v1.mjs';
 /**
  * Strict JSON-safe resolved IR contract for the experimental program-v2 backend.
  * This is a backend-local migration seam, NOT yet the shared canonical Oreslang IR.
@@ -5,10 +6,22 @@
 export const PROGRAM_IR_VERSION=2;
 export const PROGRAM_IR_DIALECT='oreslang.program';
 export const PROGRAM_IR_INT_MODEL='signed-i64-checked-provisional';
-const ID=/^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const DEC=/^(?:0|[1-9][0-9]*|-[1-9][0-9]*)$/;
 const MIN=-(1n<<63n), MAX=(1n<<63n)-1n;
 const LIMIT_NODES=30000,LIMIT_DEPTH=192;
+// Both source and supplied IR must preserve exact Unicode scalar sequences.
+// Strict JS equality is equivalent to exact UTF-8 byte equality on this domain.
+export function validLocalString(value){
+  if(typeof value!=='string'||value.length>256)return false;
+  for(let i=0;i<value.length;i++){
+    const u=value.charCodeAt(i);
+    if(u>=0xd800&&u<=0xdbff){
+      const low=value.charCodeAt(++i);
+      if(!(low>=0xdc00&&low<=0xdfff))return false;
+    }else if(u>=0xdc00&&u<=0xdfff)return false;
+  }
+  return new TextEncoder().encode(value).length<=256;
+}
 const CLASS_RESERVED=new Set([
   'default','new','class','export','import','null','true','false','this','super',
   'extends','static','constructor','prototype','__proto__','define','pub','as',
@@ -68,7 +81,7 @@ function sequence(v,max,context){
   return v;
 }
 function ident(s,where) {
-  if(typeof s!=='string'||!ID.test(s))fail(where+': invalid identifier');
+  if(typeof s!=='string'||!isIdentifier(s))fail(where+': invalid identifier');
   return s;
 }
 function classIdent(s,where){
@@ -308,7 +321,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
     // No implicit truthiness or numeric coercions, including in supplied IR.
     if(expected==='bool'&&['int','neg','binary'].includes(desc.value))
       fail('boolean expression required');
-    if(expected!=='bool'&&['bool','compare','boolCompare','symbolCompare','not'].includes(desc.value))
+    if(expected!=='bool'&&['bool','compare','boolCompare','stringCompare','symbolCompare','not'].includes(desc.value))
       fail('boolean value cannot be used as non-bool');
     if(expected!=='int'&&['int','neg','binary'].includes(desc.value))
       fail('integer expression cannot be used as non-int');
@@ -393,7 +406,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         return {kind:'bool',value:expr.value};
       case 'string':
         record(expr,['kind','value'],'local string');
-        if(allowScalarWhile===true||expected!=='string'||typeof expr.value!=='string'||expr.value.length>256||!/^[\x20-\x7e]*$/.test(expr.value))fail('invalid local string literal/type');
+        if(allowScalarWhile===true||expected!=='string'||!validLocalString(expr.value))fail('invalid local string literal/type');
         return {kind:'string',value:expr.value};
       case 'symbol':
         record(expr,['kind','value'],'symbol');
@@ -569,7 +582,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
       case 'binary':
         record(expr,['kind','op','left','right'],'binary');
         if(expected!=='int')fail('arithmetic in boolean context');
-        if(!['+','-','*','/','%','mod','^','&','|','<<<','>>>'].includes(expr.op))fail('unsupported binary operator');
+        if(!['+','-','*','/','%','mod','^','&','|','<<<','>>>','ashr'].includes(expr.op))fail('unsupported binary operator');
         return {kind:'binary',op:expr.op,
           left:node(expr.left,owner,depth+1,'int',active),right:node(expr.right,owner,depth+1,'int',active)};
       case 'compare':
@@ -578,6 +591,13 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         if(!['<','>','<=','>=','==','!='].includes(expr.op))fail('unsupported comparator');
         return {kind:'compare',op:expr.op,left:node(expr.left,owner,depth+1,'int',active),
           right:node(expr.right,owner,depth+1,'int',active)};
+      case 'stringCompare':
+        record(expr,['kind','op','left','right'],'local string compare');
+        if(allowScalarWhile===true||expected!=='bool'||!['==','!='].includes(expr.op))
+          fail('invalid local string comparison');
+        return {kind:'stringCompare',op:expr.op,
+          left:node(expr.left,owner,depth+1,'string',active),
+          right:node(expr.right,owner,depth+1,'string',active)};
       case 'boolCompare':
         record(expr,['kind','op','left','right'],'Boolean compare');
         if(expected!=='bool'||!['==','!='].includes(expr.op))
@@ -655,6 +675,8 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           'Option.unwrap_or':[['option<int>','int'],'int'],
           'Option.unwrap':[['option<int>'],'int'],
           'Result.unwrap':[['result<int,int>'],'int'],
+          'Option.expect':[['option<int>','string'],'int'],
+          'Result.expect':[['result<int,int>','string'],'int'],
           'Result.ok':[['int'],'result<int,int>'],
           'Result.err':[['int'],'result<int,int>'],
           'Result.is_ok':[['result<int,int>'],'bool'],
@@ -763,7 +785,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         return {kind:'not',inner:methodNode(expr.inner,method,depth+1,'bool')};
       case 'binary':
         record(expr,['kind','op','left','right'],'method binary');
-        if(expected!=='int'||!['+','-','*','/','%','mod','^','&','|','<<<','>>>'].includes(expr.op))
+        if(expected!=='int'||!['+','-','*','/','%','mod','^','&','|','<<<','>>>','ashr'].includes(expr.op))
           fail('unsupported method arithmetic');
         return {kind:'binary',op:expr.op,
           left:methodNode(expr.left,method,depth+1,'int'),
@@ -863,7 +885,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
       case 'trapMethod':case 'trapOptionMethod':return n.name==='unwrap'||ordinary(n.receiver);
       case 'intrinsic':return ['Option.unwrap','Result.unwrap'].includes(n.name)||n.args.some(ordinary);
       case 'methodCall':case 'namedMethodCall':return true; // no method effect summaries yet
-      case 'binary':return ['+','-','*','/','%','mod','<<','>>','<<<','>>>'].includes(n.op)||ordinary(n.left)||ordinary(n.right);
+      case 'binary':return ['+','-','*','/','%','mod','<<','>>','<<<','>>>','ashr'].includes(n.op)||ordinary(n.left)||ordinary(n.right);
       case 'neg':case 'i32Check':case 'refinementCheck':return true;
       default:return Object.values(n).some(v=>Array.isArray(v)?v.some(ordinary):ordinary(v));
     }

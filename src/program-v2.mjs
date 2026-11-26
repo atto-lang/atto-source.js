@@ -1,6 +1,7 @@
+import {identifierCharAt,isIdentifierStart,isIdentifierPart,isIdentifier} from './portable-unicode-identifier-v1.mjs';
 import {lowerVerifiedQuantitySource} from './verified-quantity-source.mjs';
 import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
-import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
+import {validLocalString,validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 import {TESTING_SCALAR_SOURCE, TESTING_SCALAR_EXPORTS} from './compiler-owned-testing-scalar.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
 import {rejectUnsupportedHttpActors} from './http-actor-admission.mjs';
@@ -14,7 +15,6 @@ import {coreBooleanIntrinsic,isCoreBooleanUnit} from './core-boolean-intrinsics.
  */
 const MAX_BYTES = 262144, MAX_TOKENS = 30000, MAX_DEPTH = 192;
 const MIN = -(1n << 63n), MAX = (1n << 63n) - 1n;
-const TOKEN_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const CLASS_METHOD_RESERVED=new Set([
   'default','new','class','export','import','null','this','super','extends','static',
   'constructor','prototype','__proto__','define','pub','as','end','self','int',
@@ -251,21 +251,39 @@ function tokenize(source) {
       }
       if(pos>=source.length)fail('unterminated module import string',start);
       advance();emit('str',value,start);
-    } else if(c==='"'){
+    } else if(c==='"'||c==="'"){
+      const quote=c;
       advance();let value='';
-      while(pos<source.length&&source[pos]!=='"'){
-        const ch=source[pos];
-        if(ch==='\\'||sourceLineEnd(ch)||ch.charCodeAt(0)<32||ch.charCodeAt(0)>126)
-          fail('E_STRING_PROFILE: only unescaped printable ASCII local strings are admitted',start);
-        if(value.length>=256)fail('E_STRING_PROFILE: local string exceeds 256 bytes',start);
-        value+=ch;advance();
+      while(pos<source.length&&source[pos]!==quote){
+        let ch=source[pos];advance();
+        if(sourceLineEnd(ch)||ch.charCodeAt(0)<32)
+          fail('E_STRING_PROFILE: raw control in string',start);
+        if(ch==='\\'){
+          if(pos>=source.length)fail('E_STRING_ESCAPE: truncated escape',start);
+          ch=source[pos];advance();
+          if(sourceLineEnd(ch))fail('E_STRING_ESCAPE: multiline continuation unsupported',start);
+          if(ch==='u'){
+            const hex=source.slice(pos,pos+4);
+            if(!/^[0-9A-Fa-f]{4}$/.test(hex))fail('E_STRING_ESCAPE: invalid Unicode escape',start);
+            ch=String.fromCharCode(parseInt(hex,16));
+            for(let i=0;i<4;i++)advance();
+          }else ch=ch==='n'?'\n':ch==='r'?'\r':ch==='t'?'\t':ch;
+        }
+        value+=ch;
+        if(value.length>256)fail('E_STRING_PROFILE: local string exceeds 256 bytes',start);
       }
       if(pos>=source.length)fail('E_STRING_PROFILE: unterminated string',start);
-      advance();emit('localString',value,start);
-    } else if (/[A-Za-z_]/.test(c)) {
+      if(!validLocalString(value))fail('E_STRING_PROFILE: invalid Unicode or byte budget',start);
+      advance();
+      // Never let quoted payload text masquerade as a keyword or delimiter.
+      emit('localString','<local-string>',start);
+      result.at(-1).literal=value;
+    } else if (c==='⧖'||c==='∂') {
+      emit('id','suspends',start); result.at(-1).lexeme=c; advance();
+    } else if (isIdentifierStart(identifierCharAt(source,pos))) {
       let word = '';
-      while (pos < source.length && /[A-Za-z0-9_]/.test(source[pos])) {
-        word += source[pos]; advance();
+      while (pos < source.length && isIdentifierPart(identifierCharAt(source,pos))) {
+        const ch=identifierCharAt(source,pos);word+=ch;for(let j=0;j<ch.length;j++)advance();
       }
       if (word.length > 128) fail('identifier limit',start);
       // Never parse a contextual ownership bang as a macro or ordinary call;
@@ -274,22 +292,23 @@ function tokenize(source) {
         fail('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+word+'!',start);
       if (['copy','take','move','borrow','share'].includes(word) && source[pos]==='!' &&
           source[pos+1]!=='=' &&
-          !(source.slice(pos+1,pos+3)==='eq' && !/[A-Za-z0-9_]/.test(source[pos+3]??'')))
+          !(source.slice(pos+1,pos+3)==='eq' && !isIdentifierPart(identifierCharAt(source,pos+3))))
         fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
       // Canonical bang exceptional control requires typed Error/Result and
       // checked guest unwind; no fallback to an ordinary JS exception.
       if(['trap','throw','raise','panic'].includes(word) && source[pos]==='!' &&
-         source[pos+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(source.slice(pos)))
+         source[pos+1]!=='=' && !(source.startsWith('!eq',pos)&&!isIdentifierPart(identifierCharAt(source,pos+3))))
         {
           if(!/[ \t\r\n\v\f]/.test(source[pos+1]??''))
             fail('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+word+'!',start);
-          if(word==='trap'&&!['=','|>','return'].includes(result.at(-1)?.value))
+          if(word==='trap'&&!['=','|>','return','('].includes(result.at(-1)?.value))
             fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: typed guest effects and Result lowering required',start);
           if(word!=='trap'&&!['{',';','then','else','do'].includes(result.at(-1)?.value))
             fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: exceptional control must be a statement',start);
           advance();word+='!';
         }
-      emit('id',word,start);
+      emit('id',word==='susp'?'suspends':word,start);
+      if(word==='susp')result.at(-1).lexeme=word;
     } else if (/[0-9]/.test(c)) {
       let number = '';
       while (pos < source.length && /[0-9_]/.test(source[pos])) {
@@ -317,7 +336,7 @@ function tokenize(source) {
       fail("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",start);
     } else if (source.startsWith('^^',pos)) {
       emit('sym','^^',start); advance(); advance();
-    } else if ('(){}[]:,;+-*/=.<>!?^&|'.includes(c)) {
+    } else if ('(){}[]:,;+-*/=.<>!¬?^&|'.includes(c)) {
       emit('sym',c,start); advance();
     } else fail('unsupported character',start);
   }
@@ -331,12 +350,20 @@ function tokenize(source) {
  * Match lexer tokens, never raw text: comments containing 'trap' are inert.
  */
 function rejectUnsupportedTrapEffect(tokens) {
+  const admitted = new Set();
   for (let i=0;i<tokens.length;i++) {
     const token=tokens[i];
     if (token.kind==='id' && (token.value==='trap'||token.value==='trap!')) {
       // Only the statically validated inferred local binding slice is admitted.
       // All other contexts retain the existing fail-closed admission.
-      if(tokens[i-3]?.value==='val'&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='=')continue;
+      if(tokens[i-3]?.value==='val'&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='='){admitted.add(i);continue;}
+      // Closed typed Result<int,Error> locals are the same validated trap IR.
+      if(tokens.slice(i-9,i-2).map(t=>t.value).join(' ')==='val Result < int , Error >'&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='='){admitted.add(i);continue;}
+      // A nested trap may only follow the opening parentheses of an already
+      // admitted trap operand. The typed parser still validates the whole tree.
+      let outer=i-1;
+      while(tokens[outer]?.value==='(')outer--;
+      if(outer<i-1&&admitted.has(outer)){admitted.add(i);continue;}
       if(token.value==='trap!'&&tokens[i-1]?.value==='|>')continue;
       if(tokens[i-1]?.value==='return'&&tokens[i+1]?.kind==='id'&&
          tokens.slice(i+2,i+10).map(t=>t.value).join(' ')==='. unwrap ( ) |> match < int'&&tokens[i+10]?.value==='>'&&tokens[i+11]?.value==='over')continue;
@@ -365,25 +392,25 @@ class Parser {
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
   name() {
     const t = this.peek();
-    if (t.kind !== 'id' || !TOKEN_NAME.test(t.value) || t.value==='ifnot'||t.value==='unless') fail('identifier expected',t);
+    if (t.kind !== 'id' || !isIdentifier(t.value) || t.value==='ifnot'||t.value==='unless'||t.value==='suspends') fail('identifier expected',t);
     this.i++; return t.value;
   }
   generatorIdentifier() {
     const t=this.peek(),value=t.value;
-    if(t.kind!=='id'||!TOKEN_NAME.test(value)||GENERATOR_RESERVED.has(value))
+    if(t.kind!=='id'||!isIdentifier(value)||GENERATOR_RESERVED.has(value))
       fail('invalid or reserved generator identifier '+value,t);
     this.i++;return value;
   }
   classIdentifier() {
     const t=this.peek(),value=t.value;
-    if(t.kind!=='id'||!TOKEN_NAME.test(value)||CLASS_METHOD_RESERVED.has(value)||
+    if(t.kind!=='id'||!isIdentifier(value)||CLASS_METHOD_RESERVED.has(value)||
        value==='Option'||value==='Result'||value==='Integer')
       fail('invalid or reserved class/member identifier '+value,t);
     this.i++;return value;
   }
   callableName() {
     const t=this.peek(),value=t.value;
-    if(t.kind!=='id'||!TOKEN_NAME.test(value)||
+    if(t.kind!=='id'||!isIdentifier(value)||
        (CLASS_METHOD_RESERVED.has(value)&&!CLASS_METHOD_CALLABLE_KEYWORDS.has(value)))
       fail('invalid or reserved callable name '+value,t);
     this.i++;return value;
@@ -396,6 +423,7 @@ class Parser {
     const value=next.value;
     if(CLASS_METHOD_RESERVED.has(value)&&!CLASS_METHOD_CALLABLE_KEYWORDS.has(value))
       return false;
+    if(marker==='method')fail('obsolete method introducer; use mtd',this.peek());
     this.i++;return true;
   }
   argumentsAfterOpen() {
@@ -444,7 +472,7 @@ class Parser {
     }
     fail('unsupported scalar type (int, bool, Symbol, Option<int>, Result<int,int>)',this.peek());
   }
-  classDeclaration(pub) {
+  classDeclaration(pub, writtenPrivate=false) {
     const name=this.classIdentifier();
     if(isProtectedPreludeIdentity(name))
       fail('E_PRELUDE_SPOOF: cannot define compiler-owned core class '+name,this.peek());
@@ -501,7 +529,7 @@ class Parser {
       slots.add(slot);
       methods.push({name:methodName,pub:methodPub,params,paramTypes,returnType,body});
     }
-    return {name,pub,methods};
+    return {name,pub,methods,...(writtenPrivate?{writtenPrivate:true}:{})};
   }
   generatorStart() {
     let j=this.i;
@@ -563,8 +591,14 @@ class Parser {
     return {module:moduleName,name,pub,params,paramTypes,elementType,yields};
   }
 
-  functions(moduleName, declaredPub=false) {
-    const pub = declaredPub || this.eat('pub'), start=this.peek();
+  functions(moduleName, declaredPub=false, declaredPrivate=false) {
+    let pub=declaredPub, writtenPrivate=declaredPrivate;
+    while(['pub','private'].includes(this.peek().value)) {
+      if(pub||writtenPrivate)fail('conflicting visibility modifier',this.peek());
+      pub=this.eat('pub');writtenPrivate=!pub;if(writtenPrivate)this.expect('private');
+    }
+    const start=this.peek();
+    if(start.value==='suspends')fail('E_SUSPENDS_UNSUPPORTED: JS callable continuation lowering is unavailable',start);
     const fnc=this.eat('fnc'),routine=!fnc&&this.eat('routine');
     const requestedReturnType=this.peek().value;
     const returnFirst=['int','void','infer'].includes(requestedReturnType) &&
@@ -661,7 +695,7 @@ class Parser {
     // Exporting a routine as a module object property would make a
     // direct-call-only routine first class. Leave this for runtime/ABI design.
     if (pub && kind === 'routine') fail('public routine cannot be exported');
-    const fn={module:moduleName, name, kind, pub, params, body,...(throws===undefined?{}:{throws})};
+    const fn={module:moduleName, name, kind, pub, params, body,...(writtenPrivate?{writtenPrivate:true}:{}),...(throws===undefined?{}:{throws})};
     // Keep the historical integer-only IR exactly stable for old consumers.
     // New typed fields are an all-or-nothing additive extension for bool.
     if(returnType!=='int'||paramTypes.some(type=>type!=='int')){
@@ -743,34 +777,48 @@ class Parser {
         const isConst=this.eat('const');
         const readOnlyLet=!isConst&&this.eat('let');
         if(!isConst&&!readOnlyLet)this.expect('val');
-        // This bounded slice admits only function-scope immutable int locals.
+        // Function-scope scalar locals; only typed string let may rebind.
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
         // Keep existing Option, Result, string, bool, and directional bindings.
-        const localType=(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
+        const typedTrapResult=this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')==='Result < int , Error >';
+        if(typedTrapResult)this.i+=6;
+        let localType=typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
         const name=this.name();
         if(this.peek().value===';')fail('E_MISSING_INITIALIZER: explicit initializer required',this.peek());
         const directional=this.takeDirection('<');
         if(!directional)this.expect('=');
         let init;
         if(localType==='inferredTrap'&&!directional&&!isConst){
-          if(!this.eat('trap!')&&!this.eat('trap'))fail('only trap Result inference is supported',this.peek());
-          init={kind:'trap',inner:this.expression()};
+          if(this.eat('trap!')||this.eat('trap'))init={kind:'trap',inner:this.expression()};
+          else {localType='inferredInt';init=this.expression();}
         }else init=this.expression();
         this.expect(';');
         if(isConst&&(!directional||localType!=='int'))fail('only directional const int is admitted here',this.peek());
-        statements.push({kind:'local',name,init,localType:isConst?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType});
+        statements.push({kind:'local',name,init,localType:isConst?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string'});
+      } else if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
+        if(depth!==0)fail('E_STRING_VIEW_SCOPE: rebinding requires root function scope',this.peek());
+        const name=this.name();this.expect('=');
+        const init=this.expression();this.expect(';');
+        statements.push({kind:'local',name,init,localType:'string',writable:true,rebind:true});
       } else if(['if','ifnot','unless'].includes(this.peek().value)) {
         const head=this.tokens[this.i++].value;
         const predicate=this.expression();
         // Negate the predicate once using the existing typed Boolean IR.
         const condition=head==='if'?predicate:{kind:'not',inner:predicate};
-        // Canonical imperative suffix do; preserve old positive if spellings.
-        if(head!=='if')this.expect('do');
-        else if(!this.eat('do')&&!this.eat('then')){this.expect(';');this.expect('do');}
-        const yes=this.statementSequence(['else','fi'],depth+1);
-        const no=this.eat('else')?this.statementSequence(['fi'],depth+1):[];
-        this.expect('fi');
-        statements.push({kind:'branch',condition,yes,no});
+        if(this.eat('{')){
+          const yes=this.statementSequence(['}'],depth+1);this.expect('}');
+          let no=[];
+          if(this.eat('else')){this.expect('{');no=this.statementSequence(['}'],depth+1);this.expect('}');}
+          statements.push({kind:'branch',condition,yes,no});
+        }else{
+          // Keyword-delimited conditionals alone own their fi.
+          if(head!=='if')this.expect('do');
+          else if(!this.eat('do')&&!this.eat('then')){this.expect(';');this.expect('do');}
+          const yes=this.statementSequence(['else','fi'],depth+1);
+          const no=this.eat('else')?this.statementSequence(['fi'],depth+1):[];
+          this.expect('fi');
+          statements.push({kind:'branch',condition,yes,no});
+        }
        } else if(this.peek().kind==='id'||this.peek().kind==='int'||this.peek().value==='('){
         const expr=this.expression();
         if(this.takeDirection('>')){
@@ -812,7 +860,7 @@ class Parser {
       else if(stmt.kind==='tryCatch')result={kind:'tryCatch',name:stmt.name,body:this.lowerStatements(stmt.body,null),handler:this.lowerStatements(stmt.handler,null)};
       else if(stmt.kind==='local'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
-        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,body:result};
+        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,rebind:stmt.rebind===true,body:result};
       }
       else if(stmt.kind==='voidCall'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: void call must precede a value return');
@@ -906,19 +954,20 @@ class Parser {
           ? 'import namespace requires verified manifest package index and per-provider linker'
           : 'cross-file import requires verified source graph lowering',this.peek());
       }
-      let prefixPub=false;
-      if(this.peek().value==='pub'&&this.tokens[this.i+1]?.value==='define'){
-        this.i++;prefixPub=true;
+      let prefixVisibility=null;
+      if(['pub','private'].includes(this.peek().value)&&this.tokens[this.i+1]?.value==='define'){
+        prefixVisibility=this.peek().value;this.i++;
       }
       if(this.eat('define')){
-        const afterPub=this.eat('pub');
-        if(prefixPub&&afterPub)fail('duplicate pub modifier',this.peek());
-        const declarationPub=prefixPub||afterPub;
+        const afterVisibility=['pub','private'].includes(this.peek().value)?this.tokens[this.i++].value:null;
+        if(prefixVisibility&&afterVisibility)fail(prefixVisibility==='pub'&&afterVisibility==='pub'?'duplicate pub modifier':'duplicate/conflicting visibility modifier',this.peek());
+        const declarationPub=(prefixVisibility||afterVisibility)==='pub';
+        const declarationPrivate=(prefixVisibility||afterVisibility)==='private';
         if(this.peek().value==='symbol')
           fail('Symbol declaration/export manifest not implemented',this.peek());
         if(this.eat('class')){
           if(classes.length>=512)fail('class declaration budget exceeded',this.peek());
-          const cls=this.classDeclaration(declarationPub);
+          const cls=this.classDeclaration(declarationPub,declarationPrivate);
           if(usedClasses.has(cls.name)||usedModules.has(cls.name))
             fail('duplicate class/module name '+cls.name,this.peek());
           usedClasses.add(cls.name);classes.push(cls);
@@ -927,10 +976,10 @@ class Parser {
         if(this.peek().value==='fnc'||this.peek().value==='routine'||
            (['int','void','infer'].includes(this.peek().value)&&['<-','•'].includes(this.tokens[this.i+1]?.value))){
           if(functions.length+generators.length>=512)fail('declaration budget exceeded',this.peek());
-          functions.push(this.functions(null,declarationPub));
+          functions.push(this.functions(null,declarationPub,declarationPrivate));
           continue;
         }
-        if(declarationPub)fail('public define is only supported for classes/functions in program-v2',this.peek());
+        if(declarationPub||declarationPrivate)fail('explicit visibility define is only supported for classes/functions in program-v2',this.peek());
         this.expect('module');const name=this.name();
         if(isProtectedPreludeIdentity(name)||name==='Symbol'||name==='Integer')
           fail('E_PRELUDE_SPOOF: reserved portable intrinsic module name '+name);
@@ -1055,7 +1104,7 @@ class Parser {
         const logical=op==='and'||op==='or';
         if(op==='^')fail("E_OPERATOR_CARET: single infix '^' is invalid; use '^^' for integer XOR",token);
         const prec=op==='*'||op==='/'?20:op==='+'||op==='-'?15:
-          op==='<<<'||op==='>>>'?12:
+          op==='<<<'||op==='>>>'||op==='ashr'?12:
           ['<','>','<=','>='].includes(op)?9:compare?8:
           op==='&'?7:op==='^^'?6:op==='|'?5:op==='and'?4:op==='or'?3:-1;
         if (prec < min) break;
@@ -1135,7 +1184,7 @@ class Parser {
     }
     if(this.eat('trap!')||this.eat('trap'))return {kind:'trap',inner:this.expression(30)};
     if(this.eat('await'))return {kind:'immediateAwait',inner:this.expression(30)};
-    if(this.eat('!')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
+    if(this.eat('!')||this.eat('¬')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
     if(this.eat('new')){
       const className=this.name();
       this.expect('(');
@@ -1147,7 +1196,7 @@ class Parser {
       }
       return receiver;
     }
-    if(this.peek().kind==='localString')return {kind:'string',value:this.tokens[this.i++].value};
+    if(this.peek().kind==='localString')return {kind:'string',value:this.tokens[this.i++].literal};
     if(this.eat('true'))return {kind:'bool',value:true};
     if(this.eat('false'))return {kind:'bool',value:false};
     if (this.eat('-')) {
@@ -1335,10 +1384,8 @@ class Parser {
 }
 function resolveProgram(parsed) {
   const {modules,functions,generators=[],classes=[],exportDeclarations=[]}=parsed;
-  const seenExportNames=new Set();
+  const resolvedExports=new Map();
   for(const entry of exportDeclarations) {
-    if(seenExportNames.has(entry.name))fail('duplicate export '+entry.name);
-    seenExportNames.add(entry.name);
     const targetClasses=classes.filter(c=>c.name===entry.name);
     const targetFns=functions.filter(f=>f.module===null&&f.name===entry.name);
     if(!targetClasses.length&&!targetFns.length)fail('unknown export '+entry.name);
@@ -1346,12 +1393,19 @@ function resolveProgram(parsed) {
     const kind=targetClasses.length?'class':'fnc';
     if(entry.kind!==null&&entry.kind!==kind)fail('export kind mismatch '+entry.name);
     const targets=targetClasses.length?targetClasses:targetFns;
+    if(targets.some(t=>t.writtenPrivate))fail('explicit private declaration cannot be exported: '+entry.name);
     if(entry.visibility==='package'&&targets.some(t=>t.pub))
       fail('package export conflicts with public declaration '+entry.name);
     if(kind==='fnc'&&targets.some(t=>t.kind==='routine')&&entry.visibility==='public')
       fail('routine is not a public exported fnc '+entry.name);
-    if(entry.visibility==='public')targets.forEach(t=>{t.pub=true;});
+    const prior=resolvedExports.get(entry.name);
+    if(prior&&prior.visibility!==entry.visibility)fail('conflicting export visibility '+entry.name);
+    if(!prior)resolvedExports.set(entry.name,{name:entry.name,kind,visibility:entry.visibility,targets});
   }
+  for(const entry of resolvedExports.values())if(entry.visibility==='public')entry.targets.forEach(t=>{t.pub=true;});
+  // Written visibility is compiler-only provenance; the checked IR schema
+  // must not acquire a new field or a serialized authority marker.
+  for(const target of [...functions,...classes])delete target.writtenPrivate;
   const slots=new Map(),exports=new Set(),symbolKinds=new Map(),classByName=new Map();
   const classTables=classes.map((cls,classIndex)=>{
     if(classByName.has(cls.name))fail('duplicate class '+cls.name);
@@ -1409,7 +1463,7 @@ function resolveProgram(parsed) {
       case 'trapOptionCapture':return 'trapOptionResult';
       case 'trapMethod':return expr.name==='unwrap'?'int':'bool';
       case 'trapOptionMethod':return expr.name==='unwrap'?'option<int>':'bool';
-      case 'bool':case 'not':case 'compare':case 'boolCompare':case 'numericCompare':case 'symbolCompare':return 'bool';
+      case 'bool':case 'not':case 'compare':case 'boolCompare':case 'stringCompare':case 'numericCompare':case 'symbolCompare':return 'bool';
       case 'symbol':return 'symbol';
       case 'string':case 'stringCapture':return 'string';
       case 'boolCapture':return 'bool';
@@ -1421,7 +1475,7 @@ function resolveProgram(parsed) {
       case 'intrinsic': {
         const results={
           'Option.some':'option<int>','Option.none':'option<int>',
-          'Option.is_some':'bool','Option.unwrap_or':'int','Option.unwrap':'int','Result.unwrap':'int',
+          'Option.is_some':'bool','Option.unwrap_or':'int','Option.unwrap':'int','Result.unwrap':'int','Option.expect':'int','Result.expect':'int',
           'Result.ok':'result<int,int>','Result.err':'result<int,int>',
           'Result.is_ok':'bool','Result.unwrap_or':'int','Result.unwrap_err_or':'int'
         };
@@ -1510,19 +1564,25 @@ function resolveProgram(parsed) {
         return inner;
       }
       case 'local': {
-        // Only the inline parser can synthesize taskRebind, and only for
-        // a previously declared mutable local in the same task. Resolve the
-        // initializer against the prior version, then publish a fresh IR slot.
-        if(owner.ownerKind==='method'||owner.params.includes(expr.name)||
-           (!expr.taskRebind&&bindings.some(b=>b.name===expr.name))||
-           (expr.taskRebind&&bindings.findLast(b=>b.name===expr.name)?.type!=='int'))
+        const previous=bindings.findLast(b=>b.name===expr.name);
+        if(owner.ownerKind==='method'||owner.params.includes(expr.name))
           fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
+        if(expr.taskRebind){
+          // Parser admits writes only to a mutable int declared in this inline task.
+          if(expr.rebind||!previous||previous.type!=='int')
+            fail('E_TASK_LOCAL_WRITE: requires previously declared int local');
+        }else if(expr.rebind){
+          if(!previous||previous.type!=='string'||!previous.writable)
+            fail('E_STRING_REBIND: requires writable typed string local');
+        }else if(previous)fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
         if(nextCaptureSlot>=MAX_TOKENS)fail('local slot budget exceeded');
         const slot=nextCaptureSlot++;
         const init=resolve(expr.init,owner,depth+1,bindings);
-        const type=['inferredTrap','directionalInferred'].includes(expr.localType)?resolvedType(init,owner):expr.localType==='constInt'?'int':expr.localType;
+        const type=['inferredTrap','directionalInferred','inferredInt'].includes(expr.localType)?resolvedType(init,owner):expr.localType==='constInt'?'int':expr.localType;
+        if(expr.localType==='trapResult'&&(init.kind!=='trap'||resolvedType(init,owner)!=='trapResult'))fail('E_TRAP_TYPE: typed Result<int,Error> local requires checked trap initializer');
         if(expr.taskRebind&&resolvedType(init,owner)!=='int')fail('E_TASK_LOCAL_WRITE: int assignment required');
         if(expr.localType==='inferredTrap'&&!['trapResult','trapOptionResult'].includes(type))fail('inferred trap local requires Result');
+        if(expr.localType==='inferredInt'&&type!=='int')fail('inferred val requires int in program-v2; use an explicit supported type');
         if(expr.localType==='directionalInferred'&&!['int','float','trapResult','trapOptionResult'].includes(type))fail('directional binding requires supported scalar or trapped Result');
         if(expr.localType==='constInt'){
           // Narrow, fail-closed constant-expression subset: evaluate only
@@ -1550,7 +1610,7 @@ function resolveProgram(parsed) {
           if(typeof fold(init)!=='bigint')fail('directional const int requires int');
         }
         return {kind:type==='option<int>'?'optionLocal':type==='result<int,int>'?'resultLocal':type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':type==='bool'?'boolLocal':type==='string'?'stringLocal':'local',slot,init,
-          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type}])};
+          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string'}])};
       }
       case 'seqVoidCall': {
         if(expr.call.kind!=='call'||expr.call.qualifier!==null)
@@ -1624,6 +1684,11 @@ function resolveProgram(parsed) {
         const left=resolve(expr.left,owner,depth+1,bindings);
         const right=resolve(expr.right,owner,depth+1,bindings);
         const leftType=resolvedType(left,owner),rightType=resolvedType(right,owner);
+        if(leftType==='string'||rightType==='string'){
+          if(leftType!=='string'||rightType!=='string'||!['==','!='].includes(expr.op))
+            fail('E_STRING_TYPE: string equality requires two typed string operands');
+          return {kind:'stringCompare',op:expr.op,left,right};
+        }
         if(leftType==='bool'||rightType==='bool'){
           if(leftType!=='bool'||rightType!=='bool'||!['==','!='].includes(expr.op))
             fail('Boolean comparison requires bool ==/!= bool');
@@ -1646,20 +1711,34 @@ function resolveProgram(parsed) {
         const local=bindings.findLast(b=>b.name===expr.qualifier);
         if(local){
           if(['option<int>','result<int,int>'].includes(local.type)){
-            if(expr.name!=='unwrap'||expr.args.length!==0)fail('unsupported typed local method/arity');
             const option=local.type==='option<int>';
-            return {kind:'intrinsic',name:option?'Option.unwrap':'Result.unwrap',args:[{kind:option?'optionCapture':'resultCapture',slot:local.slot}]};
+            const receiver={kind:option?'optionCapture':'resultCapture',slot:local.slot};
+            if(expr.name==='expect'){
+              if(owner.ownerKind==='method'||expr.args.length!==1||expr.args[0].name!==null)fail('E_EXPECT: one positional string message required');
+              const message=resolve(expr.args[0].expr,owner,depth+1,bindings);
+              if(resolvedType(message,owner)!=='string')fail('E_EXPECT: string message required');
+              return {kind:'intrinsic',name:option?'Option.expect':'Result.expect',args:[receiver,message]};
+            }
+            if(expr.name!=='unwrap'||expr.args.length!==0)fail('unsupported typed local method/arity');
+            return {kind:'intrinsic',name:option?'Option.unwrap':'Result.unwrap',args:[receiver]};
           }
           if(!['trapResult','trapOptionResult'].includes(local.type)||!['is_ok','is_err','unwrap'].includes(expr.name)||expr.args.length!==0)fail('unsupported local Result method/arity');
           const option=local.type==='trapOptionResult';
           return {kind:option?'trapOptionMethod':'trapMethod',name:expr.name,receiver:{kind:option?'trapOptionCapture':'trapCapture',slot:local.slot}};
         }
-        if(expr.qualifier!==null&&owner.params.includes(expr.qualifier)&&expr.name==='unwrap'){
+        if(expr.qualifier!==null&&owner.params.includes(expr.qualifier)&&['unwrap','expect'].includes(expr.name)){
           const index=owner.params.indexOf(expr.qualifier), type=owner.paramTypes?.[index];
-          if(expr.args.length!==0||!['option<int>','result<int,int>'].includes(type))
+          if(!['option<int>','result<int,int>'].includes(type)||owner.ownerKind==='method')
             fail('unsupported typed parameter method/arity');
-          if(owner.ownerKind==='method')fail('checked unwrap in methods unsupported');
-          return {kind:'intrinsic',name:type==='option<int>'?'Option.unwrap':'Result.unwrap',args:[{kind:'param',index}]};
+          const receiver={kind:'param',index};
+          if(expr.name==='expect'){
+            if(expr.args.length!==1||expr.args[0].name!==null)fail('E_EXPECT: one positional string message required');
+            const message=resolve(expr.args[0].expr,owner,depth+1,bindings);
+            if(resolvedType(message,owner)!=='string')fail('E_EXPECT: string message required');
+            return {kind:'intrinsic',name:type==='option<int>'?'Option.expect':'Result.expect',args:[receiver,message]};
+          }
+          if(expr.args.length!==0)fail('unsupported typed parameter method/arity');
+          return {kind:'intrinsic',name:type==='option<int>'?'Option.unwrap':'Result.unwrap',args:[receiver]};
         }
         if(expr.qualifier==='Option'||expr.qualifier==='Result'){
           const key=expr.qualifier+'.'+expr.name;
@@ -1754,7 +1833,7 @@ function resolveProgram(parsed) {
     } else if(expr.kind==='newClass') {
       // fieldless construction has no call-graph edge in this slice
     } else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
-    else if(['binary','floatBin','compare','boolCompare','numericCompare','symbolCompare'].includes(expr.kind)) {inspect(expr.left,owner);inspect(expr.right,owner);}
+    else if(['binary','floatBin','compare','boolCompare','stringCompare','numericCompare','symbolCompare'].includes(expr.kind)) {inspect(expr.left,owner);inspect(expr.right,owner);}
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='tryCatch'){inspect(expr.body,owner);inspect(expr.handler,owner);}
     else if(expr.kind==='seqVoidCall'){inspect(expr.call,owner);inspect(expr.value,owner);}
@@ -1778,8 +1857,8 @@ function resolveProgram(parsed) {
   resolved.forEach((_,i)=>visit(i));
   return {
     sourceNamespace:parsed.namespace,modules,functions:resolved,
-    ...(exportDeclarations.length?{fileExports:exportDeclarations.map(e=>({
-      name:e.name,kind:e.kind??(classes.some(c=>c.name===e.name)?'class':'fnc'),
+    ...(resolvedExports.size?{fileExports:[...resolvedExports.values()].map(e=>({
+      name:e.name,kind:e.kind,
       visibility:e.visibility
     }))}:{}),
     ...(resolvedGenerators.length?{generators:resolvedGenerators}:{}),
@@ -1846,13 +1925,13 @@ function emitProgram(program) {
       }
       case 'not':return '!('+emitExpr(expr.inner,depth+1)+')';
       case 'binary':
-        if(expr.op==='<<<'||expr.op==='>>>'){
+        if(expr.op==='<<<'||expr.op==='>>>'||expr.op==='ashr'){
           const staticCount=expr.right.kind==='int'?BigInt(expr.right.value):
             expr.right.kind==='neg'&&expr.right.inner.kind==='int'?-BigInt(expr.right.inner.value):null;
           if(staticCount!==null&&(staticCount<0n||staticCount>63n))fail('E_SHIFT_DISTANCE: expected 0..63');
           const left=emitExpr(expr.left,depth+1),right=emitExpr(expr.right,depth+1);
           // Evaluate both operands once; validate before shifting, never mask counts.
-          const shift=expr.op==='<<<'?'a<<b':'BigInt.asUintN(64,a)>>b';
+          const shift=expr.op==='<<<'?'a<<b':expr.op==='ashr'?'a>>b':'BigInt.asUintN(64,a)>>b';
           return '((a,b)=>{_check(a);_check(b);if(b<0n||b>63n)throw new RangeError("E_GUEST_SHIFT_DISTANCE: expected 0..63");return BigInt.asIntN(64,'+shift+');})('+left+','+right+')';
         }
         // Evaluate operands once, left-to-right; do not expose engine-specific zero-divisor errors.
@@ -1862,7 +1941,7 @@ function emitProgram(program) {
         if(expr.op==='mod')return '((a,b)=>{const r=_rem(a,b);return r<0n?_check(b>0n?r+b:r-b):r;})(('+emitExpr(expr.left,depth+1)+'),('+emitExpr(expr.right,depth+1)+'))';
         return '_check(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
       case 'compare':return '(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
-      case 'boolCompare':return '(('+emitExpr(expr.left,depth+1)+')'+
+      case 'stringCompare':case 'boolCompare':return '(('+emitExpr(expr.left,depth+1)+')'+
         (expr.op==='=='?'===':'!==')+'('+emitExpr(expr.right,depth+1)+'))';
       case 'symbolCompare': {
         const equal='_symboleq('+emitExpr(expr.left,depth+1)+','+
@@ -1902,7 +1981,7 @@ function emitProgram(program) {
       case 'intrinsic': {
         const funcs={
           'Option.some':'_some','Option.none':'_none',
-          'Option.is_some':'_is_some','Option.unwrap_or':'_option_or','Option.unwrap':'_optionUnwrap','Result.unwrap':'_resultUnwrap',
+          'Option.is_some':'_is_some','Option.unwrap_or':'_option_or','Option.unwrap':'_optionUnwrap','Result.unwrap':'_resultUnwrap','Option.expect':'_optionExpect','Result.expect':'_resultExpect',
           'Result.ok':'_ok','Result.err':'_err',
           'Result.is_ok':'_is_ok','Result.unwrap_or':'_result_or',
           'Result.unwrap_err_or':'_error_or'
@@ -1948,7 +2027,7 @@ function emitProgram(program) {
       case 'methodCall':case 'namedMethodCall':
         return usesSymbol(expr.receiver)||expr.args.some(usesSymbol);
       case 'call':case 'namedCall':case 'intrinsic':return expr.args.some(usesSymbol);
-      case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'numericCompare':case 'symbolCompare':
+      case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'stringCompare':case 'numericCompare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
       case 'scalarWhileMany': {
         const visit=steps=>steps.some(s=>s.kind==='loop'?usesSymbol(s.condition)||visit(s.steps):s.kind==='loopExit'?usesSymbol(s.condition):usesSymbol(s.init??s.value));
@@ -1995,7 +2074,7 @@ function emitProgram(program) {
       case 'methodCall':case 'namedMethodCall':
         return usesPortableRuntime(expr.receiver)||expr.args.some(usesPortableRuntime);
       case 'call':case 'namedCall':return expr.args.some(usesPortableRuntime);
-      case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'numericCompare':case 'symbolCompare':
+      case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'stringCompare':case 'numericCompare':case 'symbolCompare':
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
       case 'scalarWhileMany': {
         const visit=steps=>steps.some(s=>s.kind==='loop'?usesPortableRuntime(s.condition)||visit(s.steps):s.kind==='loopExit'?usesPortableRuntime(s.condition):usesPortableRuntime(s.init??s.value));
@@ -2015,7 +2094,7 @@ function emitProgram(program) {
     }
   }
   function containsCheckedUnwrap(value){
-    return !!value&&typeof value==='object'&&((value.kind==='intrinsic'&&['Option.unwrap','Result.unwrap'].includes(value.name))||Object.values(value).some(containsCheckedUnwrap));
+    return !!value&&typeof value==='object'&&((value.kind==='intrinsic'&&['Option.unwrap','Result.unwrap','Option.expect','Result.expect'].includes(value.name))||Object.values(value).some(containsCheckedUnwrap));
   }
   const hasCheckedUnwrap=containsCheckedUnwrap(program);
   if(program.functions.some(fn=>['option<int>','result<int,int>'].includes(fn.returnType)||
@@ -2048,7 +2127,7 @@ function emitProgram(program) {
   // programs that actually use trap; keep ordinary ADT artifact overhead low.
   function containsTrap(value){
     if(!value||typeof value!=='object')return false;
-    if(['trap','trapMethod','trapOptionMethod'].includes(value.kind)||(value.kind==='intrinsic'&&['Option.unwrap','Result.unwrap'].includes(value.name))||(value.kind==='adtMatch'&&value.adt==='trapResult'))return true;
+    if(['trap','trapMethod','trapOptionMethod'].includes(value.kind)||(value.kind==='intrinsic'&&['Option.unwrap','Result.unwrap','Option.expect','Result.expect'].includes(value.name))||(value.kind==='adtMatch'&&value.adt==='trapResult'))return true;
     return Object.values(value).some(containsTrap);
   }
   function containsGuestEffect(value){
@@ -2070,7 +2149,10 @@ function emitProgram(program) {
       ...(hasCheckedUnwrap?[
       'function _unwrapFailure(name,message,original){const e=new Error(message,{cause:original});Object.defineProperty(e,"name",{value:name});_checkedUnwrapBrand.add(e);throw Object.freeze(e);}',
       'function _optionUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Option unwrap carrier");const x=_checkoption(v);if(x.kind==="Some")return x.value;return _unwrapFailure("OptionUnwrapError","cannot unwrap None",undefined);}',
-      'function _resultUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Result unwrap carrier");const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",x.value);}'
+      'function _resultUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Result unwrap carrier");const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",x.value);}',
+      'function _expectPanic(message,cause){if(typeof message!=="string")throw new TypeError("expect message must be string");const e=new Error(message,{cause});Object.defineProperty(e,"effect",{value:"panic",enumerable:true});throw Object.freeze(e);}',
+      'function _optionExpect(v,message){if(!_tagBrand.has(v))throw new TypeError("untrusted Option expect carrier");if(typeof message!=="string")throw new TypeError("expect message must be string");const x=_checkoption(v);if(x.kind==="Some")return x.value;return _expectPanic(message,undefined);}',
+      'function _resultExpect(v,message){if(!_tagBrand.has(v))throw new TypeError("untrusted Result expect carrier");if(typeof message!=="string")throw new TypeError("expect message must be string");const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _expectPanic(message,x.value);}'
       ]:[]),
       'function _checkTrapResult(v){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}',
       'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult"||t==="trapOptionResult"){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}const result=t==="option<int>"?_tag("Ok",_checkoption(v)):t==="int"?_ok(v):_checkresult(v);_trapBrand.add(result);return result;}catch(e){if(!_isOrdinaryGuest(e))throw e;const result=_tag("Err",e);_trapBrand.add(result);return result;}}',
@@ -2197,7 +2279,7 @@ function lowerCompilerOwnedBooleanImports(tokens){
         tokens[i+3]?.value==='from'&&tokens[i+4]?.kind==='str'&&
         isCoreBooleanUnit(tokens[i+4].value)){
     const alias=tokens[i+2],end=tokens[i+5];
-    if(alias?.kind!=='id'||!TOKEN_NAME.test(alias.value)||end?.value!==';'||
+    if(alias?.kind!=='id'||!isIdentifier(alias.value)||end?.value!==';'||
        aliases.has(alias.value)||aliases.size>=8||
        CLASS_METHOD_RESERVED.has(alias.value)||GENERATOR_RESERVED.has(alias.value)||
        isProtectedPreludeIdentity(alias.value)||coreBooleanIntrinsic(alias.value)||
@@ -2229,7 +2311,7 @@ function lowerCompilerOwnedTestingImports(tokens) {
   };
   const identifier=()=>{
     const t=next();
-    if(t?.kind!=='id'||!TOKEN_NAME.test(t.value))
+    if(t?.kind!=='id'||!isIdentifier(t.value))
       fail('E_STD_IMPORT: expected import function identifier',t);
     i++;
     return t.value;
@@ -2388,7 +2470,7 @@ export function compileAttoScalarV1(source) {
       case 'local':visit(expr.init);visit(expr.body);return;
       case 'i32Check':case 'refinementCheck':case 'neg':return visit(expr.inner);
       case 'binary':
-        if(!['+','-','*','/','%','mod','^','&','|','<<<','>>>'].includes(expr.op))
+        if(!['+','-','*','/','%','mod','^','&','|','<<<','>>>','ashr'].includes(expr.op))
           fail('AttoLang scalar-v1 removed or unsupported operator '+expr.op);
         visit(expr.left);visit(expr.right);return;
       case 'call':
