@@ -97,3 +97,18 @@ test('canonical const Future is non-awaited until explicit await; immutable bind
     assert.throws(()=>compileCountedReadyV1(prefix+'const int k = 1; k = 2; const Array[int] b = await select<int>(1) { when readch a: int n -> { return n; } }; return b[0]; }'),/immutable binding/);
   }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('raw Future select binds concrete scalar or counted type without erasing capability checks',async()=>{
+  const prefix='suspends fnc main(): int { const Channel<int> a = Channel.new<int>(1); writech a, 20; ';
+  const source=prefix+'const Future f = select { default: -> { return 20; } }; const Future batch = select(1) { when readch a: int n -> { return n; } }; const Array[int] values = await batch; const int extra = await select<int> { default: -> { return 2; } }; return (await f) + values[0] + extra; }';
+  const dir=await mkdtemp(join(process.cwd(),'.counted-ready-'));
+  try {
+    const path=join(dir,'raw-future.mjs');await writeFile(path,compileCountedReadyV1(source));
+    assert.equal(await (await import(pathToFileURL(path))).main(),42n);
+    const pending='const Future batch = nb select<int>(1) { when readch a: int n -> { return n; } }; ';
+    for(const body of ['return 42; }','const int b = await batch; return b; }','const Array[int] b = await batch; const Array[int] c = await batch; return b[0]; }'])
+      assert.throws(()=>compileCountedReadyV1(prefix+pending+body),/E_COUNTED_READY_PROFILE/);
+    for(const body of ['const Future f = 42; return 42; }','const Future<int> f = select(1) { when readch a: int n -> { return n; } }; return 42; }','const Future f = select { default: -> { return a; } }; return 42; }'])
+      assert.throws(()=>compileCountedReadyV1(prefix+body),/E_COUNTED_READY_PROFILE/);
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
