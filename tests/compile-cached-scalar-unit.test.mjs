@@ -18,10 +18,11 @@ test('actual compiler cold/warm persistent source-unit API and process restart',
  const root=mkdtempSync(join(tmpdir(),'atto-cached-unit-'));
  try{
   const opts={...config,root};
+  assert.throws(()=>compileCachedScalarUnit({...opts,cold:true,ledgerPin:Buffer.alloc(32)}),/E_CACHE_LEDGER/);
   const a=compileCachedScalarUnit(opts);assert.equal(a.emitted,1);assert.equal(a.code,compile(source));assert.equal(await execute(a.code),42n);
   const b=compileCachedScalarUnit(opts);assert.equal(b.reused,1);assert.equal(a.code,b.code);
   const env={...process.env,ATTO_CACHED_UNIT_CHILD:root};delete env.NODE_TEST_CONTEXT;
-  const p=spawnSync(process.execPath,['--test',new URL(import.meta.url).pathname],{env,encoding:'utf8',timeout:60000});
+  const p=spawnSync(process.execPath,['--test','--test-reporter=tap',new URL(import.meta.url).pathname],{env,encoding:'utf8',timeout:60000});
   assert.equal(p.status,0,p.stdout+p.stderr);assert.match(p.stdout,/CACHED_SCALAR_CHILD_HIT/);
   const edit=source.replace('42','43');const c=compileCachedScalarUnit({...opts,source:edit});assert.notEqual(c.key,a.key);assert.equal(c.emitted,1);assert.equal(c.code,compile(edit));assert.equal(await execute(c.code),43n);
   const file=join(root,'slot-'+c.key[0]),before=readFileSync(file);

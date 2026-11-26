@@ -4,7 +4,7 @@
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {compile} from './compiler.mjs';
-import {encodeCacheKey} from './compiler-cache-envelope.node.mjs';
+import {encodeCacheKey,admitLedgerRecord} from './compiler-cache-envelope.node.mjs';
 import {TrustedArtifactStore} from './compiler-artifact-store.node.mjs';
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const files=Object.freeze(['compiler.mjs','scalar-ir.mjs','execution-domain-admission.mjs',
@@ -20,6 +20,8 @@ export function compileCachedScalarUnit({root,source,owner,unit,expectedCompiler
  scope,ledgerRecord,ledgerPin,master,cold=false}={}){
  if(typeof source!=='string'||source.length>262144||!source.isWellFormed()||Buffer.byteLength(source)>262144)
    throw Error('E_CACHE_INPUT: invalid source');
+ // Admit even on cold or non-retained oversized output.
+ const admitted=admitLedgerRecord(scope,ledgerRecord,ledgerPin,master);admitted.fill(0);
  const compiler=scalarCompilerClosureSha256();
  if(compiler!==expectedCompilerSha256)throw Error('E_CACHE_COMPILER: installation digest mismatch');
  const key=encodeCacheKey({stage:'scalar-esm',owner,unitKind:'source-unit',unit,compiler,

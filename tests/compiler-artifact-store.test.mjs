@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-import {spawn} from 'node:child_process';
+import {spawn,spawnSync} from 'node:child_process';
 import {TrustedArtifactStore,MAX_STORE_FILES,MAX_STORE_BYTES} from '../src/compiler-artifact-store.node.mjs';
 import {makeLedgerRecord} from '../src/compiler-cache-envelope.node.mjs';
 const master=Buffer.alloc(32,7),scope='tenant/cache',record=makeLedgerRecord(scope,1n,master),pin=createHash('sha256').update(record).digest();
@@ -54,3 +54,12 @@ test('concurrent process writers never expose partial receipts',async()=>{
   await Promise.all([run('one'),run('two')]);const s=new TrustedArtifactStore(d);assert.ok(['one','two'].includes(s.load(key,...auth).toString()));assert.deepEqual(fs.readdirSync(d),['slot-a']);
  }finally{fs.rmSync(d,{recursive:true,force:true});}
 });
+
+test('ancestor symlink and FIFO rejected before artifact read',()=>scratch(d=>{
+ const root=join(d,'real'),alias=join(d,'alias'),inner=join(root,'cache');fs.mkdirSync(root,{mode:0o700});fs.mkdirSync(inner,{mode:0o700});
+ fs.symlinkSync(root,alias);assert.throws(()=>new TrustedArtifactStore(join(alias,'cache')));
+ const s=new TrustedArtifactStore(inner);s.publish(key,Buffer.from('old'),...auth);
+ const file=join(inner,'slot-a');fs.unlinkSync(file);const p=spawnSync('mkfifo',[file]);assert.equal(p.status,0);fs.chmodSync(file,0o600);
+ assert.throws(()=>s.load(key,...auth),/E_CACHE_PATH/);assert.throws(()=>s.publish(key,Buffer.from('new'),...auth),/E_CACHE_PATH/);
+ console.log('CACHE_DESCRIPTOR|ancestor-symlink|fifo|pinned-inode');
+}));
