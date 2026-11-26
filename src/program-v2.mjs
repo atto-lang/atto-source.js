@@ -1,3 +1,4 @@
+import {identifierCharAt,isIdentifierStart,isIdentifierPart,isIdentifier} from './portable-unicode-identifier-v1.mjs';
 import {lowerVerifiedQuantitySource} from './verified-quantity-source.mjs';
 import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
 import {validLocalString,validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
@@ -14,7 +15,6 @@ import {coreBooleanIntrinsic,isCoreBooleanUnit} from './core-boolean-intrinsics.
  */
 const MAX_BYTES = 262144, MAX_TOKENS = 30000, MAX_DEPTH = 192;
 const MIN = -(1n << 63n), MAX = (1n << 63n) - 1n;
-const TOKEN_NAME = /^[A-Za-z_Α-ΡΣ-Ωα-ω][A-Za-z0-9_Α-ΡΣ-Ωα-ω]*$/;
 const CLASS_METHOD_RESERVED=new Set([
   'default','new','class','export','import','null','this','super','extends','static',
   'constructor','prototype','__proto__','define','pub','as','end','self','int',
@@ -278,10 +278,10 @@ function tokenize(source) {
       // Never let quoted payload text masquerade as a keyword or delimiter.
       emit('localString','<local-string>',start);
       result.at(-1).literal=value;
-    } else if (/[A-Za-z_Α-ΡΣ-Ωα-ω]/.test(c)) {
+    } else if (isIdentifierStart(identifierCharAt(source,pos))) {
       let word = '';
-      while (pos < source.length && /[A-Za-z0-9_Α-ΡΣ-Ωα-ω]/.test(source[pos])) {
-        word += source[pos]; advance();
+      while (pos < source.length && isIdentifierPart(identifierCharAt(source,pos))) {
+        const ch=identifierCharAt(source,pos);word+=ch;for(let j=0;j<ch.length;j++)advance();
       }
       if (word.length > 128) fail('identifier limit',start);
       // Never parse a contextual ownership bang as a macro or ordinary call;
@@ -290,12 +290,12 @@ function tokenize(source) {
         fail('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+word+'!',start);
       if (['copy','take','move','borrow','share'].includes(word) && source[pos]==='!' &&
           source[pos+1]!=='=' &&
-          !(source.slice(pos+1,pos+3)==='eq' && !/[A-Za-z0-9_Α-ΡΣ-Ωα-ω]/.test(source[pos+3]??'')))
+          !(source.slice(pos+1,pos+3)==='eq' && !isIdentifierPart(identifierCharAt(source,pos+3))))
         fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
       // Canonical bang exceptional control requires typed Error/Result and
       // checked guest unwind; no fallback to an ordinary JS exception.
       if(['trap','throw','raise','panic'].includes(word) && source[pos]==='!' &&
-         source[pos+1]!=='=' && !/^!eq(?![A-Za-z0-9_Α-ΡΣ-Ωα-ω])/.test(source.slice(pos)))
+         source[pos+1]!=='=' && !(source.startsWith('!eq',pos)&&!isIdentifierPart(identifierCharAt(source,pos+3))))
         {
           if(!/[ \t\r\n\v\f]/.test(source[pos+1]??''))
             fail('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+word+'!',start);
@@ -333,7 +333,7 @@ function tokenize(source) {
       fail("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",start);
     } else if (source.startsWith('^^',pos)) {
       emit('sym','^^',start); advance(); advance();
-    } else if ('(){}[]:,;+-*/=.<>!?^&|'.includes(c)) {
+    } else if ('(){}[]:,;+-*/=.<>!¬?^&|'.includes(c)) {
       emit('sym',c,start); advance();
     } else fail('unsupported character',start);
   }
@@ -389,7 +389,7 @@ class Parser {
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
   name() {
     const t = this.peek();
-    if (t.kind !== 'id' || !TOKEN_NAME.test(t.value) || t.value==='ifnot'||t.value==='unless') fail('identifier expected',t);
+    if (t.kind !== 'id' || !isIdentifier(t.value) || t.value==='ifnot'||t.value==='unless') fail('identifier expected',t);
     this.i++; return t.value;
   }
   generatorIdentifier() {
@@ -1138,7 +1138,7 @@ class Parser {
   primary() {
     if(this.eat('trap!')||this.eat('trap'))return {kind:'trap',inner:this.expression(30)};
     if(this.eat('await'))return {kind:'immediateAwait',inner:this.expression(30)};
-    if(this.eat('!')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
+    if(this.eat('!')||this.eat('¬')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
     if(this.eat('new')){
       const className=this.name();
       this.expect('(');
