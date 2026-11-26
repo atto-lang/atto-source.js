@@ -148,3 +148,34 @@ test('direct braces cannot fall back to aggregate or implicit tail syntax',()=>{
   assert.throws(()=>compileProgramV2('pub fnc bad(): int {return false ? 7 : {};}'),
     e=>e.code==='E_VALUE_ARM');
 });
+
+test('canonical negated suffix-do statements use the existing typed lazy Boolean IR',async()=>{
+  const source=[
+    'pub fnc choose(bool b): int {ifnot b do return 42; else return 9; fi}',
+    'pub fnc fallback(bool b): int {unless b do return 42; fi return 9;}',
+    'pub fnc nested(bool b): int {if true do unless b do return 42; fi fi return 9;}',
+    'pub fnc lazy(bool b): int {unless b do return 42; else return Integer.rem(1,0); fi}'
+  ].join('\n');
+  const ir=compileToProgramIRV2(source);
+  assert.equal(ir.functions[0].body.condition.kind,'not');
+  assert.deepEqual(validateProgramIRV2(JSON.parse(JSON.stringify(ir))),ir);
+  const m=await compiled(source);
+  for(const name of ['choose','fallback','nested']){
+    assert.equal(m[name](false),42n,name);
+    assert.equal(m[name](true),9n,name);
+    assert.throws(()=>m[name](1n),/bool required/,name);
+  }
+  assert.equal(m.lazy(false),42n);
+  assert.throws(()=>m.lazy(true),/ORES_I64_DIVISION_BY_ZERO/);
+});
+
+test('negated conditional heads reject non-Boolean predicates and unsupported delimiters',()=>{
+  for(const source of [
+    'pub fnc bad(): int {ifnot 1 do return 1; else return 2; fi}',
+    'pub fnc bad(): int {unless 0 do return 1; else return 2; fi}',
+    'pub fnc bad(): int {unless false then return 1; fi return 2;}',
+    'pub fnc bad(): int {ifnot false do return 1;}',
+    'pub fnc unless(): int {return 1;}',
+    'pub fnc bad(int ifnot): int {return 1;}'
+  ]) assert.throws(()=>compileProgramV2(source),/error: program v2:|error: program IR:/,source);
+});
