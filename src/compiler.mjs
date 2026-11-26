@@ -355,11 +355,15 @@ class Parser {
       this.pos++;
     }else first=this.pureProductInt();
     this.expect(',');
-    const second=this.pureProductInt();
+    // A proven pure static string key has no guest effects or owned
+    // resources to discard. Keep the second expression in checked scalar
+    // IR; never evaluate or duplicate it at compile time. Entry still
+    // requires pure integer literals until both eager operands can lower.
+    const second=pair?this.expr():this.pureProductInt();
     this.expect(')');
     if(!this.match('.'))throw new CompileError('E_PRODUCT_ESCAPE_UNSUPPORTED: owned product ABI unavailable',at);
     const field=this.id();
-    if(pair && field==='second')return {kind:'int',n:second};
+    if(pair && field==='second')return second;
     if(!pair && field==='key')return {kind:'int',n:first};
     if(!pair && field==='value')return {kind:'int',n:second};
     throw new CompileError('E_PRODUCT_PROJECTION_UNSUPPORTED: incompatible or non-scalar member',at);
@@ -442,7 +446,13 @@ export function compileToIR(source) {
   }
 }
 export function compileIR(input) {
+  return emitValidated(input,new Map()).code;
+}
+// Canonical checked IR includes exact function slots and call target indices.
+// Full source and IR validation precede reuse; exports are rebuilt every time.
+function emitValidated(input,prior) {
   const ir = validateScalarIR(input);
+  const next=new Map();let emitted=0,reused=0;
   const fns = ir.functions;
   function lower(e, depth = 0) {
     if (depth > 384) throw new CompileError('expression depth limit during lowering');
@@ -467,16 +477,29 @@ export function compileIR(input) {
     'function _int(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang int requires a signed i64 BigInt");return v;}',
   ];
   fns.forEach((f,i) => {
-    const params = f.params.map((_,j) => '_p' + j);
-    out.push('function _f' + i + '(' + params.join(',') + '){');
-    params.forEach(p => out.push('_int(' + p + ');'));
-    out.push('return ' + lower(f.body) + ';', '}');
+    const key=JSON.stringify([i,f]);
+    let body=prior.get(key);
+    if(body===undefined){
+      const params=f.params.map((_,j)=>'_p'+j);
+      body=['function _f'+i+'('+params.join(',')+'){',...params.map(p=>'_int('+p+');'),'return '+lower(f.body)+';','}'].join('\n');
+      emitted++;
+    }else reused++;
+    next.set(key,body);out.push(body);
   });
   // String-literal export names prevent ECMAScript keyword collisions.
   fns.forEach((f,i) => {
     if (f.pub) out.push('export { _f' + i + ' as ' + JSON.stringify(f.name) + ' };');
   });
-  return out.join('\n') + '\n';
+  return {code:out.join('\n')+'\n',next,emitted,reused};
+}
+/** One previous validated scalar module. No persisted cache or skipped type checking. */
+export class IncrementalSession {
+  #memo=new Map();
+  build(source,{cold=false}={}){
+    const result=emitValidated(compileToIR(source),cold?new Map():this.#memo);
+    this.#memo=result.next;
+    return {code:result.code,emitted:result.emitted,reused:result.reused};
+  }
 }
 export function compile(source) {
   return compileIR(compileToIR(source));

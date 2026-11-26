@@ -419,6 +419,24 @@ function transpile_actor_tokens(tokens) {
 
 // Opt-in broker-only profile, identical bounded transition domain to Rust
 // --durable-counter-actor-v1. It never creates a volatile worker actor.
+// Reserved source words must not become state-schema identities merely because
+// this bounded profile erases identifiers before guest emission. Keep the
+// Rust parser's unconditional keyword floor; do not reserve contextual names.
+const DURABLE_COUNTER_RESERVED_NAMES = new Set([
+  "abstract", "actor", "arr", "as", "async", "await", "begin", "block", "break",
+  "catch", "cb", "class", "conforms", "const", "continue", "contract", "cpu", "def",
+  "default", "defer", "define", "do", "done", "durable", "elif", "else", "elseif",
+  "end", "eq", "extends", "false", "fi", "finally", "fnc", "for", "from",
+  "generator", "gpu", "guard", "if", "impl", "implements", "import", "int", "interface",
+  "is", "isoactor", "let", "loop", "match", "matches", "maybe", "module", "mut",
+  "namespace", "nb", "neq", "new", "nlex", "null", "obj", "of", "over",
+  "panic", "persistent", "pipe", "private", "pub", "pure", "quantum", "raise", "readch",
+  "receive", "recover", "return", "routine", "rpipe", "rt", "select", "self", "shared",
+  "spawn", "state", "static", "stop", "struct", "super", "susp", "suspends", "switch",
+  "sync", "task", "then", "throw", "trait", "trap", "true", "try", "type",
+  "typeof", "types", "unsafe", "untrusted", "using", "val", "void", "while", "writech",
+  "yield",
+]);
 export function compile_durable_counter_actor_v1(source) {
   const tokens=checked_tokens(source);
   let i=0;
@@ -427,7 +445,7 @@ export function compile_durable_counter_actor_v1(source) {
   const id=()=>{
     const t=tokens[i++];
     if(!/^[A-Za-z_][A-Za-z_0-9]*$/.test(t??'') ||
-       ['self','define','durable','persistent','actor','as','state','receive','int','void','end','return','let','val','pub','fnc','true','false','sync','susp','await','new'].includes(t))fail();
+       DURABLE_COUNTER_RESERVED_NAMES.has(t))fail();
     return t;
   };
   expect('define');expect('durable');expect('actor');expect('Counter');expect('as');

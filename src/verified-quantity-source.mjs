@@ -55,7 +55,8 @@ function provesArithmetic(a,b,op){
   return false;
 }
 export function lowerVerifiedQuantitySource(tokens,report,strict=false){
-  const refinementEntry=tokens[0]?.value==='type'&&tokens[2]?.value==='='&&['int','i64','i32'].includes(tokens[3]?.value)&&tokens[4]?.value==='where';
+  const declarationOffset=tokens[0]?.value==='declare'?1:0;
+  const refinementEntry=tokens[declarationOffset]?.value==='type'&&tokens[declarationOffset+2]?.value==='='&&['int','i64','i32'].includes(tokens[declarationOffset+3]?.value)&&tokens[declarationOffset+4]?.value==='where';
   if(!refinementEntry&&(tokens[0]?.value!=='define'||!['dimension','unit'].includes(tokens[1]?.value)))return null;
   let at=0,budget=256;
   const peek=()=>tokens[Math.min(at,tokens.length-1)];
@@ -118,7 +119,8 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     compatible(want.unit,got.unit);
     if(!contains(want.range,got.range))fail(code,'unproved refinement on normal result');
   };
-  while(take('type')){
+  while(peek().value==='type'||peek().value==='declare'){
+    take('declare');expect('type');
     if(aliases.size>=128)fail('E_UNIT_LIMIT','too many aliases');
     if(['int','i64','i32'].includes(peek().value))fail('E_REFINEMENT_DUPLICATE','reserved carrier');
     const n=identifier();
@@ -361,9 +363,28 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     const p=condition(header);
     expect('{');
     let current=new Map(p.yes);const declared=new Map(mutable),steps=[];
+    let hasBreak=false;
     while(!take('}')){
       if(--budget<0)fail('E_UNIT_LIMIT','strict loop statement budget');
       locals=current;
+      // Restricted guard-only loop exits; no arbitrary branching inside loop
+      // bodies. The continue edge is checked against every written invariant.
+      // A break invalidates the assumption that the header condition is false.
+      if(peek().value==='if'||['break','continue'].includes(peek().value)){
+        const guarded=take('if');
+        const edge=guarded?condition(current):{ir:{kind:'bool',value:true},yes:current,no:current};
+        if(guarded)expect('{');
+        const kind=take('break')?'break':take('continue')?'continue':null;
+        if(kind===null)fail('E_VERIFY_UNSUPPORTED','strict loop if requires a direct break or continue');
+        expect(';');
+        if(guarded)expect('}');
+        else if(peek().value!=='}')fail('E_VERIFY_UNSUPPORTED','statement after unconditional loop exit');
+        if(kind==='continue')for(const key of writes)boundary(mutable.get(key),edge.yes.get(key),'E_REFINEMENT_BINDING');
+        if(kind==='break')hasBreak=true;
+        steps.push({kind:'loopExit',exit:kind,condition:edge.ir});
+        current=new Map(edge.no);
+        continue;
+      }
       if(take('while')){
         const nested=loopPlan(current,declared,depth+1,false);
         steps.push({kind:'loop',condition:nested.condition,steps:nested.steps});
@@ -377,6 +398,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
         else{want=type();key=identifier();}
         if(mut&&!want)fail('E_VERIFY_UNSUPPORTED','mutable loop local requires declared type');
         if(current.has(key))fail('E_UNIT_DUPLICATE','duplicate loop local');
+        if(peek().value===';')fail('E_MISSING_INITIALIZER','explicit initializer required');
         expect('=');const value=expr(0,0);expect(';');
         if(want)boundary(want,value,'E_REFINEMENT_BINDING');
         if(nextStrictSlot>=64)fail('E_UNIT_LIMIT','strict local slot budget');
@@ -396,7 +418,8 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       fail('E_VERIFY_UNSUPPORTED','strict loop statement not admitted');
     }
     for(const key of writes)boundary(mutable.get(key),current.get(key),'E_REFINEMENT_BINDING');
-    return {states,condition:p.ir,steps,exit:p.no};
+    // All break paths retain the declared ranges, but not the false header guard.
+    return {states,condition:p.ir,steps,exit:hasBreak?header:p.no};
   }
   // Fixed, nonescaping scalar arrays are scalar-replaced into immutable
   // captures. Every initializer is evaluated exactly once, in source order.
@@ -432,6 +455,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       else{want=type();key=identifier();}
       if(isMutable&&want===null)fail('E_VERIFY_UNSUPPORTED','strict mutable scalar requires declared type');
       if(facts.has(key))fail('E_UNIT_DUPLICATE','duplicate local');
+        if(peek().value===';')fail('E_MISSING_INITIALIZER','explicit initializer required');
       expect('=');
       if(peek().value==='Array'){
         if(isMutable||want!==null||onExit)fail('E_VERIFY_UNSUPPORTED','fixed array requires nonescaping inferred val');
@@ -588,8 +612,16 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     }
     expect('->');const result=type();
     if(pub&&(params.length||!same(result.unit,scalar())||!contains(result.range,FULL)))fail('E_UNIT_ERASURE','main requires zero arguments and plain int result');
-    const checks=readContracts(params,types,result,pub);
-    expect('{');
+    const contractStart=at,checks=readContracts(params,types,result,pub);
+    const contracted=at!==contractStart;
+    let closer='}';
+    if(!take('{')){
+      if(take('::'))closer='end';
+      else if(peek().value==='begin'){
+        if(contracted&&peek().line<=tokens[at-1].line)fail('E_SYNTAX','contracted begin must start on a later line');
+        expect('begin');closer='end';
+      }else fail('E_SYNTAX','expected verified callable body opener');
+    }
     const bindings=[];
     while(take('val')){
       if(!aliases.size||bindings.length>=64)fail('E_UNIT_LIMIT','typed local admission or budget');
@@ -598,6 +630,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       else if(tokens[at+1]?.value==='='){key=identifier();}
       else{want=type();key=identifier();}
       if(locals.has(key))fail('E_UNIT_DUPLICATE','duplicate local');
+        if(strict&&peek().value===';')fail('E_MISSING_INITIALIZER','explicit initializer required');
       expect('=');
       if(strict&&peek().value==='Array'){
         if(want!==null)fail('E_VERIFY_UNSUPPORTED','fixed array requires inferred val');
@@ -612,10 +645,10 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       locals.set(key,make(value.unit,{kind:'capture',slot},null,value.range,want?.width??(value.width||64)));
     }
     let body;
-    if(strict){if(checks.length)fail('E_VERIFY_UNSUPPORTED','strict ensures with control flow require separate proof');nextStrictSlot=bindings.length;body=strictReturn(result,locals);expect('}');}
+    if(strict){if(checks.length)fail('E_VERIFY_UNSUPPORTED','strict ensures with control flow require separate proof');nextStrictSlot=bindings.length;body=strictReturn(result,locals);expect(closer);}
     else {
       if(peek().value==='let')fail('E_REFINEMENT_BODY','mutable binding not admitted');
-      expect('return');const v=expr(0,0);expect(';');expect('}');
+      expect('return');const v=expr(0,0);expect(';');expect(closer);
       if(pub&&!same(v.unit,scalar()))fail('E_UNIT_ERASURE','main requires scale-one scalar');
       boundary(result,v,'E_REFINEMENT_RETURN');
       proveContracts(checks,v,types,bindings);
