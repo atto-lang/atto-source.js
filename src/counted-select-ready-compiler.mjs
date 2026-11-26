@@ -16,7 +16,7 @@ class Parser {
   literal(){const t=this.peek();if(t.kind!=='int')this.fail('integer literal required');this.i++;const v=BigInt(t.value.replaceAll('_',''));if(v>MAX)this.fail('integer literal out of range');return v;}
   small(max){const n=this.literal();if(n>BigInt(max))this.fail('bounded literal exceeds profile limit');return Number(n);}
   type(){if(this.eat('int'))return 'int';if(this.eat('Channel')){this.need('<');this.need('int');this.need('>');return 'channel';}
-    if(this.eat('Future')){this.need('<');if(this.eat('Array')){this.need('<');this.need('int');this.need('>');this.need('>');return 'futureArray';}this.need('int');this.need('>');return 'future';}
+    if(this.eat('Future')){if(!this.eat('<'))return 'inferFuture';if(this.eat('Array')){this.need('<');this.need('int');this.need('>');this.need('>');return 'futureArray';}this.need('int');this.need('>');return 'future';}
     if(this.eat('Array')){if(this.eat('[')){this.need('int');this.need(']');}else{this.need('<');this.need('int');this.need('>');}return 'array';}
     this.fail('unsupported lexical type');}
   check(v,t){if(v.type!==t)this.fail('expected '+t+' expression');return v.code;}
@@ -46,7 +46,7 @@ class Parser {
       const legacy=this.eat('nb');
       if(this.eat('select')){
         if(this.activeBatch)this.fail('await outstanding counted batch first');
-        return this.countedSelect(true);
+        return this.selectResult(true);
       }
       if(legacy)this.fail('nb requires select');
       const name=this.name(),s=this.slots.get(name);
@@ -73,7 +73,6 @@ class Parser {
   // No external producer, arbitrary effect, or handle escape.
   countedSelect(direct){
     if(this.activeBatch)this.fail('await outstanding counted batch first');
-    if(this.eat('<')){this.need('int');this.need('>');}
     this.need('(');const count=this.check(this.expression(0,'@count'),'int');this.need(')');
     const literal=/^-?[0-9]+n$/.test(count)?BigInt(count.slice(0,-1)):null;
     if(literal!==null&&(literal<0n||literal>16n))this.fail('SelectCountInvalid');
@@ -101,8 +100,15 @@ class Parser {
     const code='_startBatch('+args+','+JSON.stringify(policy)+',_owned)';
     return direct?expr('array','(await '+code+')'):expr('futureArray',code);
   }
+  // Called after select; infer only the two already-checked ready-only shapes.
+  selectResult(direct){
+    if(this.activeBatch)this.fail('await outstanding counted batch first');
+    if(this.eat('<')){this.need('int');this.need('>');}
+    if(this.peek().value==='(')return this.countedSelect(direct);
+    const code=this.defaultFuture();
+    return direct?expr('int','_awaitReady('+code+')'):expr('future',code);
+  }
   defaultFuture(){
-    this.need('select');this.need('<');this.need('int');this.need('>');
     const over=this.eat('over');if(!over)this.need('{');
     this.need('default');this.need(':');this.need('->');this.need('{');this.need('return');
     // Constant-only: no user calls or capture, no actor/scheduling claim.
@@ -111,13 +117,16 @@ class Parser {
     return '_ready(()=>'+value+')';
   }
   binding(mutable=false){
-    const type=this.type(),n=this.name();if(this.slots.has(n)||this.next>=128)this.fail('duplicate or excessive lexical binding');
+    let type=this.type();const n=this.name();if(this.slots.has(n)||this.next>=128)this.fail('duplicate or excessive lexical binding');
     if(mutable&&type!=='int')this.fail('only scalar int mutation is admitted');
     this.need('=');let code;
     if(type==='channel'){if(this.activeBatch)this.fail('await outstanding counted batch first');this.need('Channel');this.need('.');this.need('new');this.need('<');this.need('int');this.need('>');this.need('(');
       const cap=this.small(64);if(cap===0)this.fail('zero channel capacity');this.need(')');code='new _Channel('+cap+')';}
-    else if(type==='future'){if(this.activeBatch)this.fail('await outstanding counted batch first');code=this.defaultFuture();}
-    else if(type==='futureArray'){this.eat('nb');this.need('select');code=this.check(this.countedSelect(false),type);}
+    else if(type==='future'||type==='futureArray'||type==='inferFuture'){
+      this.eat('nb');this.need('select');const selected=this.selectResult(false);
+      if(type==='inferFuture')type=selected.type;
+      code=this.check(selected,type);
+    }
     else code=this.check(this.expression(),type);
     this.need(';');const slot='_v'+this.next++;this.slots.set(n,{slot,type,moved:false,mutable});
     if(type==='futureArray')this.activeBatch=slot;
