@@ -13,15 +13,24 @@ import {invokeTrustedNodeModule} from './host-bridge.node.mjs';
 export async function loadTrustedNodePackage(options){
   const {manifest,moduleBase64}=await readVerifiedPackage(options);
   const specifier='data:text/javascript;base64,'+moduleBase64;
-  const namespace=await import(specifier);
+  // Dynamic import resolves a Promise; a target module's exported `then`
+  // can execute during assimilation and even substitute a forged namespace.
+  // Import a fixed wrapper with one inert export instead, then inspect the
+  // actual target namespace synchronously. The target is still trusted JS:
+  // this does not prevent top-level evaluation or sandbox arbitrary code.
+  const wrapper='export * as packageNamespace from '+JSON.stringify(specifier)+';';
+  const {packageNamespace:namespace}=await import('data:text/javascript;base64,'+Buffer.from(wrapper,'utf8').toString('base64'));
   const actual=Object.getOwnPropertyNames(namespace).sort();
   const declared=[...manifest.publicEntrypoints].sort();
   if(actual.length!==declared.length || actual.some((name,i)=>name!==declared[i])){
     throw new PackageAdmissionError('module exports do not match reviewed manifest');
   }
   for(const entry of declared){
-    if(typeof Object.getOwnPropertyDescriptor(namespace,entry)?.value!=='function')
+    const fn=Object.getOwnPropertyDescriptor(namespace,entry)?.value;
+    if(typeof fn!=='function')
       throw new PackageAdmissionError('reviewed entrypoint is not a function');
+    if(manifest.schemaVersion===2&&fn.length!==manifest.publicInterface.find(e=>e.name===entry).params.length)
+      throw new PackageAdmissionError('reviewed entrypoint arity differs from manifest');
   }
   return Object.freeze({
     manifest,

@@ -5,6 +5,7 @@ import {constants} from 'node:fs';
 import {resolve, join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {HOST_ABI} from './host-bridge.mjs';
+import {scalarInterface,validatePublicNames} from './scalar-package-interface.mjs';
 import {parseStrictJsonReport} from './parity-json-strict.mjs';
 
 const SHA256=/^[0-9a-f]{64}$/;
@@ -51,13 +52,14 @@ async function readBoundedRegular(path,limit){
   }finally{await file.close();}
 }
 function validateManifest(m){
+  const keys=m?.schemaVersion===2?[...KEYS,'publicInterface','interfaceSha256']:KEYS;
   if(!m||typeof m!=='object'||Array.isArray(m)||
-     Reflect.ownKeys(m).length!==KEYS.length||
-     KEYS.some(k=>!Object.hasOwn(m,k))||
-     m.schemaVersion!==1||m.backend!=='javascript'||
+     Reflect.ownKeys(m).length!==keys.length||
+     keys.some(k=>!Object.hasOwn(m,k))||
+     ![1,2].includes(m.schemaVersion)||m.backend!=='javascript'||
      !['browser','edge-js'].includes(m.target)||m.hostABI!==HOST_ABI||
-     m.module!=='module.mjs'||!SHA40.test(m.declaredCompilerSha)||
-     !SHA256.test(m.sourceSha256)||!SHA256.test(m.moduleSha256)||
+     m.module!=='module.mjs'||typeof m.declaredCompilerSha!=='string'||!SHA40.test(m.declaredCompilerSha)||
+     typeof m.sourceSha256!=='string'||!SHA256.test(m.sourceSha256)||typeof m.moduleSha256!=='string'||!SHA256.test(m.moduleSha256)||
      !Array.isArray(m.declaredCapabilities)||m.declaredCapabilities.length!==0||
      typeof m.provenanceNote!=='string'||m.provenanceNote.length>1024||
      !Array.isArray(m.publicEntrypoints)||m.publicEntrypoints.length>128||
@@ -65,9 +67,19 @@ function validateManifest(m){
      // No once-only initialization contract is encoded by this signed
      // artifact schema. Treating init as an ordinary entrypoint would
      // bypass lifecycle isolation on the trusted Node loader.
-     m.publicEntrypoints.includes('init')||
+     m.publicEntrypoints.includes('init')||m.publicEntrypoints.includes('then')||
      new Set(m.publicEntrypoints).size!==m.publicEntrypoints.length)
     throw new PackageAdmissionError('invalid or unsupported package manifest');
+  if(m.schemaVersion===2){
+    try {
+      validatePublicNames(m.publicEntrypoints);
+      const abi=scalarInterface(m.publicInterface,m.target);
+      if(typeof m.interfaceSha256!=='string'||abi.sha256!==m.interfaceSha256||
+         JSON.stringify(abi.entries)!==JSON.stringify(m.publicInterface)||
+         JSON.stringify(abi.entries.map(e=>e.name))!==JSON.stringify([...m.publicEntrypoints].sort()))
+        throw Error('interface mismatch');
+    } catch {throw new PackageAdmissionError('invalid scalar package interface');}
+  }
 }
 
 /**
@@ -78,7 +90,7 @@ function validateManifest(m){
  */
 export async function readVerifiedPackage({
   directory,expectedManifestSha256,expectedModuleSha256,
-  expectedSourceSha256,expectedCompilerSha,target
+  expectedSourceSha256,expectedCompilerSha,target,expectedInterfaceSha256
 }={}){
   for(const [v,label] of [[expectedManifestSha256,'manifest digest'],[expectedModuleSha256,'module digest'],[expectedSourceSha256,'source digest']])
     requireSha(v,SHA256,label);
@@ -103,11 +115,19 @@ export async function readVerifiedPackage({
   if(manifest.target!==target||manifest.moduleSha256!==expectedModuleSha256||
      manifest.sourceSha256!==expectedSourceSha256||manifest.declaredCompilerSha!==expectedCompilerSha)
     throw new PackageAdmissionError('package does not match trusted expectations');
+  if(manifest.schemaVersion===2){
+    requireSha(expectedInterfaceSha256,SHA256,'interface digest');
+    if(manifest.interfaceSha256!==expectedInterfaceSha256)
+      throw new PackageAdmissionError('package interface incompatible with trusted expectation');
+  } else if(expectedInterfaceSha256!==undefined){
+    throw new PackageAdmissionError('legacy package has no verified interface digest');
+  }
   const rawModule=await readBoundedRegular(join(dir,'module.mjs'),4194304);
   if(hash(rawModule)!==expectedModuleSha256)throw new PackageAdmissionError('module digest mismatch');
   const approved=Object.freeze({...manifest,
     publicEntrypoints:Object.freeze([...manifest.publicEntrypoints]),
-    declaredCapabilities:Object.freeze([])
+    declaredCapabilities:Object.freeze([]),
+    ...(manifest.schemaVersion===2?{publicInterface:Object.freeze(manifest.publicInterface.map(e=>Object.freeze({...e,params:Object.freeze([...e.params])})))}:{})
   });
   // Exact verified bytes are snapshotted as an immutable base64 string.
   // Hosts must import THIS content, not reopen the original filesystem path.

@@ -6,6 +6,7 @@ import {dirname, basename, join, resolve} from 'node:path';
 import {TextDecoder} from 'node:util';
 import {compileToIR, compileIR} from './compiler.mjs';
 import {HOST_ABI} from './host-bridge.mjs';
+import {scalarInterface,validatePublicNames} from './scalar-package-interface.mjs';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -13,9 +14,10 @@ const digest = bytes => createHash('sha256').update(bytes).digest('hex');
  * Create a never-overwritten output directory containing module.mjs/manifest.json.
  * Caller must pin and review compiler and source independently; a digest is not authorization.
  */
-export async function buildPackage({sourceFile, outputDir, target='edge-js', declaredCompilerSha}={}) {
+export async function buildPackage({sourceFile, outputDir, target='edge-js', declaredCompilerSha, schemaVersion=1}={}) {
+  if (![1,2].includes(schemaVersion)) throw Error('unsupported package schema');
   if (!['edge-js','browser'].includes(target)) throw Error('unsupported JS host target');
-  if (!/^[0-9a-f]{40}$/.test(declaredCompilerSha || '')) throw Error('exact declared compiler SHA required');
+  if (typeof declaredCompilerSha!=='string'||! /^(?:[0-9a-f]{40})$/.test(declaredCompilerSha)) throw Error('exact declared compiler SHA required');
   if (typeof sourceFile !== 'string' || typeof outputDir !== 'string') throw Error('source and output paths required');
   const input = resolve(sourceFile), dest = resolve(outputDir);
   // Read from one file descriptor, without following a final-component
@@ -49,15 +51,18 @@ export async function buildPackage({sourceFile, outputDir, target='edge-js', dec
   if (emitted.length > 4194304) throw Error('generated module exceeds package limit');
   // Derive the manifest from validated IR, not text patterns in generated JS.
   const exports = ir.functions.filter(fn => fn.pub).map(fn => fn.name);
-  if (exports.length > 128 || new Set(exports).size !== exports.length)
-    throw Error('unsupported public entrypoint count');
+  validatePublicNames(exports);
+  const abi = schemaVersion===2 ? scalarInterface(ir.functions.filter(fn=>fn.pub).map(({name,params,resultType})=>({name,params,resultType})),target) : null;
   const manifest = {
-    schemaVersion:1, backend:'javascript', target, hostABI:HOST_ABI,
+    schemaVersion, backend:'javascript', target, hostABI:HOST_ABI,
     module:'module.mjs', declaredCompilerSha,
     sourceSha256:digest(sourceBytes), moduleSha256:digest(emitted),
     publicEntrypoints:exports, declaredCapabilities:[],
     provenanceNote:'The compiler SHA is caller-declared, not independently attested. A hash is not an authorization or a sandbox.'
   };
+  if(abi){manifest.publicInterface=abi.entries;manifest.interfaceSha256=abi.sha256;}
+  const manifestJson=JSON.stringify(manifest,null,2)+'\n';
+  if(Buffer.byteLength(manifestJson,'utf8')>65536)throw Error('package manifest exceeds admission limit');
   const parent = dirname(dest);
   // Materialize the caller-chosen package parent before creating a private
   // staging directory. Previously nested output paths failed with ENOENT.
@@ -67,7 +72,7 @@ export async function buildPackage({sourceFile, outputDir, target='edge-js', dec
   const temp = await mkdtemp(join(parent,'.'+basename(dest)+'.staging-'));
   try {
     await writeFile(join(temp,'module.mjs'),emitted,{flag:'wx',mode:0o600});
-    await writeFile(join(temp,'manifest.json'),JSON.stringify(manifest,null,2)+'\n',{flag:'wx',mode:0o600});
+    await writeFile(join(temp,'manifest.json'),manifestJson,{flag:'wx',mode:0o600});
     try { await mkdir(dest,{mode:0o700}); }
     catch(error) {
       if (error.code === 'EEXIST') throw Error('refusing to overwrite an existing package');

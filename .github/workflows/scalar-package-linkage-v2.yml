@@ -1,0 +1,54 @@
+name: JS scalar package linkage v2
+on:
+  pull_request:
+    paths:
+      - 'src/scalar-package-interface.mjs'
+      - 'src/compiler.mjs'
+      - 'src/compile-error.mjs'
+      - 'src/scalar-emitter.mjs'
+      - 'tests/scalar-emitter.test.mjs'
+      - 'tests/incremental-consumer-session.test.mjs'
+      - 'src/build-cached-scalar-graph.node.mjs'
+      - 'src/build-scalar-graph.node.mjs'
+      - 'tests/build-cached-scalar-graph.test.mjs'
+      - 'src/scalar-transitive-plan.mjs'
+      - 'src/link-trusted-scalar-closure.node.mjs'
+      - 'tests/scalar-transitive-plan.test.mjs'
+      - 'tests/scalar-closure-runtime.test.mjs'
+      - 'tests/scalar-closure-compiler.test.mjs'
+      - 'src/scalar-dependency-plan.mjs'
+      - 'src/build-scalar-graph.node.mjs'
+      - 'src/link-trusted-scalar-graph.node.mjs'
+      - 'tests/scalar-graph-runtime.test.mjs'
+      - 'tests/scalar-graph-compiler.test.mjs'
+      - 'src/scalar-consumer-link.node.mjs'
+      - 'src/link-trusted-scalar-consumer.node.mjs'
+      - 'tests/scalar-consumer-runtime-fixtures.test.mjs'
+      - 'tests/scalar-consumer-link.test.mjs'
+      - 'src/build-package.mjs'
+      - 'src/package-admission.mjs'
+      - 'src/load-trusted-package.node.mjs'
+      - 'tests/scalar-package-linkage-v2.test.mjs'
+      - 'tests/scalar-package-loader-fixtures.test.mjs'
+      - '.github/workflows/scalar-package-linkage-v2.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compiled-esm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Exact head and actual compiler/package tests
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git rev-parse HEAD HEAD^{tree}
+          node --version
+          node --test tests/scalar-emitter.test.mjs tests/incremental-consumer-session.test.mjs tests/build-cached-scalar-graph.test.mjs tests/scalar-closure-compiler.test.mjs tests/scalar-transitive-plan.test.mjs tests/scalar-closure-runtime.test.mjs tests/scalar-graph-runtime.test.mjs tests/scalar-graph-compiler.test.mjs tests/scalar-consumer-runtime-fixtures.test.mjs tests/scalar-consumer-link.test.mjs tests/scalar-package-loader-fixtures.test.mjs tests/scalar-package-linkage-v2.test.mjs tests/package-admission-security.test.mjs tests/compiler.test.mjs

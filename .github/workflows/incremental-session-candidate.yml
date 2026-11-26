@@ -1,0 +1,39 @@
+name: Incremental compiler session candidate
+on:
+  pull_request:
+    paths:
+      - 'src/compiler.mjs'
+      - 'src/build-cached-scalar-graph.node.mjs'
+      - 'src/build-scalar-graph.node.mjs'
+      - 'tests/build-cached-scalar-graph.test.mjs'
+      - 'src/compile-error.mjs'
+      - 'src/scalar-emitter.mjs'
+      - 'tests/scalar-emitter.test.mjs'
+      - 'tests/incremental-consumer-session.test.mjs'
+      - 'tests/incremental-session.test.mjs'
+      - 'tests/compiler-cache-envelope.test.mjs'
+      - 'src/compiler-cache-envelope.node.mjs'
+      - 'src/compiler-artifact-store.node.mjs'
+      - 'tests/compiler-artifact-store.test.mjs'
+      - 'src/compile-cached-scalar-unit.node.mjs'
+      - 'tests/compile-cached-scalar-unit.test.mjs'
+      - '.github/workflows/incremental-session-candidate.yml'
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Execute real compiler candidate
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git rev-parse HEAD HEAD^{tree}
+          node --version
+          node --test tests/build-cached-scalar-graph.test.mjs tests/scalar-emitter.test.mjs tests/incremental-consumer-session.test.mjs tests/compiler.test.mjs tests/incremental-session.test.mjs tests/compiler-cache-envelope.test.mjs tests/compiler-artifact-store.test.mjs tests/compile-cached-scalar-unit.test.mjs
