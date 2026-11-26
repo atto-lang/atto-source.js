@@ -9,7 +9,7 @@ class Parser {
   constructor(source){this.ts=tokenizeCountedProfileSource(source);this.i=0;this.slots=new Map();this.next=0;this.budget=4096;this.depth=0;this.counted=0;}
   peek(){return this.ts[this.i];}
   fail(msg){const t=this.peek();throw new Error('E_COUNTED_READY_PROFILE: '+msg+' at '+t.line+':'+t.col);}
-  eat(v){if(this.peek().value===v){this.i++;return true;}return false;}
+  eat(v){if(['id','sym'].includes(this.peek().kind)&&this.peek().value===v){this.i++;return true;}return false;}
   need(v){if(!this.eat(v))this.fail('expected '+v);}
   name(){const t=this.peek();if(t.kind!=='id'||reserved.has(t.value))this.fail('lexical identifier required');this.i++;return t.value;}
   get(name,kind){const s=this.slots.get(name);if(!s||s.moved||s.type!==kind)this.fail('expected live lexical '+kind+' source');return s;}
@@ -87,7 +87,7 @@ class Parser {
     // Constant-only: no user calls or capture, no actor/scheduling claim.
     const value=this.check(this.expression(0,'$no_binding'),'int');
     this.need(';');this.need('}');this.need(over?'end':'}');
-    return '_ready('+value+')';
+    return '_ready(()=>'+value+')';
   }
   binding(){
     const type=this.type(),n=this.name();if(this.slots.has(n)||this.next>=128)this.fail('duplicate or excessive lexical binding');
@@ -125,9 +125,9 @@ import {SelectableI64Future as _Future} from '@atto-lang/source-js/selectable-i6
 import {CountedSelectI64Batch as _Batch} from '@atto-lang/source-js/counted-select-i64-batch';
 function _i(v){if(typeof v!=='bigint'||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new RangeError('E_I64_OVERFLOW');return v;}
 function _write(c,v){if(!c.tryWrite(v))throw new Error('E_READY_ONLY: channel write would suspend');}
-function _read(c){const r=c.tryRead();if(!r.hasValue && r.status!=='value' && typeof r.value!=='bigint')throw new Error('E_READY_ONLY: channel read would suspend');return _i(r.value);}
+function _read(c){const r=c.tryRead();if(!r.ok)throw new Error('E_READY_ONLY: channel read would suspend');return _i(r.value);}
 function _at(a,i){if(i<0||i>=a.length)throw new RangeError('E_ARRAY_BOUNDS');return _i(a[i]);}
-function _ready(v){const f=new _Future();f.resolve(_i(v));return f;}
+function _ready(project){const f=new _Future();try{f.resolve(_i(project()));}catch(e){f.fail(e);}return f;}
 function _awaitReady(f){const s=f.subscribeReady(()=>{});try{const c=f.createResultCell();if(!f.tryCommit(s,c))throw new Error('E_READY_ONLY: Future would suspend');if(c.status!=='value')throw c.error??new Error('Future failed');return _i(c.value);}finally{s.close();}}
 async function _batch(n,s,p,policy){
   const b=new _Batch(n,s,policy,p);
