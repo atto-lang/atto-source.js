@@ -31,12 +31,12 @@ test('downstream match arm throw is outside upstream trap',async()=>{
  assert.throws(()=>guest.main(false),e=>e.effect==='throw'&&e.message==='arm');
 });
 test('typed match and checked unwrap reject invalid source and forged IR',()=>{
- for(const expr of [match('x').replace('unwrap()','unwrap(1)'),match('x').replace('x.unwrap','y.unwrap'),match('x').replace('Err()','Err(e)'),match('x').replace('-> 42','-> true'),match('x').replace('on Err(): int -> 42,',''),match('x').replace('match<int>','match<bool>')])
+ for(const expr of [match('x').replace('unwrap()','unwrap(1)'),match('x').replace('x.unwrap','y.unwrap'),match('x').replace('Err()','Err(e)').replace('-> 42','-> e'),match('x').replace('-> 42','-> true'),match('x').replace('on Err(): int -> 42,',''),match('x').replace('match<int>','match<bool>')])
   assert.throws(()=>compileProgramV2(optionSource(expr)),/error:/,expr);
  for(const mutate of [
   ir=>ir.functions[0].body.subject.inner.name='Result.unwrap',
   ir=>ir.functions[0].body.adt='result<int,int>',
-  ir=>ir.functions[0].body.arms[1].slot=17,
+  ir=>{ir.functions[0].body.arms[1].slot=17;ir.functions[0].body.arms[1].body={kind:'capture',slot:17};},
   ir=>ir.functions[0].body.subject.inner.args.push({kind:'int',value:'1'}),
   ir=>ir.functions[0].body.arms.pop()
  ]){
@@ -86,4 +86,37 @@ test('checked unwrap refuses external lookalike and Proxy carriers rather than c
  assert.throws(()=>guest.choose(new Proxy(genuine,{})),/untrusted Option unwrap carrier/);
  const other=await load('pub fnc make():Option<int>{return None;}');
  assert.throws(()=>guest.choose(other.make()),/untrusted Option unwrap carrier/);
+});
+
+test('explicit throws rows validate transitively and trap only its own operand',async()=>{
+ const source='fnc fail():int throws(Error){throw! new Error("downstream");} fnc choose(Option<int> x):int throws(Error){return '+match('x').replace('-> 42','-> fail()')+';} pub fnc main():int throws(){val r=trap! choose(None);return r.is_err()?42:0;}';
+ assert.equal((await load(source)).main(),42n);
+ assert.throws(()=>compileProgramV2(source.replace('choose(Option<int> x):int throws(Error)','choose(Option<int> x):int throws()')),/E_EFFECT/);
+ assert.throws(()=>compileProgramV2('fnc raw(Option<int> x):int{return x.unwrap();} pub fnc main():int throws(){return raw(None);}'),/E_EFFECT/);
+ assert.throws(()=>compileProgramV2('pub fnc main():int throws(){return 1/0;}'),/E_EFFECT/);
+ assert.throws(()=>compileProgramV2('pub fnc main():int throws(Unknown){return 42;}'),/error:/);
+ const ir=compileToProgramIRV2(source);
+ ir.functions[1].throws=[];
+ assert.throws(()=>compileProgramIRV2(ir),/E_EFFECT/);
+ const caught='pub fnc main():int throws(){try {throw! new Error("handled");} catch(e){return 42;}}';
+ assert.equal((await load(caught)).main(),42n);
+ const terminal='pub fnc main():int throws(){panic! new Error("terminal");}';
+ const panic=await load(terminal);assert.throws(()=>panic.main(),e=>e.effect==='panic');
+});
+test('typed Err(e) can call private Error handler and rethrow the original object',async()=>{
+ const source='fnc handle_error(Error e):int throws(){return 42;} fnc choose(Option<int> x):int throws(){return '+match('x').replace('Err()','Err(e)').replace('-> 42','-> handle_error(e)')+';} pub fnc main(bool present):int throws(){return choose(present?Some(7):None);}';
+ const guest=await load(source);
+ assert.equal(guest.main(true),7n);assert.equal(guest.main(false),42n);
+ const rethrow=source.replace('handle_error(Error e):int throws(){return 42;}','handle_error(Error e):int throws(Error){throw! e;}').replaceAll('throws(){return choose','throws(Error){return choose').replace('choose(Option<int> x):int throws()','choose(Option<int> x):int throws(Error)');
+ const raw=await load(rethrow);
+ assert.throws(()=>raw.main(false),e=>e.name==='OptionUnwrapError'&&Object.isFrozen(e)&&!e.cause);
+ assert.equal(raw.main(true),7n);
+ assert.throws(()=>compileProgramV2(source.replace('fnc handle_error','pub fnc handle_error')),/E_ERROR_BINDING/);
+ assert.throws(()=>compileProgramV2(source.replace('handle_error(e)','handle_error(n)')),/error:/);
+ assert.throws(()=>compileProgramV2(source.replace('Error e','int e')),/error:/);
+ const forged=compileToProgramIRV2(source);
+ const err=forged.functions[1].body.arms[1];err.body.args[0].slot=99;
+ assert.throws(()=>compileProgramIRV2(forged),/E_ERROR_BINDING/);
+ const mixed='fnc handle_error(Error e):int{return 42;} pub fnc main():int{val r=trap Err(7);return r |> match<int> over on Ok(n)->n,on Err(e)->handle_error(e),end;}';
+ assert.throws(()=>compileProgramV2(mixed),/E_ERROR_BINDING/);
 });
