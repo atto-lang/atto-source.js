@@ -8,6 +8,8 @@ on:
       - 'src/compiler-cache-envelope.node.mjs'
       - 'src/compiler-artifact-store.node.mjs'
       - 'tests/compiler-artifact-store.test.mjs'
+      - 'src/compile-cached-scalar-unit.node.mjs'
+      - 'tests/compile-cached-scalar-unit.test.mjs'
       - '.github/workflows/incremental-session-candidate.yml'
   workflow_dispatch:
 permissions: {contents: read}
@@ -27,4 +29,4 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           git rev-parse HEAD HEAD^{tree}
           node --version
-          node --test tests/compiler.test.mjs tests/incremental-session.test.mjs tests/compiler-cache-envelope.test.mjs tests/compiler-artifact-store.test.mjs
+          node --test tests/compiler.test.mjs tests/incremental-session.test.mjs tests/compiler-cache-envelope.test.mjs tests/compiler-artifact-store.test.mjs tests/compile-cached-scalar-unit.test.mjs
