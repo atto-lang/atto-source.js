@@ -1,0 +1,42 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {SelectContinuationFence} from '../src/select-continuation-fence.mjs';
+
+test('physical lease blocks advance and retains capacity until exactly-once retirement',()=>{
+  const fence=new SelectContinuationFence({maxTickets:1});
+  const first=fence.register();
+  const lease=fence.tryClaim(first);
+  assert.ok(lease);
+  assert.equal(fence.pendingTickets,0);
+  assert.equal(fence.executing,1);
+  assert.equal(first.active,false);
+  assert.equal(fence.tryClaim(first),null);
+  assert.equal(first.close(),false);
+  assert.equal(fence.advance(1),false);
+  assert.throws(()=>fence.register(),/capacity/);
+  assert.equal(lease.close(),true);
+  assert.equal(lease.close(),false);
+  assert.equal(fence.executing,0);
+  assert.equal(fence.advance(1),true);
+  const fresh=fence.register();
+  assert.equal(fence.tryClaim(first),null);
+  assert.equal(fresh.active,true);
+  const live=fence.tryClaim(fresh);
+  assert.equal(fence.close(),true);
+  assert.equal(fence.retirementReady,false);
+  assert.equal(fence.advance(2),false);
+  assert.equal(live.close(),true);
+  assert.equal(fence.retirementReady,true);
+});
+test('close revokes pending but does not release a claimed execution',()=>{
+  const fence=new SelectContinuationFence({maxTickets:2});
+  const a=fence.register(),b=fence.register();
+  const lease=fence.tryClaim(a);
+  assert.equal(fence.close(),true);
+  assert.equal(b.active,false);
+  assert.equal(fence.tryClaim(b),null);
+  assert.equal(fence.executing,1);
+  assert.equal(fence.retirementReady,false);
+  assert.equal(lease.close(),true);
+  assert.equal(fence.retirementReady,true);
+});
