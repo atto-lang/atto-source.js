@@ -202,12 +202,33 @@ function rejectUnsupportedSelect(tokens) {
     }
   }
 }
+// Scalar aggregate lowering erases source names. Validate them before erasure
+// using unconditional language keywords, not contextual identifiers.
+const AGGREGATE_RESERVED_WORDS = new Set([
+  'unsafe','sync','task','pipe','rpipe','define','def','module','namespace',
+  'contract','conforms','class','struct','interface','trait','type','types',
+  'typeof','abstract','extends','implements','impl','import','from','as',
+  'using','fnc','routine','pure','async','suspends','generator','yield','nlex',
+  'return','begin','self','super','static','pub','private','const','val','let',
+  'mut','if','guard','then','else','elif','elseif','fi','do','done','end',
+  'while','for','of','loop','block','break','continue','switch','match','maybe',
+  'matches','over','default','try','catch','finally','throw','raise','panic',
+  'recover','trap','defer','actor','persistent','durable','isoactor','shared',
+  'untrusted','spawn','stop','rt','await','nb','cb','select','readch','writech',
+  'eq','neq','is','new','true','false','null','void','obj','arr','cpu','gpu','quantum'
+]);
 class Parser {
   constructor(tokens){this.ts=tokens;this.pos=0;this.depth=0;}
   peek(){return this.ts[this.pos];}
   match(v){if(this.peek().value===v){this.pos++;return true;}return false;}
   expect(v){if(!this.match(v))throw new CompileError('expected '+v+', found '+this.peek().value,this.peek());}
   id(){const t=this.peek();if(t.kind!=='id')throw new CompileError('expected identifier',t);this.pos++;return t.value;}
+  aggregateIdentifier(){
+    const at=this.peek(), name=this.id();
+    if(name.length>128 || AGGREGATE_RESERVED_WORDS.has(name) || name==='infer')
+      throw new CompileError('E_TYPE_NAME: reserved or oversized aggregate identifier',at);
+    return name;
+  }
   // Restricted compile-time scalar aggregate profile. Only immutable literal
   // locals and integer projections are admitted; no runtime aggregate ABI,
   // escaping values, nested products or general expression inference.
@@ -217,7 +238,7 @@ class Parser {
     let alias=null, binder=false;
     if(this.match('<')){
       binder=this.match('infer');
-      alias=this.id(); // bare infer cannot consume the closing angle
+      alias=this.aggregateIdentifier(); // bare infer cannot consume the closing angle
       if(['infer','Record','Tuple','struct','int','bool','string','const','let','val',
           'fnc','return','true','false','void','null','self','float','decimal','bigint','uint',
           'i8','i16','i32','i64','u8','u16','u32','u64','f32','f64','String','Bool','Integer',
@@ -225,6 +246,10 @@ class Parser {
           'FixedArray','FixedList','Map','OrderedMap','Set','Pair','Entry','Option','Result',
           'Future','Channel','ActorId','ActorKind','ActorRef','Mutex','MutexGuard','SharedMutex',
           'Generator','AsyncGenerator','Iterator','AsyncIterator','Fnc','Function','define',
+          'Pointer','ActorMail','ReadLoan','WriteLoan','Atomic','AtomicRef','AtomicBool','AtomicInt',
+          'AtomicLong','AtomicI8','AtomicI16','AtomicI32','AtomicI64','AtomicU8','AtomicU16',
+          'AtomicU32','AtomicU64','Arc','Weak','Box','Rc','RwLock','RwLockReadGuard',
+          'RwLockWriteGuard','UnsafeCell',
           'type','module','class','actor','pub','new','if','else','end','routine'].includes(alias))
         throw new CompileError('E_TYPE_NAME: reserved type name',at);
       this.expect('>');
@@ -233,7 +258,7 @@ class Parser {
       if(!binder&&!this.aggregateTypes.has(alias))
         throw new CompileError('E_UNKNOWN_TYPE: '+alias,at);
     }
-    const name=this.id();
+    const name=this.aggregateIdentifier();
     if(params.includes(name)||this.aggregateLocals.has(name))
       throw new CompileError('duplicate aggregate binding '+name,at);
     if(this.aggregateLocals.size>=64)
@@ -243,7 +268,7 @@ class Parser {
     const close=kind==='struct'?'}':')', fields=new Map();
     do {
       if(fields.size>=64)throw new CompileError('aggregate field limit',this.peek());
-      const key=kind==='Tuple'?String(fields.size):this.id();
+      const key=kind==='Tuple'?String(fields.size):this.aggregateIdentifier();
       if(fields.has(key))throw new CompileError('E_DUPLICATE_FIELD: '+key,this.peek());
       if(kind!=='Tuple')this.expect(kind==='struct'?':':'=');
       const token=this.peek();let type, value;
@@ -285,7 +310,7 @@ class Parser {
         throw new CompileError('tuple projection requires a static index',index);
       key=index.value;this.pos++;this.expect(']');
     }else{
-      this.expect('.');key=this.id();
+      this.expect('.');key=this.aggregateIdentifier();
     }
     const field=aggregate.fields.get(key);
     if(!field)throw new CompileError('E_NO_FIELD: '+key,at);
