@@ -185,12 +185,29 @@ function rejectUnloweredActorHeap(tokens) {
 }
 
 function rejectUnsupportedSelect(tokens) {
-  const startsStaticSelect = next =>
-    next && ['{','<','(','over','first','fair','random'].includes(next.value);
+  const bodyStart = next =>
+    next && ['{','over','first','fair','random'].includes(next.value);
+  // Compute matching parentheses once. A bare select(args) call remains
+  // legal; a count followed by the static body is a contextual keyword.
+  const stack=[], matching=new Map();
+  for(let i=0;i<tokens.length;i++) {
+    if(tokens[i].kind !== 'sym') continue;
+    if(tokens[i].value==='(') stack.push(i);
+    if(tokens[i].value===')' && stack.length) matching.set(stack.pop(),i);
+  }
+  function startsStaticSelect(i) {
+    const next=tokens[i+1];
+    if(!next) return false;
+    if(bodyStart(next) || next.value==='<') return true;
+    if(next.kind!=='sym' || next.value!=='(') return false;
+    const end=matching.get(i+1);
+    return end!==undefined && bodyStart(tokens[end+1]);
+  }
   for (let i=0;i<tokens.length;i++) {
     const token=tokens[i];
-    if (token.kind === 'id' && token.value === 'select' &&
-        startsStaticSelect(tokens[i+1])) {
+    const declaration=['fnc','routine','mtd'].includes(tokens[i-1]?.value);
+    if (token.kind === 'id' && token.value === 'select' && !declaration &&
+        startsStaticSelect(i)) {
       throw new CompileError(
         'static select requires checked Channel/Future arbitration, actor-lane continuation, ownership and cancellation lowering in the JS backend',
         token

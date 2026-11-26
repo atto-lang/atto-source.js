@@ -12,4 +12,5 @@ test('canonical counted select and typed aliases cannot emit scalar IR or JS',()
 });
 test('comments and longer names do not reserve unrelated scalar source',()=>{
   assert.doesNotThrow(()=>compile('pub fnc selection(): int { return 42; } pub fnc main(): int { /* select<int>(3) */ return selection(); }'));
+  assert.doesNotThrow(()=>compile('fnc select(int n): int { return n; } pub fnc main(): int { return select((3 + 4)); }'));
 });
