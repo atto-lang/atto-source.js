@@ -29,7 +29,22 @@ test('trapOption IR is type- and scope-checked',()=>{
     mutate(ir);assert.throws(()=>compileProgramIRV2(ir),/error: program IR:/);
   }
 });
-test('Option unwrap panic is never consumed by outer trap',async()=>{
-  const g=await guest("fnc payload():Option<int>{return Some(7/0);} fnc bad():int{val x=trap payload();return Option.unwrap_or(x.unwrap(),0);} pub fnc main():int{val x=trap bad();return x.is_err()?42:0;}");
-  assert.throws(()=>g.main(),e=>e.name==='ResultUnwrapPanic'&&e.cause.abiCode===65538);
+test('failed unwrap of Result<Option<int>,Error> is an ordinary guest error',async()=>{
+  const source="fnc payload():Option<int>{return Some(7/0);} fnc bad():int{val x=trap payload();return Option.unwrap_or(x.unwrap(),0);}";
+  const captured=await guest(source+" pub fnc main():int{val x=trap! bad();return x.is_err()?42:0;}");
+  assert.equal(captured.main(),42n);
+  const uncaught=await guest(source+" pub fnc main():int{return bad();}");
+  assert.throws(()=>uncaught.main(),e=>e.name==='ResultUnwrapError'&&e.cause.abiCode===65538&&Object.isFrozen(e));
+});
+test('checked unwrap retains original scalar Err and nested trap captures it',async()=>{
+  const g=await guest("pub fnc main():int{val x=trap Err(7);val y=trap! x.unwrap();return y.is_err()?42:0;}");
+  assert.equal(g.main(),42n);
+  const uncaught=await guest("pub fnc main():int{val x=trap Err(7);return x.unwrap();}");
+  assert.throws(()=>uncaught.main(),e=>e.name==='ResultUnwrapError'&&e.cause===7n);
+});
+test('explicit panic and raise still bypass trap',async()=>{
+  for(const effect of ['panic!','raise!']){
+    const g=await guest('fnc fail():int{'+effect+' new Error("terminal");} pub fnc main():int{val r=trap! fail();return r.is_err()?42:0;}');
+    assert.throws(()=>g.main(),e=>e.effect===effect.slice(0,-1)&&e.message==='terminal');
+  }
 });

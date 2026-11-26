@@ -91,7 +91,7 @@ test('typed source errors reject int/bool conflation and illegal operations',()=
     'define module core as pub fnc a(bool flag): int {return flag;} end',
     'define module core as pub fnc a(bool flag): bool {return flag + 1;} end',
     'define module core as pub fnc a(bool flag): bool {return flag < true;} end',
-    'define module core as pub fnc a(bool flag): bool {return flag == true;} end',
+    'define module core as pub fnc a(bool flag): bool {return flag == 1;} end',
     'define module core as pub fnc a(int x): bool {return true;} pub fnc b(int y): int {return a(y);} end',
     'define module core as pub fnc a(bool x): int {return 1;} pub fnc b(int y): int {return a(y);} end'
   ];
@@ -151,4 +151,14 @@ test('IR headers with null, primitive, missing or malformed bool metadata fail c
     (({returnType,...rest})=>rest)(first),
     (({paramTypes,...rest})=>rest)(first)
   ])assert.throws(()=>compileProgramIRV2(altered(v)),/error: program IR:/);
+});
+
+// Boolean equality is now admitted with strict, homogeneous bool operands.
+test('freestanding Boolean equality preserves the exact bool ABI',async()=>{
+  const {core}=await moduleOf(compileFreestandingCore('define module core as pub fnc a(bool flag): bool {return flag == true;} pub fnc b(bool flag): bool {return flag != false;} end'));
+  for(const flag of [false,true]){
+    assert.equal(core.a(flag),flag);
+    assert.equal(core.b(flag),flag);
+  }
+  assert.throws(()=>core.a(1n),/bool required/);
 });

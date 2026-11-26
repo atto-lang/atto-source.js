@@ -1,4 +1,5 @@
-// Bounded Atto pure-i64 functional pipeline source compiler -> executable ESM.
+// Bounded Atto i64 functional pipeline source compiler -> executable ESM.
+// Pure by default; explicit capability profile allows main-only i64 println.
 // Source is lexed, parsed and checked; no eval, dynamic import, ambient I/O or
 // raw input splice occurs in generated guest module.
 const MAX_SOURCE = 16 * 1024;
@@ -17,16 +18,17 @@ export class FunctionalPipelineSourceError extends Error {
 }
 const deny = code => { throw new FunctionalPipelineSourceError(code); };
 function tokenize(src) {
-  if (typeof src !== 'string' || new TextEncoder().encode(src).length > MAX_SOURCE || !/^[\x09\x0a\x0d\x20-\x7e]*$/.test(src)) deny('E_SOURCE');
+  if (typeof src !== 'string' || new TextEncoder().encode(src).length > MAX_SOURCE || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(src)) deny('E_SOURCE');
   const tokens=[]; let i=0;
   while (i<src.length) {
-    if (/\s/.test(src[i])) { i++; continue; }
+    if (/[\t\n\r ]/.test(src[i])) { i++; continue; }
     if (src.startsWith('//',i)) { i+=2; while(i<src.length && src[i]!=='\n') i++; continue; }
     if (src.startsWith('/*',i)) {
       i+=2; const end=src.indexOf('*/',i); if (end<0) deny('E_LEX'); i=end+2;continue;
     }
+    if (src.charCodeAt(i)>0x7e) deny('E_SOURCE');
     if (tokens.length>=MAX_TOKENS) deny('E_TOKEN_LIMIT');
-    const m=/^(?:[A-Za-z_][A-Za-z_0-9]*|[0-9]+|\|>|<\||->|[(){}:,;+*\/=\-])/.exec(src.slice(i));
+    const m=/^(?:[A-Za-z_][A-Za-z_0-9]*|[0-9]+|\|>|<\||->|[(){}:.,;+*\/=|\-])/.exec(src.slice(i));
     if (!m) deny('E_LEX');
     tokens.push(m[0]);i+=m[0].length;
   }
@@ -34,7 +36,7 @@ function tokenize(src) {
 }
 const node = (kind,...args) => ({kind,args});
 class Parser {
-  constructor(text) { this.tokens=tokenize(text);this.pos=0;this.nodes=0; }
+  constructor(text,allowStdio) { this.tokens=tokenize(text);this.pos=0;this.nodes=0;this.allowStdio=allowStdio; }
   get token() { return this.tokens[this.pos]; }
   eat(x) { if(this.token!==x) return false;this.pos++;return true; }
   need(x) { if(!this.eat(x)) deny('E_PARSE'); }
@@ -55,7 +57,21 @@ class Parser {
   expr(min=0,depth=0,direction=null) {
     if(depth>MAX_DEPTH) deny('E_DEPTH');
     let lhs;
-    if(this.eat('(')) {lhs=this.expr(0,depth+1);this.need(')');}
+    if(this.eat('(')) {
+      if(this.eat(')')) lhs=this.make('tuple',[]);
+      else {
+        const first=this.expr(0,depth+1);
+        if(this.eat(',')) {
+          const items=[first];
+          while(this.token!==')'){
+            if(items.length>=8) deny('E_LIMIT');
+            items.push(this.expr(0,depth+1));
+            if(!this.eat(',')) break;
+          }
+          this.need(')');lhs=this.make('tuple',items);
+        } else {this.need(')');lhs=first;}
+      }
+    }
     else if(this.eat('-')) {lhs=this.make('neg',this.expr(30,depth+1,direction));}
     else if(/^[0-9]/.test(this.token)) {
       const value=BigInt(this.token);
@@ -70,8 +86,31 @@ class Parser {
       if(op==='|>'||op==='<|') {
         if(direction&&direction!==op) deny('E_MIXED_PIPE');direction=op;
         if(op==='|>') {
-          const name=this.name(),args=this.token==='('?this.args(depth+1):[];
-          if(args.length>=8) deny('E_ARITY');lhs=this.make('call',name,[lhs,...args]);
+          if(this.eat('|')){
+            // Only the explicit unary tuple pattern is admitted here.
+            // The tuple is one root, not an implicit named-call expansion.
+            this.need('(');const names=[];const seen=new Set();let comma=false;
+            while(this.token!==')'){
+              if(names.length>=8)deny('E_LIMIT');
+              const name=this.name();
+              if(name!=='_'&&(seen.has(name)||name==='arguments'||name==='self'))deny('E_DUP_PARAM');
+              if(name!=='_')seen.add(name);
+              if(this.eat(':')){
+                if(name==='_')deny('E_PATTERN');
+                this.need('int');
+              }
+              names.push(name);
+              if(!this.eat(','))break;
+              comma=true;
+            }
+            this.need(')');
+            if(names.length===1&&!comma)deny('E_PATTERN');
+            this.need('|');this.need('->');
+            lhs=this.make('tuplePattern',lhs,names,this.expr(prec+1,depth+1,direction));
+          } else {
+            const name=this.name(),args=this.token==='('?this.args(depth+1):[];
+            if(args.length>=8) deny('E_ARITY');lhs=this.make('call',name,[lhs,...args]);
+          }
         } else {
           if(!['ref','call'].includes(lhs.kind)) deny('E_CALLEE');
           const name=lhs.args[0],args=lhs.kind==='call'?lhs.args[1]:[];
@@ -85,10 +124,16 @@ class Parser {
     }
     return lhs;
   }
-  body(locals) {
+  body(locals,prints,name) {
     while(this.eat('val')) {
       const name=this.name();this.need('=');const init=this.expr();this.need(';');
       if(locals.length>=4) deny('E_LIMIT');locals.push({name,init});
+    }
+    while(this.eat('stdio')) {
+      if(!this.allowStdio||name!=='main') deny('E_PERMISSION');
+      this.need('.');if(!this.eat('println')) deny('E_STDIO');
+      this.need('(');const value=this.expr();this.need(')');this.need(';');
+      if(prints.length>=4) deny('E_LIMIT');prints.push(value);
     }
     this.need('return');const e=this.expr();this.need(';');this.need('}');return e;
   }
@@ -102,13 +147,13 @@ class Parser {
         params.push(arg);if(params.length>8) deny('E_LIMIT');
       } while(this.eat(','));
       this.need(')');const colon=this.eat(':');if(!colon)this.need('->');this.need('int');
-      const locals=[];let result;
-      if(this.eat('{')) result=this.body(locals);
+      const locals=[],prints=[];let result;
+      if(this.eat('{')) result=this.body(locals,prints,name);
       else if(colon&&this.eat('->')) {
-        if(this.eat('{'))result=this.body(locals);
+        if(this.eat('{'))result=this.body(locals,prints,name);
         else {result=this.expr();this.need(';');}
       } else deny('E_PARSE');
-      functions.push({name,params,locals,result});if(functions.length>64) deny('E_LIMIT');
+      functions.push({name,params,locals,prints,result});if(functions.length>64) deny('E_LIMIT');
     }
     return functions;
   }
@@ -124,10 +169,22 @@ function check(functions) {
         if(e.args[0].kind==='literal'&&e.args[0].args[0]===MAX+1n)return;
         return expr(e.args[0],scope);
       case 'ref': if(!scope.has(e.args[0]))deny('E_SYMBOL');return;
+      case 'tuple': deny('E_UNSUPPORTED_TUPLE_VALUE');return;
+      case 'tuplePattern': {
+        const [root,names,body]=e.args;
+        if(root.kind!=='tuple')deny('E_PATTERN_SHAPE');
+        const items=root.args[0];
+        if(items.length!==names.length)deny('E_ARITY');
+        for(const item of items)expr(item,scope);
+        const child=new Set(scope);
+        for(const name of names)if(name!=='_')child.add(name);
+        expr(body,child);return;
+      }
       case 'add':case 'sub':case 'mul':for(const a of e.args)expr(a,scope);return;
       case 'call': {
         const [name,args]=e.args,callee=symbols.get(name);
         if(!callee) deny('E_SYMBOL');if(args.length!==callee.params.length)deny('E_ARITY');
+        if(name==='main'&&callee.prints.length)deny('E_EFFECT_CALL');
         for(const arg of args) expr(arg,scope);
         fn(name);return;
       }
@@ -138,20 +195,33 @@ function check(functions) {
     if(state.get(name)===2)return;if(state.get(name)===1)deny('E_CYCLE');
     state.set(name,1);const f=symbols.get(name),scope=new Set(f.params);
     for(const local of f.locals){expr(local.init,scope);if(scope.has(local.name))deny('E_DUP_LOCAL');scope.add(local.name);}
+    for(const value of f.prints)expr(value,scope);
     expr(f.result,scope);state.set(name,2);
   }
   for(const name of symbols.keys())fn(name);
 }
 const checkedGuest = `const MIN=-(1n<<63n),MAX=(1n<<63n)-1n;\nfunction checked(x){if(x<MIN||x>MAX)throw RangeError('E_OVERFLOW');return x;}\n`;
-function emitExpr(e,fn) {
-  const v=x=>emitExpr(x,fn);
+function emitExpr(e,fn,bindings=new Map(),depth=0) {
+  const v=x=>emitExpr(x,fn,bindings,depth);
   switch(e.kind) {
     case 'literal':return `checked(${e.args[0]}n)`;
     case 'neg':
       if(e.args[0].kind==='literal'&&e.args[0].args[0]===MAX+1n)
         return `checked(-${MAX+1n}n)`;
       return `checked(-${v(e.args[0])})`;
-    case 'ref':return (fn.params.includes(e.args[0])?'p_':'v_')+e.args[0];
+    case 'ref':return bindings.get(e.args[0])??((fn.params.includes(e.args[0])?'p_':'v_')+e.args[0]);
+    case 'tuplePattern': {
+      const [root,names,body]=e.args;
+      const rootName='tuple_root_'+depth, child=new Map(bindings);
+      const projections=names.map((name,i)=>{
+        if(name==='_')return '';
+        const slot='tuple_slot_'+depth+'_'+i;
+        child.set(name,slot);return `const ${slot}=${rootName}[${i}];`;
+      }).join('');
+      // The one literal tuple value evaluates left-to-right before any
+      // projection, including discarded components. No getter or clone.
+      return `((${rootName})=>{${projections}return ${emitExpr(body,fn,child,depth+1)};})([${root.args[0].map(v).join(',')}])`;
+    }
     case 'add':return `checked(${v(e.args[0])}+${v(e.args[1])})`;
     case 'sub':return `checked(${v(e.args[0])}-${v(e.args[1])})`;
     case 'mul':return `checked(${v(e.args[0])}*${v(e.args[1])})`;
@@ -159,14 +229,17 @@ function emitExpr(e,fn) {
     default:deny('E_AST');
   }
 }
-export function compileFunctionalPipelineSource(source) {
-  const functions=new Parser(source).parse();check(functions);
+export function compileFunctionalPipelineSource(source,{allowStdio=false}={}) {
+  if(typeof allowStdio!=='boolean')deny('E_PERMISSION');
+  const functions=new Parser(source,allowStdio).parse();check(functions);
+  const effectful=functions.find(f=>f.name==='main').prints.length>0;
   let out=`// Checked and compiled Atto int64 guest; no dynamic host evaluator.\n${checkedGuest}`;
   for(const f of functions) {
-    out+=`function f_${f.name}(${f.params.map(x=>'p_'+x).join(',')}){\n`;
+    out+=`function f_${f.name}(${f.name==='main'&&effectful?'print_i64':f.params.map(x=>'p_'+x).join(',')}){\n`;
     for(const b of f.locals) out+=`const v_${b.name}=${emitExpr(b.init,f)};\n`;
+    for(const value of f.prints)out+=`print_i64(${emitExpr(value,f)});\n`;
     out+=`return ${emitExpr(f.result,f)};\n}\n`;
     if(out.length>65536)deny('E_OUTPUT_LIMIT');
   }
-  out+='export function main(){return f_main();}\n';return out;
+  out+=effectful?'export function main(print_i64){if(typeof print_i64!=="function")throw Error("E_PERMISSION");return f_main(print_i64);}\n':'export function main(){return f_main();}\n';return out;
 }
