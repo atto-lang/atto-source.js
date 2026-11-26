@@ -207,6 +207,84 @@ class Parser {
   match(v){if(this.peek().value===v){this.pos++;return true;}return false;}
   expect(v){if(!this.match(v))throw new CompileError('expected '+v+', found '+this.peek().value,this.peek());}
   id(){const t=this.peek();if(t.kind!=='id')throw new CompileError('expected identifier',t);this.pos++;return t.value;}
+  // Restricted compile-time scalar aggregate profile. Only immutable literal
+  // locals and integer projections are admitted; no runtime aggregate ABI,
+  // escaping values, nested products or general expression inference.
+  aggregateConst(params){
+    const at=this.peek();this.expect('const');
+    const kind=this.id();
+    let alias=null, binder=false;
+    if(this.match('<')){
+      binder=this.match('infer');
+      alias=this.id(); // bare infer cannot consume the closing angle
+      if(['infer','Record','Tuple','struct','int','bool','string','const','let','val','fnc','return','true','false'].includes(alias))
+        throw new CompileError('E_TYPE_NAME: reserved type name',at);
+      this.expect('>');
+      if(binder&&this.aggregateTypes.has(alias))
+        throw new CompileError('E_DUPLICATE_TYPE: '+alias,at);
+      if(!binder&&!this.aggregateTypes.has(alias))
+        throw new CompileError('E_UNKNOWN_TYPE: '+alias,at);
+    }
+    const name=this.id();
+    if(params.includes(name)||this.aggregateLocals.has(name))
+      throw new CompileError('duplicate aggregate binding '+name,at);
+    if(this.aggregateLocals.size>=64)
+      throw new CompileError('aggregate binding limit',at);
+    this.expect('=');
+    this.expect(kind==='struct'?'{':'(');
+    const close=kind==='struct'?'}':')', fields=new Map();
+    do {
+      if(fields.size>=64)throw new CompileError('aggregate field limit',this.peek());
+      const key=kind==='Tuple'?String(fields.size):this.id();
+      if(fields.has(key))throw new CompileError('E_DUPLICATE_FIELD: '+key,this.peek());
+      if(kind!=='Tuple')this.expect(kind==='struct'?':':'=');
+      const token=this.peek();let type, value;
+      if(token.kind==='int'||token.value==='-'){
+        const negative=this.match('-'), number=this.peek();
+        if(number.kind!=='int')throw new CompileError('E_TYPE_INFER_AMBIGUOUS: scalar integer required',number);
+        this.pos++;
+        value=BigInt(number.value.replaceAll('_',''))*(negative?-1n:1n);
+        if(value<-(1n<<63n)||value>I64_MAX)throw new CompileError('aggregate int outside signed i64',number);
+        type='int';
+      }else if(token.kind==='id'&&['true','false'].includes(token.value)){
+        this.pos++;type='bool';
+      }else if(token.kind==='string'){
+        // A lexed, non-interpolated string has no evaluation effects.
+        this.pos++;type='string';
+      }else throw new CompileError('E_TYPE_INFER_AMBIGUOUS: scalar literal required in JS profile',token);
+      fields.set(key,{type,value});
+    } while(this.match(','));
+    this.expect(close);this.expect(';');
+    const shape={kind,fields:new Map([...fields].map(([k,v])=>[k,v.type]))};
+    if(alias!==null&&!binder){
+      const expected=this.aggregateTypes.get(alias);
+      if(expected.kind!==kind)throw new CompileError('E_AGGREGATE_KIND: '+alias,at);
+      if(expected.fields.size!==shape.fields.size||
+          [...expected.fields].some(([k,v])=>shape.fields.get(k)!==v))
+        throw new CompileError('E_TYPE_MISMATCH: '+alias,at);
+    }
+    if(binder)this.aggregateTypes.set(alias,shape);
+    this.aggregateLocals.set(name,{kind,fields});
+  }
+  aggregateProjection(){
+    const at=this.peek(), aggregate=this.aggregateLocals.get(at.value);
+    this.pos++;
+    let key;
+    if(aggregate.kind==='Tuple'){
+      this.expect('[');
+      const index=this.peek();
+      if(index.kind!=='int'||!/^(0|[1-9][0-9]*)$/.test(index.value))
+        throw new CompileError('tuple projection requires a static index',index);
+      key=index.value;this.pos++;this.expect(']');
+    }else{
+      this.expect('.');key=this.id();
+    }
+    const field=aggregate.fields.get(key);
+    if(!field)throw new CompileError('E_NO_FIELD: '+key,at);
+    if(field.type!=='int')throw new CompileError('JS scalar aggregate profile supports only int projections',at);
+    // Immutable scalar literal, constant-folded through normal typed scalar IR.
+    return {kind:'int',n:field.value};
+  }
   exportDeclaration(){
     this.expect('export');this.expect('pub');
     let visibility='public';
@@ -248,6 +326,9 @@ class Parser {
       const braced=this.match('{');
       if(!braced&&!arrow)throw new CompileError('expected { for colon function body',this.peek());
       if(!braced){if(!this.match('as'))this.match('::');}
+      this.aggregateTypes=new Map();this.aggregateLocals=new Map();
+      while(this.peek().value==='const'&&['Record','Tuple','struct'].includes(this.ts[this.pos+1]?.value))
+        this.aggregateConst(params);
       this.expect('return');
       const body=this.expr();this.expect(';');this.expect(braced?'}':'end');
       functions.push({name,params,body,pub});
@@ -318,6 +399,8 @@ class Parser {
       this.pos++;this.expect('(');const left=this.expr();this.expect(',');const right=this.expr();this.expect(')');
       return {kind:'binary',op:ops[name.value],left,right};
     }
+    if(t.kind==='id'&&this.aggregateLocals?.has(t.value))
+      return this.aggregateProjection();
     if(t.kind==='id'){
       this.pos++;
       if(this.match('(')){
