@@ -129,11 +129,29 @@ test('canonical instance markers preserve contextual names and receiver dispatch
       }
       const mod=await load(s);
       assert.equal(new mod.Box().answer(),42n);
-      assert.throws(()=>compileProgramV2('define class Box as '+name+
-        '():int{return 1;} mtd '+name+'():int{return 2;} end'),
-        /duplicate method name\/arity/);
+      for(const other of ['', 'mtd ', 'fnc ']){
+        assert.throws(()=>compileProgramV2('define class Box as '+marker+name+
+          '():int{return 1;} '+other+name+'():int{return 2;} end'),
+          /duplicate method name\/arity/);
+      }
     }
     assert.throws(()=>compileProgramV2('define class Box as method '+name+
       '():int{return 42;} end'),/OBSOLETE_METHOD_INTRODUCER/);
+  }
+});
+
+test('stacked declaration markers reject before receiver lowering',()=>{
+  for(const first of ['mtd','fnc','method']){
+    for(const second of ['mtd','fnc','method']){
+      for(const trivia of [' ', ' /* marker */ ']){
+        const s='define class Box as '+first+trivia+second+
+          ' ping():int{return 42;} end';
+        assert.throws(()=>compileProgramV2(s),/DUPLICATE_METHOD_INTRODUCER/);
+      }
+    }
+  }
+  for(const name of ['ping','mtd','method']){
+    const s='define class Box as method '+name+'<T>():int{return 42;} end';
+    assert.throws(()=>compileProgramV2(s),/OBSOLETE_METHOD_INTRODUCER/);
   }
 });
