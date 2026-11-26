@@ -47,3 +47,14 @@ test('explicit result type cannot silently become bool in ADT match',()=>{
   const source='pub fnc f(Result<int,int> result):bool { return result |> match<int> over { on Ok(v) -> true, on Err(e) -> false, }; }';
   assert.throws(()=>compileProgramV2(source),/explicit match<int> requires integer arm results/);
 });
+
+test('bare immediate await erases to checked integer identity in prefix and pipeline positions',async()=>{
+  const program=expr=>'fnc identity(int x):int { return x; } pub fnc main():int { return '+expr+'; }';
+  const plain=compileToProgramIRV2(program('identity(42)'));
+  for(const expr of ['42 |> await |> identity','identity(await 42)','identity(42 |> await)']){
+    assert.deepEqual(compileToProgramIRV2(program(expr)),plain);
+    assert.equal((await load(program(expr))).main(),42n);
+  }
+  for(const expr of ['true |> await','42 |> await(7)','42 |> await<int>','Ok(42) |> await'])
+    assert.throws(()=>compileProgramV2(program(expr)),/error:/,expr);
+});
