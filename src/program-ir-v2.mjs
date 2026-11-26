@@ -121,7 +121,7 @@ function symbolName(s){
  * Copy after validation, never return caller-owned IR references.
  * Direct object inputs are trusted data only, not a JavaScript sandbox.
  */
-export function validateProgramIRV2(input) {
+export function validateProgramIRV2(input, allowScalarWhile = false) {
   if(input===null||typeof input!=='object'||Array.isArray(input))
     fail('program: expected object');
   const rawKeys=Reflect.ownKeys(input);
@@ -423,6 +423,22 @@ export function validateProgramIRV2(input) {
           ...(named?{paramOrder:order}:{})
         };
       }
+      case 'scalarWhile': {
+        if(allowScalarWhile!==true)fail('scalar while requires strict source admission');
+        // Checked i64 state only. This validates structural/type safety,
+        // not a source-level proof or termination certificate.
+        record(expr,['kind','slot','init','condition','update','body'],'scalar while');
+        if(owner>=headers.length||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
+           expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
+          fail('invalid or repeated loop slot');
+        captureSlots[owner].add(expr.slot);
+        const init=node(expr.init,owner,depth+1,'int',active);
+        const scoped=[...active,expr.slot];
+        return {kind:'scalarWhile',slot:expr.slot,init,
+          condition:node(expr.condition,owner,depth+1,'bool',scoped),
+          update:node(expr.update,owner,depth+1,'int',scoped),
+          body:node(expr.body,owner,depth+1,expected,scoped)};
+      }
       case 'local':case 'boolLocal':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':{
         record(expr,['kind','slot','init','body'],'immutable local');
         if(owner>=headers.length||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
@@ -453,6 +469,18 @@ export function validateProgramIRV2(input) {
         if((owners[owner].paramTypes?.[expr.index]??'int')!==expected)
           fail('parameter type mismatch');
         return {kind:'param',index:expr.index};
+      case 'i32Check': {
+        record(expr,['kind','inner'],'checked i32');
+        if(expected!=='int')fail('checked i32 requires integer');
+        return {kind:'i32Check',inner:node(expr.inner,owner,depth+1,'int',active)};
+      }
+      case 'refinementCheck': {
+        record(expr,['kind','inner','minimum','maximum'],'checked refinement');
+        if(expected!=='int')fail('checked refinement requires signed-i64 value');
+        const minimum=int(expr.minimum),maximum=int(expr.maximum);
+        if(BigInt(minimum)>BigInt(maximum))fail('empty refinement range');
+        return {kind:'refinementCheck',inner:node(expr.inner,owner,depth+1,'int',active),minimum,maximum};
+      }
       case 'neg':
         record(expr,['kind','inner'],'neg');
         if(expected!=='int')fail('int negation in boolean context');
