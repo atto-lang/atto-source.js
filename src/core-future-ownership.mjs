@@ -2,6 +2,8 @@
 // Not a generic borrow-checker, suspending guest compiler or actor runtime.
 // Even valid owned Future source MUST fail closed until typed affine IR exists.
 const sealedNames=new Set(['Future','TaskFuture','ActorFuture']);
+// Match Worker admission: no guest nominal form may redeclare a sealed receipt.
+const reservedIntroducers=new Set(['new','class','actor','struct','enum','contract','interface','trait','type','alias','namespace','module','record']);
 const value=(tokens,i)=>tokens[i]?.value;
 const future=(tokens,i)=>tokens[i]?.kind==='id'&&sealedNames.has(tokens[i]?.value);
 function close(tokens,start,open,ending,fail){
@@ -64,8 +66,7 @@ export function preflightCoreFutureOwnership(tokens,fail){
   let seen=false;
   for(let i=0;i<tokens.length;i++){
     if(future(tokens,i)&&value(tokens,i+1)==='<')seen=true;
-    if((value(tokens,i)==='new'&&future(tokens,i+1))||
-       (['class','actor','struct'].includes(value(tokens,i))&&future(tokens,i+1)))
+    if(tokens[i]?.kind==='id'&&reservedIntroducers.has(value(tokens,i))&&future(tokens,i+1))
       fail('E_RESERVED','sealed Future types cannot be constructed or declared by guest code',tokens[i]);
   }
   if(!seen)return;
