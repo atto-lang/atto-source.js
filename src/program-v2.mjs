@@ -480,42 +480,71 @@ class Parser {
     }
     fail('unsupported scalar type (int, bool, Symbol, Option<int>, Result<int,int>)',this.peek());
   }
+  nominalMethodSignature() {
+    this.eatMethodMarker();
+    const methodName=this.callableName();
+    this.expect('(');
+    if(this.eat('self')){
+      if(this.eat(',')){
+        if(this.peek().value===')')fail('trailing receiver comma',this.peek());
+      }else if(this.peek().value!==')')fail('unsupported self parameter spelling',this.peek());
+      else if(this.tokens[this.i+1]?.value==='('){
+        // Legacy split shared receiver: erase self before the normal value formals.
+        // Neither mut self nor a second receiver is admitted by this profile.
+        this.expect(')');this.expect('(');
+      }
+    }
+    const params=[],paramTypes=[];
+    if(!this.eat(')')){
+      do {
+        if(params.length>=32)fail('method arity budget',this.peek());
+        const {type,name:param}=this.typedParameter(()=>this.classIdentifier());
+        if(param==='self'||params.includes(param))fail('duplicate or reserved method parameter '+param,this.peek());
+        params.push(param);paramTypes.push(type);
+      } while(this.eat(','));
+      this.expect(')');
+    }
+    const arrow=this.eat('->');
+    if(!arrow)this.expect(':');
+    const returnType=this.eat('void')?'void':this.valueType();
+    return {methodName,params,paramTypes,returnType,arrow};
+  }
+  nominalContractDeclaration(kind) {
+    const name=this.classIdentifier();
+    if(isProtectedPreludeIdentity(name))fail('E_PRELUDE_SPOOF: reserved nominal contract '+name,this.peek());
+    this.expect('as');
+    const methods=[],slots=new Set();
+    while(!this.eat('end')){
+      if(this.peek().kind==='eof'||methods.length>=256)fail('nominal contract method budget or terminator',this.peek());
+      this.eat('pub');
+      const {methodName,params,paramTypes,returnType}=this.nominalMethodSignature();
+      this.expect(';'); // Abstract signatures only; defaults/effects need separate lowering.
+      const key=methodName+'/'+params.length;
+      if(slots.has(key))fail('duplicate method name/arity '+name+'.'+key,this.peek());
+      slots.add(key);methods.push({name:methodName,params,paramTypes,returnType});
+    }
+    return {name,kind,methods};
+  }
   classDeclaration(pub, writtenPrivate=false) {
     const name=this.classIdentifier();
     if(isProtectedPreludeIdentity(name))
       fail('E_PRELUDE_SPOOF: cannot define compiler-owned core class '+name,this.peek());
+    const implementsNames=[];
+    if(this.eat('implements')){
+      do{
+        const contract=this.classIdentifier();
+        if(implementsNames.length>=32||implementsNames.includes(contract))
+          fail('duplicate or excessive implements entry '+contract,this.peek());
+        implementsNames.push(contract);
+      }while(this.eat(','));
+    }
     this.expect('as');
     const methods=[],slots=new Set();
     while(!this.eat('end')) {
       if(this.peek().kind==='eof')fail('unterminated class '+name,this.peek());
       if(methods.length>=256)fail('method count limit',this.peek());
       const methodPub=this.eat('pub');
-      this.eatMethodMarker();
-      const methodName=this.callableName();
-      this.expect('(');
-      if(this.eat('self')){
-        if(this.eat(',')){
-          if(this.peek().value===')')fail('trailing receiver comma',this.peek());
-        }else if(this.peek().value!==')')fail('unsupported self parameter spelling',this.peek());
-        else if(this.tokens[this.i+1]?.value==='('){
-          // Legacy split shared receiver: erase self before the normal value formals.
-          // Neither mut self nor a second receiver is admitted by this profile.
-          this.expect(')');this.expect('(');
-        }
-      }
-      const params=[],paramTypes=[];
-      if(!this.eat(')')){
-        do {
-          if(params.length>=32)fail('method arity budget',this.peek());
-          const {type,name:param}=this.typedParameter(()=>this.classIdentifier());
-          if(param==='self'||params.includes(param))fail('duplicate or reserved method parameter '+param,this.peek());
-          params.push(param);paramTypes.push(type);
-        } while(this.eat(','));
-        this.expect(')');
-      }
-      const arrow=this.eat('->');
-      if(!arrow)this.expect(':');
-      const returnType=this.eat('void')?'void':this.valueType();
+      const {methodName,params,paramTypes,returnType,arrow}=this.nominalMethodSignature();
       const braced=this.eat('{');
       if(!braced){
         if(!arrow)fail('colon method bodies require braces',this.peek());
@@ -542,7 +571,7 @@ class Parser {
       slots.add(slot);
       methods.push({name:methodName,pub:methodPub,params,paramTypes,returnType,body});
     }
-    return {name,pub,methods,...(writtenPrivate?{writtenPrivate:true}:{})};
+    return {name,pub,methods,implementsNames,...(writtenPrivate?{writtenPrivate:true}:{})};
   }
   generatorStart() {
     let j=this.i;
@@ -954,7 +983,7 @@ class Parser {
       namespace = this.name();
       this.expect(';');
     }
-    const modules=[],functions=[],generators=[],classes=[],usedModules=new Set(),usedClasses=new Set();
+    const modules=[],functions=[],generators=[],classes=[],contracts=new Map(),usedModules=new Set(),usedClasses=new Set();
     const exportDeclarations=[];
     while(this.peek().kind!=='eof'){
       if(this.peek().value==='export') {
@@ -979,6 +1008,15 @@ class Parser {
         const declarationPrivate=(prefixVisibility||afterVisibility)==='private';
         if(this.peek().value==='symbol')
           fail('Symbol declaration/export manifest not implemented',this.peek());
+        if(['interface','trait'].includes(this.peek().value)){
+          if(declarationPub||declarationPrivate)fail('explicit contract visibility unsupported in local abstract profile',this.peek());
+          if(contracts.size>=512)fail('contract declaration budget exceeded',this.peek());
+          const contract=this.nominalContractDeclaration(this.tokens[this.i++].value);
+          if(usedClasses.has(contract.name)||usedModules.has(contract.name))
+            fail('duplicate nominal declaration '+contract.name,this.peek());
+          usedClasses.add(contract.name);contracts.set(contract.name,contract);
+          continue;
+        }
         if(this.eat('class')){
           if(classes.length>=512)fail('class declaration budget exceeded',this.peek());
           const cls=this.classDeclaration(declarationPub,declarationPrivate);
@@ -1013,6 +1051,34 @@ class Parser {
         else functions.push(this.functions(null));
       }
     }
+    // Local nominal contracts are compile-time obligations only. Check every
+    // implementation before erasing the declaration metadata; no runtime cast,
+    // interface value, structural projection or dynamic dispatch is admitted.
+    for(const f of [...functions,...generators])
+      if(f.module===null&&contracts.has(f.name))fail('nominal contract/callable name collision '+f.name);
+    const usedContracts=new Set();
+    for(const cls of classes){
+      const slots=new Map(cls.methods.map(method=>[method.name+'/'+method.params.length,method]));
+      for(const name of cls.implementsNames){
+        const contract=contracts.get(name);
+        if(!contract)fail('E_IMPL_UNRESOLVED: unknown local interface or trait '+name);
+        usedContracts.add(name);
+        for(const required of contract.methods){
+          const key=required.name+'/'+required.params.length,actual=slots.get(key);
+          if(!actual)fail('MISSING_INSTANCE_OBLIGATION: '+cls.name+'.'+key);
+          if(!actual.pub)fail('E_IMPL_VISIBILITY: required method must be public '+cls.name+'.'+key);
+          if(actual.returnType!==required.returnType||
+             actual.paramTypes.some((type,i)=>type!==required.paramTypes[i])||
+             actual.params.some((param,i)=>param!==required.params[i]))
+            fail('E_IMPL_SIGNATURE: required method signature mismatch '+cls.name+'.'+key);
+        }
+      }
+      delete cls.implementsNames;
+    }
+    // This bounded slice cannot export or represent an unused contract type.
+    // Do not let a contract-only program masquerade as scalar-only input.
+    for(const name of contracts.keys())if(!usedContracts.has(name))
+      fail('E_CONTRACT_PROFILE: unused local contract unsupported '+name);
     if(this.booleanAliasToken&&(usedClasses.has('boolean')||usedModules.has('boolean')))
       fail('E_TYPE_ALIAS_SHADOWED: boolean requires nominal type resolution',this.booleanAliasToken);
     if(!functions.length&&!generators.length&&!modules.length&&!classes.length)fail('empty program');

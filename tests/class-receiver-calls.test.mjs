@@ -180,3 +180,78 @@ test('split shared receiver erases before value-formal binding and slot identity
   assert.equal((await load('define class C as pub ping(self)():int{return 42;} end '+
     'pub fnc main():int{return new C().ping();}')).main(),42n);
 });
+
+// Local abstract contract obligation profile: source checks only; no runtime type objects.
+test('local interface and trait obligations erase only after exact public slot validation',async()=>{
+  const plain='define class C as pub ping(int n):int{return n+2;} end pub fnc main():int{return new C().ping(40);}';
+  for(const kind of ['interface','trait'])for(const marker of ['', 'mtd ', 'fnc ']){
+    const source='define '+kind+' Required as '+marker+'ping(self)(int n):int; end '+
+      plain.replace('class C as','class C implements Required as');
+    assert.deepEqual(compileToProgramIRV2(source),compileToProgramIRV2(plain));
+    assert.equal(compileProgramV2(source),compileProgramV2(plain));
+    assert.equal((await load(source)).main(),42n);
+  }
+  for(const [source,diagnostic] of [
+  [
+    "define interface Required as ping(int n):int; end  define class C implements Required as  end pub fnc main():int{return new C().ping(40);}",
+    "MISSING_INSTANCE_OBLIGATION"
+  ],
+  [
+    "define interface Required as ping(int n):int; end  define class C implements Required as ping(int n):int{return n+2;} end pub fnc main():int{return new C().ping(40);}",
+    "E_IMPL_VISIBILITY"
+  ],
+  [
+    "define interface Required as ping(int n):int; end  define class C implements Required as pub ping(bool n):int{return 42;} end pub fnc main():int{return new C().ping(40);}",
+    "E_IMPL_SIGNATURE"
+  ],
+  [
+    "define interface Required as ping(int n):int; end  define class C implements Required as pub ping(int x):int{return x+2;} end pub fnc main():int{return new C().ping(40);}",
+    "E_IMPL_SIGNATURE"
+  ],
+  [
+    "define interface Required as ping(int n):int; end  define class C implements Required as pub ping(int n):bool{return true;} end pub fnc main():int{return new C().ping(40);}",
+    "E_IMPL_SIGNATURE"
+  ],
+  [
+    "define interface Required as ping(int n):int; end  define class C implements Required as pub ping():int{return 42;} end pub fnc main():int{return new C().ping(40);}",
+    "MISSING_INSTANCE_OBLIGATION"
+  ],
+  [
+    "define interface Required as ping(int n):int; end  define class C implements Unknown as pub ping(int n):int{return n+2;} end pub fnc main():int{return new C().ping(40);}",
+    "E_IMPL_UNRESOLVED"
+  ],
+  [
+    "define interface Required as ping(int n):int; end  define class C implements Required,Required as pub ping(int n):int{return n+2;} end pub fnc main():int{return new C().ping(40);}",
+    "duplicate or excessive"
+  ],
+  [
+    "define interface Required as ping(int n):int; mtd ping(self,int n):int; end  define class C implements Required as pub ping(int n):int{return n+2;} end pub fnc main():int{return new C().ping(40);}",
+    "duplicate method name\\/arity"
+  ],
+  [
+    "define interface Required as ping(int n):int {return 42;} end  define class C implements Required as pub ping(int n):int{return n+2;} end pub fnc main():int{return new C().ping(40);}",
+    "expected ;"
+  ],
+  [
+    "define interface Required as method ping(int n):int; end  define class C implements Required as pub ping(int n):int{return n+2;} end pub fnc main():int{return new C().ping(40);}",
+    "OBSOLETE_METHOD_INTRODUCER"
+  ],
+  [
+    "define interface Required as ping():int; end pub fnc main():int{return 42;}",
+    "E_CONTRACT_PROFILE"
+  ],
+  [
+    "define interface Required as ping(int n):int; end define trait Required as ping(int n):int; end define class C implements Required as pub ping(int n):int{return n+2;} end pub fnc main():int{return new C().ping(40);}",
+    "duplicate nominal declaration"
+  ],
+  [
+    "define interface Required as ping(int n):int; end fnc Required():int{return 42;} define class C implements Required as pub ping(int n):int{return n+2;} end pub fnc main():int{return new C().ping(40);}",
+    "nominal contract\\/callable name collision"
+  ],
+  [
+    "define interface Required as ping(int n):int; end define trait Other as ping(int n):bool; end define class C implements Required,Other as pub ping(int n):int{return n+2;} end pub fnc main():int{return new C().ping(40);}",
+    "E_IMPL_SIGNATURE"
+  ]
+])
+    assert.throws(()=>compileProgramV2(source),new RegExp(diagnostic));
+});
