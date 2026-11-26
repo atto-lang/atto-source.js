@@ -137,6 +137,7 @@ function normalizeProcessSymbolName(input) {
   }
   return value;
 }
+export function tokenizeCountedProfileSource(source) { return tokenize(source); }
 function tokenize(source) {
   validateSourceText(source);
   if (new TextEncoder().encode(source).length > MAX_BYTES) fail('oversized or invalid source');
