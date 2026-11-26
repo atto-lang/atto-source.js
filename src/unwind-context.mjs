@@ -58,6 +58,9 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
   let busy = false;
   let retired = false;
   let active_callback = null;
+  let active_pending = null;
+  let awaiting_callback = false;
+  let cancel_requested = false;
 
   // Tokens are valid only for the current trusted callback invocation.
   // Not a guest-visible ABI: compiler provenance and isolation are still required.
@@ -134,6 +137,8 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     require_error(error);
     const pending = pending_outcome(kind,error);
     busy = true;
+    active_pending = pending;
+    cancel_requested = kind === 'cancel';
     try {
       // Phase 1: search *all* dynamic frames for an ordinary catch/trap.
       // Never invoke a recover handler until this complete search ends.
@@ -172,6 +177,7 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
         const frame = yield* pop_clean(pending);
         if (!recoverable_kinds.has(pending.kind)) continue;
         for (let i = frame.recovers.length - 1; i >= 0; i--) {
+          if (!recoverable_kinds.has(pending.kind)) break;
           const handler = frame.recovers[i];
           const NEXT = Symbol('invocation-local recovery delegation');
           let valid = true;
@@ -188,6 +194,9 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
           enter_callback(true);
           try {
             const result = yield { ...handler, args:[error_view,cursor], diagnostic:'E_ASYNC_RECOVER_UNSUPPORTED' };
+            // An external scheduler cancellation may arrive while awaiting the
+            // trusted handler. Its successful decision may not erase that exit.
+            if (!recoverable_kinds.has(pending.kind)) break;
             if (delegated || !result || !active_callback.recovered.has(result))
               throw new TypeError('E_RECOVERY_DECISION_REQUIRED');
             return Object.freeze({kind:'recovered', value:result.value, error:pending.error});
@@ -203,6 +212,9 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
       }
       return terminal_view(pending);
     } finally {
+      active_pending = null;
+      awaiting_callback = false;
+      cancel_requested = false;
       busy = false;
     }
   }
@@ -212,12 +224,17 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     // Preserve the evaluated return slot before callbacks run.
     const pending = pending_outcome('return',null);
     busy = true;
+    active_pending = pending;
+    cancel_requested = false;
     try {
       yield* pop_clean(pending);
       // A terminal cleanup failure cannot leave outer recovery scopes live.
       if (pending.kind !== 'return') while (frames.length) yield* pop_clean(pending);
       return pending.kind === 'return' ? Object.freeze({kind:'returned',value}) : terminal_view(pending);
     } finally {
+      active_pending = null;
+      awaiting_callback = false;
+      cancel_requested = false;
       busy = false;
     }
   }
@@ -255,7 +272,12 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
       const action = step.value;
       let result;
       try {
-        result = action.suspends ? await action.handler(...action.args) : invoke_sync(action);
+        if (action.suspends) {
+          const promise = action.handler(...action.args);
+          awaiting_callback = true;
+          try { result = await promise; }
+          finally { awaiting_callback = false; }
+        } else result = invoke_sync(action);
       } catch (error) { step = steps.throw(error); continue; }
       step = steps.next(result);
     }
@@ -269,9 +291,20 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     sync_preflight();
     return run_sync(dispatch_failure_steps(kind,error));
   }
-  // Trusted host reference only: no external cancellation/deadline or
-  // guest scheduler admission is implied. Pending cancellation is modeled
-  // by dispatch_failure_async('cancel', error).
+  // Trusted host scheduler ingress only, not an Atto guest capability.
+  // Cancellation seals the pending result but lets the active callback settle
+  // before further unwind/retirement. No forced deadline is implemented.
+  function request_cancel(error) {
+    require_error(error);
+    if (!busy || !awaiting_callback || !active_pending)
+      throw new Error('E_NO_SUSPENDED_UNWIND');
+    if (cancel_requested) return false;
+    cancel_requested = true;
+    merge_failure(active_pending,'cancel',error);
+    return true;
+  }
+  // Trusted host reference only: scheduler authentication and bounded
+  // cancellation deadlines remain compiler/runtime integration gates.
   function return_frame_async(value) {
     return run_async(return_frame_steps(value));
   }
@@ -315,6 +348,7 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     dispatch_failure,
     return_frame_async,
     dispatch_failure_async,
+    request_cancel,
     recovered,
     signal_failure,
     retire() {
