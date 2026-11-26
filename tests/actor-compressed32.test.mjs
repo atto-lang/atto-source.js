@@ -30,3 +30,14 @@ test("JS compressed32 matches cross-backend unsigned actor-offset representation
     0xffff_ffffn,MAX_COMPRESSED32_OFFSET,8n),/outside/);
   assert.equal(dereferenceCompressed32(1n,8n,8n),0n);
 });
+
+test("compressed32 dereference rejects spans beyond the storage ABI ceiling",()=>{
+  const cap=MAX_COMPRESSED32_SPAN;
+  assert.equal(dereferenceCompressed32(0xffff_ffffn,cap,8n),MAX_COMPRESSED32_OFFSET);
+  for(const oversized of [cap+1n,cap+8n,1n<<64n]){
+    assert.throws(()=>dereferenceCompressed32(1n,oversized,1n),/outside logical actor span/);
+    assert.throws(()=>dereferenceCompressed32(0xffff_ffffn,oversized,9n),/outside logical actor span/);
+  }
+  assert.throws(()=>dereferenceCompressed32(0xffff_ffffn,cap,9n),/outside logical actor span/);
+  assert.throws(()=>dereferenceCompressed32(1n,0n,1n),/outside logical actor span/);
+});
