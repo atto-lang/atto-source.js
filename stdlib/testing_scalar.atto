@@ -1,0 +1,27 @@
+// JavaScript backend-local AttoLang scalar test assertions, M0.
+// Public behavior matches the LLVM scalar status contract: 0 pass, 1 fail.
+// This module is linked only by the compiler's bounded std/testing_scalar
+// resolver; full TestSuite/ORESTEST and arbitrary imports remain unsupported.
+pub fnc equal_int(int actual, int expected): int {
+  return actual == expected ? 0 : 1;
+}
+
+pub fnc not_equal_int(int actual, int unexpected): int {
+  return actual != unexpected ? 0 : 1;
+}
+
+pub fnc greater_than_int(int actual, int lower_bound): int {
+  return actual > lower_bound ? 0 : 1;
+}
+
+pub fnc less_than_int(int actual, int upper_bound): int {
+  return actual < upper_bound ? 0 : 1;
+}
+
+pub fnc in_range_int(int actual, int lower_bound, int upper_bound): int {
+  return lower_bound > upper_bound ? 1 : (actual < lower_bound ? 1 : (actual > upper_bound ? 1 : 0));
+}
+
+pub fnc combine_status(int first, int second): int {
+  return first != 0 ? 1 : (second != 0 ? 1 : 0);
+}

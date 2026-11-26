@@ -48,7 +48,16 @@ for(const c of corpus.cases.filter(c=>c.kind==='accept')){
   });
 }
 
-for(const c of corpus.cases.filter(c=>c.kind==='reject')){
+// The original manifest and all its fixture bytes remain pinned above.
+// Spec chapter 17 (2026-11-23) explicitly supersedes the old division rejection.
+const superseded=corpus.cases.find(c=>c.id==='reject.division');
+test('historical reject.division now executes the specified checked quotient',async()=>{
+  const source=await readFile(join(root,superseded.file),'utf8');
+  const esm=compileProgramV2(source);
+  const {main}=await import('data:text/javascript,'+encodeURIComponent(esm));
+  assert.equal(main(),1n);
+});
+for(const c of corpus.cases.filter(c=>c.kind==='reject'&&c.id!=='reject.division')){
   test('shared scalar fail-closed parity: '+c.id,async()=>{
     const source=await readFile(join(root,c.file),'utf8');
     assert.throws(()=>compileProgramV2(source),/error: program v2:|error: program IR:/);

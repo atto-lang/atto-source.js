@@ -13,7 +13,7 @@ test('default and explicitly trusted worker mode allow inert canonical records',
 test('untrusted and unavailable isolation modes never silently become Worker trust',()=>{
   for(const isolation of ['wasmtime-store','vm-isolate','sandboxed-process','untrusted'])
     assert.throws(()=>admit({isolation}),/not implemented by JS Workers/,isolation);
-  assert.throws(()=>admit({isolation:'trusted-worker',untrusted:true}),/separately verified OS sandbox/);
+  assert.throws(()=>admit({isolation:'trusted-worker',untrusted:true}),/untrusted tenant requires a verified TenantVM execution boundary/);
   assert.throws(()=>admit({isolation:'trusted-worker',untrusted:'false'}),/must be a boolean/);
 });
 

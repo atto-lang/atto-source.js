@@ -1,0 +1,62 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {ReadonlyCopyDomain} from '../src/readonly-copy-domain.mjs';
+const deny=(code,fn)=>assert.throws(fn,{code});
+const make=(d,value=1,options={dynamic:true})=>{const o=d.create(options);d.initialize(o,'n',value);d.finish(o);return o;};
+const pair=d=>{const a=make(d),ar=d.identity(a),c=make(d,10),child=d.identity(c);d.moveInto(a,ar,'child',c);return {a,ar,child};};
+test('both field replacement directions, independent slots and immediate recovery',()=>{
+  for(const original of [true,false]){
+    const d=new ReadonlyCopyDomain(),{a,ar,child}=pair(d),b=d.copy(a),br=d.identity(b);
+    deny('E_COPY_READONLY',()=>d.setScalar(a,child,'n',11));
+    deny('E_COPY_READONLY',()=>d.setScalar(b,child,'n',11));
+    d.setScalar(a,ar,'n',20);d.setScalar(b,br,'n',22);
+    assert.equal(d.read(a,ar,'n')+d.read(b,br,'n'),42);
+    const fresh=make(d,30),fr=d.identity(fresh);
+    d.moveInto(original?a:b,original?ar:br,'child',fresh);
+    deny('E_COPY_STALE',()=>d.identity(fresh));
+    d.setScalar(original?a:b,fr,'n',31);
+    d.setScalar(original?b:a,child,'n',12);
+    assert.equal(d.read(original?b:a,child,'n'),12);
+  }
+});
+test('third root and duplicate paths must both be detached',()=>{
+  const d=new ReadonlyCopyDomain(),{a,ar,child}=pair(d);
+  d.linkWithin(a,ar,'again',child);const b=d.copy(a),c=d.copy(b),br=d.identity(b);
+  d.remove(b,br,'child');d.remove(b,br,'again');
+  assert.equal(d.canWrite(a,child),false);d.drop(c);
+  assert.equal(d.canWrite(a,child),true);
+});
+test('read loan blocks recovery after dropping other owner',()=>{
+  const d=new ReadonlyCopyDomain(),{a,child}=pair(d),b=d.copy(a),l=d.readLoan(b,child);
+  d.drop(b);deny('E_COPY_LOAN',()=>d.setScalar(a,child,'n',42));
+  d.release(l);d.setScalar(a,child,'n',42);deny('E_COPY_STALE',()=>d.release(l));
+});
+test('self cycle protects original root, independent clone may detach',()=>{
+  const d=new ReadonlyCopyDomain(),a=make(d),ar=d.identity(a);d.linkWithin(a,ar,'self',ar);
+  const b=d.copy(a),br=d.identity(b);
+  deny('E_COPY_READONLY',()=>d.setScalar(a,ar,'n',2));
+  d.remove(b,br,'self');d.setScalar(a,ar,'n',3);
+});
+test('failed move retains donor and original slot, readonly and foreign denial',()=>{
+  const d=new ReadonlyCopyDomain({maxWork:5}),a=make(d),ar=d.identity(a),fresh=d.create({dynamic:true});
+  d.initialize(fresh,'a',1);d.initialize(fresh,'b',2);d.initialize(fresh,'c',3);d.finish(fresh);
+  deny('E_COPY_BUDGET',()=>d.moveInto(a,ar,'n',fresh));
+  assert.equal(d.read(a,ar,'n'),1);assert.ok(d.identity(fresh));
+  const fixed=d.create();d.initialize(fixed,'x',1,false);d.finish(fixed);
+  deny('E_COPY_READONLY_SLOT',()=>d.moveInto(fixed,d.identity(fixed),'x',fresh));
+  const foreign=new ReadonlyCopyDomain(),f=make(foreign);
+  deny('E_COPY_STALE',()=>d.moveInto(a,ar,'n',f));
+  deny('E_COPY_TYPE',()=>d.setScalar(a,ar,'n',{}));
+});
+test('noncopyable descendants fail closed without partial retention',()=>{
+  const d=new ReadonlyCopyDomain(),a=make(d),ar=d.identity(a),c=make(d,2,{noncopyable:true}),cr=d.identity(c);
+  d.moveInto(a,ar,'child',c);deny('E_COPY_FORBIDDEN',()=>d.copy(a));
+  d.setScalar(a,cr,'n',3);assert.equal(d.read(a,cr,'n'),3);
+});
+test('bounded root and read-loan capacity, scalar fast path',()=>{
+  const d=new ReadonlyCopyDomain({maxRoots:2,maxLoans:1,maxWork:2}),a=make(d),ar=d.identity(a),b=d.copy(a);
+  deny('E_COPY_BUDGET',()=>d.copy(a));
+  const l=d.readLoan(a,ar);deny('E_COPY_BUDGET',()=>d.readLoan(a,ar));
+  d.release(l);for(let i=0;i<10000;i++)d.setScalar(a,ar,'n',i);
+  assert.equal(d.read(a,ar,'n'),9999);assert.equal(d.read(b,d.identity(b),'n'),1);
+});

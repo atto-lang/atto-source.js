@@ -31,17 +31,20 @@
     "./freestanding-core": "./src/freestanding-core.mjs",
     "./freestanding-core-link": "./src/freestanding-core-link.mjs",
     "./select-runtime": "./src/select-runtime.mjs",
+    "./counted-select-ready-v1": "./src/counted-select-ready-compiler.mjs",
+    "./counted-select-i64-batch": "./src/counted-select-i64-batch.mjs",
     "./selectable-i64-channel": "./src/selectable-i64-channel.mjs",
     "./selectable-i64-future": "./src/selectable-i64-future.mjs",
     "./select-continuation-fence": "./src/select-continuation-fence.mjs",
-    "./structural-runtime": "./src/structural-runtime.mjs"
+    "./structural-runtime": "./src/structural-runtime.mjs",
+    "./std-time-runtime": "./src/std-time-runtime.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node bin/oreslang-jsc.mjs --check tests/fixtures/arithmetic.ores",
+    "check": "node scripts/check-js-syntax.mjs && node bin/oreslang-jsc.mjs --check tests/fixtures/arithmetic.ores",
     "parity:js": "node bin/js-semantic-parity-report.mjs",
     "parity:numeric-js": "node bin/js-numeric-boundary-report.mjs",
     "static-facts:smoke": "node bin/oreslang-jsc.mjs --static-facts tests/fixtures/forward-call.ores",
@@ -63,6 +66,7 @@
     "test:program-classes": "node --test tests/program-classes-v2.test.mjs",
     "test:class-methods": "node --test tests/class-methods-compat-v1.test.mjs",
     "test:shared-scalar50": "node --test tests/shared-scalar50-js-esm.test.mjs",
-    "test:atto-canonical": "node --test tests/atto-java-llvm-source-transpilation.test.mjs"
+    "test:atto-canonical": "node --test tests/atto-java-llvm-source-transpilation.test.mjs",
+    "test:std-time": "node --test tests/std-time-runtime.test.mjs"
   }
 }

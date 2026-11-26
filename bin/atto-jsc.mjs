@@ -7,6 +7,7 @@ import {randomBytes} from 'node:crypto';
 import {TextDecoder} from 'node:util';
 import {compileStructuralProjectionIR} from '../src/structural-projection-ir.mjs';
 import {compileStructuralProjectionSource} from '../src/structural-source.mjs';
+import {compileFunctionalPipelineSource} from '../src/functional-pipelines.mjs';
 import {parseStrictJsonReport} from '../src/parity-json-strict.mjs';
 
 const MAX_BYTES=262144;
@@ -41,8 +42,10 @@ async function boundedText(path) {
 try {
   const args=process.argv.slice(2);
   const mode=args.shift();
-  if(mode!=='--structural-source'&&mode!=='--structural-ir')
-    throw Error('usage: atto-jsc --structural-source|--structural-ir [--portable] [--check] input.atto|input.json [--out=/absolute/output.mjs]');
+  if(mode!=='--structural-source'&&mode!=='--structural-ir'&&mode!=='--functional-source')
+    throw Error('usage: atto-jsc --structural-source|--structural-ir|--functional-source [--allow-stdio (functional only)] [--portable] [--check] input.atto|input.json [--out=/absolute/output.mjs]');
+  const allowStdio=args[0]==='--allow-stdio';
+  if(allowStdio){if(mode!=='--functional-source')throw Error('E_PERMISSION');args.shift();}
   const portable=args[0]==='--portable';
   if(portable)args.shift();
   const checkOnly=args[0]==='--check';
@@ -52,8 +55,12 @@ try {
      (args.length&&!args[0].startsWith('--out='))||
      (checkOnly&&args.length))
     throw Error('invalid structural CLI input or output arguments');
+  if(mode==='--functional-source'&&!input.endsWith('.atto'))
+    throw Error('functional source mode requires .atto input');
   const text=await boundedText(resolve(input));
-  const result=mode==='--structural-ir'
+  const result=mode==='--functional-source'
+    ?compileFunctionalPipelineSource(text,{allowStdio})
+    :mode==='--structural-ir'
     ?compileStructuralProjectionIR(parseStrictJsonReport(text,MAX_BYTES,'Atto typed IR'),{portable})
     :compileStructuralProjectionSource(text,{portable});
   if(checkOnly)process.stdout.write('OK\n');

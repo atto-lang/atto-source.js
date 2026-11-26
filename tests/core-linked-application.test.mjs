@@ -9,7 +9,7 @@ import {createHash} from 'node:crypto';
 import {compileLinkedFreestandingCore,checkLinkedFreestandingCore}
   from '../src/freestanding-core-link.mjs';
 import {compileLinkedFreestandingCore as compileViaPublicExport}
-  from '@oreslang/source-js/freestanding-core-link';
+  from '@atto-lang/source-js/freestanding-core-link';
 
 const corePath=resolve('tests/fixtures/freestanding-core-java.ores');
 const appPath=resolve('tests/fixtures/core-linked-app.ores');

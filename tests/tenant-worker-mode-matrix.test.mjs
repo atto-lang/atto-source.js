@@ -13,7 +13,7 @@ test('only explicitly trusted Worker modes are accepted',()=>{
 
 test('untrusted flag cannot be bypassed by ordering or incompatible modes',()=>{
  for(const isolation of ['trusted-worker','wasmtime-store','vm-isolate'])
-  assert.throws(()=>requireSupportedTenantWorkerIsolation({untrusted:true,isolation}),/separately verified OS sandbox/);
+  assert.throws(()=>requireSupportedTenantWorkerIsolation({untrusted:true,isolation}),/untrusted tenant requires a verified TenantVM execution boundary/);
  for(const untrusted of ['false',0,1,null])
   assert.throws(()=>requireSupportedTenantWorkerIsolation({untrusted}),/untrusted must be a boolean/);
 });
