@@ -32,12 +32,18 @@ test('oversized Result match literals reject before emitting a guest',()=>{
     '9223372036854775808',
     '-9223372036854775809',
     '9'.repeat(60000),
-    '-9'.repeat(60000),
+    '-'+'9'.repeat(60000),
     '0'.repeat(6000)+'9223372036854775808'
-  ]) assert.throws(
-    ()=>transpile_to_worker(subject(literal)),
-    e=>e instanceof TranspileError && e.code==='E_INT_OVERFLOW'
-  );
+  ]){
+    assert.ok(Buffer.byteLength(subject(literal))<=64*1024,'within source budget');
+    assert.throws(
+      ()=>transpile_to_worker(subject(literal)),
+      e=>e instanceof TranspileError && e.code==='E_INT_OVERFLOW',literal.length+' chars'
+    );
+  }
+  for(const literal of ['9'.repeat(66000),'-'+'9'.repeat(66000)])
+    assert.throws(()=>transpile_to_worker(subject(literal)),
+      e=>e instanceof TranspileError && e.code==='E_SOURCE_LIMIT');
 });
 
 test('Result match literal bounds do not mask typed tag or parse errors',async()=>{

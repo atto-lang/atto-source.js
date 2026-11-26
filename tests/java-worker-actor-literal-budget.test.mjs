@@ -44,12 +44,16 @@ test('actor literal overflow fails closed before BigInt materialization',()=>{
     '9223372036854775808',
     '-9223372036854775809',
     '9'.repeat(60000),
-    '-9'.repeat(60000),
+    '-'+'9'.repeat(60000),
     '0'.repeat(4096)+'9223372036854775808'
   ];
-  for(const value of rejected)
-    assert.throws(()=>build(value),error=>error instanceof TranspileError&&error.code==='E_INT_OVERFLOW');
-  assert.throws(()=>build('9'.repeat(66000)),error=>error instanceof TranspileError&&error.code==='E_SOURCE_LIMIT');
+  // Exercise the integer bound while staying within the separate source budget.
+  for(const value of rejected){
+    assert.ok(Buffer.byteLength(actor(value))<=64*1024,'within source budget');
+    assert.throws(()=>build(value),error=>error instanceof TranspileError&&error.code==='E_INT_OVERFLOW',value.length+' chars');
+  }
+  for(const value of ['9'.repeat(66000),'-'+'9'.repeat(66000)])
+    assert.throws(()=>build(value),error=>error instanceof TranspileError&&error.code==='E_SOURCE_LIMIT');
 });
 
 test('actor overflow panic leaves owned state unchanged after rejected message',async()=>{
