@@ -6,6 +6,7 @@ on:
       - 'tests/incremental-session.test.mjs'
       - 'tests/compiler-cache-envelope.test.mjs'
       - 'src/compiler-cache-envelope.node.mjs'
+      - 'src/compiler-artifact-store.node.mjs'
       - '.github/workflows/incremental-session-candidate.yml'
   workflow_dispatch:
 permissions: {contents: read}
