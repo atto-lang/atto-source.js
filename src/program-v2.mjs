@@ -1869,11 +1869,11 @@ function emitProgram(program) {
     'function _guestEffect(kind,message){const e=new Error(message);Object.defineProperty(e,"effect",{value:kind,enumerable:true});if(kind==="throw")_ordinaryGuestBrand.add(e);throw Object.freeze(e);}'
   );
   function containsCatch(value){return !!value&&typeof value==='object'&&(value.kind==='tryCatch'||Object.values(value).some(containsCatch));}
-  if(containsTrap(program)||containsCatch(program))out.push('function _isOrdinaryGuest(e){return _arithmeticBrand.has(e)||(typeof _ordinaryGuestBrand!=="undefined"&&_ordinaryGuestBrand.has(e));}');
+  if(containsTrap(program)||containsCatch(program))out.push('function _isOrdinaryGuest(e){return _arithmeticBrand.has(e)||(typeof _ordinaryGuestBrand!=="undefined"&&_ordinaryGuestBrand.has(e))||(typeof _checkedUnwrapBrand!=="undefined"&&_checkedUnwrapBrand.has(e));}');
   if(containsTrap(program))out.push(
-      'const _trapBrand=new WeakSet();',
+      'const _trapBrand=new WeakSet(),_checkedUnwrapBrand=new WeakSet();',
       'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult"||t==="trapOptionResult"){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}const result=t==="option<int>"?_tag("Ok",_checkoption(v)):t==="int"?_ok(v):_checkresult(v);_trapBrand.add(result);return result;}catch(e){if(!_isOrdinaryGuest(e))throw e;const result=_tag("Err",e);_trapBrand.add(result);return result;}}',
-      'function _trapMethod(m,result,option){if(!_trapBrand.has(result))throw new TypeError("invalid trap Result");if(m==="is_ok")return result.kind==="Ok";if(m==="is_err")return result.kind==="Err";if(m==="unwrap"&&result.kind==="Ok")return option?_checkoption(result.value):_check(result.value);if(m==="unwrap"){const e=new Error("cannot unwrap Err",{cause:result.value});Object.defineProperty(e,"name",{value:"ResultUnwrapPanic"});throw Object.freeze(e);}throw new TypeError("invalid trap Result method");}'
+      'function _trapMethod(m,result,option){if(!_trapBrand.has(result))throw new TypeError("invalid trap Result");if(m==="is_ok")return result.kind==="Ok";if(m==="is_err")return result.kind==="Err";if(m==="unwrap"&&result.kind==="Ok")return option?_checkoption(result.value):_check(result.value);if(m==="unwrap"){const e=new Error("cannot unwrap Err",{cause:result.value});Object.defineProperty(e,"name",{value:"ResultUnwrapError"});_checkedUnwrapBrand.add(e);throw Object.freeze(e);}throw new TypeError("invalid trap Result method");}'
   );
   (program.classes??[]).forEach((cls,classIndex)=>{
     const local='_class'+classIndex;
