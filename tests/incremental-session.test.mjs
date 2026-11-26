@@ -45,7 +45,8 @@ test('persistent compiler output executes across process restart',async()=>{
  if(child){const warm=cached(child,aSource,false,true);assert.equal(warm.reused,true);await executeCached(warm.code,42);console.log('PERSISTENT_NODE_CHILD|no-compile|guest=42');return;}
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'atto-cache-'));try{
  const cold=cached(root,aSource,true);assert.equal(cold.reused,false);assert.equal(cold.code,fresh(aSource));await executeCached(cold.code,42);
- const p=spawnSync(process.execPath,['--test','--test-name-pattern=persistent compiler output',new URL(import.meta.url).pathname],{env:{...process.env,ATTO_CACHE_FIXTURE_CHILD:root},encoding:'utf8',timeout:60000});
+ const env={...process.env,ATTO_CACHE_FIXTURE_CHILD:root};delete env.NODE_TEST_CONTEXT;
+ const p=spawnSync(process.execPath,['--test','--test-reporter=tap','--test-name-pattern=persistent compiler output',new URL(import.meta.url).pathname],{env,encoding:'utf8',timeout:60000});
  assert.equal(p.status,0,p.stdout+p.stderr);assert.match(p.stdout,/PERSISTENT_NODE_CHILD/);
  const edited=cached(root,bSource);assert.equal(edited.reused,false);assert.equal(edited.code,fresh(bSource));await executeCached(edited.code,43);
  const file=path.join(root,'slot-'+artifactKey(bSource)[0]),before=fs.readFileSync(file);
