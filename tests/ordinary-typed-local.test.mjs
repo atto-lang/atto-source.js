@@ -9,8 +9,8 @@ test('typed ordinary bool and string locals execute real generated ESM',async()=
     assert.equal(guest.main(),42n,body);
   }
 });
-test('typed local mismatch, rebinding, unsupported text and strict profile reject',()=>{
-  for(const body of ['let bool x = 1; return 42;','let string x = true; return 42;','let string x = "é"; return 42;','let string x = "'+'a'.repeat(257)+'"; return 42;','let bool x = true; x = false; return 42;','val string x = "hi"; return x;'])
+test('typed local mismatch, unsupported rebinding, invalid Unicode and strict profile reject',()=>{
+  for(const body of ['let bool x = 1; return 42;','let string x = true; return 42;','let string x = "\\uD800"; return 42;','let string x = "'+'a'.repeat(257)+'"; return 42;','let bool x = true; x = false; return 42;','val string x = "hi"; return x;'])
     assert.throws(()=>compileProgramV2(src(body)),undefined,body);
   assert.throws(()=>compileVerifiedStrict('type Bounded = int where self >= 1 and self <= 42; '+src('val bool x = true; return 42;')));
 });

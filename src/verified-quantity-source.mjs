@@ -361,9 +361,28 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     const p=condition(header);
     expect('{');
     let current=new Map(p.yes);const declared=new Map(mutable),steps=[];
+    let hasBreak=false;
     while(!take('}')){
       if(--budget<0)fail('E_UNIT_LIMIT','strict loop statement budget');
       locals=current;
+      // Restricted guard-only loop exits; no arbitrary branching inside loop
+      // bodies. The continue edge is checked against every written invariant.
+      // A break invalidates the assumption that the header condition is false.
+      if(peek().value==='if'||['break','continue'].includes(peek().value)){
+        const guarded=take('if');
+        const edge=guarded?condition(current):{ir:{kind:'bool',value:true},yes:current,no:current};
+        if(guarded)expect('{');
+        const kind=take('break')?'break':take('continue')?'continue':null;
+        if(kind===null)fail('E_VERIFY_UNSUPPORTED','strict loop if requires a direct break or continue');
+        expect(';');
+        if(guarded)expect('}');
+        else if(peek().value!=='}')fail('E_VERIFY_UNSUPPORTED','statement after unconditional loop exit');
+        if(kind==='continue')for(const key of writes)boundary(mutable.get(key),edge.yes.get(key),'E_REFINEMENT_BINDING');
+        if(kind==='break')hasBreak=true;
+        steps.push({kind:'loopExit',exit:kind,condition:edge.ir});
+        current=new Map(edge.no);
+        continue;
+      }
       if(take('while')){
         const nested=loopPlan(current,declared,depth+1,false);
         steps.push({kind:'loop',condition:nested.condition,steps:nested.steps});
@@ -397,7 +416,8 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       fail('E_VERIFY_UNSUPPORTED','strict loop statement not admitted');
     }
     for(const key of writes)boundary(mutable.get(key),current.get(key),'E_REFINEMENT_BINDING');
-    return {states,condition:p.ir,steps,exit:p.no};
+    // All break paths retain the declared ranges, but not the false header guard.
+    return {states,condition:p.ir,steps,exit:hasBreak?header:p.no};
   }
   // Fixed, nonescaping scalar arrays are scalar-replaced into immutable
   // captures. Every initializer is evaluated exactly once, in source order.
