@@ -87,3 +87,33 @@ test('fair rotation preserves exact surviving lexical occurrence after Future re
   assert.equal(b.tryRead().value,3n);
   assert.equal(a.tryRead().value,1n);
 });
+
+test('mixed lexical priority does not group channels before Futures',()=>{
+  const a=new Channel(2),f=new Future();
+  a.tryWrite(20n);a.tryWrite(30n);f.resolve(10n);
+  const c=new Cursor(2,[f,a],'first');
+  round(c);round(c);
+  assert.deepEqual(c.result(),[10n,20n]);
+  assert.equal(a.tryRead().value,30n);
+  assert.equal(a.pendingReaders+f.pendingWaiters,0);
+});
+test('mixed FAIR order survives Future alias retirement',()=>{
+  const a=new Channel(2),b=new Channel(2),f=new Future();
+  a.tryWrite(10n);a.tryWrite(40n);b.tryWrite(30n);b.tryWrite(50n);f.resolve(20n);
+  const c=new Cursor(4,[a,f,b,f]);
+  for(let i=0;i<4;i++)round(c);
+  assert.deepEqual(c.result(),[10n,20n,30n,40n]);
+  assert.equal(b.tryRead().value,50n);
+  assert.equal(a.pendingReaders+b.pendingReaders+f.pendingWaiters,0);
+});
+test('sparse and unsupported source positions fail before registration; zero ignores sources',()=>{
+  const a=new Channel(1);
+  assert.throws(()=>new Cursor(1,[a,,]),/dense/);
+  assert.throws(()=>new Cursor(1,[a,{}]),/trusted i64 source/);
+  assert.equal(a.pendingReaders,0);
+  const untouched={get length(){throw new Error('zero inspected sources');}};
+  assert.deepEqual(new Cursor(0,untouched).result(),[]);
+  const dense=[a];dense.map=()=>{throw new Error('must not call caller map');};
+  a.tryWrite(42n);
+  const c=new Cursor(1,dense);round(c);assert.deepEqual(c.result(),[42n]);
+});

@@ -15,11 +15,17 @@ export class CountedSelectI64Cursor {
     if(count===0){this.#live=[];this.#state='success';return;}
     if(!Array.isArray(sources)||sources.length<1||sources.length>256)
       throw new RangeError('counted source count');
-    this.#live=sources.map(source=>{
+    // Array.map skips holes and can be overridden. Validate every lexical
+    // position before creating any registration, including sparse arrays.
+    const length=sources.length;
+    this.#live=[];
+    for(let i=0;i<length;i++){
+      if(!Object.hasOwn(sources,i))throw new TypeError('counted source list must be dense');
+      const source=sources[i];
       if(!(source instanceof SelectableI64Channel)&&!(source instanceof SelectableI64Future))
         throw new TypeError('counted selection requires trusted i64 source');
-      return source;
-    });
+      this.#live.push(source);
+    }
     this.#state='ready';
   }
   get state(){return this.#state;}
