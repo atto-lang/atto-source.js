@@ -114,43 +114,77 @@ export function compileIntConstLambdaDirect(tokens) {
     }
     binding = parseHead();
   }
+  // Scalarize only literal, immutable tuples in this closed source profile.
+  // No general tuple object, ownership-sensitive projection or adapter ABI.
+  const parseArgs = () => {
+    const args = [];
+    expect('(');
+    if (!has(')')) {
+      do {
+        if (args.length >= binding.params.length) fail('E_ARITY', 'too many lambda arguments');
+        const token = peek();
+        let value; let type;
+        if (take('true')) { value = true; type = 'bool'; }
+        else if (take('false')) { value = false; type = 'bool'; }
+        else if (has('-') || token.kind === 'int') { value = number(); type = 'int'; }
+        else fail('E_TYPE', 'direct lambda arguments must be scalar literals');
+        const p = binding.params[args.length];
+        if (p.type !== null && p.type !== type) fail('E_TYPE', 'lambda argument type mismatch', token);
+        args.push({type,value});
+      } while (take(','));
+    }
+    expect(')');
+    return args;
+  };
+  const literalTuple = () => {
+    if (binding.functionName === 'tuple')
+      fail('E_UNSUPPORTED', 'tuple constructor identity is shadowed');
+    expect('tuple');
+    return parseArgs();
+  };
+  let saved;
+  if (take('val')) {
+    const identifier = name();
+    if (identifier === binding.functionName || identifier === 'tuple')
+      fail('E_DUPLICATE', 'tuple binding shadows callable or constructor');
+    expect('=');
+    saved = {identifier, args:literalTuple()};
+    expect(';');
+  }
+  const tupleOperand = () => {
+    if (saved && has(saved.identifier)) { i++; return saved.args; }
+    if (saved) fail('E_UNSUPPORTED', 'unused tuple binding is unsupported');
+    return literalTuple();
+  };
+  const requireCallable = () => {
+    if (name() !== binding.functionName)
+      fail('E_CONST', 'only direct calls to the closed const binding are supported');
+  };
   expect('return');
-  if (name() !== binding.functionName) fail('E_CONST', 'only direct calls to the closed const binding are supported');
-  // Intrinsics are admitted only after resolving the exact closed callable.
-  // Both forms enter the existing checked scalar argument binder below.
-  let tupleApply = false;
-  if (take('.')) {
-    if (take('call')) {
-      // Identical argument grammar to ordinary invocation.
-    } else if (take('apply')) {
-      tupleApply = true;
-      // This bounded profile has no first-class tuple storage. A local
-      // callable named tuple could shadow the constructor; fail closed.
-      if (binding.functionName === 'tuple')
-        fail('E_UNSUPPORTED', 'tuple constructor identity is shadowed');
-    } else fail('E_UNSUPPORTED', 'unsupported callable member');
+  let args;
+  if ((has('tuple') && binding.functionName !== 'tuple') || (saved && has(saved.identifier))) {
+    args = tupleOperand();
+    expect('|>'); requireCallable(); expect('.'); expect('apply');
+  } else {
+    requireCallable();
+    if (take('.')) {
+      if (take('call')) {
+        if (saved) fail('E_UNSUPPORTED', 'unused tuple binding is unsupported');
+        args = parseArgs();
+      } else if (take('apply')) {
+        expect('('); args = tupleOperand(); expect(')');
+      } else fail('E_UNSUPPORTED', 'unsupported callable member');
+    } else {
+      if (saved) fail('E_UNSUPPORTED', 'unused tuple binding is unsupported');
+      args = parseArgs();
+    }
   }
-  expect('(');
-  if (tupleApply) { expect('tuple'); expect('('); }
-  const args = [];
-  if (!has(')')) {
-    do {
-      if (args.length >= binding.params.length) fail('E_ARITY', 'too many lambda arguments');
-      const token = peek();
-      let value; let type;
-      if (take('true')) { value = true; type = 'bool'; }
-      else if (take('false')) { value = false; type = 'bool'; }
-      else if (has('-') || token.kind === 'int') { value = number(); type = 'int'; }
-      else fail('E_TYPE', 'direct lambda arguments must be scalar literals');
-      const p = binding.params[args.length];
-      if (p.type !== null && p.type !== type) fail('E_TYPE', 'lambda argument type mismatch', token);
-      if (p.type === null) p.type = type;
-      args.push({type,value});
-    } while (take(','));
-  }
-  expect(')');
-  if (tupleApply) expect(')');
   expect(';'); expect('}');
+  for (let k = 0; k < args.length; k++) {
+    const p = binding.params[k];
+    if (p.type !== null && p.type !== args[k].type) fail('E_TYPE', 'lambda argument type mismatch');
+    if (p.type === null) p.type = args[k].type;
+  }
   if (peek()?.kind !== 'eof') fail('E_SYNTAX', 'trailing source not admitted');
   if (args.length !== binding.params.length) fail('E_ARITY', 'missing lambda arguments');
   if (binding.body.kind === 'param' && binding.params[binding.body.index].type !== 'int')
