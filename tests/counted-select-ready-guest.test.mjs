@@ -61,3 +61,17 @@ test('dynamic invalid count fails before registration, and an empty direct read 
     const p=join(dir,'empty-read.mjs');await writeFile(p,compileCountedReadyV1(empty));await assert.rejects((await import(pathToFileURL(p))).main(),/E_READY_ONLY/);
   }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('exceptional guest exit cancels the owned pending batch before its first pump',async()=>{
+  const {CountedSelectI64Batch:Batch}=await import('../src/counted-select-i64-batch.mjs');
+  const pump=Batch.prototype.pump,cancel=Batch.prototype.cancel;
+  let pumps=0,cancels=0;
+  Batch.prototype.pump=function(){pumps++;return pump.call(this);};
+  Batch.prototype.cancel=function(){cancels++;return cancel.call(this);};
+  const dir=await mkdtemp(join(process.cwd(),'.counted-ready-'));
+  try {
+    const source='suspends fnc main(): int { val Channel<int> a = Channel.new<int>(1); writech a, 42; val Future<Array<int>> pending = select<int>(1) { when readch a: int n -> { return n; } }; val int overflow = 9223372036854775807 + 1; val Array[int] b = await pending; return b[0]; }';
+    const path=join(dir,'retire.mjs');await writeFile(path,compileCountedReadyV1(source));await assert.rejects((await import(pathToFileURL(path))).main(),/E_I64_OVERFLOW/);
+    assert.equal(pumps,0);assert.equal(cancels,1);
+  }finally{Batch.prototype.pump=pump;Batch.prototype.cancel=cancel;await rm(dir,{recursive:true,force:true});}
+});

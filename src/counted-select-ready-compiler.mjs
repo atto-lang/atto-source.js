@@ -96,7 +96,7 @@ class Parser {
     // before materializing the source plan.
     if(literal!==0n)for(const s of futures)s.moved=true;
     const args=literal===0n?'0n,()=>[[],[]]':count+',()=>[['+cases.join(',')+'],['+projects.join(',')+']]';
-    const code='_startBatch('+args+','+JSON.stringify(policy)+')';
+    const code='_startBatch('+args+','+JSON.stringify(policy)+',_owned)';
     return direct?expr('array','(await '+code+')'):expr('futureArray',code);
   }
   defaultFuture(){
@@ -159,30 +159,43 @@ function _read(c){const r=c.tryRead();if(!r.ok)throw new Error('E_READY_ONLY: ch
 function _at(a,i){if(i<0||i>=a.length)throw new RangeError('E_ARRAY_BOUNDS');return _i(a[i]);}
 function _ready(project){const f=new _Future();try{f.resolve(_i(project()));}catch(e){f.fail(e);}return f;}
 function _awaitReady(f){const s=f.subscribeReady(()=>{});try{const c=f.createResultCell();if(!f.tryCommit(s,c))throw new Error('E_READY_ONLY: Future would suspend');if(c.status!=='value')throw c.error??new Error('Future failed');return _i(c.value);}finally{s.close();}}
-function _startBatch(count,plan,policy){
+function _startBatch(count,plan,policy,owned){
   if(typeof count!=='bigint'||count<0n||count>16n)throw new RangeError('SelectCountInvalid');
   const n=Number(count),[s,p]=n===0?[[],[]]:plan();
-  const completion=_batch(n,s,p,policy);
-  completion.catch(()=>{});
-  return completion;
-}
-async function _batch(n,s,p,policy){
   const b=new _Batch(n,s,policy,p);
-  // Register a rejection observer before driving; preserve exact failure.
-  const completion=b.completion;completion.catch(()=>{});
+  const record={batch:b,cancelled:false,driver:null};
+  owned.add(record);
+  record.driver=_batch(record,n,s.length);
+  record.driver.then(()=>owned.delete(record),()=>owned.delete(record));
+  return record.driver;
+}
+async function _batch(record,n,arms){
+  const b=record.batch,completion=b.completion;completion.catch(()=>{});
   let terminal=false;completion.then(()=>{terminal=true;},()=>{terminal=true;});
   try {
     await Promise.resolve();
-    for(let i=0;!terminal&&i<2*(n+s.length)+2;i++){
+    for(let i=0;!terminal&&!record.cancelled&&i<2*(n+arms)+2;i++){
       if(!b.pump()){b.cancel();throw new Error('E_READY_ONLY: counted selection would suspend');}
       await Promise.resolve();
     }
+    if(record.cancelled)return await completion;
     if(!terminal){b.cancel();throw new Error('E_READY_ONLY: counted selection budget exceeded');}
     return await completion;
-  }finally{if(!terminal)b.cancel();}
+  }finally{if(!terminal&&!record.cancelled)b.cancel();}
+}
+// A failed main cannot leave a queued owner driver consuming channel data.
+// Revoke first, then join all physical owner continuations before exiting.
+async function _drain(owned){
+  const pending=[...owned],errors=[];
+  for(const record of pending){
+    record.cancelled=true;
+    try{record.batch.cancel();}catch(e){errors.push(e);}
+  }
+  await Promise.allSettled(pending.map(record=>record.driver));
+  if(errors.length)throw new AggregateError(errors,'counted guest retirement failure');
 }
 `;
 export function compileCountedReadyV1(source){
   const body=new Parser(source).parse();
-  return runtime+'\nexport async function main(){\n'+body+'\n}\n';
+  return runtime+'\nexport async function main(){\nconst _owned=new Set();\ntry {\n'+body+'\n}finally{await _drain(_owned);}\n}\n';
 }
