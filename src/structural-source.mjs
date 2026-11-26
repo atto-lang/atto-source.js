@@ -68,7 +68,7 @@ class Parser {
   get t(){return this.tokens[this.pos];}
   eat(s){if(this.t.value===s){this.pos++;return true;}return false;}
   expect(s){if(!this.eat(s))fail('expected '+s+', got '+this.t.value,this.t);}
-  id(){const t=this.t;if(t.kind!=='id')fail('identifier expected',t);this.pos++;return t.value;}
+  id(){const t=this.t;if(t.kind!=='id'||t.value==='sync')fail('identifier expected',t);this.pos++;return t.value;}
   type(){const t=this.t,v=this.id();if(!['int','bool','string'].includes(v))fail('unsupported scalar type '+v,t);return v;}
   fieldDescriptor(publicly){const name=this.id();this.expect(':');return {name,type:this.type(),public:publicly};}
   contract(){

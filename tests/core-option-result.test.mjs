@@ -62,7 +62,7 @@ test('host values cannot smuggle malformed tagged values into a core function',a
       value:{get(){throw Error('must never read accessor');},enumerable:true}
     }))
   ]){
-    assert.throws(()=>core.fallback(bad,7n),/TypeError|RangeError/);
+    assert.throws(()=>core.fallback(bad,7n),e=>e instanceof TypeError||e instanceof RangeError);
   }
   const mutable=Object.assign(Object.create(null),{kind:'Some',value:1n});
   assert.throws(()=>core.fallback(mutable,2n),/tagged value/);
@@ -125,9 +125,13 @@ test('external IR cannot forge ADT intrinsic operation or argument types',async(
   ])assert.throws(()=>compileProgramIRV2(mutate(bad)),/error: program IR:/);
 });
 
-test('old integer-only IR and emitted ESM remain stable',async()=>{
+test('old integer-only IR and deterministic ESM retain bounded checked-error runtime',async()=>{
   const src=await old(),ir=compileToProgramIRV2(src);
-  assert.equal(compileProgramV2(src).length,1662);
+  const emitted=compileProgramV2(src);
+  // Historical 1662-byte output is superseded by the nominal error ABI (+392).
+  assert.equal(emitted.length,2054);
+  assert.equal(emitted,compileProgramV2(src));
+  assert.doesNotMatch(emitted,/const _trapBrand/);
   assert.equal(ir.functions.length,3);
   for(const fn of ir.functions){
     assert.equal(Object.hasOwn(fn,'returnType'),false);

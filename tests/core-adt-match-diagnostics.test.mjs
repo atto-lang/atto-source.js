@@ -33,9 +33,12 @@ test('forged typed capture and escaped capture fail for different reasons',async
   assert.throws(()=>validateProgramIRV2(mistyped),/ADT int payload capture type mismatch/);
 });
 
-test('valid nested captures and original source ESM remain unchanged',async()=>{
+test('valid nested captures retain deterministic bounded ESM',async()=>{
   const generated=compileFreestandingCore(await fixture());
-  assert.equal(generated.length,5343);
+  // +392 bytes for the decided nominal arithmetic error runtime; no trap helpers.
+  assert.equal(generated.length,5735);
+  assert.equal(generated,compileFreestandingCore(await fixture()));
+  assert.doesNotMatch(generated,/const _trapBrand/);
   assert.match(generated,/case "Some"/);
   assert.match(generated,/case "Err"/);
 });

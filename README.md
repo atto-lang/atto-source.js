@@ -73,3 +73,34 @@ Rust/Wasm compiled guest conformance. Web/Node Workers do **not** securely
 sandbox arbitrary JavaScript within the same origin. Do not run untrusted
 tenants through this JS backend. Use `npm test` with Node 22+ for its focused
 host tests, and report separate browser/compiler/guest validation evidence.
+
+## Narrow inline `sync task` preview (trusted JS only)
+
+The checked-i64 browser-worker subset admits pure, nonsuspending
+`sync task<int> { return expression; }` and inferred
+`sync task { return expression; }` expressions, including nesting.
+Empty `sync task {}` has a `void` result and must use
+`do sync task {};` when its value is discarded. The **only** permitted
+payload for `do sync task` is `void`: the explicit
+`do sync task<void> { return; };` and inferred-void
+`do sync task { return; };` are accepted, but `do sync task<int>`
+or `do sync task { return 42; }` reject with `E_TASK_RETURN_TYPE`.
+A bare `sync task {}` statement is rejected with
+`E_SYNTAX`. To produce a value, consume
+`sync task<int> { return expression; }` as an expression instead. Every supported inline body executes immediately on the caller's
+logical execution path, without a child Future, TaskId, worker dispatch,
+or new cancellation target. Checked-i64 panics in discarded expressions
+are still observed. There is no host-JavaScript passthrough.
+
+This is **not** a general Task implementation. Task spawning, `await task`,
+suspension inside inline bodies, captures, `using`/`defer`, locks,
+cancellation safepoints and arbitrary side effects remain unsupported and
+fail closed before generating a guest module. Web Workers are not a secure
+TenantVM. See `tests/sync-task-inline.test.mjs` and the normative target in
+atto-spec #129; host tests alone do not certify cross-backend conformance.
+
+The inline-task scanner checks the significant decimal digits against the
+signed-i64 bounds **before** invoking BigInt, including negative-minimum
+literals with long leading-zero padding. Source bytes, token count, expression
+nesting, and task count are bounded. This admission check does not implement
+cancellation or make JavaScript Workers into a secure TenantVM.
