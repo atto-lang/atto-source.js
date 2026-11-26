@@ -117,10 +117,10 @@ function lex(src) {
       }
       while(i<literal.end)advance();
       add(literal.kind,literal,loc);
-    }else if(src.startsWith('->',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
+    }else if(src.startsWith('->',i)||src.startsWith('<-',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
     else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
     else if(src[i]==='^')throw new CompileError(src.startsWith('^^',i)?"'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)":"'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",loc);
-    else if('(){}[]:,;+-*/=.!<>'.includes(src[i])){add('sym',src[i],loc);advance();}
+    else if('(){}[]:,;+-*/=.!<>@•'.includes(src[i])){add('sym',src[i],loc);advance();}
     else throw new CompileError('unsupported character',loc);
   }
   out.push({kind:'eof',value:'<eof>',line,col});
@@ -239,7 +239,7 @@ function rejectAmbiguousProductFactories(tokens) {
   }
 }
 class Parser {
-  constructor(tokens){this.ts=tokens;this.pos=0;this.depth=0;}
+  constructor(tokens){this.ts=tokens;this.pos=0;this.depth=0;this.guarantees=[];}
   peek(){return this.ts[this.pos];}
   match(v){if(this.peek().value===v){this.pos++;return true;}return false;}
   expect(v){if(!this.match(v))throw new CompileError('expected '+v+', found '+this.peek().value,this.peek());}
@@ -264,13 +264,25 @@ class Parser {
         exports.push(this.exportDeclaration());continue;
       }
       if(functions.length>=512)throw new CompileError('function limit',this.peek());
+      const markers=new Map();
+      while(this.match('@')){
+        const token=this.peek(), marker=this.id();
+        if(!['noalloc','nocopy'].includes(marker)||markers.has(marker))
+          throw new CompileError('E_ANNOTATION: unknown or duplicate guarantee',token);
+        markers.set(marker,token);
+      }
       // Accept only one define and one pub, in either canonical order.
       // Deliberately do not admit pub define module in this scalar subset.
       let pub=this.match('pub');
       if(pub){this.match('define');}
       else if(this.match('define')){pub=this.match('pub');}
       const at=this.peek();
-      if(!this.match('fnc')&&!this.match('routine'))throw new CompileError('unsupported declaration',at);
+      const abbreviated=at.value==='int' && this.ts[this.pos+1]?.value==='<-';
+      if(markers.size && at.value!=='fnc' && !abbreviated)
+        throw new CompileError('E_ANNOTATION: guarantee requires named callable',at);
+      if(!abbreviated&&!this.match('fnc')&&!this.match('routine'))throw new CompileError('unsupported declaration',at);
+      const returnFirst=this.peek().value==='int' && ['•','<-'].includes(this.ts[this.pos+1]?.value);
+      if(returnFirst){this.expect('int');this.pos++;}
       const name=this.id();this.expect('(');const params=[];
       if(!this.match(')')){
         do{if(params.length>=128)throw new CompileError('parameter limit');this.expect('int');const v=this.id();if(params.includes(v))throw new CompileError('duplicate parameter '+v);params.push(v);}while(this.match(','));
@@ -279,15 +291,20 @@ class Parser {
       // The bootstrap parser only supports int functions with a single
       // return expression. Support canonical arrow/end spellings without
       // pretending to support arbitrary statement bodies or async functions.
-      const arrow=this.match('->');
-      if(!arrow)this.expect(':');
-      this.expect('int');
+      let arrow=false;
+      if(!returnFirst){
+        arrow=this.match('->');
+        if(!arrow)this.expect(':');
+        this.expect('int');
+        if(!arrow)arrow=this.match('->');
+      }
       const braced=this.match('{');
       if(!braced&&!arrow)throw new CompileError('expected { for colon function body',this.peek());
       if(!braced){if(!this.match('as'))this.match('::');}
       this.expect('return');
       const body=this.expr();this.expect(';');this.expect(braced?'}':'end');
       functions.push({name,params,body,pub});
+      for(const [marker,token] of markers)this.guarantees.push({marker,token});
     }
     if(module)this.expect('end');
     if(this.peek().kind!=='eof')throw new CompileError('trailing tokens',this.peek());
@@ -424,9 +441,24 @@ export function compileToIR(source) {
   rejectUnloweredActorHeap(tokens);
   rejectUnsupportedSelect(tokens);
   rejectAmbiguousProductFactories(tokens);
-  const parsed=new Parser(tokens).parse();
+  const parser=new Parser(tokens);
+  const parsed=parser.parse();
   try {
-    return createScalarIR(parsed);
+    const ir=createScalarIR(parsed);
+    // A JS engine's BigInt storage and allocation behavior are not statically
+    // controlled by this ESM backend. Never silently accept @noalloc.
+    const allocation=parser.guarantees.find(x=>x.marker==='noalloc');
+    if(allocation)throw new CompileError('E_NOALLOC: JS engine allocation effects are unverified',allocation.token);
+    const copy=parser.guarantees.find(x=>x.marker==='nocopy');
+    if(copy){
+      // Whole-module, closed scalar proof. No aggregate projections, host
+      // calls, arithmetic helpers or dynamic dispatch admitted in v1.
+      const scalar=e=>e.kind==='int'||e.kind==='param'||
+        (e.kind==='call'&&e.args.every(scalar));
+      if(!ir.functions.every(f=>scalar(f.body)))
+        throw new CompileError('E_NOCOPY: unproven payload-copy effects in scalar module',copy.token);
+    }
+    return ir;
   } catch (error) {
     // Keep the source frontend's stable diagnostics while preserving
     // strict "scalar IR" diagnostics for direct compileIR callers.
