@@ -787,7 +787,7 @@ class Parser {
       switch(expr.kind){
         case 'int':case 'float':case 'bool':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':break;
         case 'tryCatch':add(expr.body);add(expr.handler);break;
-        case 'neg':case 'not':case 'trap':case 'immediateAwait':add(expr.inner);break;
+        case 'neg':case 'not':case 'trap':case 'immediateAwait':case 'intTypeTest':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
@@ -922,6 +922,24 @@ class Parser {
           }else if(this.eat('await')){
             if(['(','<'].includes(this.peek().value))fail('pipeline await takes only the left-hand value',this.peek());
             left={kind:'immediateAwait',inner:left};
+          }else if(['if','ifnot','unless'].includes(this.peek().value)){
+            const invert=this.tokens[this.i++].value!=='if';
+            let condition=this.receiverPredicate(left);
+            if(invert)condition={kind:'not',inner:condition};
+            this.expect('then');
+            const yes=this.expression();
+            this.expect('else');
+            const no=this.expression();
+            this.expect('fi');
+            left={kind:'if',condition,yes,no};
+          }else if(this.peek().value==='?'||this.receiverPredicateStarts()){
+            left=this.receiverPredicate(left);
+            if(this.eat('?')){
+              const yes=this.ternaryArm(0);
+              this.expect(':');
+              const no=this.ternaryArm(1);
+              left={kind:'if',condition:left,yes,no};
+            }
           }else{
             // Program-v2 admits named root/module calls; no computed callees.
             const at=this.peek();
@@ -971,6 +989,21 @@ class Parser {
       }
       return left;
     } finally {this.depth--;}
+  }
+  receiverPredicateStarts(){
+    return ['is','<','>','<=','>=','eq','neq','==','!='].includes(this.peek().value);
+  }
+  receiverPredicate(left){
+    if(this.eat('is')){
+      this.eat('type');
+      // The portable program-v2 profile has no general nominal type-test ABI.
+      this.expect('int');
+      return {kind:'intTypeTest',inner:left};
+    }
+    if(!this.receiverPredicateStarts())return left;
+    const op=this.tokens[this.i++].value;
+    const right=this.expression(['<','>','<=','>='].includes(op)?10:9);
+    return {kind:'compare',op:op==='eq'?'==':op==='neq'?'!=':op,left,right};
   }
   ternaryArm(min) {
     if(!this.eat('{'))return this.expression(min);
@@ -1270,6 +1303,13 @@ function resolveProgram(parsed) {
           fail('E_EFFECT_PROFILE: explicit result type and unshadowed core Error required');
         return expr;
       case 'int':case 'float':case 'bool':case 'symbol':return expr;
+      case 'intTypeTest': {
+        const inner=resolve(expr.inner,owner,depth+1,bindings);
+        if(resolvedType(inner,owner)!=='int')fail('int type test requires statically proven int in program-v2');
+        // All admitted integers are signed i64. Comparison with MIN retains
+        // receiver evaluation (including errors) exactly once, no fake constant.
+        return {kind:'compare',op:'>=',left:inner,right:{kind:'int',value:MIN.toString()}};
+      }
       case 'immediateAwait': {
         const inner=resolve(expr.inner,owner,depth+1,bindings);
         // No Future/actor readiness lowering exists in this frontend. Admit
