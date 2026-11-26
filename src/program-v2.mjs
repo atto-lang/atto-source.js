@@ -423,6 +423,7 @@ class Parser {
     const value=next.value;
     if(CLASS_METHOD_RESERVED.has(value)&&!CLASS_METHOD_CALLABLE_KEYWORDS.has(value))
       return false;
+    if(marker==='method')fail('obsolete method introducer; use mtd',this.peek());
     this.i++;return true;
   }
   argumentsAfterOpen() {
