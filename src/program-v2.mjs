@@ -647,6 +647,16 @@ class Parser {
     const statements=[];
     while(this.peek().kind!=='eof'&&!terminators.includes(this.peek().value)) {
       if(++this.statementNodes>MAX_TOKENS)fail('statement budget exceeded',this.peek());
+      // Recognize declaration heads without granting implicit initialization.
+      const bindingTokens=this.tokens.slice(this.i,this.i+5);
+      const qualifier=['let','val','const'].includes(bindingTokens[0]?.value);
+      const localHead=qualifier?1:0;
+      const builtin=['int','i64','i32','float','bool','string','Symbol'].includes(bindingTokens[localHead]?.value);
+      if(builtin&&bindingTokens[localHead+1]?.kind==='id'&&bindingTokens[localHead+2]?.value===';')
+        fail('E_MISSING_INITIALIZER: explicit initializer required',bindingTokens[localHead+2]);
+      if(qualifier&&bindingTokens[1]?.kind==='id'&&bindingTokens[2]?.value===':'&&
+          ['int','i64','i32','float','bool','string','Symbol'].includes(bindingTokens[3]?.value)&&bindingTokens[4]?.value===';')
+        fail('E_MISSING_INITIALIZER: explicit initializer required',bindingTokens[4]);
       if((this.eat('return')||this.eat('^'))) {
         if(this.peek().value===';')
           fail('RETURN_VALUE_REQUIRED: nonvoid return requires a value',this.peek());
@@ -701,13 +711,16 @@ class Parser {
           fail('E_GUARD: every failure path must explicitly return from the function',this.peek());
         statements.push({kind:'branch',condition:{kind:'not',inner:condition},
           yes:failure,no:[]});
-      } else if(this.peek().value==='val'||this.peek().value==='const') {
+      } else if(this.peek().value==='val'||this.peek().value==='const'||
+                 (this.peek().value==='let'&&this.tokens[this.i+1]?.value==='int')) {
         const isConst=this.eat('const');
-        if(!isConst)this.expect('val');
+        const readOnlyLet=!isConst&&this.eat('let');
+        if(!isConst&&!readOnlyLet)this.expect('val');
         // This bounded slice admits only function-scope immutable int locals.
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
         const localType=this.eat('float')?'float':this.eat('int')?'int':'inferredTrap';
         const name=this.name();
+        if(this.peek().value===';')fail('E_MISSING_INITIALIZER: explicit initializer required',this.peek());
         const directional=this.takeDirection('<');
         if(!directional)this.expect('=');
         let init;
