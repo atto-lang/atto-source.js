@@ -83,3 +83,16 @@ for(const [id,body] of [
  ['wrong-binding','fnc f(int x,int y) -> int { if x != 0 { return 42/y; } return 0; } '+main('f(1,1)')],
  ['lost-fact','fnc f(int x) -> int { if x != 0 || x == 0 { return 42/x; } return 0; } '+main('f(1)')],
 ])test('strict control flow rejects '+id,()=>assert.throws(()=>compileVerifiedStrict(pre+body),/E_VERIFY_UNPROVEN:/));
+
+for(const [id,body,want] of [
+ ['rebind','pub fnc main() -> int { let int x = 1; x = 42; return x; }',42n],
+ ['copy-before-rebind','pub fnc main() -> int { let int x = 1; val old = x; x = 0; return 42/old; }',42n],
+ ['branch-rebind','fnc f(int x) -> int { let int d = x; if d != 0 { d = 1; return 42/d; } return 0; } '+main('f(2)'),42n],
+])test('strict scalar assignment '+id,async()=>assert.equal((await strictGuest(body))(),want));
+for(const [id,body,code] of [
+ ['stale','pub fnc main() -> int { let int x = 1; x = 0; return 42/x; }','E_VERIFY_UNPROVEN'],
+ ['stale-branch','fnc f(int x) -> int { let int d = x; if d != 0 { d = 0; return 42/d; } return 0; } '+main('f(1)'),'E_VERIFY_UNPROVEN'],
+ ['bad-invariant','pub fnc main() -> int { let Bounded x = 1; x = 43; return x; }','E_REFINEMENT_BINDING'],
+ ['immutable','pub fnc main() -> int { val int x = 1; x = 2; return x; }','E_VERIFY_UNSUPPORTED'],
+ ['loop-gap','pub fnc main() -> int { let int x = 1; while x < 42 { x = x+1; } return x; }','E_VERIFY_UNSUPPORTED'],
+])test('strict scalar rejects '+id,()=>assert.throws(()=>compileVerifiedStrict(pre+body),new RegExp(code+':')));
