@@ -41,6 +41,10 @@ function tokenize(source) {
     }
     const token = /^(?:"(?:\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})|[^"\\\x00-\x1f])*"|->|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;,+*\-.=<>!?])/.exec(tail);
     if (!token) throw new TranspileError('E_UNSUPPORTED_TOKEN');
+    // Preserve mainline exceptional-effect spelling: a bare bang is only
+    // tokenized for the explicitly denied actor lifecycle/pipe/share forms.
+    if(token[0]==='!' && !['stop','pipe','rpipe','share'].includes(tokens.at(-1)))
+      throw new TranspileError('E_UNSUPPORTED_TOKEN');
     tokens.push(token[0]);
     offsets.push(i);
     if (tokens.length > MAX_TOKENS) throw new TranspileError('E_TOKEN_LIMIT');
