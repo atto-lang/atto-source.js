@@ -304,12 +304,13 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     }
     return disjunction(incoming,depth);
   }
-  // Closed returning conditionals with scalar assignments lowered to fresh
-  // lexical SSA-like slots and single-state iterative while. No live branch
-  // merges, aliases, nonlocal mutation, effects or suspension are admitted.
-  function strictReturn(result,facts,mutable=new Map(),depth=0){
+  // Closed scalar control flow with fresh lexical SSA-like versions, bounded
+  // path-sensitive continuation splitting and single-state iterative while.
+  // No aliases, nonlocal mutation, effects or suspension are admitted.
+  function strictReturn(result,facts,mutable=new Map(),depth=0,onExit=null){
     if(depth>16||--budget<0)fail('E_UNIT_LIMIT','strict return budget');
     locals=facts;
+    if(peek().value==='}'&&onExit)return onExit(facts,mutable,depth);
     if(take('while')){
       // Single direct scalar assignment per backedge. Locate the candidate
       // target without consuming the guard; the real parser validates every
@@ -332,7 +333,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       boundary(declared,update,'E_REFINEMENT_BINDING');
       if(!take('}'))fail('E_VERIFY_UNSUPPORTED','strict while supports one direct assignment');
       return {kind:'scalarWhile',slot,init:initial.ir,condition:p.ir,update:update.ir,
-        body:strictReturn(result,p.no,mutable,depth+1)};
+        body:strictReturn(result,p.no,mutable,depth+1,onExit)};
     }
     if(['loop','for','break','continue'].includes(peek().value))
       fail('E_VERIFY_UNSUPPORTED','strict loop form not implemented');
@@ -350,7 +351,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       const slot=nextStrictSlot++,after=new Map(facts),decls=new Map(mutable);
       after.set(key,make(value.unit,{kind:'capture',slot},null,value.range,want?.width??(value.width||64)));
       if(isMutable)decls.set(key,want);
-      return {kind:'local',slot,init:value.ir,body:strictReturn(result,after,decls,depth+1)};
+      return {kind:'local',slot,init:value.ir,body:strictReturn(result,after,decls,depth+1,onExit)};
     }
     if(peek().kind==='id'&&tokens[at+1]?.value==='='){
       const key=identifier();expect('=');
@@ -361,14 +362,52 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       const slot=nextStrictSlot++,after=new Map(facts);
       // New binding identity and replacement range, never union with stale fact.
       after.set(key,make(value.unit,{kind:'capture',slot},null,value.range,mutable.get(key).width));
-      return {kind:'local',slot,init:value.ir,body:strictReturn(result,after,mutable,depth+1)};
+      return {kind:'local',slot,init:value.ir,body:strictReturn(result,after,mutable,depth+1,onExit)};
     }
     if(take('if')){
       const p=condition(facts);
-      expect('{');const yes=strictReturn(result,p.yes,mutable,depth+1);expect('}');
+      // Bounded continuation splitting: each continuing arm independently
+      // checks the remaining source under its own current SSA versions.
+      // The generated conditional executes exactly one arm and continuation.
+      const close=(open)=>{
+        if(tokens[open]?.value!=='{')fail('E_SYNTAX','expected branch block');
+        let nesting=0;
+        for(let k=open;k<tokens.length;k++){
+          if(tokens[k].value==='{')nesting++;
+          else if(tokens[k].value==='}'&&--nesting===0)return k;
+        }
+        fail('E_SYNTAX','unterminated strict branch');
+      };
+      const yesOpen=at,yesClose=close(yesOpen);
+      const hasElse=tokens[yesClose+1]?.value==='else';
+      const noOpen=yesClose+2,noClose=hasElse?close(noOpen):yesClose;
+      const resume=noClose+1;
+      let end=null;
+      const continuation=(edgeFacts,edgeMutable,d)=>{
+        const saved=at;
+        const scoped=new Map([...facts.keys()].map(k=>[k,edgeFacts.get(k)]));
+        // Locals declared inside an arm never enter the outer scope.
+        at=resume;
+        const tail=strictReturn(result,scoped,mutable,d+1,onExit);
+        if(end!==null&&end!==at)fail('E_VERIFY_UNSUPPORTED','inconsistent branch continuation');
+        end=at;at=saved;
+        return tail;
+      };
+      at=yesOpen+1;
+      const yes=strictReturn(result,p.yes,mutable,depth+1,continuation);
+      if(at!==yesClose)fail('E_VERIFY_UNSUPPORTED','statement after strict return');
       let no;
-      if(take('else')){expect('{');no=strictReturn(result,p.no,mutable,depth+1);expect('}');}
-      else no=strictReturn(result,p.no,mutable,depth+1);
+      if(hasElse){
+        at=noOpen+1;
+        no=strictReturn(result,p.no,mutable,depth+1,continuation);
+        if(at!==noClose)fail('E_VERIFY_UNSUPPORTED','statement after strict return');
+      }else{
+        at=resume;
+        no=strictReturn(result,p.no,mutable,depth+1,onExit);
+        if(end!==null&&end!==at)fail('E_VERIFY_UNSUPPORTED','inconsistent branch continuation');
+        end=at;
+      }
+      at=end??resume;
       return {kind:'if',condition:p.ir,yes,no};
     }
     expect('return');const v=expr(0,0);expect(';');
