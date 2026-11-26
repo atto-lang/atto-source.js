@@ -567,7 +567,16 @@ export function compile(source) {
           tokens[i + 3]?.kind === 'id' && tokens[i + 4]?.value === ')' &&
           tokens[i + 5]?.value === '->')
       ));
-    if (tokens.some(t => t.value === '|') || hasConstFnc || hasUnpipedAnonymous) {
+    // A bare bar is not evidence of a callable binding: actor state leases,
+    // conditions and unrelated pipe syntax must retain ordinary admission and
+    // diagnostics. Only the bounded const-lambda declaration opts into this
+    // profile. Token matching deliberately excludes comment/string contents.
+    const hasVoidLambda = tokens.some((t, i) =>
+      t.kind === 'id' && t.value === 'const' &&
+      tokens[i + 1]?.kind === 'id' &&
+      tokens[i + 2]?.value === '=' &&
+      tokens[i + 3]?.value === '|');
+    if (hasVoidLambda || hasConstFnc || hasUnpipedAnonymous) {
       return hasConstFnc || hasUnpipedAnonymous
         ? compileIntConstLambdaDirect(tokens)
         : compileVoidLambdaDirect(tokens);
