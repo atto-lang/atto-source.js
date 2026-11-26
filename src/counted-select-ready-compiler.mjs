@@ -6,7 +6,7 @@ const MAX=(1n<<63n)-1n, MIN=-(1n<<63n);
 const reserved=new Set('pub suspends fnc main int bool val let const Channel Future Array new writech readch select nb await when fair first random default over end return if then fi true false and or'.split(' '));
 const expr=(type,code)=>({type,code});
 class Parser {
-  constructor(source){this.ts=tokenizeCountedProfileSource(source);this.i=0;this.slots=new Map();this.next=0;this.budget=4096;this.depth=0;this.counted=0;this.activeBatch=null;}
+  constructor(source){this.ts=tokenizeCountedProfileSource(source);this.i=0;this.slots=new Map();this.next=0;this.budget=4096;this.depth=0;this.counted=0;this.activeBatch=null;this.pureCondition=false;}
   peek(){return this.ts[this.i];}
   fail(msg){const t=this.peek();throw new Error('E_COUNTED_READY_PROFILE: '+msg+' at '+t.line+':'+t.col);}
   eat(v){if(['id','sym'].includes(this.peek().kind)&&this.peek().value===v){this.i++;return true;}return false;}
@@ -42,6 +42,7 @@ class Parser {
     if(this.peek().kind==='int')return expr('int',this.literal()+'n');
     if(projector!==null){const n=this.name();if(projector==='@count')return expr('int',this.get(n,'int').slot);if(n!==projector)this.fail('projection may reference only its binding');return expr('int','_x');}
     if(this.eat('await')){
+      if(this.pureCondition)this.fail('effect in condition');
       const legacy=this.eat('nb');
       if(this.eat('select')){
         if(this.activeBatch)this.fail('await outstanding counted batch first');
@@ -56,6 +57,7 @@ class Parser {
       const future=this.get(name,'future');future.moved=true;return expr('int','_awaitReady('+future.slot+')');
     }
     if(this.eat('readch')){
+      if(this.pureCondition)this.fail('effect in condition');
       if(this.activeBatch)this.fail('await outstanding counted batch before channel access');
       return expr('int','_read('+this.get(this.name(),'channel').slot+')');
     }
@@ -133,7 +135,8 @@ class Parser {
         const s=this.get(this.name(),'channel');this.need(',');const v=this.check(this.expression(),'int');this.need(';');stmts.push('_write('+s.slot+','+v+');');
       }else if(this.eat('if')){
         if(this.activeBatch)this.fail('await outstanding counted batch before branching');
-        const condition=this.check(this.expression(),'bool');this.need('then');this.need('return');
+        this.pureCondition=true;
+        const condition=this.check(this.expression(),'bool');this.pureCondition=false;this.need('then');this.need('return');
         // Conditional return cannot consume a Future on only one exit and
         // then reuse it on the fallthrough. The return path is terminal.
         const saved=new Map([...this.slots].map(([n,s])=>[n,{...s}]));
