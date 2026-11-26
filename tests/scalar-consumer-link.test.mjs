@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {buildPackage} from '../src/build-package.mjs';
 import {compile,compileScalarConsumer} from '../src/compiler.mjs';
+import {scalarInterface} from '../src/scalar-package-interface.mjs';
 import {buildScalarConsumer} from '../src/scalar-consumer-link.node.mjs';
 import {linkTrustedScalarConsumer} from '../src/link-trusted-scalar-consumer.node.mjs';
 const hash=x=>createHash('sha256').update(x).digest('hex');
@@ -89,3 +90,38 @@ test('provider signature order is canonical, renamed parameters invalidate',()=>
  const changed=buildScalarConsumer({source,providerInterface:[{...a,params:['y']},b]});
  assert.notEqual(one.moduleSource,changed.moduleSource);
 });
+
+test('interface snapshot rejects holes and accessors before compiling consumer',()=>{
+ const good={name:'answer',params:['x'],resultType:'int'};
+ const hole=Array(1);
+ const sparseParams={...good,params:Array(1)};
+ let reads=0;
+ const accessor={...good};
+ Object.defineProperty(accessor,'params',{enumerable:true,get(){reads++;return ['x'];}});
+ const arrayAccessor=[good];
+ Object.defineProperty(arrayAccessor,'0',{get(){reads++;return good;}});
+ for(const providerInterface of [hole,[sparseParams],[accessor],arrayAccessor]){
+   assert.throws(()=>buildScalarConsumer({source,providerInterface}),/invalid scalar interface|invalid scalar signature/);
+ }
+ assert.equal(reads,0);
+});
+test('canonical interface stays immutable and independent of source metadata mutation',()=>{
+ const raw=[{name:'answer',params:['x'],resultType:'int'}];
+ const abi=scalarInterface(raw,'edge-js');
+ const original=abi.sha256;
+ raw[0].name='wrong';raw[0].params[0]='other';
+ assert.equal(abi.entries[0].name,'answer');
+ assert.deepEqual(abi.entries[0].params,['x']);
+ assert.equal(abi.sha256,original);
+ assert.ok(Object.isFrozen(abi)&&Object.isFrozen(abi.entries)&&Object.isFrozen(abi.entries[0])&&Object.isFrozen(abi.entries[0].params));
+ assert.throws(()=>{abi.entries[0].params[0]='changed';},TypeError);
+});
+test('real interface-only consumer compilation with provider source removed',()=>scratch(async dir=>{
+ const a=await provider(dir,'a',v1),b=await provider(dir,'b',v2);
+ await rm(join(dir,'a.atto'));await rm(join(dir,'b.atto'));
+ const consumer=buildScalarConsumer({source,providerInterface:a.manifest.publicInterface});
+ const old=await linkTrustedScalarConsumer(pin(consumer,a.options));
+ const next=await linkTrustedScalarConsumer(pin(consumer,b.options));
+ assert.equal(old.main(),42n);assert.equal(next.main(),43n);assert.equal(old.main(),42n);
+ assert.deepEqual(consumer,buildScalarConsumer({source,providerInterface:b.manifest.publicInterface}));
+}));
