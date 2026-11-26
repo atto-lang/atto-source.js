@@ -1,3 +1,4 @@
+import {lowerVerifiedQuantitySource} from './verified-quantity-source.mjs';
 import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 import {TESTING_SCALAR_SOURCE, TESTING_SCALAR_EXPORTS} from './compiler-owned-testing-scalar.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
@@ -1791,6 +1792,10 @@ export function compileToProgramIRV2(source) {
   rejectUnsupportedHttpActors(tokens,fail);
   rejectUnsupportedStaticSelect(tokens);
   rejectUnsupportedTrapEffect(tokens);
+  const quantity=lowerVerifiedQuantitySource(tokens,fail);
+  if(quantity!==null)return validateProgramIRV2({
+    schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,integerModel:PROGRAM_IR_INT_MODEL,...quantity
+  });
   const linked=lowerCompilerOwnedTestingImports(tokens);
   const parsed=bindCompilerOwnedTestingImports(new Parser(linked.rootTokens).parse(),linked.locals);
   const program=resolveProgram(parsed);
