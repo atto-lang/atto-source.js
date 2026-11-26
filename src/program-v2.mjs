@@ -1860,7 +1860,8 @@ function emitProgram(program) {
       method.paramTypes.some(t=>['option<int>','result<int,int>'].includes(t))||
       (method.body!==null&&usesPortableRuntime(method.body)))) {
     out.push(
-      'function _tag(k,v){const x=Object.create(null);Object.defineProperty(x,"kind",{value:k,enumerable:true});Object.defineProperty(x,"value",{value:v,enumerable:true});return Object.freeze(x);}',
+      'const _tagBrand=new WeakSet();',
+      'function _tag(k,v){const x=Object.create(null);Object.defineProperty(x,"kind",{value:k,enumerable:true});Object.defineProperty(x,"value",{value:v,enumerable:true});_tagBrand.add(x);return Object.freeze(x);}',
       'function _checktag(x,types){if(!x||typeof x!=="object"||Object.getPrototypeOf(x)!==null||!Object.isFrozen(x))throw new TypeError("Oreslang tagged value required");const keys=Reflect.ownKeys(x);if(keys.length!==2||!keys.includes("kind")||!keys.includes("value"))throw new TypeError("Oreslang tagged value shape required");const kd=Object.getOwnPropertyDescriptor(x,"kind"),vd=Object.getOwnPropertyDescriptor(x,"value");if(!kd||!vd||!Object.hasOwn(kd,"value")||!Object.hasOwn(vd,"value")||!kd.enumerable||!vd.enumerable||!types.includes(kd.value))throw new TypeError("Oreslang tagged value type required");if(kd.value==="None"){if(vd.value!==null)throw new TypeError("Oreslang None payload must be null");}else _check(vd.value);return x;}',
       'function _checkoption(v){return _checktag(v,["Some","None"]);}',
       'function _checkresult(v){return _checktag(v,["Ok","Err"]);}',
@@ -1897,8 +1898,8 @@ function emitProgram(program) {
   if(containsTrap(program))out.push(
       'const _trapBrand=new WeakSet(),_checkedUnwrapBrand=new WeakSet();',
       'function _unwrapFailure(name,message,original){const e=new Error(message,{cause:original});Object.defineProperty(e,"name",{value:name});_checkedUnwrapBrand.add(e);throw Object.freeze(e);}',
-      'function _optionUnwrap(v){const x=_checkoption(v);if(x.kind==="Some")return x.value;return _unwrapFailure("OptionUnwrapError","cannot unwrap None",undefined);}',
-      'function _resultUnwrap(v){const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",x.value);}',
+      'function _optionUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Option unwrap carrier");const x=_checkoption(v);if(x.kind==="Some")return x.value;return _unwrapFailure("OptionUnwrapError","cannot unwrap None",undefined);}',
+      'function _resultUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Result unwrap carrier");const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",x.value);}',
       'function _checkTrapResult(v){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}',
       'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult"||t==="trapOptionResult"){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}const result=t==="option<int>"?_tag("Ok",_checkoption(v)):t==="int"?_ok(v):_checkresult(v);_trapBrand.add(result);return result;}catch(e){if(!_isOrdinaryGuest(e))throw e;const result=_tag("Err",e);_trapBrand.add(result);return result;}}',
       'function _trapMethod(m,result,option){if(!_trapBrand.has(result))throw new TypeError("invalid trap Result");if(m==="is_ok")return result.kind==="Ok";if(m==="is_err")return result.kind==="Err";if(m==="unwrap"&&result.kind==="Ok")return option?_checkoption(result.value):_check(result.value);if(m==="unwrap"){const e=new Error("cannot unwrap Err",{cause:result.value});Object.defineProperty(e,"name",{value:"ResultUnwrapError"});_checkedUnwrapBrand.add(e);throw Object.freeze(e);}throw new TypeError("invalid trap Result method");}'
