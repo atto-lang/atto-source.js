@@ -577,8 +577,14 @@ export function compile(source) {
       tokens[i + 1]?.kind === 'id' &&
       tokens[i + 2]?.value === '=' &&
       tokens[i + 3]?.value === '|');
-    if (hasVoidLambda || hasConstFnc || hasUnpipedAnonymous) {
-      return hasConstFnc || hasUnpipedAnonymous
+    const hasTypedLocalCallable = tokens.some((t, i) =>
+      t.kind === 'id' && (t.value === 'val' || t.value === 'const') &&
+      tokens[i + 1]?.kind === 'id' &&
+      tokens[i + 2]?.value === ':' &&
+      tokens[i + 3]?.value === 'fnc' &&
+      tokens[i + 4]?.value === '(');
+    if (hasVoidLambda || hasConstFnc || hasUnpipedAnonymous || hasTypedLocalCallable) {
+      return hasConstFnc || hasUnpipedAnonymous || hasTypedLocalCallable
         ? compileIntConstLambdaDirect(tokens)
         : compileVoidLambdaDirect(tokens);
     }
