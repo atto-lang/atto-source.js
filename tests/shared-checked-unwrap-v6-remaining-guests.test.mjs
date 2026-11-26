@@ -48,9 +48,11 @@ function blob(source) {
 for (const fixture of cases) {
   test('exact v6 remaining guest '+fixture.path, async () => {
     assert.equal(blob(fixture.source),fixture.git_blob_sha1);
-    const ir=compileToProgramIRV2(fixture.source);
-    const direct=compileProgramV2(fixture.source);
-    const replay=compileProgramIRV2(JSON.parse(JSON.stringify(ir)));
+    const hosted=fixture.expected.stdout!==undefined;
+    const options=hosted?{stdout:true}:undefined;
+    const ir=compileToProgramIRV2(fixture.source,options);
+    const direct=compileProgramV2(fixture.source,options);
+    const replay=compileProgramIRV2(JSON.parse(JSON.stringify(ir)),options);
     assert.equal(replay,direct,'serialized typed IR changed lowering');
     if (fixture.expected.runtime_failure) {
       const guest=await import('data:text/javascript,'+encodeURIComponent(direct));
@@ -59,8 +61,8 @@ for (const fixture of cases) {
     }
     // Child process isolates output and prevents harness output being
     // confused with guest stdout. No source adaptation or injected guest code.
-    const runner='const g=await import(process.argv[1]); const value=g.main(); if(value!==42n) process.exitCode=23;';
-    const run=spawnSync(process.execPath,['--input-type=module','-e',runner,'data:text/javascript,'+encodeURIComponent(direct)],{encoding:'utf8',timeout:10000,maxBuffer:65536});
+    const runner='const g=await import(process.argv[1]); const value=process.argv[2]==="hosted"?g.main(s=>{process.stdout.write(s);}):g.main(); if(value!==42n) process.exitCode=23;';
+    const run=spawnSync(process.execPath,['--input-type=module','-e',runner,'data:text/javascript,'+encodeURIComponent(direct),hosted?'hosted':'pure'],{encoding:'utf8',timeout:10000,maxBuffer:65536});
     assert.ifError(run.error);
     assert.equal(run.signal,null);
     assert.equal(run.status,0,run.stderr);

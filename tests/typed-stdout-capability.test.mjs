@@ -1,0 +1,27 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {compileProgramV2,compileToProgramIRV2,compileProgramIRV2} from '../src/program-v2.mjs';
+const source='fnc rhs():bool { stdio.stdout.write("R"); val Option<bool> x=None; return x.unwrap(); } pub fnc main(bool run):int { val Result<bool, Error> r=trap! (run && rhs()); return r.is_err()?42:17; }';
+const opt={stdout:true};
+test('stdout requires explicit source and IR capability; skipped branch has no output',async()=>{
+ assert.throws(()=>compileProgramV2(source),/E_STDOUT_PROFILE/);
+ const ir=compileToProgramIRV2(source,opt);
+ assert.throws(()=>compileProgramIRV2(ir),/E_STDOUT_PROFILE/);
+ const esm=compileProgramV2(source,opt);
+ assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir)),opt),esm);
+ const guest=await import('data:text/javascript,'+encodeURIComponent(esm));
+ assert.throws(()=>guest.main(true),/explicit stdout capability/);
+ let a='',b='';
+ assert.equal(guest.main(s=>{a+=s;},false),17n);
+ assert.equal(a,'');
+ assert.equal(guest.main(s=>{b+=s;},true),42n);
+ assert.equal(b,'R');
+ assert.throws(()=>guest.main(()=>{throw new Error('host failure');},true),/stdout capability failed/);
+ assert.throws(()=>guest.main(()=>1,true),/stdout capability failed/);
+});
+test('stdout rejects shadowing, nonliteral, forged message, and wrong arity',()=>{
+ for(const bad of [source.replace('fnc rhs()', 'fnc rhs(bool stdio)'),source.replace('write("R")','write(42)'),source.replace('write("R")','write("R","S")')])assert.throws(()=>compileProgramV2(bad,opt),/error:/);
+ const ir=compileToProgramIRV2(source,opt);
+ ir.functions.find(f=>f.name==='rhs').body.message=42;
+ assert.throws(()=>compileProgramIRV2(ir,opt),/error:/);
+});

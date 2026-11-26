@@ -739,6 +739,11 @@ class Parser {
         if(!this.returnsOnAllPaths(body)||!this.returnsOnAllPaths(handler))
           fail('E_TRY_FALLTHROUGH_UNSUPPORTED: both protected and handler paths must terminate',this.peek());
         statements.push({kind:'tryCatch',name,body,handler});
+      } else if(this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')==='stdio . stdout . write (') {
+        this.i+=6;const message=this.peek();
+        if(message.kind!=='localString')fail('E_STDOUT_LITERAL: bounded string literal required',message);
+        this.i++;this.expect(')');this.expect(';');
+        statements.push({kind:'stdoutWrite',message:message.literal});
       } else if(this.eat('guard')) {
         // Guard's predicate must be a bool. Reuse the typed IR's conditional
         // checker and evaluate each comma-separated predicate at most once,
@@ -856,6 +861,10 @@ class Parser {
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
         result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,rebind:stmt.rebind===true,body:result};
       }
+      else if(stmt.kind==='stdoutWrite'){
+        if(result===null)fail('RETURN_EXPLICIT_REQUIRED: stdout must precede a value return');
+        result={kind:'stdoutSeq',message:stmt.message,body:result};
+      }
       else if(stmt.kind==='voidCall'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: void call must precede a value return');
         result={kind:'seqVoidCall',call:stmt.expr,value:result};
@@ -890,6 +899,7 @@ class Parser {
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
+        case 'stdoutSeq':add(expr.body);break;
         case 'local':add(expr.init);add(expr.body);break;
         case 'newClass':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'methodCall':
@@ -1446,6 +1456,7 @@ function resolveProgram(parsed) {
       }
       case 'if':return resolvedType(expr.yes,owner);
       case 'seqVoidCall':return resolvedType(expr.value,owner);
+      case 'stdoutSeq':return resolvedType(expr.body,owner);
       case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return resolvedType(expr.body,owner);
       case 'adtMatch':return resolvedType(expr.arms[0].body,owner);
       default:fail('cannot infer resolved expression type '+expr.kind);
@@ -1551,6 +1562,10 @@ function resolveProgram(parsed) {
         }
         return {kind:type==='option<bool>'?'optionBoolLocal':type==='trapBoolResult'?'trapBoolLocal':type==='option<int>'?'optionLocal':type==='result<int,int>'?'resultLocal':type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':type==='bool'?'boolLocal':type==='string'?'stringLocal':'local',slot,init,
           body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string'}])};
+      }
+      case 'stdoutSeq': {
+        if(owner.ownerKind==='method'||owner.params.includes('stdio')||bindings.some(b=>b.name==='stdio')||functions.some(f=>f.name==='stdio')||modules.length||classes.length||generators.length)fail('E_STDOUT_PROFILE: unshadowed root callable required');
+        return {kind:'stdoutSeq',message:expr.message,body:resolve(expr.body,owner,depth+1,bindings)};
       }
       case 'seqVoidCall': {
         if(expr.call.kind!=='call'||expr.call.qualifier!==null)
@@ -1794,6 +1809,7 @@ function resolveProgram(parsed) {
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='tryCatch'){inspect(expr.body,owner);inspect(expr.handler,owner);}
     else if(expr.kind==='seqVoidCall'){inspect(expr.call,owner);inspect(expr.value,owner);}
+    else if(expr.kind==='stdoutSeq')inspect(expr.body,owner);
     else if(['local','floatLocal','boolLocal','stringLocal','trapLocal','trapOptionLocal','trapBoolLocal','optionBoolLocal','optionLocal','resultLocal'].includes(expr.kind)){inspect(expr.init,owner);inspect(expr.body,owner);}
     else if(['trapMethod','trapOptionMethod','trapBoolMethod'].includes(expr.kind))inspect(expr.receiver,owner);
     else if(['neg','floatNeg','not','trap'].includes(expr.kind)) inspect(expr.inner,owner);
@@ -1823,6 +1839,9 @@ function resolveProgram(parsed) {
   };
 }
 function emitProgram(program) {
+  const hosted=program.functions.some(f=>hasStdout(f.body));
+  function hasStdout(n){return !!n&&typeof n==='object'&&(n.kind==='stdoutSeq'||Object.values(n).some(hasStdout));}
+  const hostArgs=args=>hosted?['_stdout',...args]:args;
   const out=[
     '// experimental Oreslang program-v2, provisional signed-64 integer model',
     'const _arithmeticBrand=new WeakSet();',
@@ -1833,6 +1852,7 @@ function emitProgram(program) {
     // code, NOT the portable guest Error wire ABI or actor CONTROL signal.
     'function _rem(a,b){_check(a);_check(b);if(b===0n)throw _arith("division_by_zero","ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit remainder by zero");return _check(a%b);}'
   ];
+  if(hosted)out.push('function _writeStdout(sink,message){try{if(sink(message)!==undefined)throw new TypeError("stdout sink must return undefined");}catch{throw new TypeError("stdout capability failed");}}');
   function emitExpr(expr,depth=0) {
     if(depth > MAX_DEPTH) fail('codegen depth exceeded');
     switch(expr.kind) {
@@ -1907,6 +1927,7 @@ function emitProgram(program) {
       }
       case 'if':return '(('+emitExpr(expr.condition,depth+1)+')?('+
         emitExpr(expr.yes,depth+1)+'):('+emitExpr(expr.no,depth+1)+'))';
+      case 'stdoutSeq':return '(()=>{_writeStdout(_stdout,'+JSON.stringify(expr.message)+');return '+emitExpr(expr.body,depth+1)+';})()';
       case 'seqVoidCall':
         return '(()=>{'+emitExpr(expr.call,depth+1)+';return '+
           emitExpr(expr.value,depth+1)+';})()';
@@ -1926,14 +1947,14 @@ function emitProgram(program) {
         return '(()=>{'+declarations.join('')+'return _receiver['+
           JSON.stringify(method.name)+']('+formal.join(',')+');})()';
       }
-      case 'call':return '_f'+expr.target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
+      case 'call':return '_f'+expr.target+'('+hostArgs(expr.args.map(x=>emitExpr(x,depth+1))).join(',')+')';
       case 'namedCall': {
         const declarations=expr.args.map((arg,i)=>
           'const _named'+i+'='+emitExpr(arg,depth+1)+';');
         const formal=new Array(expr.args.length);
         expr.paramOrder.forEach((slot,i)=>{formal[slot]='_named'+i;});
         return '(()=>{'+declarations.join('')+'return _f'+expr.target+'('+
-          formal.join(',')+');})()';
+          hostArgs(formal).join(',')+');})()';
       }
       case 'intrinsic': {
         const funcs={
@@ -1997,6 +2018,7 @@ function emitProgram(program) {
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
       case 'tryCatch':return usesSymbol(expr.body)||usesSymbol(expr.handler);
       case 'seqVoidCall':return usesSymbol(expr.call)||usesSymbol(expr.value);
+      case 'stdoutSeq':return usesSymbol(expr.body);
       case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
       case 'trap':return usesSymbol(expr.inner);
       case 'trapMethod':case 'trapOptionMethod':case 'trapBoolMethod':return usesSymbol(expr.receiver);
@@ -2045,6 +2067,7 @@ function emitProgram(program) {
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
       case 'tryCatch':return usesPortableRuntime(expr.body)||usesPortableRuntime(expr.handler);
       case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
+      case 'stdoutSeq':return usesPortableRuntime(expr.body);
       case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'i32Check':case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
       case 'match':return usesPortableRuntime(expr.subject)||
@@ -2174,7 +2197,7 @@ function emitProgram(program) {
   });
   program.functions.forEach((fn,i)=>{
     const params=fn.params.map((_,j)=>'_p'+j);
-    out.push('function _f'+i+'('+params.join(',')+'){');
+    out.push('function _f'+i+'('+hostArgs(params).join(',')+'){');
     params.forEach((p,j)=>{
       const type=fn.paramTypes?.[j]??'int';
       const check={int:'_check',bool:'_checkbool',symbol:'_checksymbol',error:'_checkGuestError',
@@ -2203,9 +2226,9 @@ function emitProgram(program) {
     // One dispatcher owns the exported name across ordinary functions and
     // generators. Same-arity collisions were rejected during resolution.
     const name='_dispatch'+(dispatcherNumber++);
-    out.push('function '+name+'(..._args){switch(_args.length){');
+    out.push('function '+name+'(..._args){'+(hosted?'if(typeof _args[0]!=="function")throw new TypeError("explicit stdout capability required");':'')+'switch(_args.length){');
     for(const i of group.functions)
-      out.push('case '+program.functions[i].params.length+':return _f'+i+'(..._args);');
+      out.push('case '+(program.functions[i].params.length+(hosted?1:0))+':return _f'+i+'(..._args);');
     for(const i of group.generators)
       out.push('case '+program.generators[i].params.length+':return _g'+i+'(..._args);');
     out.push('default:throw new TypeError("Oreslang overload arity mismatch");}}');
@@ -2375,7 +2398,7 @@ function admitUnusedRefinementsBeforeCheckedUnwrap(tokens){
   return remainder;
 }
 
-export function compileToProgramIRV2(source) {
+export function compileToProgramIRV2(source, options) {
   const tokens=tokenize(source);
   rejectExecutionDomains(tokens,fail);
   rejectUnsupportedHttpActors(tokens,fail);
@@ -2395,7 +2418,7 @@ export function compileToProgramIRV2(source) {
     dialect:PROGRAM_IR_DIALECT,
     integerModel:PROGRAM_IR_INT_MODEL,
     ...program
-  });
+  },false,options?.stdout===true);
 }
 // Strict verification admits only the explicitly checked quantity frontend.
  // An unverified ordinary source path must never be used as a fallback.
@@ -2411,11 +2434,11 @@ export function compileVerifiedStrict(source) {
     schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,integerModel:PROGRAM_IR_INT_MODEL,...quantity
   },true));
 }
-export function compileProgramIRV2(ir) {
-  return emitProgram(validateProgramIRV2(ir));
+export function compileProgramIRV2(ir, options) {
+  return emitProgram(validateProgramIRV2(ir,false,options?.stdout===true));
 }
-export function compileProgramV2(source) {
-  return emitProgram(compileToProgramIRV2(source));
+export function compileProgramV2(source, options) {
+  return emitProgram(compileToProgramIRV2(source,options));
 }
 export function checkProgramV2(source) {
   compileProgramV2(source);

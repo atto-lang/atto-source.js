@@ -134,7 +134,7 @@ function symbolName(s){
  * Copy after validation, never return caller-owned IR references.
  * Direct object inputs are trusted data only, not a JavaScript sandbox.
  */
-export function validateProgramIRV2(input, allowScalarWhile = false) {
+export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout = false) {
   if(input===null||typeof input!=='object'||Array.isArray(input))
     fail('program: expected object');
   const rawKeys=Reflect.ownKeys(input);
@@ -621,6 +621,11 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         return {kind:'if',condition:node(expr.condition,owner,depth+1,'bool',active),
           yes:node(expr.yes,owner,depth+1,expected,active),
           no:node(expr.no,owner,depth+1,expected,active)};
+      case 'stdoutSeq': {
+        record(expr,['kind','message','body'],'stdout sequence');
+        if(allowStdout!==true||allowScalarWhile===true||owner>=headers.length||moduleNames.length||classHeaders.length||generatorHeaders.length||headers.some(f=>f.name==='stdio'||f.params.includes('stdio'))||!validLocalString(expr.message))fail('E_STDOUT_PROFILE: explicit bounded stdout capability required');
+        return {kind:'stdoutSeq',message:expr.message,body:node(expr.body,owner,depth+1,expected,active)};
+      }
       case 'seqVoidCall': {
         record(expr,['kind','call','value'],'void-call sequence');
         const effectKind=expr.call&&typeof expr.call==='object'&&
