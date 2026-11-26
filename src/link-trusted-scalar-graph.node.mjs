@@ -19,6 +19,8 @@ export async function linkTrustedScalarGraph({artifact,expectedManifestSha256,ex
   const {manifestJson,moduleSource}=artifact??{};
   if(typeof manifestJson!=='string'||manifestJson.length>65536||Buffer.byteLength(manifestJson)>65536||
      typeof moduleSource!=='string'||moduleSource.length>4194304||Buffer.byteLength(moduleSource)>4194304||
+     Buffer.from(manifestJson,'utf8').toString('utf8')!==manifestJson||
+     Buffer.from(moduleSource,'utf8').toString('utf8')!==moduleSource||
      hashText(manifestJson)!==expectedManifestSha256||hashText(moduleSource)!==expectedModuleSha256)fail('consumer digest or size mismatch');
   const m=parseStrictJsonReport(manifestJson,65536,'graph manifest');
   if(!m||Object.keys(m).sort().join(',')!==KEYS||m.schemaVersion!==2||m.target!=='edge-js'||
