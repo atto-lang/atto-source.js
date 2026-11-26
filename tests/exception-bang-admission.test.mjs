@@ -65,7 +65,7 @@ test('quoted and commented exception spellings do not change executable JS guest
       assert.doesNotThrow(()=>compile(source),'comment changed guest: '+source);
 });
 
-for (const keyword of ['trap!','throw!','raise!','panic!','copy!','copy!!','take!','borrow!','share!','pin!','drop!','pipe!','rpipe!','stop!','expand!']) {
+for (const keyword of ['trap!','throw!','raise!','panic!','copy!','copy!!','take!','move!','borrow!','share!','pin!','drop!','pipe!','rpipe!','stop!','expand!']) {
   test('mandatory whitespace after '+keyword,()=>{
     for(const tail of ['value','(42)','/*comment*/ value','', '\u00a0value']) {
       const source='fnc main():int{return '+keyword+tail+';}';
@@ -74,3 +74,10 @@ for (const keyword of ['trap!','throw!','raise!','panic!','copy!','copy!!','take
     }
   });
 }
+
+test('move! is a contextual ownership denial, not an untyped call',()=>{
+  for(const compile of [compileScalar,compileProgramV2]) {
+    assert.throws(()=>compile('fnc main():int{return move! value;}'),/OWNERSHIP_BANG_BACKEND_UNSUPPORTED/);
+    assert.throws(()=>compile('fnc main():int{return move!! value;}'),/E_BANG_KEYWORD_WHITESPACE/);
+  }
+});
