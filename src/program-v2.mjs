@@ -787,7 +787,7 @@ class Parser {
       switch(expr.kind){
         case 'int':case 'float':case 'bool':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':break;
         case 'tryCatch':add(expr.body);add(expr.handler);break;
-        case 'neg':case 'not':case 'trap':add(expr.inner);break;
+        case 'neg':case 'not':case 'trap':case 'immediateAwait':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
@@ -919,6 +919,9 @@ class Parser {
             // Subject injection uses the normal checked match IR, not a lambda.
             if(++this.depth>MAX_DEPTH)fail('expression budget exceeded',token);
             try{left=this.matchExpression(left);}finally{this.depth--;}
+          }else if(this.eat('await')){
+            if(['(','<'].includes(this.peek().value))fail('pipeline await takes only the left-hand value',this.peek());
+            left={kind:'immediateAwait',inner:left};
           }else{
             // Program-v2 admits named root/module calls; no computed callees.
             const at=this.peek();
@@ -979,6 +982,7 @@ class Parser {
     return value;
   }
   primary() {
+    if(this.eat('await'))return {kind:'immediateAwait',inner:this.expression(30)};
     if(this.eat('!')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
     if(this.eat('new')){
       const className=this.name();
@@ -1266,6 +1270,13 @@ function resolveProgram(parsed) {
           fail('E_EFFECT_PROFILE: explicit result type and unshadowed core Error required');
         return expr;
       case 'int':case 'float':case 'bool':case 'symbol':return expr;
+      case 'immediateAwait': {
+        const inner=resolve(expr.inner,owner,depth+1,bindings);
+        // No Future/actor readiness lowering exists in this frontend. Admit
+        // only statically typed i64 values, and erase the identity operator.
+        if(resolvedType(inner,owner)!=='int')fail('await requires immediate int in program-v2; asynchronous await unsupported');
+        return inner;
+      }
       case 'local': {
         if(owner.ownerKind==='method'||owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))
           fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
