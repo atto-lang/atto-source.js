@@ -3,6 +3,9 @@ on:
   pull_request:
     paths:
       - 'src/compiler.mjs'
+      - 'src/build-cached-scalar-graph.node.mjs'
+      - 'src/build-scalar-graph.node.mjs'
+      - 'tests/build-cached-scalar-graph.test.mjs'
       - 'src/compile-error.mjs'
       - 'src/scalar-emitter.mjs'
       - 'tests/scalar-emitter.test.mjs'
@@ -33,4 +36,4 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           git rev-parse HEAD HEAD^{tree}
           node --version
-          node --test tests/scalar-emitter.test.mjs tests/incremental-consumer-session.test.mjs tests/compiler.test.mjs tests/incremental-session.test.mjs tests/compiler-cache-envelope.test.mjs tests/compiler-artifact-store.test.mjs tests/compile-cached-scalar-unit.test.mjs
+          node --test tests/build-cached-scalar-graph.test.mjs tests/scalar-emitter.test.mjs tests/incremental-consumer-session.test.mjs tests/compiler.test.mjs tests/incremental-session.test.mjs tests/compiler-cache-envelope.test.mjs tests/compiler-artifact-store.test.mjs tests/compile-cached-scalar-unit.test.mjs
