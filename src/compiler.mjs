@@ -355,11 +355,15 @@ class Parser {
       this.pos++;
     }else first=this.pureProductInt();
     this.expect(',');
-    const second=this.pureProductInt();
+    // A proven pure static string key has no guest effects or owned
+    // resources to discard. Keep the second expression in checked scalar
+    // IR; never evaluate or duplicate it at compile time. Entry still
+    // requires pure integer literals until both eager operands can lower.
+    const second=pair?this.expr():this.pureProductInt();
     this.expect(')');
     if(!this.match('.'))throw new CompileError('E_PRODUCT_ESCAPE_UNSUPPORTED: owned product ABI unavailable',at);
     const field=this.id();
-    if(pair && field==='second')return {kind:'int',n:second};
+    if(pair && field==='second')return second;
     if(!pair && field==='key')return {kind:'int',n:first};
     if(!pair && field==='value')return {kind:'int',n:second};
     throw new CompileError('E_PRODUCT_PROJECTION_UNSUPPORTED: incompatible or non-scalar member',at);
