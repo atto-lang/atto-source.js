@@ -1,0 +1,5 @@
+# Checked unsigned scalar v1 (explicit experimental profile)
+
+`compileCheckedU64ScalarV1(source)` emits closed-world ESM with an exported zero-arity `main()` returning exact BigInt. Admitted source: ASCII root functions, homogeneous u64/uint parameters and results, canonical decimal literals, grouping, calls and checked +,-,*. All other forms including comments, effects, mixed signed types and recursion are refused; no signed fallback. Expanded call work, expression depth, token and source size are bounded. The profile preserves intermediate overflow and reports a JS RangeError with code integer_overflow. That is not full typed guest Error/Result/supervision ABI parity.
+
+This is an isolated candidate, not a new default parser or general program-v2 support. Integrate the shared tokenizer and typed IR after review. The unchanged shared corpus is from atto-platform-conformance#680, blob 2d41ae576d049ed3a8898c3deacc8d30c705dce8. Run `node --test tests/checked-u64-scalar-v1.test.mjs`. Full repository CI, browser execution and other backends remain unverified.
