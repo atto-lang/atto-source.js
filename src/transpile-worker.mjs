@@ -133,6 +133,12 @@ function preflight_worker_future_formals(tokens){
     }
     if(candidate)break;
   }
+  // Reject sealed nominal declarations through every supported declaration
+  // keyword, even where the scalar ownership preflight has no positive lane.
+  for(let i=0;i+1<tokens.length;i++){
+    if(['enum','contract','interface','trait','type','alias','namespace','module','record'].includes(tokens[i])&&sealed.has(tokens[i+1]))
+      throw new TranspileError('E_RESERVED');
+  }
   if(candidate){
     preflightCoreFutureOwnership(tokens.map(value=>({kind:isId(value)?'id':'sym',value})),
       code=>{throw new TranspileError(code);});

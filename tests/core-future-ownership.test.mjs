@@ -69,3 +69,9 @@ test('Worker Future preflight ignores comments and preserves actual emitted scal
  const mod=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(module_source));
  assert.equal((await (await mod.create_tenant({tenant:'future-probe',generation:1})).on_message()).value,'42');
 });
+
+test('Worker rejects sealed Future nominal redefinitions in additional declaration forms',()=>{
+ for(const kind of ['enum','contract','interface','trait','type','alias','namespace','module','record'])
+  for(const name of ['Future','TaskFuture','ActorFuture'])
+   assert.throws(()=>transpile_to_worker('define '+kind+' '+name+' as end'),e=>e instanceof TranspileError&&e.code==='E_RESERVED',kind+' '+name);
+});
