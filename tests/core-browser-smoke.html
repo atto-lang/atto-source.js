@@ -134,7 +134,7 @@ try {
   }
   // Execute the new source conditional slice in a real browser engine.
   conditionalUrl=URL.createObjectURL(new Blob([compileProgramV2([
-    'pub fnc choose(bool b): int {return b ? 42 : 1 % 0;}',
+    'pub fnc choose(bool b): int {return b ? 42 : Integer.rem(1, 0);}',
     'pub fnc nested(bool a,bool b): int {return a ? 1 : b ? 2 : 3;}',
     'pub fnc statement(bool b): int {if b then return 41; else return 42; fi}'
   ].join('\n'))],{type:'text/javascript'}));
