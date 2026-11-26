@@ -219,3 +219,22 @@ test('compound and Boolean caret rejection preserves the integer-only contract',
     ['let int x = 12; x ^/*gap*/^= 10; return x;','E_UNSUPPORTED_SYNTAX']
   ])assert.throws(()=>transpile_to_worker(main(body)),e=>e instanceof TranspileError&&e.code===code,body);
 });
+
+
+test('inline task writeback, lazy branches and panic preserve one-shot tenant execution',async()=>{
+  for(const [body,want] of [
+    ['let int n = 0; val bool r = false && sync task<bool> { n = 99; return true; }; return r ? 1 : n+42;','42'],
+    ['let int n = 0; val bool r = Xor(true, sync task<bool> { n = 2; return false; }); return r ? n+40 : 1;','42'],
+    ['let int x = 12; x ^^= sync task<int> { x = 99; return 10; }; return x;','6'],
+    ['return sync task<int> { return 9223372036854775807 + 1; };',null]
+  ]){
+    const {module_source}=transpile_to_worker(main(body));
+    const mod=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(module_source));
+    for(const generation of [1,2]){
+      const tenant=await mod.create_tenant({tenant:'inline-replay-test',generation});
+      if(want===null) await assert.rejects(()=>tenant.on_message(),/E_GUEST_PANIC_1/);
+      else assert.deepEqual(await tenant.on_message(),{value:want,stdout:'',actors:0});
+      await assert.rejects(()=>tenant.on_message(),/E_MAIN_ALREADY_CALLED/);
+    }
+  }
+});
