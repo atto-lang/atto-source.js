@@ -23,12 +23,17 @@ function equalToken(a,b) {
   for(let i=0;i<32;i++)diff|=a.charCodeAt(i)^b.charCodeAt(i);
   return diff===0;
 }
-function dataRecord(o) {
-  if(!o||typeof o!=='object'||Array.isArray(o))return false;
-  const keys=Object.keys(o).sort();
-  if(keys.length!==6||keys.join(',')!=='capability,epoch,owner,ticket,type,value')return false;
+const FRAME_FIELDS=['capability','epoch','owner','ticket','type','value'];
+function snapshotFrame(o) {
+  if(!o||typeof o!=='object'||Array.isArray(o))return null;
   const desc=Object.getOwnPropertyDescriptors(o);
-  return keys.every(k=>own(desc,k)&&own(desc[k],'value')&&desc[k].enumerable);
+  if(Reflect.ownKeys(desc).length!==FRAME_FIELDS.length)return null;
+  const frame=Object.create(null);
+  for(const k of FRAME_FIELDS) {
+    if(!own(desc,k)||!own(desc[k],'value')||!desc[k].enumerable)return null;
+    frame[k]=desc[k].value;
+  }
+  return frame;
 }
 export function createWorkerCompletionCapabilitiesV1({loop,owner,epoch,maxPending=1024}={}) {
   if(!loop||!['attachOwner','retireOwner','beginSuspension','complete','cancel']
@@ -54,11 +59,12 @@ export function createWorkerCompletionCapabilitiesV1({loop,owner,epoch,maxPendin
     active.set(id,record);byGrant.set(grant,record);
     return grant;
   }
-  function complete(frame) {
+  function complete(input) {
     try {
       // Treat the frame as untrusted structured-clone data. No getter values,
       // polymorphic payloads, functions, extra fields or object-valued results.
-      if(closed||!dataRecord(frame)||frame.type!==WORKER_COMPLETION_V1||
+      const frame=closed?null:snapshotFrame(input);
+      if(!frame||frame.type!==WORKER_COMPLETION_V1||
          frame.owner!==owner||frame.epoch!==epoch||
          !Number.isSafeInteger(frame.ticket)||frame.ticket<=0||
          typeof frame.value!=='bigint'||frame.value<MIN_I64||frame.value>MAX_I64) {
@@ -70,9 +76,16 @@ export function createWorkerCompletionCapabilitiesV1({loop,owner,epoch,maxPendin
       }
       // Loop.complete is non-reentrant: it queues the trusted resume callback.
       // If the scheduler was retired, invalidate the grant regardless.
-      const admitted=loop.complete(record.pending,frame.value);
+      // Consume before calling the trusted scheduler. A throwing admission
+      // must not make a single-use capability replayable.
       active.delete(frame.ticket);
-      byGrant.delete(record.grant); // do not retain the settled resume closure
+      byGrant.delete(record.grant);
+      let admitted;
+      try {admitted=loop.complete(record.pending,frame.value);}
+      catch (error) {
+        try {loop.cancel(record.pending);} catch { /* Best-effort cleanup. */ }
+        throw error;
+      }
       if(admitted)accepted++;else rejected++;
       return admitted;
     } catch {
