@@ -455,6 +455,11 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
               local.push(id);if(step.mutable)mut.add(id);
               return {kind:'bind',slot:id,mutable:step.mutable,init};
             }
+            if(kind.value==='loopExit'){
+              record(step,['kind','exit','condition'],'guarded loop exit');
+              if(step.exit!=='break'&&step.exit!=='continue')fail('invalid loop exit');
+              return {kind:'loopExit',exit:step.exit,condition:node(step.condition,owner,depth+d+1,'bool',local)};
+            }
             if(kind.value==='loop'){
               record(step,['kind','condition','steps'],'nested loop');
               return {kind:'loop',condition:node(step.condition,owner,depth+d+1,'bool',local),
