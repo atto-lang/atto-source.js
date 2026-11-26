@@ -256,9 +256,11 @@ class Parser {
   }
   eatMethodMarker() {
     const marker=this.peek().value;
-    if(marker!=='mtd'&&marker!=='method')return false;
+    if(marker!=='mtd'&&marker!=='method'&&marker!=='fnc')return false;
     const next=this.tokens[this.i+1],after=this.tokens[this.i+2];
     if(!next||next.kind!=='id'||after?.value!=='(')return false;
+    // The literal callable method() remains valid; only the old introducer is obsolete.
+    if(marker==='method')fail('OBSOLETE_METHOD_INTRODUCER: use mtd or a bare method name',this.peek());
     const value=next.value;
     if(CLASS_METHOD_RESERVED.has(value)&&!CLASS_METHOD_CALLABLE_KEYWORDS.has(value))
       return false;
