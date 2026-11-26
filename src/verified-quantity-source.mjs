@@ -4,8 +4,29 @@ const MIN=-(1n<<63n),MAX=(1n<<63n)-1n,LIMIT=(1n<<256n)-1n;
 const scalar=()=>({powers:new Map(),n:1n,d:1n});
 const FULL=[MIN,MAX];
 const max=(a,b)=>a>b?a:b,min=(a,b)=>a<b?a:b;
-const intersect=(a,b)=>{const lo=max(a[0],b[0]),hi=min(a[1],b[1]);return lo<=hi?[lo,hi]:null;};
-const contains=(a,b)=>a[0]<=b[0]&&b[1]<=a[1];
+// A bounded exclusion domain: only 0 and -1 are represented as holes.
+const bit=n=>n===0n?1:n===-1n?2:0;
+const has=(r,n)=>r[0]<=n&&n<=r[1]&&!((r[2]??0)&bit(n));
+function normalize(lo,hi,mask=0){
+  if(lo>hi)return null;
+  while(mask&bit(lo))lo++;
+  while(mask&bit(hi))hi--;
+  if(lo>hi)return null;
+  return [lo,hi,mask];
+}
+const intersect=(a,b)=>normalize(max(a[0],b[0]),min(a[1],b[1]),(a[2]??0)|(b[2]??0));
+const contains=(a,b)=>a[0]<=b[0]&&b[1]<=a[1]&&[0n,-1n].every(n=>!has(b,n)||has(a,n));
+const join=(a,b)=>normalize(min(a[0],b[0]),max(a[1],b[1]),[0n,-1n].reduce((m,n)=>m|(!has(a,n)&&!has(b,n)?bit(n):0),0));
+function restrict(r,op,n){
+  if(op==='!='){
+    if(!has(r,n))return r;
+    if(r[0]===n)return normalize(n+1n,r[1],r[2])??r;
+    if(r[1]===n)return normalize(r[0],n-1n,r[2])??r;
+    return normalize(r[0],r[1],(r[2]??0)|bit(n))??r;
+  }
+  const bound=op==='<'?[MIN,n-1n]:op==='<='?[MIN,n]:op==='>'?[n+1n,MAX]:op==='>='?[n,MAX]:[n,n];
+  return intersect(r,bound)??r; // no unreachable-path certification
+}
 const normal=(lo,hi)=>intersect([lo,hi],FULL)??FULL;
 function arithmeticRange(a,b,op){
   const [l,h]=a,[r,s]=b;
@@ -30,7 +51,7 @@ function provesArithmetic(a,b,op){
   if(op==='+')return fits(l+r,h+s);
   if(op==='-')return fits(l-s,h-r);
   if(op==='*'){const v=[l*r,l*s,h*r,h*s];return fits(v.reduce(min),v.reduce(max));}
-  if(op==='/')return (r>0n||s<0n)&&!(l===MIN&&r<=-1n&&s>=-1n);
+  if(op==='/')return !has(b,0n)&&!(has(a,MIN)&&has(b,-1n));
   return false;
 }
 export function lowerVerifiedQuantitySource(tokens,report,strict=false){
@@ -222,6 +243,72 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     if(min===0&&take('as'))left=cast(left,name(),true);
     return left;
   }
+  function joinFacts(a,b){
+    return new Map([...a].map(([k,v])=>[k,{...v,range:join(v.range,b.get(k).range)}]));
+  }
+  function condition(incoming,depth=0){
+    if(depth>16||--budget<0)fail('E_UNIT_LIMIT','strict condition budget');
+    function predicate(facts,d){
+      if(d>16||--budget<0)fail('E_UNIT_LIMIT','strict predicate budget');
+      locals=facts;
+      if(take('!')){
+        const p=predicate(facts,d+1);
+        return {ir:{kind:'not',inner:p.ir},yes:p.no,no:p.yes};
+      }
+      if(take('(')){
+        const p=disjunction(facts,d+1);expect(')');return p;
+      }
+      const left=expr(0,0);
+      const op=({'eq':'==','neq':'!='})[peek().value]??peek().value;
+      if(!['<','<=','>','>=','==','!='].includes(op))fail('E_VERIFY_UNSUPPORTED','strict comparison required');
+      at++;
+      const right=expr(0,0);compatible(left.unit,right.unit);
+      const yes=new Map(facts),no=new Map(facts);
+      const inverse={'<':'>=','<=':'>','>':'<=','>=':'<','==':'!=','!=':'=='};
+      if(right.range[0]===right.range[1]){
+        // Only the exact original immutable binding can be narrowed.
+        for(const [key,v] of facts)if(left.ir===v.ir){
+          yes.set(key,{...v,range:restrict(v.range,op,right.range[0])});
+          no.set(key,{...v,range:restrict(v.range,inverse[op],right.range[0])});
+        }
+      }
+      return {ir:{kind:'compare',op,left:left.ir,right:right.ir},yes,no};
+    }
+    function conjunction(facts,d){
+      let p=predicate(facts,d);
+      while(take('&&')){
+        const q=predicate(p.yes,d);
+        p={ir:{kind:'if',condition:p.ir,yes:q.ir,no:{kind:'bool',value:false}},yes:q.yes,no:joinFacts(p.no,q.no)};
+      }
+      return p;
+    }
+    function disjunction(facts,d){
+      let p=conjunction(facts,d);
+      while(take('||')){
+        const q=conjunction(p.no,d);
+        p={ir:{kind:'if',condition:p.ir,yes:{kind:'bool',value:true},no:q.ir},yes:joinFacts(p.yes,q.yes),no:q.no};
+      }
+      return p;
+    }
+    return disjunction(incoming,depth);
+  }
+  // Restricted returning conditionals: no mutable bindings, arbitrary
+  // statements, side effects, loop or suspension admission here.
+  function strictReturn(result,facts,depth=0){
+    if(depth>16||--budget<0)fail('E_UNIT_LIMIT','strict return budget');
+    locals=facts;
+    if(take('if')){
+      const p=condition(facts);
+      expect('{');const yes=strictReturn(result,p.yes,depth+1);expect('}');
+      let no;
+      if(take('else')){expect('{');no=strictReturn(result,p.no,depth+1);expect('}');}
+      else no=strictReturn(result,p.no,depth+1);
+      return {kind:'if',condition:p.ir,yes,no};
+    }
+    expect('return');const v=expr(0,0);expect(';');
+    boundary(result,v,'E_REFINEMENT_RETURN');
+    return v.ir;
+  }
   const functions=[];
   for(;;){
     if(functions.length>=32)fail('E_UNIT_LIMIT','too many functions');
@@ -257,10 +344,14 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       bindings.push({slot,init:value.ir});
       locals.set(key,make(value.unit,{kind:'capture',slot},null,value.range));
     }
-    expect('return');const v=expr(0,0);expect(';');expect('}');
-    if(pub&&!same(v.unit,scalar()))fail('E_UNIT_ERASURE','main requires scale-one scalar');
-    boundary(result,v,'E_REFINEMENT_RETURN');
-    let body=v.ir;
+    let body;
+    if(strict){body=strictReturn(result,locals);expect('}');}
+    else {
+      expect('return');const v=expr(0,0);expect(';');expect('}');
+      if(pub&&!same(v.unit,scalar()))fail('E_UNIT_ERASURE','main requires scale-one scalar');
+      boundary(result,v,'E_REFINEMENT_RETURN');
+      body=v.ir;
+    }
     for(let i=bindings.length-1;i>=0;i--)body={kind:'local',...bindings[i],body};
     const index=functions.length;
     functions.push({module:null,name:n,kind:'fnc',pub,params,body});
