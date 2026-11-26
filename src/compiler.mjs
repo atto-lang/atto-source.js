@@ -79,7 +79,7 @@ function lex(src) {
     if(/[A-Za-z_]/.test(src[i])){
       let s='';while(i<src.length&&/[A-Za-z0-9_]/.test(src[i])){s+=src[i];advance();}
       // Mandatory separator after the entire contextual keyword suffix.
-      if (['trap','throw','raise','panic','copy','take','borrow','share','pin','drop','pipe','rpipe','stop','expand'].includes(s) && src[i]==='!' &&
+      if (['trap','throw','raise','panic','copy','take','move','borrow','share','pin','drop','pipe','rpipe','stop','expand'].includes(s) && src[i]==='!' &&
           src[i+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(src.slice(i))) {
         const after=i+(s==='copy' && src[i+1]==='!' ? 2 : 1);
         if (!/[ \t\r\n\v\f]/.test(src[after]??'')) throw new CompileError('E_BANG_KEYWORD_WHITESPACE: whitespace required after bang keyword',loc);
@@ -89,6 +89,9 @@ function lex(src) {
       if(['trap','throw','raise','panic'].includes(s) && src[i]==='!' &&
          src[i+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(src.slice(i)))
         throw new CompileError('EXCEPTION_BANG_BACKEND_UNSUPPORTED: typed guest effects and Result lowering required',loc);
+      if(['copy','take','move','borrow','share'].includes(s) && src[i]==='!' &&
+         src[i+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(src.slice(i)))
+        throw new CompileError('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: checked ownership lowering required',loc);
       add('id',s,loc);
     }else if(/[0-9]/.test(src[i])){
       let s='';while(i<src.length&&/[0-9_]/.test(src[i])){s+=src[i];advance();}
