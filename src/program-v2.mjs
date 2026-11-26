@@ -296,7 +296,7 @@ function tokenize(source) {
       advance(); advance();
     } else if (['<=','>=','==','!='].some(op=>source.startsWith(op,pos))) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
-    } else if (source.startsWith('->',pos) || source.startsWith('<-',pos) || source.startsWith('::',pos)) {
+    } else if (source.startsWith('->',pos) || source.startsWith('<-',pos) || source.startsWith('::',pos) || source.startsWith('|>',pos)) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
     } else if (c==='•') {
       emit('sym',c,start); advance();
@@ -908,9 +908,28 @@ class Parser {
     if (++this.depth > MAX_DEPTH || ++this.expressions > MAX_TOKENS) fail('expression budget exceeded',this.peek());
     try {
       let left = this.primary();
+      let stages=0;
       while (true) {
         const token=this.peek();
         let op=token.value, width=1;
+        if(op==='|>' && min===0){
+          this.i++;
+          if(++stages>128)fail('pipeline exceeds 128 stages',token);
+          if(this.eat('match')){
+            // Subject injection uses the normal checked match IR, not a lambda.
+            if(++this.depth>MAX_DEPTH)fail('expression budget exceeded',token);
+            try{left=this.matchExpression(left);}finally{this.depth--;}
+          }else{
+            // Program-v2 admits named root/module calls; no computed callees.
+            const at=this.peek();
+            if(at.kind!=='id'||GENERATOR_RESERVED.has(at.value))fail('pipeline requires a named function or match',at);
+            let name=this.name(),qualifier=null;
+            if(this.eat('.')){qualifier=name;name=this.name();}
+            const args=this.eat('(')?this.argumentsAfterOpen():[];
+            left={kind:'call',qualifier,name,args:[{name:null,expr:left},...args]};
+          }
+          continue;
+        }
         // Recognize contiguous triple shifts only at expression boundaries.
         // Keep individual > tokens for nested nominal generic closers.
         if(op==='<'||op==='>'){
@@ -1027,14 +1046,14 @@ class Parser {
     }
     return {kind:'call',qualifier,name:symbol,args};
   }
-  matchExpression() {
+  matchExpression(injectedSubject=null) {
     // A typed scalar match is a canonical source form, not a new
     // dynamically-dispatched container or unchecked JS pattern primitive.
     const typed=this.eat('<');
     if(typed){this.expect('int');this.expect('>');}
-    const subject=this.expression();
+    const subject=injectedSubject??this.expression();
     const hasOver=this.eat('over');
-    if(typed&&!hasOver)fail('typed scalar match requires over',this.peek());
+    if((typed||injectedSubject!==null)&&!hasOver)fail('typed or pipeline match requires over',this.peek());
     const braced=this.eat('{');
     const arms=[],seen=new Set();
     let family=null,wildcard=false;
@@ -1077,17 +1096,21 @@ class Parser {
       const key=tag==='integer'?'int:'+value:tag;
       if(seen.has(key))fail('duplicate match pattern '+key);
       seen.add(key);
-      if(canonicalDefault)this.expect('->');
-      else this.eat('->');
-      this.expect('{');
-      // Existing Oreslang ADT fixture uses statement-looking return bodies
-      // inside a match expression. Treat that spelling as an expression arm.
-      if(this.peek().value==='return') {
+      const arrow=this.eat('->');
+      if(!arrow&&(canonicalDefault||this.peek().value!=='{'))
+        fail("match expression arms require '->'",this.peek());
+      const block=this.eat('{');
+      // Keep the existing single-expression block subset. No arbitrary
+      // statement blocks or early-return control flow are admitted here.
+      if(block&&this.peek().value==='return') {
         if(family!=='adt')fail('return in scalar expression match is unsupported');
         this.i++;
       }
       const body=this.expression();
-      this.expect(';');this.expect('}');
+      if(block){this.expect(';');this.expect('}');}
+      const separated=this.eat(',');
+      if(!block&&!separated&&!ended()&&!['on','default','else'].includes(this.peek().value))
+        fail('expected match arm boundary',this.peek());
       arms.push({tag,bind,value,body});
       if(arms.length>256)fail('match arm limit');
     }
