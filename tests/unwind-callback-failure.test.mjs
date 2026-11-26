@@ -60,3 +60,12 @@ test('supplemental diagnostics are bounded and report overflow',()=>{
   assert.equal(r.failure_kind,'panic');assert.equal(r.suppressed.length,16);
   assert.equal(r.suppressed_kinds.length,16);assert.equal(r.suppressed_overflow,34);
 });
+test('terminal cleanup failure on return drains outer frames without recovery',()=>{
+  const c=context(),trace=[],err=Error('panic');
+  c.push_frame(1);c.register_defer(()=>trace.push('outer'));
+  c.register_recover(()=>c.recovered(42));
+  c.push_frame(2);c.register_defer(()=>c.signal_failure('raise',err));
+  const r=c.return_frame(40);
+  assert.equal(r.failure_kind,'panic');assert.equal(r.error,err);
+  assert.equal(c.depth,0);assert.deepEqual(trace,['outer']);c.retire();
+});
