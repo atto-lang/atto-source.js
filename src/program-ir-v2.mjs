@@ -296,7 +296,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
     // No implicit truthiness or numeric coercions, including in supplied IR.
     if(expected==='bool'&&['int','neg','binary'].includes(desc.value))
       fail('boolean expression required');
-    if(expected!=='bool'&&['bool','compare','symbolCompare','not'].includes(desc.value))
+    if(expected!=='bool'&&['bool','compare','boolCompare','symbolCompare','not'].includes(desc.value))
       fail('boolean value cannot be used as non-bool');
     if(expected!=='int'&&['int','neg','binary'].includes(desc.value))
       fail('integer expression cannot be used as non-int');
@@ -543,6 +543,13 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         if(!['<','>','<=','>=','==','!='].includes(expr.op))fail('unsupported comparator');
         return {kind:'compare',op:expr.op,left:node(expr.left,owner,depth+1,'int',active),
           right:node(expr.right,owner,depth+1,'int',active)};
+      case 'boolCompare':
+        record(expr,['kind','op','left','right'],'Boolean compare');
+        if(expected!=='bool'||!['==','!='].includes(expr.op))
+          fail('unsupported Boolean comparison');
+        return {kind:'boolCompare',op:expr.op,
+          left:node(expr.left,owner,depth+1,'bool',active),
+          right:node(expr.right,owner,depth+1,'bool',active)};
       case 'symbolCompare':
         record(expr,['kind','op','left','right'],'Symbol compare');
         if(expected!=='bool')fail('Symbol comparison outside bool context');
@@ -727,6 +734,13 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         return {kind:'compare',op:expr.op,
           left:methodNode(expr.left,method,depth+1,'int'),
           right:methodNode(expr.right,method,depth+1,'int')};
+      case 'boolCompare':
+        record(expr,['kind','op','left','right'],'method Boolean compare');
+        if(expected!=='bool'||!['==','!='].includes(expr.op))
+          fail('unsupported method Boolean comparison');
+        return {kind:'boolCompare',op:expr.op,
+          left:methodNode(expr.left,method,depth+1,'bool'),
+          right:methodNode(expr.right,method,depth+1,'bool')};
       case 'symbolCompare':
         record(expr,['kind','op','left','right'],'method Symbol compare');
         if(expected!=='bool'||(expr.op!=='=='&&expr.op!=='!='))

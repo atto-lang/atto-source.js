@@ -27,3 +27,9 @@ test('triple-angle shift is not a declaration sink',async()=>{
   assert.equal((await load('val int n << 21 <<< 1;return n;')).main(),42n);
   assert.equal((await load('84 >>> 1 >> val int n;return n;')).main(),42n);
 });
+
+test('directional const preserves homogeneous Boolean equality',async()=>{
+  for(const body of ['const int n << (true eq false) ? 7 : 42;return n;','const int n << (true neq false) ? 42 : 7;return n;'])
+    assert.equal((await load(body)).main(),42n);
+  assert.throws(()=>compileProgramV2(program('const int n << (true eq 1) ? 42 : 7;return n;')), /Boolean comparison requires bool/);
+});
