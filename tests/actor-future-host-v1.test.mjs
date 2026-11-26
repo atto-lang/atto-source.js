@@ -122,3 +122,32 @@ test('real actor Worker receives only incarnation-matched one-shot reply port',a
     link.port1.close();await service.terminate();
   }
 });
+
+
+test('bounded manifest actor authority and asynchronous supervisor sink failure',async()=>{
+  const {loop,turns}=mk(),m=new MessageChannel();
+  let notices=0;
+  const host=createActorFutureHostV1({module:fixture(),loop,
+    onSupervisorNotice:async()=>{notices++;throw Error('observer failed');}});
+  try{
+    for(let id=8;id<1032;id++)
+      assert.throws(()=>host.registerActor({actorId:id,incarnation:1,controlPort:m.port1}),
+        /UNDECLARED_ACTOR/);
+    assert.equal(host.stats.activeActors,0);
+    host.registerActor({actorId:7,incarnation:1,controlPort:m.port1});
+    const task=host.spawn({owner:'bounded',ownerId:1,epoch:1});
+    task.result.catch(()=>{});
+    tick(turns);
+    assert.equal(host.stopActor({actorId:7,incarnation:1,kind:'panic'}),true);
+    tick(turns);
+    await assert.rejects(task.result,e=>e instanceof ActorFutureFailure&&e.code==='E_ACTOR_FUTURE_PANIC');
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(host.stats.liveFrames,0);
+    assert.equal(notices,1);
+    assert.throws(()=>host.registerActor({actorId:7,incarnation:1,controlPort:m.port1}),/STALE_INCARNATION/);
+    host.registerActor({actorId:7,incarnation:2,controlPort:m.port1});
+    assert.equal(host.close(),true);
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(notices,2);
+  }finally{m.port1.close();m.port2.close();}
+});

@@ -39,7 +39,7 @@ is exported. The caller must admit only trusted compiled code: the
 marker is not an executable signature.
 
 `registerActor({actorId,incarnation,controlPort})` binds a trusted host
-actor registration; incarnations are positive monotonically increasing i32s.
+actor registration for the single producer ID declared by the manifest; unrelated IDs are rejected before any retained registration or generation history is created. Incarnations are positive monotonically increasing i32s.
 The actor's `controlPort` is a trusted, dedicated connection to its
 Worker. Multiple owner tasks may share that actor but each receives its
 **own reply MessagePort**. The host sends the actor:
@@ -72,7 +72,7 @@ JSPI, or guest runtime code generation.
 admission, then revokes all outstanding futures for that incarnation.
 The host sends `onSupervisorNotice({actorId,incarnation,kind,reason})`
 for `panic`, `raise`, or `terminated` after revocation, never routes
-panic to the faulting actor. Awaiting tasks reject with a typed
+panic to the faulting actor. A throwing or asynchronously rejecting observer cannot undo revocation; the callback is not a durable delivery acknowledgement. Awaiting tasks reject with a typed
 `ActorFutureFailure` whose `code` identifies the failure kind.
 A restarted actor **must** register a strictly larger incarnation; old
 reply tickets, ports and task handles cannot authorize its work.
