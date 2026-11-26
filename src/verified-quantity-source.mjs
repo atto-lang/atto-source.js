@@ -318,33 +318,79 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
   // Closed scalar control flow with fresh lexical SSA-like versions, bounded
   // path-sensitive continuation splitting and single-state iterative while.
   // No aliases, nonlocal mutation, effects or suspension are admitted.
+  function loopPlan(facts,mutable,depth,top){
+    if(depth>16||--budget<0)fail('E_UNIT_LIMIT','strict loop budget');
+    let brace=at;
+    while(brace<tokens.length&&tokens[brace].value!=='{'&&tokens[brace].kind!=='eof')brace++;
+    if(tokens[brace]?.value!=='{')fail('E_VERIFY_UNSUPPORTED','loop block required');
+    const writes=new Set();let nesting=1;
+    for(let k=brace+1;k<tokens.length&&nesting;k++){
+      const t=tokens[k];
+      if(t.value==='{')nesting++;
+      else if(t.value==='}')nesting--;
+      else if(t.kind==='id'&&tokens[k+1]?.value==='='&&mutable.has(t.value))writes.add(t.value);
+    }
+    if(nesting)fail('E_VERIFY_UNSUPPORTED','unterminated loop');
+    const header=new Map(facts),states=[];
+    for(const key of writes){
+      const want=mutable.get(key),initial=facts.get(key);
+      boundary(want,initial,'E_REFINEMENT_BINDING');
+      let ir=initial.ir;
+      if(top){
+        if(nextStrictSlot>=64)fail('E_UNIT_LIMIT','strict local slot budget');
+        const slot=nextStrictSlot++;states.push({slot,init:ir});ir={kind:'capture',slot};
+      }
+      if(ir.kind!=='capture')fail('E_VERIFY_UNSUPPORTED','loop target must have a scalar slot');
+      header.set(key,make(want.unit,ir,null,want.range,want.width));
+    }
+    const p=condition(header);
+    expect('{');
+    let current=new Map(p.yes);const declared=new Map(mutable),steps=[];
+    while(!take('}')){
+      if(--budget<0)fail('E_UNIT_LIMIT','strict loop statement budget');
+      locals=current;
+      if(take('while')){
+        const nested=loopPlan(current,declared,depth+1,false);
+        steps.push({kind:'loop',condition:nested.condition,steps:nested.steps});
+        current=nested.exit;continue;
+      }
+      if(peek().value==='let'||peek().value==='val'){
+        const mut=take('let');if(!mut)expect('val');
+        let key,want=null;
+        if(tokens[at+1]?.value===':'){key=identifier();expect(':');want=type();}
+        else if(tokens[at+1]?.value==='='){key=identifier();}
+        else{want=type();key=identifier();}
+        if(mut&&!want)fail('E_VERIFY_UNSUPPORTED','mutable loop local requires declared type');
+        if(current.has(key))fail('E_UNIT_DUPLICATE','duplicate loop local');
+        expect('=');const value=expr(0,0);expect(';');
+        if(want)boundary(want,value,'E_REFINEMENT_BINDING');
+        if(nextStrictSlot>=64)fail('E_UNIT_LIMIT','strict local slot budget');
+        const slot=nextStrictSlot++;
+        current.set(key,make(value.unit,{kind:'capture',slot},null,value.range,want?.width??(value.width||64)));
+        if(mut)declared.set(key,want);
+        steps.push({kind:'bind',slot,mutable:mut,init:value.ir});continue;
+      }
+      if(peek().kind==='id'&&tokens[at+1]?.value==='='){
+        const key=identifier();expect('=');
+        const want=declared.get(key),prior=current.get(key);
+        if(!want||prior?.ir.kind!=='capture')fail('E_VERIFY_UNSUPPORTED','assignment to nonmutable loop slot');
+        const value=expr(0,0);expect(';');boundary(want,value,'E_REFINEMENT_BINDING');
+        steps.push({kind:'set',slot:prior.ir.slot,value:value.ir});
+        current.set(key,make(want.unit,prior.ir,null,value.range,want.width));continue;
+      }
+      fail('E_VERIFY_UNSUPPORTED','strict loop statement not admitted');
+    }
+    for(const key of writes)boundary(mutable.get(key),current.get(key),'E_REFINEMENT_BINDING');
+    return {states,condition:p.ir,steps,exit:p.no};
+  }
   function strictReturn(result,facts,mutable=new Map(),depth=0,onExit=null){
     if(depth>16||--budget<0)fail('E_UNIT_LIMIT','strict return budget');
     locals=facts;
     if(peek().value==='}'&&onExit)return onExit(facts,mutable,depth);
     if(take('while')){
-      // Single direct scalar assignment per backedge. Locate the candidate
-      // target without consuming the guard; the real parser validates every
-      // token below. This scan cannot admit additional statements.
-      let brace=at;
-      while(brace<tokens.length&&tokens[brace].value!=='{'&&tokens[brace].kind!=='eof')brace++;
-      const key=tokens[brace+1]?.value;
-      if(tokens[brace+1]?.kind!=='id'||tokens[brace+2]?.value!=='='||!mutable.has(key))
-        fail('E_VERIFY_UNSUPPORTED','strict while requires one direct mutable scalar update');
-      const declared=mutable.get(key),initial=facts.get(key);
-      boundary(declared,initial,'E_REFINEMENT_BINDING');
-      if(nextStrictSlot>=64)fail('E_UNIT_LIMIT','strict local slot budget');
-      const slot=nextStrictSlot++,header=new Map(facts);
-      // The new slot represents every iteration, including entry. Forget
-      // only the assigned variable's transient range, not other bindings.
-      header.set(key,make(declared.unit,{kind:'capture',slot},null,declared.range,declared.width));
-      const p=condition(header);
-      expect('{');if(identifier()!==key)fail('E_VERIFY_UNSUPPORTED','unexpected loop update');
-      expect('=');locals=p.yes;const update=expr(0,0);expect(';');
-      boundary(declared,update,'E_REFINEMENT_BINDING');
-      if(!take('}'))fail('E_VERIFY_UNSUPPORTED','strict while supports one direct assignment');
-      return {kind:'scalarWhile',slot,init:initial.ir,condition:p.ir,update:update.ir,
-        body:strictReturn(result,p.no,mutable,depth+1,onExit)};
+      const p=loopPlan(facts,mutable,depth,true);
+      return {kind:'scalarWhileMany',states:p.states,condition:p.condition,steps:p.steps,
+        body:strictReturn(result,p.exit,mutable,depth+1,onExit)};
     }
     if(['loop','for','break','continue'].includes(peek().value))
       fail('E_VERIFY_UNSUPPORTED','strict loop form not implemented');
