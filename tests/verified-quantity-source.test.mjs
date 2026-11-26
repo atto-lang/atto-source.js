@@ -24,6 +24,7 @@ test('reject unsupported refinement carrier and bare untyped scalar division',()
 });
 
 
+
 test('contracted delimiter forms execute real equivalent ESM guests',async()=>{
  const head=pre+' type Bounded = int where self >= 1 and self <= 42; fnc f(int x) -> int requires x >= 1 requires x <= 42';
  const tail=' pub fnc main() -> int { return f(2); }';
