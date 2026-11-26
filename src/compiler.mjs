@@ -82,8 +82,8 @@ function lex(src) {
       continue;
     }
     const loc={line,col};
-    if(/[A-Za-z_]/.test(src[i])){
-      let s='';while(i<src.length&&/[A-Za-z0-9_]/.test(src[i])){s+=src[i];advance();}
+    if(/[A-Za-z_Α-ΡΣ-Ωα-ω]/.test(src[i])){
+      let s='';while(i<src.length&&/[A-Za-z0-9_Α-ΡΣ-Ωα-ω]/.test(src[i])){s+=src[i];advance();}
       // A typed Topic receiver may be a local, parameter or import. Until
       // scalar ESM owns actor/group capabilities, share! and Result lowering,
       // reject actual member publication before producing source/IR artifacts.
@@ -98,7 +98,7 @@ function lex(src) {
       // preflight can still diagnose its legacy and canonical spellings.
       if(['copy','take','move','borrow','share'].includes(s) && src[i]==='!' &&
           src[i+1]!=='=' &&
-          !(src.slice(i+1,i+3)==='eq' && !/[A-Za-z0-9_]/.test(src[i+3]??'')))
+          !(src.slice(i+1,i+3)==='eq' && !/[A-Za-z0-9_Α-ΡΣ-Ωα-ω]/.test(src[i+3]??'')))
         ownershipBang ??= loc;
       add('id',s,loc);
     }else if(/[0-9]/.test(src[i])){
