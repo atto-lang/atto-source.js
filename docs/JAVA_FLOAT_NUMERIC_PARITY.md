@@ -1,0 +1,3 @@
+# Java-first bounded floating-point lowering
+
+Forward-port of the four shared binary64 fixtures from #73 into current-main #149 without replacing guard, ownership admission, typed scalar trap or operator changes. Separate float IR nodes and float local slots; decimal literal budget; IEEE-754 arithmetic, exact mixed i64/f64 ordered and equality comparisons, no mixed arithmetic conversion, no raw float API signatures. Preserve NaN, signed zero, infinity and i64 boundaries. Strict integer-only scalar profile rejects float IR. 27 supplemental isolated V8 checks including the unchanged shared fixture execution, integer-profile refusals and invalid IR cases; Node ESM tests added. JS Number/BigInt storage is not proof of native AOT or guest zero-GC.

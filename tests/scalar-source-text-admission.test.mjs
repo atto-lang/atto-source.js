@@ -95,3 +95,15 @@ test('program-v2: accept exact UTF-8 source budget and reject a single excess by
     err=>err instanceof ProgramCompileError &&
       /oversized or invalid source/.test(err.message));
 });
+
+
+test('scalar-v1 // comments stop on CR, NEL, LS and PS without swallowing declarations',()=>{
+ for(const boundary of ['\r','\u0085','\u2028','\u2029']){
+  const src='// ignored'+boundary+PROGRAM;
+  assert.equal(check(src),true,'scalar comment boundary '+boundary.charCodeAt(0));
+  const withExtra=PROGRAM+' // comment'+boundary+'pub fnc other(): int { return 7; }';
+  assert.equal(compileToIR(withExtra).functions.length,2,'second declaration is visible');
+  const guarded='// ignored'+boundary+'// oreslang:checked-i64'+boundary+PROGRAM;
+  assert.throws(()=>compile(guarded),/checked-i64 source requires program-v2/);
+ }
+});

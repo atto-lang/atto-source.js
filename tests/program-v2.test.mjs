@@ -91,7 +91,7 @@ test('match literals, no fallthrough, exhaustive wildcard and subject evaluated 
   assert.equal((compileProgramV2(code).match(/const _subject=/g)||[]).length,1);
 });
 test('match else, lazy branches, and negative validations',async()=>{
-  const ns=await execute('pub fnc pick(int n): int {return match n on 1 -> {42;} else -> {1 % 0;} end;}');
+  const ns=await execute('pub fnc pick(int n): int {return match n on 1 -> {42;} else -> {Integer.rem(1, 0);} end;}');
   assert.equal(ns.pick(1n),42n);
   assert.throws(()=>ns.pick(2n),RangeError);
   for(const source of [
@@ -229,4 +229,58 @@ test('empty named module still emits an empty runtime namespace object',async()=
   assert.deepEqual(Object.keys(ns.empty),[]);
   assert.equal(Object.getPrototypeOf(ns.empty),null);
   assert.equal(Object.isFrozen(ns.empty),true);
+});
+
+test('namespace/lifecycle parity rejects unverified linking and init emission',()=>{
+  assert.throws(()=>compileProgramV2(
+    'import namespace billing as payments from checkout; define module app as pub fnc main(): int {return 1;} end'
+  ),/import namespace requires verified manifest package index/);
+  assert.throws(()=>compileProgramV2(
+    'namespace billing; define module app as pub fnc init(): int {return 1;} pub fnc main(): int {return 0;} end'
+  ),/init lifecycle requires once-only reachable initialization lowering/);
+  // A normal source unit has no directory scanning, ambient namespace
+  // discovery, or unexpected init side effects.
+  assert.doesNotThrow(()=>compileProgramV2(
+    'namespace billing; define module app as pub fnc main(): int {return 42;} end'
+  ));
+});
+
+test('init is not callable through either public or private source declarations',()=>{
+  for (const source of [
+    'pub fnc init(): int {return 1;}',
+    'fnc init(): int {return 1;} pub fnc main(): int {return 42;}',
+    'define module app as fnc init(): int {return 1;} end',
+    'namespace billing; define module app as pub routine init(): int {return 1;} end'
+  ]) assert.throws(()=>compileProgramV2(source),
+    /init lifecycle requires once-only reachable initialization lowering/,source);
+});
+
+test('unverified import forms cannot fall back to implicit ESM linking',()=>{
+  for (const source of [
+    'import module billing from checkout; pub fnc main(): int {return 42;}',
+    'import billing; pub fnc main(): int {return 42;}',
+    'namespace app; import other from lib; pub fnc main(): int {return 42;}'
+  ]) assert.throws(()=>compileProgramV2(source),
+    /cross-file import requires verified source graph lowering/,source);
+});
+
+test('quoted import paths fail closed lexically until package-graph linking exists',()=>{
+  for(const source of [
+    'import namespace billing as payments from "checkout"; pub fnc main(): int {return 42;}',
+    'import module billing from "checkout"; pub fnc main(): int {return 42;}',
+    'namespace app; import other from "./lib"; pub fnc main(): int {return 42;}'
+  ]) assert.throws(()=>compileProgramV2(source),/error: program v2:/,source);
+});
+
+test('comment text naming import namespace and init does not activate loader effects',async()=>{
+  const source=[
+    'namespace billing;',
+    '// import namespace forged as remote from "evil";',
+    '/* pub fnc init(): int {return 0;} */',
+    'define module app as pub fnc main(): int {return 42;} end'
+  ].join('\n');
+  const ns=await execute(source);
+  assert.deepEqual(Object.keys(ns),['app']);
+  assert.equal(ns.app.main(),42n);
+  assert.equal(Object.hasOwn(ns.app,'init'),false);
 });

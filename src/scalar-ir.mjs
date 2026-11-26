@@ -89,6 +89,10 @@ export function createScalarIR(parsedFunctions) {
         left: convert(expr.left, params, depth + 1),
         right: convert(expr.right, params, depth + 1)
       };
+      case 'entryProjection':
+        return {kind:'entryProjection', field:expr.field,
+          first:convert(expr.first,params,depth+1),
+          second:convert(expr.second,params,depth+1)};
       case 'call': {
         const target = slots.get(expr.name);
         if (target === undefined) fail('unresolved identifier ' + expr.name);
@@ -154,10 +158,16 @@ export function validateScalarIR(ir) {
         return {kind: 'neg', inner: checkExpr(expr.inner, owner, depth + 1)};
       case 'binary':
         record(expr, ['kind', 'op', 'left', 'right'], 'binary');
-        if (!['+', '-', '*', '%'].includes(expr.op)) fail('unsupported binary operator');
+        if (!['+', '-', '*', '%', 'mod', '^'].includes(expr.op)) fail('unsupported binary operator');
         return {kind: 'binary', op: expr.op,
           left: checkExpr(expr.left, owner, depth + 1),
           right: checkExpr(expr.right, owner, depth + 1)};
+      case 'entryProjection':
+        record(expr, ['kind','field','first','second'], 'entry projection');
+        if (expr.field!=='key'&&expr.field!=='value') fail('invalid entry projection field');
+        return {kind:'entryProjection',field:expr.field,
+          first:checkExpr(expr.first,owner,depth+1),
+          second:checkExpr(expr.second,owner,depth+1)};
       case 'call': {
         record(expr, ['kind', 'target', 'args'], 'call');
         const target = index(expr.target, headers.length, 'function target');

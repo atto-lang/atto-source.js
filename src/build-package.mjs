@@ -59,6 +59,9 @@ export async function buildPackage({sourceFile, outputDir, target='edge-js', dec
     provenanceNote:'The compiler SHA is caller-declared, not independently attested. A hash is not an authorization or a sandbox.'
   };
   const parent = dirname(dest);
+  // Materialize the caller-chosen package parent before creating a private
+  // staging directory. Previously nested output paths failed with ENOENT.
+  await mkdir(parent,{recursive:true,mode:0o700});
   // The caller must control the parent directory. Cross-process attackers with
   // write access to the parent can replace paths despite any JS-only checks.
   const temp = await mkdtemp(join(parent,'.'+basename(dest)+'.staging-'));

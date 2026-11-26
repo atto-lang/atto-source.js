@@ -13,7 +13,7 @@ const load = esm => import('data:text/javascript,' + encodeURIComponent(esm));
 const compiled = source => load(compileProgramV2(source));
 
 test('canonical ternary: lazy signed-i64 arms, strict bool guard, IR/ESM round trip',async()=>{
-  const source='pub fnc choose(bool useFast): int {return useFast ? 42 : 1 % 0;}';
+  const source='pub fnc choose(bool useFast): int {return useFast ? 42 : Integer.rem(1, 0);}';
   const ir=compileToProgramIRV2(source);
   assert.equal(ir.functions[0].body.kind,'if');
   assert.equal(ir.functions[0].body.condition.kind,'param');
@@ -126,4 +126,56 @@ test('CLI --program-v2 uses canonical conditionals and writes runnable ESM',asyn
     assert.equal(m.choose(true),42n);
     assert.equal(m.choose(false),2n);
   }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('explicit ternary blocks use lazy typed IR and do not return from the callable',async()=>{
+  const source='pub fnc choose(bool b): int {val int x=b ? { return 40; } : { ^ 5; }; return x+2;}';
+  const {choose}=await compiled(source);
+  assert.equal(choose(true),42n);
+  assert.equal(choose(false),7n);
+  const {lazy}=await compiled('pub fnc lazy(bool b): int {return b ? {^ 42;} : {return Integer.rem(1,0);};}');
+  assert.equal(lazy(true),42n);
+  assert.throws(()=>lazy(false),/ORES_I64_DIVISION_BY_ZERO/);
+  const {action}=await compiled('pub fnc action(bool b): int {if b do return 42; fi return 7;}');
+  assert.equal(action(true),42n);
+  assert.equal(action(false),7n);
+});
+
+test('direct braces cannot fall back to aggregate or implicit tail syntax',()=>{
+  for(const arm of ['{}','{status: 42}','{42}','{val int x=42; return x;}'])
+    assert.throws(()=>compileProgramV2('pub fnc bad(): int {return true ? '+arm+' : 7;}'),
+      e=>e.code==='E_VALUE_ARM');
+  assert.throws(()=>compileProgramV2('pub fnc bad(): int {return false ? 7 : {};}'),
+    e=>e.code==='E_VALUE_ARM');
+});
+
+test('canonical negated suffix-do statements use the existing typed lazy Boolean IR',async()=>{
+  const source=[
+    'pub fnc choose(bool b): int {ifnot b do return 42; else return 9; fi}',
+    'pub fnc fallback(bool b): int {unless b do return 42; fi return 9;}',
+    'pub fnc nested(bool b): int {if true do unless b do return 42; fi fi return 9;}',
+    'pub fnc lazy(bool b): int {unless b do return 42; else return Integer.rem(1,0); fi}'
+  ].join('\n');
+  const ir=compileToProgramIRV2(source);
+  assert.equal(ir.functions[0].body.condition.kind,'not');
+  assert.deepEqual(validateProgramIRV2(JSON.parse(JSON.stringify(ir))),ir);
+  const m=await compiled(source);
+  for(const name of ['choose','fallback','nested']){
+    assert.equal(m[name](false),42n,name);
+    assert.equal(m[name](true),9n,name);
+    assert.throws(()=>m[name](1n),/bool required/,name);
+  }
+  assert.equal(m.lazy(false),42n);
+  assert.throws(()=>m.lazy(true),/ORES_I64_DIVISION_BY_ZERO/);
+});
+
+test('negated conditional heads reject non-Boolean predicates and unsupported delimiters',()=>{
+  for(const source of [
+    'pub fnc bad(): int {ifnot 1 do return 1; else return 2; fi}',
+    'pub fnc bad(): int {unless 0 do return 1; else return 2; fi}',
+    'pub fnc bad(): int {unless false then return 1; fi return 2;}',
+    'pub fnc bad(): int {ifnot false do return 1;}',
+    'pub fnc unless(): int {return 1;}',
+    'pub fnc bad(int ifnot): int {return 1;}'
+  ]) assert.throws(()=>compileProgramV2(source),/error: program v2:|error: program IR:/,source);
 });

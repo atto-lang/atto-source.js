@@ -37,15 +37,20 @@ export function encodeInt64(value) {
 
 /** The caller supplies JSON-like lists, never executable Array methods. */
 function wireArray(value, maximum, label) {
-  if(!Array.isArray(value) || Object.getPrototypeOf(value)!==Array.prototype ||
-     value.length>maximum)throw new HostBridgeError('invalid '+label);
+  if(!Array.isArray(value) || Object.getPrototypeOf(value)!==Array.prototype)
+    throw new HostBridgeError('invalid '+label);
+  const length=Object.getOwnPropertyDescriptor(value,'length')?.value;
+  if(!Number.isSafeInteger(length)||length<0||length>maximum)
+    throw new HostBridgeError('invalid '+label);
   const own=Reflect.ownKeys(value);
-  if(own.length!==value.length+1)throw new HostBridgeError('invalid '+label);
-  for(let i=0;i<value.length;i++){
+  if(own.length!==length+1)throw new HostBridgeError('invalid '+label);
+  const snapshot=[];
+  for(let i=0;i<length;i++){
     const desc=Object.getOwnPropertyDescriptor(value,String(i));
     if(!desc||!Object.hasOwn(desc,'value'))throw new HostBridgeError('invalid '+label);
+    snapshot.push(desc.value);
   }
-  return value;
+  return Object.freeze(snapshot);
 }
 
 /**
@@ -57,19 +62,24 @@ function wireArray(value, maximum, label) {
  * This adapter cannot execute untrusted code safely or establish isolation.
  */
 export function invokeTrustedModule(namespace, {entry, allowlist, args} = {}) {
+  // A forged @@toStringTag getter can execute before an impostor is denied.
+  // Native module namespaces expose an own, inert "Module" data descriptor.
+  const tag=namespace && typeof namespace==='object' ?
+    Object.getOwnPropertyDescriptor(namespace,Symbol.toStringTag) : null;
   if (!namespace || typeof namespace !== 'object' ||
-      Object.prototype.toString.call(namespace) !== '[object Module]' ||
       Object.getPrototypeOf(namespace) !== null ||
-      Object.isExtensible(namespace)) {
+      Object.isExtensible(namespace) ||
+      !Object.hasOwn(tag??{},'value') || tag.value !== 'Module') {
     throw new HostBridgeError('expected a trusted ESM module namespace');
   }
+  const approvedNames=wireArray(allowlist,128,'entrypoint allowlist');
   if (typeof entry !== 'string' || !NAME.test(entry) ||
-      !wireArray(allowlist,128,'entrypoint allowlist').includes(entry) ||
-      allowlist.some(name => typeof name !== 'string' || !NAME.test(name))) {
+      !approvedNames.includes(entry) ||
+      approvedNames.some(name => typeof name !== 'string' || !NAME.test(name))) {
     throw new HostBridgeError('entrypoint not permitted');
   }
-  wireArray(args,128,'argument list');
-  const decoded = args.map(decodeInt64);
+  const admittedArgs=wireArray(args,128,'argument list');
+  const decoded = admittedArgs.map(decodeInt64);
   const desc = Object.getOwnPropertyDescriptor(namespace, entry);
   if (!desc || typeof desc.value !== 'function') throw new HostBridgeError('entrypoint is not a public function');
   // Generated scalar functions use explicit positional parameters. JS would

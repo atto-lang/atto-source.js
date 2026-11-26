@@ -1,77 +1,109 @@
-# Oreslang JavaScript backend
+> **AI agent instructions (organization-wide):** Before working on code, issues, or pull requests, read and follow the [organization `AGENTS.md`](https://github.com/atto-lang/.github/blob/main/AGENTS.md), including its **merge-first stealth-development policy**. Honor any repository-local `AGENTS.md`, explicit holds, and GitHub-enforced rules.
 
-Experimental source-to-ESM compiler for Oreslang, intended ultimately for browser/edge JavaScript and the iso-lattes execution host.
+# atto-source.js
 
-Implemented first slice: integer functions with typed int parameters, return-only bodies, operators +, -, *, and %, forward/same-module calls, pub exports, optional module wrapper, lexical comments and bounded source. Unsupported features fail closed. The Java/Truffle frontend is the language reference; this is **not** feature parity.
+JavaScript compilation backend and runtime compatibility layer for AttoLang.
 
-## Quick start
+## Naming and specification migration
 
-Requires Node.js 22 or later; no third-party runtime dependencies.
+This is the canonical [AttoLang backend repository](https://github.com/atto-lang/atto-source.js). Use `.atto` for portable AttoLang source and update local remotes to `https://github.com/atto-lang/atto-source.js.git`; do not use historical repository links or naming in new examples.
 
-    npm test
-    node bin/oreslang-jsc.mjs --check tests/fixtures/arithmetic.ores
-    node bin/oreslang-jsc.mjs tests/fixtures/forward-call.ores --out=/tmp/forward.mjs
-    node -e 'import("/tmp/forward.mjs").then(m => console.log(m.main()))'
+- **Normative grammar and semantics:** [atto-spec](https://github.com/atto-lang/atto-spec). Check the current versioned contracts for ownership operations (`borrow!`, `take!`, `share!`, `copy!`, `copy!!`), implicit argument borrowing, `lt!` binders, `eq`/`neq` value equality, `susp` effects and file/module `define const`. These are *specification targets*, not claims of executable support in this backend.
+- **Positive and negative guest execution evidence:** [atto-platform-conformance](https://github.com/atto-lang/atto-platform-conformance) and [atto-compilers-parity-testing](https://github.com/atto-lang/atto-compilers-parity-testing). Report `passed`, `failed`, `unsupported` or `not executed`, and pin exact compiler, source tree, target and toolchain.
+- **Portable shared sources and target constraints:** [atto-common-source](https://github.com/atto-lang/atto-common-source) and [atto-target-profiles](https://github.com/atto-lang/atto-target-profiles). Keep backend-specific gaps explicit, and do not infer guest parity from host tests or zero-step CI runs.
 
-The compiled main() returns 42n (BigInt). Numeric behavior uses **provisional** signed 64-bit wrapping; Java semantic parity is unverified. Division remains unsupported in this int-only slice because the Java reference types int/int division as float. Integer remainder (%) follows signed-i64 Java long semantics; other unsupported operations are rejected rather than guessed.
+## Scope
 
-Exports from src/compiler.mjs: `compile(source)` -> ECMAScript module source text; `check(source)` -> true or exception; `compileToIR(source)` -> versioned JSON-safe scalar IR; `compileIR(ir)` -> ESM from validated IR. Compilation does not execute generated code.
+This repository is the AttoLang ecosystem home for:
 
-**New IR seam:** the initial parser now resolves variables and function calls to numeric IR references before code generation. `src/scalar-ir.mjs` exports `validateScalarIR()` and `stringifyScalarIR()`; see [experimental scalar IR v1](docs/SCALAR_IR_V1.md) and its [JSON Schema](schemas/scalar-ir-v1.schema.json). This contract is a scalar bootstrap format, NOT the final cross-backend typed IR. Integer behavior remains provisional pending exact Java/Truffle differential execution.
+- JavaScript lowering, host interoperability, and web-compatible actor semantics.
+- Compatibility with the [canonical language specification](https://github.com/atto-lang/atto-spec) where applicable.
+- Evidence-based tests, benchmark results, and cross-backend conformance reporting.
 
-## Function syntax compatibility (scalar-v1 and program-v2)
+## Architecture and compatibility
 
-Both bootstrap parsers accept the original `pub fnc f(): int { return 42; }` spelling and new `-> int` forms with a single `return` expression, followed by `end` (optionally introduced by `as` or `::`). For example:
+AttoLang is designed around actors, explicit ownership, and portable concurrency semantics. Backend-specific optimizations must not silently change the shared language contract. Runtime capabilities, target restrictions, and unsupported features should be documented explicitly.
 
-```ores
-pub fnc answer() -> int ::
-  return 42;
-end
-```
+## Building and testing
 
-An arrow signature may also use `{ ... }`. These syntactic aliases do **not** add full function bodies, `void` functions, tasks, actors, async/await, classes, generic parameters, ownership lowering or nonblocking I/O. All remain unsupported and are rejected; this backend is **not** a general Oreslang transpiler. The two numeric models also remain different (scalar-v1 provisional wrapping vs program-v2 provisional checked i64), so source syntax compatibility does **not** establish semantic parity with Java/LLVM. See `tests/function-syntax-parity.test.mjs`.
+Consult the checked-in source tree and CI workflows for verified commands and supported targets. Add target-specific build instructions and exact-head execution results as they become available; do not treat a passing host-unit test as proof of guest-language conformance.
 
-## Browser and Node.js ESM + experimental Worker actors
+## Project status
 
-The scalar/program-v2 transpiler emits ESM that can be imported in Node and browsers. This repository now includes a **trusted-host serial Worker reference**: `spawnNodeActor()` uses Node `worker_threads` and `spawnBrowserActor()` uses browser module Web Workers. A transpiled public scalar function can execute in either Worker using `mode:'call'`; ordinary trusted JS handlers require explicit `self.respond()` and `self.done()`.
+This README describes the repository's intended responsibilities. Feature support and release readiness must be established from implementation, tests, and CI evidence rather than this description alone.
 
-This does **not** implement Oreslang `define actor` lowering or actor ownership/isolation parity. Neither JS Workers nor Wasm's existing host-side actor reference constitute an untrusted JS sandbox. See [JS vs Wasm and browser/Node test instructions](docs/JS_BROWSER_NODE_WORKERS.md), `tests/worker-node.test.mjs`, and `tests/browser-worker-smoke.html`.
+## Related repositories
 
-## Freestanding core library (browser / Node)
+- [AttoLang organization](https://github.com/atto-lang)
+- [Language specification](https://github.com/atto-lang/atto-spec)
+- [Platform conformance](https://github.com/atto-lang/atto-platform-conformance)
+- [Commercial infrastructure](https://github.com/atto-co)
 
-The JS experimental program-v2 compiler now has a fail-closed `--freestanding-core` mode for pure `core` integer functions. It accepts the **unchanged** `oreslang-source.java/stdlib/core.ores` fixture and generates an ESM module exposing `core.min_int`, `core.max_int`, and `core.clamp_int` with exact BigInt parameters. The emitted ESM has no Node imports or browser globals; the compiler and IR validator are host-neutral.
+## Repository ownership and contribution routing
 
-`core` cannot depend on `std`, host I/O, timers, Web Workers or Node APIs. `alloc` is an optional explicitly admitted tier; OS-specific `std` implementations are optional target providers. Browser `std` adapters may exist, but the browser does not inherit Linux/Windows assumptions. Note: JavaScript's underlying heap/GC is allowed; freestanding is a **source dependency/effect restriction**, not a JS zero-GC claim.
+**Belongs in this repository:** AttoLang-to-JavaScript lowering, JS runtime/interop boundaries and browser/Node worker scheduling adapters with capability-scoped messaging.
 
-Run `node bin/oreslang-jsc.mjs --freestanding-core --check tests/fixtures/freestanding-core-java.ores` and `npm run test:core`.
+**Belongs elsewhere:** Rust-to-Wasm compiler internals (atto-source.rs), Wasm backend ABI (atto-source.wasm), or static playground deployment (atto-playground).
 
-An experimental **closed-world core linker** is available for pure applications. A source beginning `import module core from "core";` (or legacy `"std/core"`) can call public core functions without introducing runtime imports or hosted `std` dependencies. Example: `node bin/oreslang-jsc.mjs --linked-core --core=/absolute/core.ores tests/fixtures/core-linked-app.ores --out=/tmp/ores-app.mjs`; see `npm run test:core-link`. This linker is deliberately limited to pure integer functions and exactly one supplied core source. For an in-browser ESM test, run `npm run serve:browser` (Node-only development server, no Python) and visit `http://127.0.0.1:8000/tests/core-browser-smoke.html`. See [freestanding core and browser admission](docs/FREESTANDING_CORE_BROWSER.md). The rest of `core`, `alloc`, actor source lowering, and hosted `std` do **not** yet transpile in this experimental backend.
+**Safety and verification boundary:** Web Workers and Node worker_threads are hosts, not hardware tenant sandboxes; reject unsupported semantics, bound workers/mailboxes/output, and keep guest data separate from host capabilities.
 
-## Typed boolean core subset
+Keep canonical AttoLang (`.atto`) semantics consistent with the language specification; migration-era interfaces are not evidence of current portable support.
 
-The experimental program-v2 and `--freestanding-core` backend now also support first-class `bool`: typed params/results, `true`/`false` literals, `!`, int comparisons producing bool, boolean function calls, and boolean `if` guards. Unlike JavaScript, Oreslang accepts **only** `true`/`false` at a boolean ABI. An integer is never treated as truthy. Legacy integer-only IR and the emitted ESM for the existing authoritative `core.ores` remain unchanged.
+Changes asserting compiler/runtime support must identify the exact source head, target, toolchain, executed positive and negative guest tests, and failure/unsupported status; an empty CI step list is **not executed**. Documentation records responsibility, **not** a claim of feature completion.
 
-Run `npm run test:core-bool`; the browser ESM smoke also covers pure boolean compilation. The source is still an **experimental narrow subset**: `Option`/`Result`, records, full comparison/equality generics, and actor declarations are not yet supported.
 
-## Symbol literals (experimental program-v2)
+## Experimental checked-i64 browser-worker subset
 
-The typed program-v2 subset now accepts nominal `Symbol` parameters/results and strict PROCESS Symbol literals such as `#ready` and `#"http.ok"`. Names use Java-aligned pre-normalization/UTF-8 budgets and NFC/control/bidi validation. Generated values are fresh/non-interned and artifact-branded; forged host objects do not satisfy the Symbol ABI. Typed `==`/`!=` use logical `(kind,name)` equality rather than JavaScript object identity.
+`src/transpile-worker.mjs` exposes `transpile_to_worker(source)`. Its emitted
+ES module exports `create_tenant({tenant,generation})` with a one-shot
+`on_message()` handler. The *supported* scalar profile accepts only a single
+`main(): int` returning a signed-i64 expression (unary minus, parentheses,
+addition, subtraction and multiplication). Checked BigInt overflow traps.
 
-Symbol-using generated ESM also exports the reserved host bridge `"@oreslang/symbol-wire-v1"`. Its `encode` method converts an artifact-branded Symbol to the portable exact-field wire `{"$symbol":"process"|"stable","name":"..."}`; `decode` validates canonical NFC/UUID/bounds and rebrands the value for the receiving artifact. The optional `"untrusted-core"` admission mode allows only PROCESS `ready`, `error`, and `Symbol.iterator`. The standalone `@oreslang/source-js/symbol-wire-v1` module additionally provides strict JSON parsing with duplicate-member rejection. Run `npm run test:symbols` and `npm run test:symbol-wire`.
+An additional, tightly restricted actor profile accepts **one**
+`define actor` with one signed-i64 additive `ActorMail<int>` receiver,
+an actor-local integer field, `stdio.println`, and `main` spawning that actor.
+It exposes `on_route` to a **trusted** JS Worker host. All other actor
+features and unsupported syntax must be rejected, not silently compiled.
+See `tests/transpile-worker.test.mjs` and `tests/actor-worker.test.mjs`.
 
-Stable UUID Symbols are wire-decodable but still have no source constructor/literal in this JS slice. Symbol-keyed collections/records, declaration/export manifests, tenant-scoped userland admission, and actor transport remain explicitly unsupported.
+These are experimental host-execution subsets; **not** the full Atto language,
+general actor lowering, source ownership/borrow analysis, or a substitute for
+Rust/Wasm compiled guest conformance. Web/Node Workers do **not** securely
+sandbox arbitrary JavaScript within the same origin. Do not run untrusted
+tenants through this JS backend. Use `npm test` with Node 22+ for its focused
+host tests, and report separate browser/compiler/guest validation evidence.
 
-## Fieldless classes and typed method calls (experimental program-v2)
+## Narrow inline `sync task` preview (trusted JS only)
 
-Program-v2 now contains the migration path for the bounded class-method semantics previously isolated in the class-method prototype. Root-level `define class`, `pub define class`, and `define pub class` declarations lower into the same resolved program IR as functions/modules. A leading declaration-level `self` is erased from caller-visible arity, so `foo()` and `foo(self)` collide as the same `foo/0` slot. Contextual `mtd`/`method` markers and the Java-compatible callable keyword names remain supported.
+The checked-i64 browser-worker subset admits pure, nonsuspending
+`sync task<int> { return expression; }` and inferred
+`sync task { return expression; }` expressions, including nesting.
+Empty `sync task {}` has a `void` result and must use
+`do sync task {};` when its value is discarded. The **only** permitted
+payload for `do sync task` is `void`: the explicit
+`do sync task<void> { return; };` and inferred-void
+`do sync task { return; };` are accepted, but `do sync task<int>`
+or `do sync task { return 42; }` reject with `E_TASK_RETURN_TYPE`.
+A bare `sync task {}` statement is rejected with
+`E_SYNTAX`. To produce a value, consume
+`sync task<int> { return expression; }` as an expression instead. Every supported inline body executes immediately on the caller's
+logical execution path, without a child Future, TaskId, worker dispatch,
+or new cancellation target. Checked-i64 panics in discarded expressions
+are still observed. There is no host-JavaScript passthrough.
 
-The first source-call form is deliberately narrow and Java-aligned: `new Box().pick(...)`. Fieldless construction has arity zero. Positional and named method arguments reuse the exact same declaration-name binder and source-order-preserving permutation model as free functions, e.g. `new Box().pick(b: 2, a: 1)`. Method parameters/results may use the current program-v2 scalar domains, including `Symbol`; Symbol equality inside methods reuses the same logical `(kind,name)` semantics.
+This is **not** a general Task implementation. Task spawning, `await task`,
+suspension inside inline bodies, captures, `using`/`defer`, locks,
+cancellation safepoints and arbitrary side effects remain unsupported and
+fail closed before generating a guest module. Web Workers are not a secure
+TenantVM. See `tests/sync-task-inline.test.mjs` and the normative target in
+atto-spec #129; host tests alone do not certify cross-backend conformance.
 
-Generated classes retain the prototype hardening proven by the standalone class-method prototype: private receiver brand checks, immutable constructor/prototype, non-extensible instances, constructor arity checks, and rejection of foreign JS subclassing. Private methods are not externally callable.
-
-This convergence slice still has **no fields, inheritance, constructors with source parameters, local class variables, class-valued parameters/results, generic methods, actor methods, ownership/borrowing, or arbitrary method call graphs**. Method bodies may use scalar/boolean/Symbol expressions, conditionals and portable Option/Result intrinsics; nested class construction, free-function calls, method calls and match inside method bodies fail closed for now. Run `npm run test:program-classes`.
-
-Legacy class-free program-v2 IR and generated ESM remain byte-stable: the optional `classes` IR field is emitted only when a class is actually present. The historical `--class-methods-v1` CLI and `@oreslang/source-js/class-methods-v1` API are retained as narrow compatibility adapters over this unified path; they intentionally reject richer program-v2 class features.
+The inline-task scanner checks the significant decimal digits against the
+signed-i64 bounds **before** invoking BigInt, including negative-minimum
+literals with long leading-zero padding. Source bytes, token count, expression
+nesting, and task count are bounded. This admission check does not implement
+cancellation or make JavaScript Workers into a secure TenantVM.
 
 ## Fieldless class receiver calls (experimental program-v2)
 
@@ -80,82 +112,3 @@ Within an instance method, `self.helper(x)` and unqualified `helper(x)` resolve 
 Bare `self.helper` is **rejected**, not silently converted to an unbound JS function. Recursion through method calls is rejected until bounded execution fuel exists. This slice does not add fields, constructors with parameters, general closures, first-class method references, inheritance, or `pkg::` root calls from methods.
 
 Run `node --test tests/class-receiver-calls.test.mjs tests/program-classes-v2.test.mjs` and `npm test` on an authorized Node 22 source-local runner before merging.
-
-## Named arguments (experimental program-v2)
-
-Ordinary program-v2 function/module calls can bind exact-arity arguments by formal name, with positional arguments only before named ones. For example, `mix(1, c: 3, b: 2)` binds to `(a,b,c)` while preserving lexical expression evaluation order. The resolved `namedCall` IR carries an explicit source-to-formal permutation and validates it before ESM emission. Unknown/duplicate/missing labels and named portable intrinsics reject. Run `npm run test:named-args`.
-
-Optional/omittable parameters, defaults, varargs and `omit`/`_` are **not** enabled by this slice. Named method calls reuse this binder only for the bounded fieldless-class profile described above.
-
-## Canonical conditional syntax (experimental program-v2)
-
-In opt-in `--program-v2` source, `if condition then ... else ... fi` is **statement-only** and requires explicit returns on all paths. Pure scalar value selection uses lazy, right-associative `condition ? whenTrue : whenFalse`, with strictly boolean conditions (no JS truthiness) and statically compatible `int` or `bool` branches. The earlier `if condition; do ... fi` remains an accepted bootstrap compatibility spelling. `return if ... fi` remains invalid. Internal program IR reuses its existing typed `if` variant; no general actor/class/ownership feature is implied. Run `npm run test:conditionals`. This is only a limited Java/Graal syntax-alignment slice, not full parity.
-
-## Select runtime substrate
-
-The JS runtime now has a source-independent `SelectArbiter` for future
-compiler-lowered static select. Within one JavaScript isolate/runtime lane it
-provides exactly-one winner publication, late-arm loser revocation,
-cancellation handles, synchronous conditional commit, reentrancy rejection,
-and cleanup-failure capture.
-
-This is not cross-Worker shared-memory arbitration and it does **not** enable
-source `select`, channels, Future selection, or actor continuation lowering.
-Commit callbacks are trusted runtime primitives and must be bounded,
-synchronous, and return a boolean; Promise/thenable commits fail closed. Source
-select remains rejected until the missing channel/Future/actor layers exist.
-
-### Selectable i64 channel substrate
-
-Stacked on the JS `SelectArbiter`, the runtime now has a bounded signed-i64
-`SelectableI64Channel` proof. It uses revocable readable/writable readiness
-subscriptions, conditional read/write commits, stale-subscription identity
-checks, post-commit notification dispatch, and signed-i64 `BigInt` validation.
-A losing selected read cannot consume and a losing selected write cannot
-publish.
-
-The channel substrate now also models close as a terminal readiness event:
-buffered values drain before EOF, an empty closed channel commits selectable
-EOF, and a selected write against a closed channel terminates as closed without
-publishing. This remains a one-isolate runtime substrate, not source
-`Channel<T>` or cross-Worker channel support. Future arms, actor continuations,
-suspension and compiler lowering remain pending.
-
-## Security boundary
-
-This is a code generator, **not a sandbox**. An ES module, Node worker thread or Node vm context is not a secure boundary for malicious guests. Only bundle the generated JS as a trusted artifact. This backend still has **no compiler-lowered Oreslang actor runtime** or enforced actor capability/ownership model. The experimental Worker reference is only for trusted host handlers and synchronous transpiled function calls. General native pointers, Oreslang async/await, channels, objects, collections, exceptions, and host I/O remain unsupported in the language compiler. Do not promote it to an untrusted host.
-
-Static `select` fails closed with a dedicated capability diagnostic in both scalar-v1 and `program-v2` (and therefore in freestanding/class-method source paths that delegate through `program-v2`). Both `{ ... }` and `over ... end` forms remain disabled until checked Channel/Future arbitration, actor-lane continuation scheduling, ownership transfer, and cancellation lowering exist. Rejected select source must not produce a JavaScript artifact.
-
-## iso-lattes integration
-
-Use a pinned Oreslang source revision, compile before deployment, inspect/build a trusted ESM bundle, and load exported public entrypoints inside the explicitly trusted iso-lattes host. Do not eval arbitrary guest source. A separate security-reviewed host adapter is required before claiming arbitrary Oreslang guest support.
-
-## Cross-backend tests
-
-The arithmetic and forward-call cases follow the common Oreslang source parity slice; the negative unresolved symbol check follows the platform-conformance negative fixture. Adding backend js to the shared conformance inventory is still necessary and must report real, exact-commit runs, not a fake or skipped pass.
-
-See docs/NEXT_STEPS.md.
-
-## Trusted JS host package and ABI
-
-The source.js backend can now emit a prebuilt `module.mjs` plus a SHA-256 manifest for the `browser` and `edge-js` target profiles using `buildPackage()`. A portable `invokeTrustedModule()` bridge requires explicit entrypoint allowlisting and JSON-safe canonical signed i64 decimal arguments/results. The source compiler is separately bounded against very large numeric literals and expression-lowering recursion.
-
-See [the experimental iso-lattes host contract](docs/ISO_LATTES_HOST_ABI.md) for build and invocation examples, limitations, provenance policy, and required host integration gates. This is **not** yet execution inside iso-lattes: we have not verified its repository or API. The adapter only accepts trusted, already-imported ESM modules and provides no OS or JS sandbox.
-
-## Experimental runtime-module and match lowering (opt-in)
-
-`node bin/oreslang-jsc.mjs --program-v2 --check path/to/program.ores` validates the new isolated scalar program dialect; `--program-v2 input.ores --out=/absolute/program.mjs` emits ESM. Its direct JS API is `compileProgramV2(source)` from `@oreslang/source-js/program-v2`. Multiple flat `define module` declarations become immutable null-prototype JS namespace objects with only public function members; the same profile now also admits the bounded root-level fieldless classes described above. File `namespace name;` is compile-time metadata and produces **no** runtime export. Exhaustive integer `match` expressions lower to one-evaluation `switch` expressions. Private member accesses and unsupported constructs are rejected.
-
-`@oreslang/source-js/multiple-inheritance` separately offers a **method-only** inheritance planner/runtime proof: diamond deduplication, method conflicts requiring explicit overrides, public visibility/field/cycle checks, arity dispatch and nominal runtime brands. This is **not** general class transpilation: constructors, storage fields, generic views, static fields, private method dispatch, class syntax and native `instanceof` interoperability remain unsupported. Please do not confuse JavaScript mixin-order semantics with Oreslang method-slot rules.
-
-The existing `compile(source)` and trusted-package builder intentionally remain on scalar v1; their signed-i64 wire ABI does not permit module objects. See [program v2 lowering and limitations](docs/JS_PROGRAM_V2.md). Node 22 runner evidence and Java/LLVM semantic parity are required before graduation.
-
-## Development policy: no Python
-
-Python is prohibited in this repository for source code, tests, build tooling, code generation, CI, and automation. Existing Python code must be replaced with behavior-equivalent Rust and equivalent regression coverage before removal. Do not add Python source/notebooks, Python dependency manifests, `python`/`python3`, `pip`, `pytest`, `poetry`, `uv`, or Python setup actions. Rust tooling must pass `cargo fmt`, `cargo clippy -- -D warnings`, and `cargo test`.
-
-
-## Concrete Option/Result and exhaustive ADT matching (integration draft)
-
-The opt-in program-v2 source compiler admits only portable `Option<int>` and `Result<int,int>` values, strict frozen null-prototype tagged-data checks, and exhaustive `Some/None` and `Ok/Err` expression matching with arm-local typed payload bindings. This is not general generics, capabilities, actor-source lowering or general exception support. Run `npm run test:core-option-result`, `npm run test:core-adt-match` and `npm run test:core-adt-conformance`. Exact-head Node/browser tests and independent review remain required.

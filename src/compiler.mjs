@@ -1,4 +1,9 @@
+import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
 import {createScalarIR, validateScalarIR} from './scalar-ir.mjs';
+import {rejectExecutionDomains} from './execution-domain-admission.mjs';
+import {rejectUnsupportedHttpActors} from './http-actor-admission.mjs';
+import {scanStringLiteral} from './string-literal-syntax.mjs';
+import {preflightCoreFutureOwnership} from './core-future-ownership.mjs';
 /** Experimental fail-closed Oreslang scalar-to-ESM compiler. */
 const MAX_BYTES = 262144;
 const I64_MAX = (1n << 63n) - 1n;
@@ -18,6 +23,14 @@ function validateSourceText(src) {
   for (let i=0; i<src.length; i++) {
     const code=src.charCodeAt(i);
     if (code===0) throw new CompileError('NUL in source');
+    if (code===0x1b || code===0x7f)
+      throw new CompileError('terminal control in source at UTF-16 offset '+i);
+    // Trojan Source: bidi format controls can reorder displayed source,
+    // including comments and literals that the lexer would otherwise skip.
+    if (code===0x061c || code===0x200e || code===0x200f ||
+        (code>=0x202a && code<=0x202e) ||
+        (code>=0x2066 && code<=0x2069))
+      throw new CompileError('bidirectional Unicode control in source');
     if (code>=0xd800 && code<=0xdbff) {
       const lo=src.charCodeAt(i+1);
       if (!(lo>=0xdc00 && lo<=0xdfff)) throw new CompileError('invalid UTF-16 in source');
@@ -33,21 +46,29 @@ function lex(src) {
   validateSourceText(src);
   const out = [];
   let i=0, line=1, col=1;
-  function advance() { if(src[i]==='\n'){line++;col=1;}else col++;i++; }
+  let ownershipBang;
+  const lineEnd=c=>c==='\n'||c==='\r'||c==='\u0085'||c==='\u2028'||c==='\u2029';
+  function advance() {
+    const ch=src[i];
+    if(lineEnd(ch)){if(ch!=='\n'||src[i-1]!=='\r')line++;col=1;}
+    else col++;
+    i++;
+  }
   function add(kind, value, loc) { if(out.length>=30000) throw new CompileError('token limit exceeded'); out.push({kind,value,...loc}); }
   while(i<src.length){
-    if(/\s/.test(src[i])) {advance();continue;}
+    if(/\s/.test(src[i])||src[i]==='\u0085') {advance();continue;}
     if(src.startsWith('//',i)){
       // Checked signed-i64 source cannot be silently compiled by the legacy
       // scalar-v1 profile: this emitter currently wraps instead of trapping.
       // Only an actual line-comment directive counts; block comments and
       // other prose must not turn on or mask a numeric profile.
       const loc={line,col};
-      const eol=src.indexOf('\n',i+2);
-      const tail=src.slice(i+2,eol<0?src.length:eol).trimStart();
+      let eol=i+2;
+      while(eol<src.length&&!lineEnd(src[eol]))eol++;
+      const tail=src.slice(i+2,eol).trimStart();
       if(tail.startsWith('oreslang:checked-i64'))
         throw new CompileError('checked-i64 source requires program-v2; scalar-v1 uses provisional wrapping arithmetic',loc);
-      while(i<src.length&&src[i]!=='\n')advance();
+      while(i<eol)advance();
       continue;
     }
     if(src.startsWith('/*',i)){
@@ -63,17 +84,47 @@ function lex(src) {
     const loc={line,col};
     if(/[A-Za-z_]/.test(src[i])){
       let s='';while(i<src.length&&/[A-Za-z0-9_]/.test(src[i])){s+=src[i];advance();}
+      // A typed Topic receiver may be a local, parameter or import. Until
+      // scalar ESM owns actor/group capabilities, share! and Result lowering,
+      // reject actual member publication before producing source/IR artifacts.
+      // Opaque strings/comments were already skipped by this lexer.
+      if(s==='try_publish' && out.at(-1)?.kind==='sym' &&
+         out.at(-1).value==='.')
+        throw new CompileError(
+          'Topic.try_publish requires checked actor/group, share! and Result lowering; JS scalar backend unsupported',loc);
+      if (missingBangKeywordSeparator(s, src.slice(i)))
+        throw new CompileError('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+s+'!',loc);
+      // Record the first contextual ownership bang so the typed Future
+      // preflight can still diagnose its legacy and canonical spellings.
+      if(['copy','take','move','borrow','share'].includes(s) && src[i]==='!' &&
+          src[i+1]!=='=' &&
+          !(src.slice(i+1,i+3)==='eq' && !/[A-Za-z0-9_]/.test(src[i+3]??'')))
+        ownershipBang ??= loc;
       add('id',s,loc);
     }else if(/[0-9]/.test(src[i])){
       let s='';while(i<src.length&&/[0-9_]/.test(src[i])){s+=src[i];advance();}
       if(!/^[0-9]+(?:_[0-9]+)*$/.test(s))throw new CompileError('invalid integer literal',loc);
       if (s.length > 64) throw new CompileError('integer literal length limit',loc);
       add('int',s,loc);
-    }else if(src.startsWith('->',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
-    else if('(){}:,;+-*/%=.'.includes(src[i])){add('sym',src[i],loc);advance();}
+    }else if(src[i]==="'" || src[i]==='"' || src[i]==='\x60'){
+      // Keep a quoted literal or entire balanced backtick template opaque:
+      // keywords, braces and comments inside it are not outer-source tokens.
+      let literal;
+      try { literal=scanStringLiteral(src,i); }
+      catch(error) {
+        if(error instanceof SyntaxError)throw new CompileError(error.message,loc);
+        throw error;
+      }
+      while(i<literal.end)advance();
+      add(literal.kind,literal,loc);
+    }else if(src.startsWith('->',i)||src.startsWith('<-',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
+    else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
+    else if(src[i]==='^')throw new CompileError(src.startsWith('^^',i)?"'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)":"'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",loc);
+    else if('(){}[]:,;+-*/=.!<>@•'.includes(src[i])){add('sym',src[i],loc);advance();}
     else throw new CompileError('unsupported character',loc);
   }
-  out.push({kind:'eof',value:'<eof>',line,col});return out;
+  out.push({kind:'eof',value:'<eof>',line,col});
+  return {tokens:out,ownershipBang};
 }
 function rejectUnloweredInvertedClasses(tokens) {
   for (let i=0; i+2<tokens.length; i++) {
@@ -88,13 +139,78 @@ function rejectUnloweredInvertedClasses(tokens) {
         tokens[at]);
   }
 }
+// Singleton is a declaration-context keyword, not a global reserved identifier.
+// This scalar JS emitter has no checked application-domain initialization, actor
+// owner provenance or fair scoped RW loans; never silently emit host JS for one.
+function rejectSingletonDeclarations(tokens) {
+  for (let i=0;i<tokens.length;i++) {
+    let at=i;
+    if(tokens[at]?.value==='pub' && tokens[at+1]?.value==='define') at++;
+    if(tokens[at]?.value!=='define') continue;
+    at++;
+    if(tokens[at]?.value==='pub') at++;
+    if(tokens[at]?.kind==='id' && tokens[at].value==='singleton')
+      throw new CompileError(
+        'ORES-SINGLETON-UNSUPPORTED: singleton requires compiler-resolved application-domain identity, exactly-once frozen publication and guarded unique-owner RW lowering',
+        tokens[at]);
+  }
+}
+// The scalar JS emitter has no nominal actor/object layout or lifetime/borrow
+// admission. Reject before building IR so a .atto actor heap can never
+// accidentally produce scalar JS that looks like a successful guest compile.
+// Inspect lexed tokens only: strings and comments are not authoritative code.
+function rejectUnloweredActorHeap(tokens) {
+  for (let i=0;i<tokens.length;i++) {
+    const at=tokens[i];
+    if(at.kind!=='id')continue;
+    if(at.value==='new' && tokens[i+1]?.kind==='id' &&
+       tokens[i+2]?.value==='(') {
+      throw new CompileError(
+        'E_ACTOR_MEMORY_GUEST_UNSUPPORTED: checked actor-owned class allocation and Ref32 field lowering are unavailable in JS scalar-v1',
+        at);
+    }
+    if(at.value!=='define' && at.value!=='pub')continue;
+    let p=i;
+    if(tokens[p]?.value==='pub') p++;
+    if(tokens[p]?.value!=='define') continue;
+    p++;
+    if(tokens[p]?.value==='pub') p++;
+    if(tokens[p]?.value==='class' || tokens[p]?.value==='actor' ||
+       (tokens[p]?.value==='inverted' && tokens[p+1]?.value==='class')) {
+      // Keep the existing precise inverted-class diagnostic, which the
+      // separate inversion gate owns. Do not reinterpret it as actor heap.
+      if(tokens[p]?.value==='inverted')continue;
+      throw new CompileError(
+        'E_ACTOR_MEMORY_GUEST_UNSUPPORTED: JS scalar-v1 requires typed actor heap, nominal layout and ownership lowering',
+        tokens[p]);
+    }
+  }
+}
+
 function rejectUnsupportedSelect(tokens) {
-  const startsStaticSelect = next =>
+  const bodyStart = next =>
     next && ['{','over','first','fair','random'].includes(next.value);
+  // Compute matching parentheses once. A bare select(args) call remains
+  // legal; a count followed by the static body is a contextual keyword.
+  const stack=[], matching=new Map();
+  for(let i=0;i<tokens.length;i++) {
+    if(tokens[i].kind !== 'sym') continue;
+    if(tokens[i].value==='(') stack.push(i);
+    if(tokens[i].value===')' && stack.length) matching.set(stack.pop(),i);
+  }
+  function startsStaticSelect(i) {
+    const next=tokens[i+1];
+    if(!next) return false;
+    if(bodyStart(next) || next.value==='<') return true;
+    if(next.kind!=='sym' || next.value!=='(') return false;
+    const end=matching.get(i+1);
+    return end!==undefined && bodyStart(tokens[end+1]);
+  }
   for (let i=0;i<tokens.length;i++) {
     const token=tokens[i];
-    if (token.kind === 'id' && token.value === 'select' &&
-        startsStaticSelect(tokens[i+1])) {
+    const declaration=['fnc','routine','mtd'].includes(tokens[i-1]?.value);
+    if (token.kind === 'id' && token.value === 'select' && !declaration &&
+        startsStaticSelect(i)) {
       throw new CompileError(
         'static select requires checked Channel/Future arbitration, actor-lane continuation, ownership and cancellation lowering in the JS backend',
         token
@@ -102,25 +218,75 @@ function rejectUnsupportedSelect(tokens) {
     }
   }
 }
+// In this scalar-only parser, no product may escape to a dynamic JS object.
+// Check the entire lexed compilation unit before recognizing an intrinsic,
+// including forward function declarations and parameters with the same name.
+function productFactoryAt(tokens, i) {
+  return tokens[i]?.kind==='id' && ['Pair','Entry'].includes(tokens[i].value)
+    && tokens[i+1]?.value==='.' && tokens[i+2]?.value==='of';
+}
+function rejectAmbiguousProductFactories(tokens) {
+  const active=new Set(tokens.filter((_,i)=>productFactoryAt(tokens,i)).map(t=>t.value));
+  if(!active.size)return;
+  for(let i=0;i<tokens.length;i++){
+    const t=tokens[i];
+    if(t.kind!=='id')continue;
+    if(active.has(t.value) && (!productFactoryAt(tokens,i)
+       || ['.','::'].includes(tokens[i-1]?.value)))
+      throw new CompileError('E_PRODUCT_SCOPE_UNSUPPORTED: competing '+t.value+' reference',t);
+    if(['import','use','macro'].includes(t.value))
+      throw new CompileError('E_PRODUCT_SCOPE_UNSUPPORTED: scalar factory requires a source-local identity',t);
+  }
+}
 class Parser {
-  constructor(tokens){this.ts=tokens;this.pos=0;this.depth=0;}
+  constructor(tokens){this.ts=tokens;this.pos=0;this.depth=0;this.guarantees=[];}
   peek(){return this.ts[this.pos];}
   match(v){if(this.peek().value===v){this.pos++;return true;}return false;}
   expect(v){if(!this.match(v))throw new CompileError('expected '+v+', found '+this.peek().value,this.peek());}
   id(){const t=this.peek();if(t.kind!=='id')throw new CompileError('expected identifier',t);this.pos++;return t.value;}
+  exportDeclaration(){
+    this.expect('export');this.expect('pub');
+    let visibility='public';
+    if(this.match('[')){this.expect('pkg');this.expect(']');visibility='package';}
+    let kind=null;
+    if(this.match('class'))kind='class';
+    else if(this.match('fnc'))kind='fnc';
+    const name=this.id();this.expect(';');
+    return {name,kind,visibility};
+  }
   parse(){
     const module=this.peek().value==='define' && this.ts[this.pos+1]?.value==='module';
     if(module){this.pos++;this.expect('module');this.id();this.match('as');}
-    const functions=[];
+    const functions=[],exports=[];
     while(this.peek().kind!=='eof'&&!(module&&this.peek().value==='end')){
+      if(this.peek().value==='export'){
+        if(module)throw new CompileError('file export requires file-root scope',this.peek());
+        if(exports.length>=1024)throw new CompileError('file export budget',this.peek());
+        exports.push(this.exportDeclaration());continue;
+      }
       if(functions.length>=512)throw new CompileError('function limit',this.peek());
+      const markers=new Map();
+      while(this.match('@')){
+        const token=this.peek(), marker=this.id();
+        if(!['noalloc','nocopy'].includes(marker)||markers.has(marker))
+          throw new CompileError('E_ANNOTATION: unknown or duplicate guarantee',token);
+        markers.set(marker,token);
+      }
       // Accept only one define and one pub, in either canonical order.
       // Deliberately do not admit pub define module in this scalar subset.
-      let pub=this.match('pub');
-      if(pub){this.match('define');}
-      else if(this.match('define')){pub=this.match('pub');}
+      let visibility=null, defined=false;
+      while(['pub','private','define'].includes(this.peek().value)) {
+        if(this.match('define')) { if(defined)throw new CompileError('duplicate define modifier',this.peek());defined=true; }
+        else { if(visibility!==null)throw new CompileError('conflicting visibility modifier',this.peek());visibility=this.peek().value;this.pos++; }
+      }
+      const pub=visibility==='pub', writtenPrivate=visibility==='private';
       const at=this.peek();
-      if(!this.match('fnc')&&!this.match('routine'))throw new CompileError('unsupported declaration',at);
+      const abbreviated=at.value==='int' && this.ts[this.pos+1]?.value==='<-';
+      if(markers.size && at.value!=='fnc' && !abbreviated)
+        throw new CompileError('E_ANNOTATION: guarantee requires named callable',at);
+      if(!abbreviated&&!this.match('fnc')&&!this.match('routine'))throw new CompileError('unsupported declaration',at);
+      const returnFirst=this.peek().value==='int' && ['•','<-'].includes(this.ts[this.pos+1]?.value);
+      if(returnFirst){this.expect('int');this.pos++;}
       const name=this.id();this.expect('(');const params=[];
       if(!this.match(')')){
         do{if(params.length>=128)throw new CompileError('parameter limit');this.expect('int');const v=this.id();if(params.includes(v))throw new CompileError('duplicate parameter '+v);params.push(v);}while(this.match(','));
@@ -129,19 +295,39 @@ class Parser {
       // The bootstrap parser only supports int functions with a single
       // return expression. Support canonical arrow/end spellings without
       // pretending to support arbitrary statement bodies or async functions.
-      const arrow=this.match('->');
-      if(!arrow)this.expect(':');
-      this.expect('int');
+      let arrow=false;
+      if(!returnFirst){
+        arrow=this.match('->');
+        if(!arrow)this.expect(':');
+        this.expect('int');
+        if(!arrow)arrow=this.match('->');
+      }
       const braced=this.match('{');
       if(!braced&&!arrow)throw new CompileError('expected { for colon function body',this.peek());
       if(!braced){if(!this.match('as'))this.match('::');}
       this.expect('return');
       const body=this.expr();this.expect(';');this.expect(braced?'}':'end');
-      functions.push({name,params,body,pub});
+      functions.push({name,params,body,pub,...(writtenPrivate?{writtenPrivate:true}:{})});
+      for(const [marker,token] of markers)this.guarantees.push({marker,token});
     }
     if(module)this.expect('end');
     if(this.peek().kind!=='eof')throw new CompileError('trailing tokens',this.peek());
-    if(!functions.length)throw new CompileError('no functions');return functions;
+    if(!functions.length)throw new CompileError('no functions');
+    const resolved=new Map();
+    for(const entry of exports){
+      if(entry.kind!==null&&entry.kind!=='fnc')
+        throw new CompileError('export kind mismatch '+entry.name);
+      const family=functions.filter(f=>f.name===entry.name);
+      if(!family.length)throw new CompileError('unbound export '+entry.name);
+      if(family.some(f=>f.writtenPrivate))throw new CompileError('explicit private declaration cannot be exported: '+entry.name);
+      if(entry.visibility==='package'&&family.some(f=>f.pub))
+        throw new CompileError('package export conflicts with public declaration '+entry.name);
+      const prior=resolved.get(entry.name);
+      if(prior&&prior.visibility!==entry.visibility)throw new CompileError('conflicting export visibility '+entry.name);
+      if(!prior)resolved.set(entry.name,{visibility:entry.visibility,family});
+    }
+    for(const entry of resolved.values())if(entry.visibility==='public')entry.family.forEach(f=>{f.pub=true;});
+    return functions;
   }
   expr(min=0){
     if(++this.depth>256)throw new CompileError('expression nesting limit',this.peek());
@@ -150,15 +336,56 @@ class Parser {
       while(true){
         const op=this.peek().value;
         if(op==='/')throw new CompileError('unsupported operator '+op,this.peek());
-        const prec=op==='*'||op==='%'?20:op==='+'||op==='-'?10:-1;
+        const prec=op==='*'?20:op==='+'||op==='-'?10:-1;
         if(prec<min)break;
         this.pos++;left={kind:'binary',op,left,right:this.expr(prec+1)};
       }
       return left;
     }finally{this.depth--;}
   }
+  productProjection(){
+    const at=this.peek(), pair=at.value==='Pair';
+    this.pos+=3;
+    if(this.match('<')){
+      if(pair && this.match('string')){this.expect(',');this.expect('int');}
+      else{
+        this.expect('int');
+        if(pair && this.peek().value===',')
+          throw new CompileError('E_PAIR_KEY_TYPE: Pair first generic argument must be string',this.peek());
+        if(!pair){this.expect(',');this.expect('int');}
+      }
+      this.expect('>');
+    }
+    this.expect('(');
+    let first;
+    if(pair){
+      const key=this.peek();
+      if(key.kind!=='string')throw new CompileError('E_PAIR_KEY_TYPE: Pair requires a string key',key);
+      // Lexer validates quoted source syntax. Only plain static keys are
+      // admitted here: no interpolation, escaped or allocated runtime values.
+      const raw=key.value.raw.slice(1,-1);
+      if(!/^[\x20-\x7e]*$/.test(raw) || /[\\$]/.test(raw))
+        throw new CompileError('E_PAIR_KEY_UNSUPPORTED: scalar projection requires plain static string',key);
+      this.pos++;
+    }else first=this.expr();
+    this.expect(',');
+    // Pair's proven static key has no effects. Entry must evaluate both
+    // scalar expressions exactly once, in source order, even if one is discarded.
+    const second=this.expr();
+    this.expect(')');
+    if(!this.match('.'))throw new CompileError('E_PRODUCT_ESCAPE_UNSUPPORTED: owned product ABI unavailable',at);
+    const field=this.id();
+    if(pair && field==='second')return second;
+    if(!pair && (field==='key'||field==='value')){
+      // Preserve the old literal-only byte output. No dynamic operand is folded.
+      if(first.kind==='int'&&second.kind==='int')return field==='key'?first:second;
+      return {kind:'entryProjection',field,first,second};
+    }
+    throw new CompileError('E_PRODUCT_PROJECTION_UNSUPPORTED: incompatible or non-scalar member',at);
+  }
   primary(){
     const t=this.peek();
+    if(productFactoryAt(this.ts,this.pos))return this.productProjection();
     if(this.match('-')){
       // The absolute magnitude 2^63 is legal only as a negated literal.
       // All other positive literals must remain within signed i64.
@@ -171,17 +398,26 @@ class Parser {
     if(this.match('+'))return this.expr(30);
     if(this.match('(')){const v=this.expr();this.expect(')');return v;}
     if(t.kind==='int'){this.pos++;const n=BigInt(t.value.replaceAll('_',''));if(n>I64_MAX)throw new CompileError('positive int outside signed i64',t);return {kind:'int',n};}
+    if(t.kind==='string'||t.kind==='template')
+      throw new CompileError('quoted strings and template interpolation require typed String lowering; unsupported in JS scalar-v1',t);
     if(t.kind==='id' && t.value==='rt'){
       this.pos++;
       const op=this.peek();
       if(op.kind!=='id')throw new CompileError('expected runtime operation after rt',op);
       if(['ref','unref','deref','raw'].includes(op.value))
         throw new CompileError('pointer-style runtime operation rt '+op.value+' is not valid Oreslang source',op);
-      if(op.value==='borrow' && this.ts[this.pos+1]?.value==='mut')
-        throw new CompileError("legacy 'rt borrow mut' is not valid Oreslang; use 'rt mut borrow value'",op);
       if(op.value==='mut' && this.ts[this.pos+1]?.value!=='borrow')
         throw new CompileError("'rt mut' only supports borrowing; use 'rt mut borrow value'",op);
       throw new CompileError('runtime ownership operation requires typed lowering in the JS scalar backend',op);
+    }
+    if(t.kind==='id'&&t.value==='Integer'&&this.ts[this.pos+1]?.value==='.'){
+      // Named integer operations replace the reserved %, ^ and ^^ operators.
+      this.pos+=2;
+      const name=this.peek();
+      const ops={rem:'%',mod:'mod',bitXor:'^'};
+      if(name.kind!=='id'||!Object.hasOwn(ops,name.value))throw new CompileError('Integer.'+name.value+' is unsupported; use Integer.rem, Integer.mod or Integer.bitXor',name);
+      this.pos++;this.expect('(');const left=this.expr();this.expect(',');const right=this.expr();this.expect(')');
+      return {kind:'binary',op:ops[name.value],left,right};
     }
     if(t.kind==='id'){
       this.pos++;
@@ -198,12 +434,37 @@ class Parser {
 // The isolated parser is a bootstrap adapter. Future language frontends
 // should produce this versioned IR instead of duplicating parser semantics.
 export function compileToIR(source) {
-  const tokens=lex(source);
+  const {tokens,ownershipBang}=lex(source);
+  // Reject affine Future violations at the compiler core boundary before IR.
+  // Valid Future code still cannot execute in the scalar-only JS backend.
+  preflightCoreFutureOwnership(tokens,(code,message,token)=>{throw new CompileError(code+': '+message,token);});
+  if(ownershipBang)
+    throw new CompileError('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: checked JS ownership lowering required',ownershipBang);
+  rejectExecutionDomains(tokens,(message,token)=>{throw new CompileError(message,token);});
+  rejectUnsupportedHttpActors(tokens,(message,token)=>{throw new CompileError(message,token);});
+  rejectSingletonDeclarations(tokens);
   rejectUnloweredInvertedClasses(tokens);
+  rejectUnloweredActorHeap(tokens);
   rejectUnsupportedSelect(tokens);
-  const parsed=new Parser(tokens).parse();
+  rejectAmbiguousProductFactories(tokens);
+  const parser=new Parser(tokens);
+  const parsed=parser.parse();
   try {
-    return createScalarIR(parsed);
+    const ir=createScalarIR(parsed);
+    // A JS engine's BigInt storage and allocation behavior are not statically
+    // controlled by this ESM backend. Never silently accept @noalloc.
+    const allocation=parser.guarantees.find(x=>x.marker==='noalloc');
+    if(allocation)throw new CompileError('E_NOALLOC: JS engine allocation effects are unverified',allocation.token);
+    const copy=parser.guarantees.find(x=>x.marker==='nocopy');
+    if(copy){
+      // Whole-module, closed scalar proof. No aggregate projections, host
+      // calls, arithmetic helpers or dynamic dispatch admitted in v1.
+      const scalar=e=>e.kind==='int'||e.kind==='param'||
+        (e.kind==='call'&&e.args.every(scalar));
+      if(!ir.functions.every(f=>scalar(f.body)))
+        throw new CompileError('E_NOCOPY: unproven payload-copy effects in scalar module',copy.token);
+    }
+    return ir;
   } catch (error) {
     // Keep the source frontend's stable diagnostics while preserving
     // strict "scalar IR" diagnostics for direct compileIR callers.
@@ -215,7 +476,13 @@ export function compileToIR(source) {
   }
 }
 export function compileIR(input) {
+  return emitValidated(input,new Map()).code;
+}
+// Canonical checked IR includes exact function slots and call target indices.
+// Full source and IR validation precede reuse; exports are rebuilt every time.
+function emitValidated(input,prior) {
   const ir = validateScalarIR(input);
+  const next=new Map();let emitted=0,reused=0;
   const fns = ir.functions;
   function lower(e, depth = 0) {
     if (depth > 384) throw new CompileError('expression depth limit during lowering');
@@ -223,8 +490,18 @@ export function compileIR(input) {
     if (e.kind === 'param') return '_p' + e.index;
     if (e.kind === 'neg') return 'BigInt.asIntN(64,-(' + lower(e.inner, depth+1) + '))';
     if (e.kind === 'binary') {
+      // Inline so programs without Integer.mod keep byte-identical output.
+      if (e.op === 'mod')
+        return '((a,b)=>{if(b===0n)throw new RangeError("ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit remainder by zero");const r=a%b;return r<0n?BigInt.asIntN(64,b>0n?r+b:r-b):r;})(' +
+          lower(e.left, depth+1) + ',' + lower(e.right, depth+1) + ')';
       return 'BigInt.asIntN(64,(' + lower(e.left, depth+1) + ')' + e.op + '(' +
         lower(e.right, depth+1) + '))';
+    }
+    if (e.kind === 'entryProjection') {
+      // Argument evaluation is eager and left-to-right, with no mutable
+      // aggregate object or host property lookup. Both expressions lower once.
+      return '((a,b)=>'+(e.field==='key'?'a':'b')+')('+
+        lower(e.first, depth+1)+','+lower(e.second, depth+1)+')';
     }
     if (e.kind === 'call') {
       return '_f' + e.target + '(' + e.args.map(arg => lower(arg, depth+1)).join(',') + ')';
@@ -233,19 +510,32 @@ export function compileIR(input) {
   }
   const out = [
     '// Oreslang JS scalar subset. Signed i64 wrapping is PROVISIONAL, not proven Java parity.',
-    'function _int(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang int requires a signed i64 BigInt");return v;}'
+    'function _int(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang int requires a signed i64 BigInt");return v;}',
   ];
   fns.forEach((f,i) => {
-    const params = f.params.map((_,j) => '_p' + j);
-    out.push('function _f' + i + '(' + params.join(',') + '){');
-    params.forEach(p => out.push('_int(' + p + ');'));
-    out.push('return ' + lower(f.body) + ';', '}');
+    const key=JSON.stringify([i,f]);
+    let body=prior.get(key);
+    if(body===undefined){
+      const params=f.params.map((_,j)=>'_p'+j);
+      body=['function _f'+i+'('+params.join(',')+'){',...params.map(p=>'_int('+p+');'),'return '+lower(f.body)+';','}'].join('\n');
+      emitted++;
+    }else reused++;
+    next.set(key,body);out.push(body);
   });
   // String-literal export names prevent ECMAScript keyword collisions.
   fns.forEach((f,i) => {
     if (f.pub) out.push('export { _f' + i + ' as ' + JSON.stringify(f.name) + ' };');
   });
-  return out.join('\n') + '\n';
+  return {code:out.join('\n')+'\n',next,emitted,reused};
+}
+/** One previous validated scalar module. No persisted cache or skipped type checking. */
+export class IncrementalSession {
+  #memo=new Map();
+  build(source,{cold=false}={}){
+    const result=emitValidated(compileToIR(source),cold?new Map():this.#memo);
+    this.#memo=result.next;
+    return {code:result.code,emitted:result.emitted,reused:result.reused};
+  }
 }
 export function compile(source) {
   return compileIR(compileToIR(source));
