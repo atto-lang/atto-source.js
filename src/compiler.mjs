@@ -1,4 +1,5 @@
-import {createScalarIR, validateScalarIR} from './scalar-ir.mjs';
+import {createScalarIR} from './scalar-ir.mjs';
+import {emitCold,ScalarEmissionSession} from './scalar-emitter.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
 import {rejectUnsupportedHttpActors} from './http-actor-admission.mjs';
 import {scanStringLiteral} from './string-literal-syntax.mjs';
@@ -6,12 +7,8 @@ import {preflightCoreFutureOwnership} from './core-future-ownership.mjs';
 /** Experimental fail-closed Oreslang scalar-to-ESM compiler. */
 const MAX_BYTES = 262144;
 const I64_MAX = (1n << 63n) - 1n;
-export class CompileError extends Error {
-  constructor(message, where) {
-    super('error: ' + message + (where ? ' at ' + where.line + ':' + where.col : ''));
-    this.name = 'CompileError';
-  }
-}
+import {CompileError} from './compile-error.mjs';
+export {CompileError} from './compile-error.mjs';
 function validateSourceText(src) {
   if (typeof src !== 'string' || src.length > MAX_BYTES)
     throw new CompileError('invalid or oversized source');
@@ -362,7 +359,7 @@ export function compileToIR(source) {
  // It does not introduce a new Atto import syntax or permit unresolved names
  // in compileToIR/compileIR. External slots are typed declarations, never
  // executable provider bodies. The private scalar emitter omits those slots.
-function compileConsumerWithMemo(source, providerEntries, prior) {
+function compileConsumerWithEmitter(source, providerEntries, emit) {
   if (!Array.isArray(providerEntries) || providerEntries.length === 0 || providerEntries.length > 128)
     throw new CompileError('invalid scalar provider interface');
   const local = parseScalarSource(source);
@@ -375,88 +372,24 @@ function compileConsumerWithMemo(source, providerEntries, prior) {
   const entries = ir.functions.slice(external.length).filter(f=>f.pub)
     .map(({name,params,resultType})=>({name,params,resultType}));
   if (!entries.length) throw new CompileError('consumer requires public entrypoint');
-  const result=emitScalarIR(ir,external.length,prior);
+  const result=emit(ir,external.length);
   return {...result,publicInterface:entries};
 }
 export function compileScalarConsumer(source, providerEntries) {
-  const result=compileConsumerWithMemo(source,providerEntries,new Map());
+  const result=compileConsumerWithEmitter(source,providerEntries,(ir,count)=>({code:emitCold(ir,count)}));
   return {moduleSource:result.code,publicInterface:result.publicInterface};
 }
-export function compileIR(input) { return emitScalarIR(input,0,new Map()).code; }
-function emitScalarIR(input, externalCount, prior) {
-  const next=new Map();let emitted=0,reused=0;
-  const ir = validateScalarIR(input);
-  const fns = ir.functions;
-  function lower(e, depth = 0) {
-    if (depth > 384) throw new CompileError('expression depth limit during lowering');
-    if (e.kind === 'int') return e.value + 'n';
-    if (e.kind === 'param') return '_p' + e.index;
-    if (e.kind === 'neg') return 'BigInt.asIntN(64,-(' + lower(e.inner, depth+1) + '))';
-    if (e.kind === 'binary') {
-      // Inline so programs without Integer.mod keep byte-identical output.
-      if (e.op === 'mod')
-        return '((a,b)=>{if(b===0n)throw new RangeError("ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit remainder by zero");const r=a%b;return r<0n?BigInt.asIntN(64,b>0n?r+b:r-b):r;})(' +
-          lower(e.left, depth+1) + ',' + lower(e.right, depth+1) + ')';
-      return 'BigInt.asIntN(64,(' + lower(e.left, depth+1) + ')' + e.op + '(' +
-        lower(e.right, depth+1) + '))';
-    }
-    if (e.kind === 'call') {
-      return '_f' + e.target + '(' + e.args.map(arg => lower(arg, depth+1)).join(',') + ')';
-    }
-    throw new CompileError('invalid IR expression');
-  }
-  const out = [
-    '// Oreslang JS scalar subset. Signed i64 wrapping is PROVISIONAL, not proven Java parity.',
-    'function _int(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang int requires a signed i64 BigInt");return v;}',
-  ];
-  if (externalCount) {
-    out.push('export function bindProvider(bindings){',
-      'if(!Array.isArray(bindings)||bindings.length!=='+externalCount+')throw new TypeError("invalid provider bindings");');
-    for(let i=0;i<externalCount;i++){
-      const params=fns[i].params.map((_,j)=>'_p'+j);
-      out.push('const _b'+i+'=bindings['+i+'];',
-        'if(typeof _b'+i+'!=="function")throw new TypeError("missing provider binding");',
-        'function _f'+i+'('+params.join(',')+'){return _int(_b'+i+'('+params.map(p=>'_int('+p+')').join(',')+'));}');
-    }
-  }
-  fns.forEach((f,i) => {
-    if(i<externalCount)return;
-    // Checked IR is canonical; external slots/arity are validated anew.
-    // Count the external boundary in the key, so closed and bound forms
-    // cannot share a fragment even when the local slot happens to match.
-    const key=JSON.stringify([externalCount,i,f]);
-    let body=prior.get(key);
-    if(body===undefined){
-      const params=f.params.map((_,j)=>'_p'+j);
-      body=['function _f'+i+'('+params.join(',')+'){',...params.map(p=>'_int('+p+');'),'return '+lower(f.body)+';','}'].join('\n');
-      emitted++;
-    }else reused++;
-    next.set(key,body);out.push(body);
-  });
-  if(externalCount){
-    out.push('const api=Object.create(null);');
-    fns.forEach((f,i)=>{if(f.pub)out.push('api['+JSON.stringify(f.name)+']=_f'+i+';');});
-    out.push('return Object.freeze(api);','}');
-    return {code:out.join('\n')+'\n',next,emitted,reused};
-  }
-  // String-literal export names prevent ECMAScript keyword collisions.
-  fns.forEach((f,i) => {
-    if (f.pub) out.push('export { _f' + i + ' as ' + JSON.stringify(f.name) + ' };');
-  });
-  return {code:out.join('\n')+'\n',next,emitted,reused};
-}
+export function compileIR(input) { return emitCold(input); }
 // One previous fully validated scalar unit per session. No persisted
 // authority, skipped frontend checks or cross-namespace claim.
 export class IncrementalSession {
-  #memo=new Map();
+  #emitter=new ScalarEmissionSession();
   build(source,{cold=false}={}){
-    const r=emitScalarIR(compileToIR(source),0,cold?new Map():this.#memo);
-    this.#memo=r.next;
+    const r=this.#emitter.emit(compileToIR(source),0,{cold});
     return {code:r.code,emitted:r.emitted,reused:r.reused};
   }
   buildConsumer(source,providerEntries,{cold=false}={}){
-    const r=compileConsumerWithMemo(source,providerEntries,cold?new Map():this.#memo);
-    this.#memo=r.next;
+    const r=compileConsumerWithEmitter(source,providerEntries,(ir,count)=>this.#emitter.emit(ir,count,{cold}));
     return {moduleSource:r.code,publicInterface:r.publicInterface,emitted:r.emitted,reused:r.reused};
   }
 }
