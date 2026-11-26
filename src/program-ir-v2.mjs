@@ -5,7 +5,7 @@
 export const PROGRAM_IR_VERSION=2;
 export const PROGRAM_IR_DIALECT='oreslang.program';
 export const PROGRAM_IR_INT_MODEL='signed-i64-checked-provisional';
-const ID=/^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+const ID=/^[A-Za-z_Α-ΡΣ-Ωα-ω][A-Za-z0-9_Α-ΡΣ-Ωα-ω]{0,127}$/;
 const DEC=/^(?:0|[1-9][0-9]*|-[1-9][0-9]*)$/;
 const MIN=-(1n<<63n), MAX=(1n<<63n)-1n;
 const LIMIT_NODES=30000,LIMIT_DEPTH=192;
