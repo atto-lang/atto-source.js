@@ -187,7 +187,7 @@ export function transpile_to_worker(source) {
       const value=checked_decimal(tokens[i++]);
       left={value};
     } else throw new TranspileError('E_UNSUPPORTED_EXPRESSION');
-    const precedence={'|':0,'^^':1,'&':2,'<<<':3,'>>>':3,'+':4,'-':4,'*':5};
+    const precedence={'|':0,'^^':1,'&':2,'<<<':3,'>>>':3,'ashr':3,'+':4,'-':4,'*':5};
     while(Object.hasOwn(precedence,peek()) && precedence[peek()]>=min_prec){
       if(result_type(left)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
       const op=tokens[i++];
@@ -230,7 +230,7 @@ export function transpile_to_worker(source) {
     if(node.op==='neg')return `checked(-(${emit(node.arg)}))`;
     const op=node.op;
     const left=emit(node.left),right=emit(node.right);
-    if(op==='<<<'||op==='>>>'){
+    if(op==='<<<'||op==='>>>'||op==='ashr'){
       uses_shift=true;
       const static_count=Object.hasOwn(node.right,'value')?node.right.value:
         node.right.op==='neg'&&Object.hasOwn(node.right.arg,'value')?-node.right.arg.value:null;
@@ -238,7 +238,9 @@ export function transpile_to_worker(source) {
         throw new TranspileError('E_SHIFT_DISTANCE');
       return op==='<<<'
         ? 'BigInt.asIntN(64, ('+left+') << checked_shift('+right+'))'
-        : 'BigInt.asIntN(64, BigInt.asUintN(64, ('+left+')) >> checked_shift('+right+'))';
+        : op==='ashr'
+          ? 'BigInt.asIntN(64, ('+left+') >> checked_shift('+right+'))'
+          : 'BigInt.asIntN(64, BigInt.asUintN(64, ('+left+')) >> checked_shift('+right+'))';
     }
     return 'checked(('+left+') '+(op==='^^'?'^':op)+' ('+right+'))';
   };
