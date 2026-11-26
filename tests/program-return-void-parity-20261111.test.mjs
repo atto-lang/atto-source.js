@@ -14,7 +14,7 @@ test('pure void functions use real transpiled ESM; nonvoid explicit returns unch
     'pub fnc arrow() -> void :: return; end',
     'define module m as pub fnc note(): void {} end',
     'pub fnc answer(): int { return 42; }',
-    'pub define class C as pub method noop():void{} end'
+    'pub define class C as pub mtd noop():void{} end'
   ].join('\n');
   const ir = compileToProgramIRV2(source);
   for (const name of ['empty','stop','arrow']) {
@@ -81,8 +81,8 @@ test('canonical return diagnostic families are explicit and fail closed', () => 
     ['pub fnc bad():int{return;}','RETURN_VALUE_REQUIRED'],
     ['pub fnc bad():void{return 9;}','RETURN_VOID_VALUE'],
     ['pub fnc bad():int{if true then return 1; fi}','RETURN_EXPLICIT_REQUIRED'],
-    ['pub define class C as pub method bad():int{} end','RETURN_EXPLICIT_REQUIRED'],
-    ['pub define class C as pub method bad():void{return 1;} end','RETURN_VOID_VALUE']
+    ['pub define class C as pub mtd bad():int{} end','RETURN_EXPLICIT_REQUIRED'],
+    ['pub define class C as pub mtd bad():void{return 1;} end','RETURN_VOID_VALUE']
   ];
   for (const [source,diagnostic] of cases) {
     assert.throws(() => compileProgramV2(source),error =>

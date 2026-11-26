@@ -15,6 +15,7 @@
     "./load-trusted-package.node": "./src/load-trusted-package.node.mjs",
     "./scalar-ir": "./src/scalar-ir.mjs",
     "./program-v2": "./src/program-v2.mjs",
+    "./checked-u64-scalar-v1": "./src/checked-u64-scalar-v1.mjs",
     "./class-methods-v1": "./src/class-methods-v1.mjs",
     "./class-method-ir-v1": "./src/class-method-ir-v1.mjs",
     "./symbol-wire-v1": "./src/symbol-wire-v1.mjs",

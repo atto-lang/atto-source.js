@@ -1,0 +1,22 @@
+name: Checked u64 scalar guest candidate
+on:
+  pull_request:
+    paths:
+      - 'src/checked-u64-scalar-v1.mjs'
+      - 'tests/checked-u64-scalar-v1.test.mjs'
+      - 'tests/checked-u64-ir-v1.test.mjs'
+      - 'tests/checked-u64-generated-guests.test.mjs'
+      - 'contracts/atto-xo-checked-u64-debit-v1/**'
+      - '.github/workflows/checked-u64-scalar-v1.yml'
+permissions:
+  contents: read
+jobs:
+  compiled-guests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: node --test tests/checked-u64-scalar-v1.test.mjs tests/checked-u64-ir-v1.test.mjs tests/checked-u64-generated-guests.test.mjs
