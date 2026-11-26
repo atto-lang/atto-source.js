@@ -113,3 +113,27 @@ test('forged IR cannot cross class scope or manufacture recursion and argument a
   for(const ir of invalid)
     assert.throws(()=>compileProgramIRV2(ir),/error: program IR:/);
 });
+
+test('canonical instance markers preserve contextual names and receiver dispatch',async()=>{
+  for(const name of ['ping','mtd','method']){
+    let baseline;
+    for(const marker of ['', 'mtd ', 'fnc ']){
+      const s='pub define class Box as '+marker+name+
+        '(int n):int{return n+1;} pub answer():int{return self.'+name+'(41);} end';
+      const ir=compileToProgramIRV2(s);
+      const emitted=compileProgramV2(s);
+      if(baseline===undefined)baseline={ir,emitted};
+      else {
+        assert.deepEqual(ir,baseline.ir);
+        assert.equal(emitted,baseline.emitted);
+      }
+      const mod=await load(s);
+      assert.equal(new mod.Box().answer(),42n);
+      assert.throws(()=>compileProgramV2('define class Box as '+name+
+        '():int{return 1;} mtd '+name+'():int{return 2;} end'),
+        /duplicate method name\/arity/);
+    }
+    assert.throws(()=>compileProgramV2('define class Box as method '+name+
+      '():int{return 42;} end'),/OBSOLETE_METHOD_INTRODUCER/);
+  }
+});
