@@ -135,7 +135,7 @@ test('nested Entry projections and distinguishable first faults retain source or
   const nested=await load('Entry.of(Entry.of(20,21).value,Entry.of(21,22).key).key+21');
   assert.equal(nested.main(),42n);
   // scalar-v1 has provisional wrapping arithmetic, so distinguish the native
-  // division fault from the explicit remainder diagnostic, not overflow.
+  // remainder fault from the explicit Euclidean-modulo diagnostic, not overflow.
   const fault=async expr=>{
     const m=await load(expr);
     let thrown;
@@ -143,7 +143,7 @@ test('nested Entry projections and distinguishable first faults retain source or
     assert.ok(thrown instanceof RangeError,expr);
     return thrown.message;
   };
-  const a='1/0', b='Integer.mod(1,0)';
+  const a='Integer.rem(1,0)', b='Integer.mod(1,0)';
   const first=await fault(a), second=await fault(b);
   assert.notEqual(first,second,'fault witnesses must be distinguishable');
   for(const field of ['key','value']){
