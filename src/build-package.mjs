@@ -61,6 +61,8 @@ export async function buildPackage({sourceFile, outputDir, target='edge-js', dec
     provenanceNote:'The compiler SHA is caller-declared, not independently attested. A hash is not an authorization or a sandbox.'
   };
   if(abi){manifest.publicInterface=abi.entries;manifest.interfaceSha256=abi.sha256;}
+  const manifestJson=JSON.stringify(manifest,null,2)+'\n';
+  if(Buffer.byteLength(manifestJson,'utf8')>65536)throw Error('package manifest exceeds admission limit');
   const parent = dirname(dest);
   // Materialize the caller-chosen package parent before creating a private
   // staging directory. Previously nested output paths failed with ENOENT.
@@ -70,7 +72,7 @@ export async function buildPackage({sourceFile, outputDir, target='edge-js', dec
   const temp = await mkdtemp(join(parent,'.'+basename(dest)+'.staging-'));
   try {
     await writeFile(join(temp,'module.mjs'),emitted,{flag:'wx',mode:0o600});
-    await writeFile(join(temp,'manifest.json'),JSON.stringify(manifest,null,2)+'\n',{flag:'wx',mode:0o600});
+    await writeFile(join(temp,'manifest.json'),manifestJson,{flag:'wx',mode:0o600});
     try { await mkdir(dest,{mode:0o700}); }
     catch(error) {
       if (error.code === 'EEXIST') throw Error('refusing to overwrite an existing package');
