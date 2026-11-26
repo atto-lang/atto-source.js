@@ -1,6 +1,8 @@
 // Versioned, JSON-safe Oreslang scalar IR for the experimental JS backend.
 // This contract is intentionally narrower than Oreslang's eventual shared typed IR.
 export const SCALAR_IR_VERSION = 1;
+// Existing v1 artifacts remain unchanged; seq nodes require v2.
+export const SCALAR_IR_SEQ_VERSION = 2;
 export const SCALAR_IR_DIALECT = 'oreslang.scalar';
 export const SCALAR_IR_INT_MODEL = 'signed-i64-wrap-provisional';
 
@@ -42,7 +44,7 @@ function array(value, maximum, context) {
     fail(context + ': invalid array size');
   const keys = Reflect.ownKeys(value);
   if (keys.length !== value.length + 1 ||
-      keys.some(k => k !== 'length' && (!/^(?:0|[1-9][0-9]*)$/.test(k) || Number(k) >= value.length)))
+      keys.some(k => k !== 'length' && (typeof k !== 'string' || !/^(?:0|[1-9][0-9]*)$/.test(k) || Number(k) >= value.length)))
     fail(context + ': unexpected array properties');
   for (let i = 0; i < value.length; i++) {
     const desc = Object.getOwnPropertyDescriptor(value, i);
@@ -73,7 +75,7 @@ export function createScalarIR(parsedFunctions) {
     if (slots.has(fnName)) fail('duplicate function ' + fnName);
     slots.set(fnName, i);
   });
-  let nodes = 0;
+  let nodes = 0, usesSeq = false;
   function convert(expr, params, depth = 0) {
     if (++nodes > MAX_NODES || depth > MAX_DEPTH) fail('expression limit exceeded');
     switch (expr.kind) {
@@ -89,6 +91,12 @@ export function createScalarIR(parsedFunctions) {
         left: convert(expr.left, params, depth + 1),
         right: convert(expr.right, params, depth + 1)
       };
+      case 'seq': {
+        usesSeq = true;
+        array(expr.items, MAX_PARAMS, 'sequence items');
+        if (!expr.items.length) fail('empty sequence');
+        return {kind: 'seq', items: expr.items.map(item => convert(item, params, depth + 1))};
+      }
       case 'call': {
         const target = slots.get(expr.name);
         if (target === undefined) fail('unresolved identifier ' + expr.name);
@@ -110,6 +118,7 @@ export function createScalarIR(parsedFunctions) {
       body: convert(fn.body, fn.params)
     }))
   };
+  if (usesSeq) ir.schemaVersion = SCALAR_IR_SEQ_VERSION;
   return validateScalarIR(ir);
 }
 
@@ -117,7 +126,7 @@ export function createScalarIR(parsedFunctions) {
 // This is a format/type gate, NOT a sandbox for adversarial JS objects.
 export function validateScalarIR(ir) {
   record(ir, ['schemaVersion', 'dialect', 'integerModel', 'functions'], 'module');
-  if (ir.schemaVersion !== SCALAR_IR_VERSION || ir.dialect !== SCALAR_IR_DIALECT ||
+  if (![SCALAR_IR_VERSION, SCALAR_IR_SEQ_VERSION].includes(ir.schemaVersion) || ir.dialect !== SCALAR_IR_DIALECT ||
       ir.integerModel !== SCALAR_IR_INT_MODEL) fail('unsupported IR version/dialect/integer model');
   array(ir.functions, MAX_FN, 'functions');
   if (!ir.functions.length) fail('no functions');
@@ -133,7 +142,7 @@ export function validateScalarIR(ir) {
     if (new Set(params).size !== params.length) fail('duplicate parameter');
     return {name: fnName, pub: fn.pub, params, resultType: 'int'};
   });
-  let nodes = 0;
+  let nodes = 0, usesSeq = false;
   const dependencies = headers.map(() => new Set());
   function checkExpr(expr, owner, depth = 0) {
     if (++nodes > MAX_NODES || depth > MAX_DEPTH) fail('expression limit exceeded');
@@ -158,6 +167,14 @@ export function validateScalarIR(ir) {
         return {kind: 'binary', op: expr.op,
           left: checkExpr(expr.left, owner, depth + 1),
           right: checkExpr(expr.right, owner, depth + 1)};
+      case 'seq': {
+        if (ir.schemaVersion !== SCALAR_IR_SEQ_VERSION) fail('sequence requires scalar IR v2');
+        record(expr, ['kind', 'items'], 'sequence');
+        array(expr.items, MAX_PARAMS, 'sequence items');
+        if (!expr.items.length) fail('empty sequence');
+        usesSeq = true;
+        return {kind: 'seq', items: expr.items.map(item => checkExpr(item, owner, depth + 1))};
+      }
       case 'call': {
         record(expr, ['kind', 'target', 'args'], 'call');
         const target = index(expr.target, headers.length, 'function target');
@@ -183,8 +200,9 @@ export function validateScalarIR(ir) {
     state[i] = 2;
   }
   functions.forEach((_, i) => visit(i));
+  if (ir.schemaVersion === SCALAR_IR_SEQ_VERSION && !usesSeq) fail('unsupported IR version: scalar IR v2 requires sequence');
   return {
-    schemaVersion: SCALAR_IR_VERSION,
+    schemaVersion: ir.schemaVersion,
     dialect: SCALAR_IR_DIALECT,
     integerModel: SCALAR_IR_INT_MODEL,
     functions
