@@ -285,6 +285,8 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
   let nodes=0;
   const captureSlots=owners.map(()=>new Set());
   const floatSlots=owners.map(()=>new Set());
+  const boolSlots=owners.map(()=>new Set());
+  const stringSlots=owners.map(()=>new Set());
   const trapSlots=owners.map(()=>new Set());
   const trapOptionSlots=owners.map(()=>new Set());
   const caughtSlots=owners.map(()=>new Set());
@@ -370,6 +372,10 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         record(expr,['kind','value'],'bool');
         if(expected!=='bool'||typeof expr.value!=='boolean')fail('invalid bool literal/type');
         return {kind:'bool',value:expr.value};
+      case 'string':
+        record(expr,['kind','value'],'local string');
+        if(allowScalarWhile===true||expected!=='string'||typeof expr.value!=='string'||expr.value.length>256||!/^[\x20-\x7e]*$/.test(expr.value))fail('invalid local string literal/type');
+        return {kind:'string',value:expr.value};
       case 'symbol':
         record(expr,['kind','value'],'symbol');
         if(expected!=='symbol')fail('Symbol literal type mismatch');
@@ -487,26 +493,29 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           update:node(expr.update,owner,depth+1,'int',scoped),
           body:node(expr.body,owner,depth+1,expected,scoped)};
       }
-      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':{
+      case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':{
         record(expr,['kind','slot','init','body'],'immutable local');
         if(owner>=headers.length||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
           fail('invalid or repeated local slot');
         captureSlots[owner].add(expr.slot);
-        const t=desc.value==='trapOptionLocal'?'trapOptionResult':desc.value==='trapLocal'?'trapResult':desc.value==='floatLocal'?'float':'int';
+        const t=desc.value==='trapOptionLocal'?'trapOptionResult':desc.value==='trapLocal'?'trapResult':desc.value==='floatLocal'?'float':desc.value==='boolLocal'?'bool':desc.value==='stringLocal'?'string':'int';
+        if(allowScalarWhile===true&&(t==='bool'||t==='string'))fail('ordinary-only local type');
         const init=node(expr.init,owner,depth+1,t,active);
         if(t==='trapResult')trapSlots[owner].add(expr.slot);
         if(t==='trapOptionResult')trapOptionSlots[owner].add(expr.slot);
         if(t==='float')floatSlots[owner].add(expr.slot);
+        if(t==='bool')boolSlots[owner].add(expr.slot);
+        if(t==='string')stringSlots[owner].add(expr.slot);
         return {kind:desc.value,slot:expr.slot,init,body:node(expr.body,owner,depth+1,expected,[...active,expr.slot])};
       }
-      case 'capture':case 'floatCapture':case 'trapCapture':case 'trapOptionCapture':
+      case 'capture':case 'floatCapture':case 'boolCapture':case 'stringCapture':case 'trapCapture':case 'trapOptionCapture':
         record(expr,['kind','slot'],'capture');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            (!active.includes(expr.slot)||caughtSlots[owner].has(expr.slot)))fail('ADT capture outside its typed payload scope');
-        const captureType=trapOptionSlots[owner].has(expr.slot)?'trapOptionResult':trapSlots[owner].has(expr.slot)?'trapResult':floatSlots[owner].has(expr.slot)?'float':'int';
+        const captureType=trapOptionSlots[owner].has(expr.slot)?'trapOptionResult':trapSlots[owner].has(expr.slot)?'trapResult':floatSlots[owner].has(expr.slot)?'float':boolSlots[owner].has(expr.slot)?'bool':stringSlots[owner].has(expr.slot)?'string':'int';
         if(captureType==='int'&&expected!=='int')fail('ADT int payload capture type mismatch');
-        if(expected!==captureType||desc.value!==(captureType==='trapOptionResult'?'trapOptionCapture':captureType==='trapResult'?'trapCapture':captureType==='float'?'floatCapture':'capture'))
+        if(expected!==captureType||desc.value!==(captureType==='trapOptionResult'?'trapOptionCapture':captureType==='trapResult'?'trapCapture':captureType==='float'?'floatCapture':captureType==='bool'?'boolCapture':captureType==='string'?'stringCapture':'capture'))
           fail('capture type mismatch');
         return {kind:desc.value,slot:expr.slot};
       case 'param':
