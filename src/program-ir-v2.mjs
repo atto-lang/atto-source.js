@@ -292,6 +292,8 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
   let nodes=0;
   const captureSlots=owners.map(()=>new Set());
   const floatSlots=owners.map(()=>new Set());
+  const boolSlots=owners.map(()=>new Set());
+  const stringSlots=owners.map(()=>new Set());
   const optionSlots=owners.map(()=>new Set());
   const resultSlots=owners.map(()=>new Set());
   const trapSlots=owners.map(()=>new Set());
@@ -306,7 +308,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
     // No implicit truthiness or numeric coercions, including in supplied IR.
     if(expected==='bool'&&['int','neg','binary'].includes(desc.value))
       fail('boolean expression required');
-    if(expected!=='bool'&&['bool','compare','symbolCompare','not'].includes(desc.value))
+    if(expected!=='bool'&&['bool','compare','boolCompare','symbolCompare','not'].includes(desc.value))
       fail('boolean value cannot be used as non-bool');
     if(expected!=='int'&&['int','neg','binary'].includes(desc.value))
       fail('integer expression cannot be used as non-int');
@@ -389,6 +391,10 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         record(expr,['kind','value'],'bool');
         if(expected!=='bool'||typeof expr.value!=='boolean')fail('invalid bool literal/type');
         return {kind:'bool',value:expr.value};
+      case 'string':
+        record(expr,['kind','value'],'local string');
+        if(allowScalarWhile===true||expected!=='string'||typeof expr.value!=='string'||expr.value.length>256||!/^[\x20-\x7e]*$/.test(expr.value))fail('invalid local string literal/type');
+        return {kind:'string',value:expr.value};
       case 'symbol':
         record(expr,['kind','value'],'symbol');
         if(expected!=='symbol')fail('Symbol literal type mismatch');
@@ -501,28 +507,31 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           update:node(expr.update,owner,depth+1,'int',scoped),
           body:node(expr.body,owner,depth+1,expected,scoped)};
       }
-      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':{
+      case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':{
         record(expr,['kind','slot','init','body'],'immutable local');
         if(owner>=headers.length||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
           fail('invalid or repeated local slot');
         captureSlots[owner].add(expr.slot);
-        const t=desc.value==='optionLocal'?'option<int>':desc.value==='resultLocal'?'result<int,int>':desc.value==='trapOptionLocal'?'trapOptionResult':desc.value==='trapLocal'?'trapResult':desc.value==='floatLocal'?'float':'int';
+        const t=desc.value==='optionLocal'?'option<int>':desc.value==='resultLocal'?'result<int,int>':desc.value==='trapOptionLocal'?'trapOptionResult':desc.value==='trapLocal'?'trapResult':desc.value==='floatLocal'?'float':desc.value==='boolLocal'?'bool':desc.value==='stringLocal'?'string':'int';
+        if(allowScalarWhile===true&&(t==='bool'||t==='string'))fail('ordinary-only local type');
         const init=node(expr.init,owner,depth+1,t,active);
         if(t==='trapResult')trapSlots[owner].add(expr.slot);
         if(t==='trapOptionResult')trapOptionSlots[owner].add(expr.slot);
         if(t==='float')floatSlots[owner].add(expr.slot);
+        if(t==='bool')boolSlots[owner].add(expr.slot);
+        if(t==='string')stringSlots[owner].add(expr.slot);
         if(t==='option<int>')optionSlots[owner].add(expr.slot);
         if(t==='result<int,int>')resultSlots[owner].add(expr.slot);
         return {kind:desc.value,slot:expr.slot,init,body:node(expr.body,owner,depth+1,expected,[...active,expr.slot])};
       }
-      case 'capture':case 'floatCapture':case 'trapCapture':case 'trapOptionCapture':case 'optionCapture':case 'resultCapture':
+      case 'capture':case 'floatCapture':case 'boolCapture':case 'stringCapture':case 'trapCapture':case 'trapOptionCapture':case 'optionCapture':case 'resultCapture':
         record(expr,['kind','slot'],'capture');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            (!active.includes(expr.slot)||caughtSlots[owner].has(expr.slot)||errorSlots[owner].has(expr.slot)))fail('ADT capture outside its typed payload scope');
-        const captureType=optionSlots[owner].has(expr.slot)?'option<int>':resultSlots[owner].has(expr.slot)?'result<int,int>':trapOptionSlots[owner].has(expr.slot)?'trapOptionResult':trapSlots[owner].has(expr.slot)?'trapResult':floatSlots[owner].has(expr.slot)?'float':'int';
+        const captureType=optionSlots[owner].has(expr.slot)?'option<int>':resultSlots[owner].has(expr.slot)?'result<int,int>':trapOptionSlots[owner].has(expr.slot)?'trapOptionResult':trapSlots[owner].has(expr.slot)?'trapResult':floatSlots[owner].has(expr.slot)?'float':boolSlots[owner].has(expr.slot)?'bool':stringSlots[owner].has(expr.slot)?'string':'int';
         if(captureType==='int'&&expected!=='int')fail('ADT int payload capture type mismatch');
-        if(expected!==captureType||desc.value!==(captureType==='option<int>'?'optionCapture':captureType==='result<int,int>'?'resultCapture':captureType==='trapOptionResult'?'trapOptionCapture':captureType==='trapResult'?'trapCapture':captureType==='float'?'floatCapture':'capture'))
+        if(expected!==captureType||desc.value!==(captureType==='option<int>'?'optionCapture':captureType==='result<int,int>'?'resultCapture':captureType==='trapOptionResult'?'trapOptionCapture':captureType==='trapResult'?'trapCapture':captureType==='float'?'floatCapture':captureType==='bool'?'boolCapture':captureType==='string'?'stringCapture':'capture'))
           fail('capture type mismatch');
         return {kind:desc.value,slot:expr.slot};
       case 'param':
@@ -564,6 +573,13 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         if(!['<','>','<=','>=','==','!='].includes(expr.op))fail('unsupported comparator');
         return {kind:'compare',op:expr.op,left:node(expr.left,owner,depth+1,'int',active),
           right:node(expr.right,owner,depth+1,'int',active)};
+      case 'boolCompare':
+        record(expr,['kind','op','left','right'],'Boolean compare');
+        if(expected!=='bool'||!['==','!='].includes(expr.op))
+          fail('unsupported Boolean comparison');
+        return {kind:'boolCompare',op:expr.op,
+          left:node(expr.left,owner,depth+1,'bool',active),
+          right:node(expr.right,owner,depth+1,'bool',active)};
       case 'symbolCompare':
         record(expr,['kind','op','left','right'],'Symbol compare');
         if(expected!=='bool')fail('Symbol comparison outside bool context');
@@ -754,6 +770,13 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         return {kind:'compare',op:expr.op,
           left:methodNode(expr.left,method,depth+1,'int'),
           right:methodNode(expr.right,method,depth+1,'int')};
+      case 'boolCompare':
+        record(expr,['kind','op','left','right'],'method Boolean compare');
+        if(expected!=='bool'||!['==','!='].includes(expr.op))
+          fail('unsupported method Boolean comparison');
+        return {kind:'boolCompare',op:expr.op,
+          left:methodNode(expr.left,method,depth+1,'bool'),
+          right:methodNode(expr.right,method,depth+1,'bool')};
       case 'symbolCompare':
         record(expr,['kind','op','left','right'],'method Symbol compare');
         if(expected!=='bool'||(expr.op!=='=='&&expr.op!=='!='))
