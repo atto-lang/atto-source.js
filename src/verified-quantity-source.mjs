@@ -63,7 +63,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
   const expect=v=>{if(!take(v))fail('E_SYNTAX','expected '+v);};
   const name=()=>{const t=peek();if(t.kind!=='id')fail('E_UNIT_NAME','expected name');at++;return t.value;};
   const dims=new Set(),bases=new Set(),units=new Map(),aliases=new Map(),signatures=new Map();
-  let locals=new Map();
+  let locals=new Map(),nextStrictSlot=0;
   const lookup=n=>{if(!units.has(n))fail('E_UNIT_NAME','unknown unit '+n);return units.get(n);};
   const integer=(negative=false)=>{
     const t=peek();if(t.kind!=='int')fail('E_SYNTAX','expected integer');
@@ -292,17 +292,47 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     }
     return disjunction(incoming,depth);
   }
-  // Restricted returning conditionals: no mutable bindings, arbitrary
-  // statements, side effects, loop or suspension admission here.
-  function strictReturn(result,facts,depth=0){
+  // Closed returning conditionals with scalar assignments lowered to fresh
+  // lexical SSA-like slots. No merge of live branch states, loops, aliases,
+  // nonlocal mutation, effects or suspension is admitted.
+  function strictReturn(result,facts,mutable=new Map(),depth=0){
     if(depth>16||--budget<0)fail('E_UNIT_LIMIT','strict return budget');
     locals=facts;
+    if(['while','loop','for','break','continue'].includes(peek().value))
+      fail('E_VERIFY_UNSUPPORTED','strict loop proof not implemented');
+    if(peek().value==='let'||peek().value==='val'){
+      const isMutable=take('let');if(!isMutable)expect('val');
+      let key,want=null;
+      if(tokens[at+1]?.value===':'){key=identifier();expect(':');want=type();}
+      else if(tokens[at+1]?.value==='='){key=identifier();}
+      else{want=type();key=identifier();}
+      if(isMutable&&want===null)fail('E_VERIFY_UNSUPPORTED','strict mutable scalar requires declared type');
+      if(facts.has(key))fail('E_UNIT_DUPLICATE','duplicate local');
+      expect('=');const value=expr(0,0);expect(';');
+      if(want!==null)boundary(want,value,'E_REFINEMENT_BINDING');
+      if(nextStrictSlot>=64)fail('E_UNIT_LIMIT','strict local slot budget');
+      const slot=nextStrictSlot++,after=new Map(facts),decls=new Map(mutable);
+      after.set(key,make(value.unit,{kind:'capture',slot},null,value.range));
+      if(isMutable)decls.set(key,want);
+      return {kind:'local',slot,init:value.ir,body:strictReturn(result,after,decls,depth+1)};
+    }
+    if(peek().kind==='id'&&tokens[at+1]?.value==='='){
+      const key=identifier();expect('=');
+      if(!mutable.has(key))fail('E_VERIFY_UNSUPPORTED','assignment to nonmutable binding');
+      const value=expr(0,0);expect(';');
+      boundary(mutable.get(key),value,'E_REFINEMENT_BINDING');
+      if(nextStrictSlot>=64)fail('E_UNIT_LIMIT','strict local slot budget');
+      const slot=nextStrictSlot++,after=new Map(facts);
+      // New binding identity and replacement range, never union with stale fact.
+      after.set(key,make(value.unit,{kind:'capture',slot},null,value.range));
+      return {kind:'local',slot,init:value.ir,body:strictReturn(result,after,mutable,depth+1)};
+    }
     if(take('if')){
       const p=condition(facts);
-      expect('{');const yes=strictReturn(result,p.yes,depth+1);expect('}');
+      expect('{');const yes=strictReturn(result,p.yes,mutable,depth+1);expect('}');
       let no;
-      if(take('else')){expect('{');no=strictReturn(result,p.no,depth+1);expect('}');}
-      else no=strictReturn(result,p.no,depth+1);
+      if(take('else')){expect('{');no=strictReturn(result,p.no,mutable,depth+1);expect('}');}
+      else no=strictReturn(result,p.no,mutable,depth+1);
       return {kind:'if',condition:p.ir,yes,no};
     }
     expect('return');const v=expr(0,0);expect(';');
@@ -345,7 +375,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       locals.set(key,make(value.unit,{kind:'capture',slot},null,value.range));
     }
     let body;
-    if(strict){body=strictReturn(result,locals);expect('}');}
+    if(strict){nextStrictSlot=bindings.length;body=strictReturn(result,locals);expect('}');}
     else {
       expect('return');const v=expr(0,0);expect(';');expect('}');
       if(pub&&!same(v.unit,scalar()))fail('E_UNIT_ERASURE','main requires scale-one scalar');
