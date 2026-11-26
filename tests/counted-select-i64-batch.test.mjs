@@ -45,3 +45,31 @@ test('producer error with the same message is not counted exhaustion',async()=>{
   f.fail(original);assert.equal(b.pump(),true);await rejected;
   assert.equal(f.pendingWaiters,0);
 });
+
+test('mixed lexical projections survive Future alias retirement',async()=>{
+  const a=new Channel(2),b=new Channel(1),f=new Future();
+  a.tryWrite(1n);a.tryWrite(4n);b.tryWrite(3n);f.resolve(2n);
+  const batch=new Batch(4,[a,f,b,a,f],'fair',[
+    v=>v+10n,v=>v+20n,v=>v+30n,v=>v+40n,
+    ()=>{throw new Error('retired alias');}
+  ]);
+  for(let i=0;i<8;i++)assert.equal(batch.pump(),true);
+  assert.deepEqual(await batch.completion,[11n,22n,33n,44n]);
+  assert.equal(a.pendingReaders+b.pendingReaders+f.pendingWaiters,0);
+});
+test('invalid projector plans reject before any registration; zero never inspects',async()=>{
+  const a=new Channel(1);let invoked=false;
+  const projectors=[v=>v];Object.defineProperty(projectors,0,{get(){invoked=true;return v=>v;}});
+  for(const bad of [[],[null],[,],projectors])assert.throws(()=>new Batch(1,[a],'fair',bad),/projector/);
+  assert.equal(invoked,false);assert.equal(a.pendingReaders,0);
+  assert.deepEqual(await new Batch(0,null,'fair',projectors).completion,[]);
+  assert.equal(invoked,false);
+});
+test('projection failure does not publish prefix or consume another message',async()=>{
+  const a=new Channel(2);a.tryWrite(1n);a.tryWrite(2n);
+  const batch=new Batch(2,[a],'fair',[()=>1n<<64n]);
+  const rejected=assert.rejects(batch.completion,/signed i64/);
+  assert.equal(batch.pump(),true);assert.equal(batch.pump(),true);await rejected;
+  assert.equal(a.pendingReaders,0);assert.equal(a.tryRead().value,2n);
+  assert.equal(batch.pump(),false);
+});

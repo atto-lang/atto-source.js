@@ -4,8 +4,8 @@ import {CountedSelectI64Cursor} from './counted-select-i64-cursor.mjs';
 // cursor; producer notifications never execute guest arms.
 export class CountedSelectI64Batch {
   #cursor; #completion; #resolve; #reject; #busy=false; #terminal=false;
-  constructor(count,sources,policy='fair'){
-    this.#cursor=new CountedSelectI64Cursor(count,sources,policy);
+  constructor(count,sources,policy='fair',projectors=null){
+    this.#cursor=new CountedSelectI64Cursor(count,sources,policy,projectors);
     this.#completion=new Promise((resolve,reject)=>{this.#resolve=resolve;this.#reject=reject;});
     this.#publish();
   }
