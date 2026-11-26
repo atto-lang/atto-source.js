@@ -675,6 +675,8 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           'Option.unwrap_or':[['option<int>','int'],'int'],
           'Option.unwrap':[['option<int>'],'int'],
           'Result.unwrap':[['result<int,int>'],'int'],
+          'Option.expect':[['option<int>','string'],'int'],
+          'Result.expect':[['result<int,int>','string'],'int'],
           'Result.ok':[['int'],'result<int,int>'],
           'Result.err':[['int'],'result<int,int>'],
           'Result.is_ok':[['result<int,int>'],'bool'],
