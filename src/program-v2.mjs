@@ -276,6 +276,11 @@ function tokenize(source) {
             fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: exceptional control must be a statement',start);
           advance();word+='!';
         }
+      // Lexical declaration gate, before callbacks can trigger generic syntax
+      // errors. Quoted/comment text and unrelated state identifiers stay inert.
+      if (word==='container' && result.at(-1)?.kind==='id' && result.at(-1).value==='state' &&
+          (result.at(-2)?.value==='define' || (result.at(-2)?.value==='pub' && result.at(-3)?.value==='define')))
+        fail('STATE_CONTAINER_BACKEND_UNSUPPORTED: typed protected-state loans and native ESM lowering required',start);
       emit('id',word,start);
     } else if (/[0-9]/.test(c)) {
       let number = '';
