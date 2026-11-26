@@ -697,8 +697,8 @@ class Parser {
         statements.push({kind:'local',name,init,localType});
       } else if(this.eat('if')) {
         const condition=this.expression();
-        // Canonical statement-only `if`; retain old ; do syntax.
-        if(!this.eat('then')){this.expect(';');this.expect('do');}
+        // Canonical imperative if ... do ... fi; retain existing migration spellings.
+        if(!this.eat('do')&&!this.eat('then')){this.expect(';');this.expect('do');}
         const yes=this.statementSequence(['else','fi'],depth+1);
         const no=this.eat('else')?this.statementSequence(['fi'],depth+1):[];
         this.expect('fi');

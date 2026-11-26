@@ -40,3 +40,24 @@ test('ordinary comparison is not reinterpreted as generic call',async()=>{
   const mod=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(compileProgramV2(source)));
   assert.equal(mod.main(),42n);
 });
+
+test('canonical imperative do disambiguates comparisons and generic calls',async()=>{
+  for(const [source,want] of [
+    ['pub fnc main(): int { if 1 < 2 do return 42; fi return 0; }',42n],
+    [template+'pub fnc main(): int { if 2 < 1 do return identity<int>(0); else return identity<T=int>(42); fi }',42n],
+    ['pub fnc main(): int { if true do return 42; else return Integer.rem(1,0); fi }',42n],
+    ['pub fnc main(): int { if false do return Integer.rem(1,0); fi return 42; }',42n]
+  ]){
+    const ir=compileToProgramIRV2(source);
+    const esm=compileProgramV2(source);
+    assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir))),esm);
+    const m=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(esm));
+    assert.equal(m.main(),want,source);
+  }
+  for(const source of [
+    'pub fnc main(): int { if 1 do return 42; fi return 0; }',
+    'pub fnc main(): int { if true do return 42; }',
+    'pub fnc main(): int { if true do 42; fi return 0; }',
+    'pub fnc main(): int { return if true do return 42; fi; }'
+  ])assert.throws(()=>compileProgramV2(source),/error: program/,source);
+});
