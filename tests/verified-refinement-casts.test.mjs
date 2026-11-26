@@ -94,5 +94,23 @@ for(const [id,body,code] of [
  ['stale-branch','fnc f(int x) -> int { let int d = x; if d != 0 { d = 0; return 42/d; } return 0; } '+main('f(1)'),'E_VERIFY_UNPROVEN'],
  ['bad-invariant','pub fnc main() -> int { let Bounded x = 1; x = 43; return x; }','E_REFINEMENT_BINDING'],
  ['immutable','pub fnc main() -> int { val int x = 1; x = 2; return x; }','E_VERIFY_UNSUPPORTED'],
- ['loop-gap','pub fnc main() -> int { let int x = 1; while x < 42 { x = x+1; } return x; }','E_VERIFY_UNSUPPORTED'],
+ ['loop-gap','pub fnc main() -> int { let int x = 1; while x < 42 { x = x+1; x = x+1; } return x; }','E_VERIFY_UNSUPPORTED'],
 ])test('strict scalar rejects '+id,()=>assert.throws(()=>compileVerifiedStrict(pre+body),new RegExp(code+':')));
+
+for(const [id,body,want] of [
+ ['counter','pub fnc main() -> int { let Bounded x = 1; while x < 42 { x = x+1; } return x; }',42n],
+ ['zero-iteration','pub fnc main() -> int { let int x = 42; while x < 42 { x = x+1; } return x; }',42n],
+ ['descending','pub fnc main() -> int { let int x = 42; while x > 0 { x = x-1; } return x+42; }',42n],
+ ['unchanged','pub fnc main() -> int { let int d = 1; let int x = 0; while x < 42 { x = x+42/d; } return x; }',42n],
+ ['snapshot','pub fnc main() -> int { let int x = 1; val old = x; while x < 42 { x = x+1; } return 42/old; }',42n],
+ ['successive','pub fnc main() -> int { let int x = 0; while x < 21 { x = x+1; } while x < 42 { x = x+1; } return x; }',42n],
+ ['lazy-guard','pub fnc main() -> int { let int x = 42; while x > 0 && 42/x > 0 { x = x-1; } return x+42; }',42n],
+])test('strict while '+id,async()=>assert.equal((await strictGuest(body))(),want));
+for(const [id,body,code] of [
+ ['overflow','pub fnc main() -> int { let int x = 0; while x >= 0 { x = x+1; } return x; }','E_VERIFY_UNPROVEN'],
+ ['invariant','pub fnc main() -> int { let Bounded x = 1; while x <= 42 { x = x+1; } return x; }','E_REFINEMENT_BINDING'],
+ ['stale-entry','pub fnc main() -> int { let int x = 1; while x >= 0 { x = 42/x; } return x; }','E_VERIFY_UNPROVEN'],
+ ['stale-exit','pub fnc main() -> int { let int x = 1; while x > 0 { x = x-1; } return 42/x; }','E_VERIFY_UNPROVEN'],
+ ['immutable-target','pub fnc main() -> int { val int x = 1; while x < 42 { x = x+1; } return x; }','E_VERIFY_UNSUPPORTED'],
+ ['break','pub fnc main() -> int { let int x = 1; while x < 42 { break; } return x; }','E_VERIFY_UNSUPPORTED'],
+])test('strict while rejects '+id,()=>assert.throws(()=>compileVerifiedStrict(pre+body),new RegExp(code+':')));
