@@ -69,3 +69,11 @@ test('Unicode negation is the exact typed Boolean NOT alias, not a bang suffix',
     'pub fnc main(): int { return #価格; }'
   ])assert.throws(()=>compileProgramV2(source),undefined,source);
 });
+
+test('inferred immutable int locals use resolved types and reject non-int inference',async()=>{
+  const source='pub fnc main(): int { val Φ = 10; val 𠮷 = Φ + 32; return 𠮷; }';
+  assert.equal((await run(compileProgramV2,source)).main(),42n);
+  assert.equal(compileProgramV2(source),compileProgramV2('pub fnc main(): int { val int Φ = 10; val int 𠮷 = Φ + 32; return 𠮷; }'));
+  assert.throws(()=>compileProgramV2('pub fnc main(): int { val Φ = true; return 42; }'),/inferred val requires int/);
+  assert.throws(()=>compileProgramV2('pub fnc main(): int { val ρ = 1; val ρ = 2; return 42; }'),/duplicate|shadow/i);
+});

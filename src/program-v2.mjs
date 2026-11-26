@@ -772,15 +772,15 @@ class Parser {
         // Keep existing Option, Result, string, bool, and directional bindings.
         const typedTrapResult=this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')==='Result < int , Error >';
         if(typedTrapResult)this.i+=6;
-        const localType=typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
+        let localType=typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
         const name=this.name();
         if(this.peek().value===';')fail('E_MISSING_INITIALIZER: explicit initializer required',this.peek());
         const directional=this.takeDirection('<');
         if(!directional)this.expect('=');
         let init;
         if(localType==='inferredTrap'&&!directional&&!isConst){
-          if(!this.eat('trap!')&&!this.eat('trap'))fail('only trap Result inference is supported',this.peek());
-          init={kind:'trap',inner:this.expression()};
+          if(this.eat('trap!')||this.eat('trap'))init={kind:'trap',inner:this.expression()};
+          else {localType='inferredInt';init=this.expression();}
         }else init=this.expression();
         this.expect(';');
         if(isConst&&(!directional||localType!=='int'))fail('only directional const int is admitted here',this.peek());
@@ -1505,9 +1505,10 @@ function resolveProgram(parsed) {
         if(nextCaptureSlot>=MAX_TOKENS)fail('local slot budget exceeded');
         const slot=nextCaptureSlot++;
         const init=resolve(expr.init,owner,depth+1,bindings);
-        const type=['inferredTrap','directionalInferred'].includes(expr.localType)?resolvedType(init,owner):expr.localType==='constInt'?'int':expr.localType;
+        const type=['inferredTrap','directionalInferred','inferredInt'].includes(expr.localType)?resolvedType(init,owner):expr.localType==='constInt'?'int':expr.localType;
         if(expr.localType==='trapResult'&&(init.kind!=='trap'||resolvedType(init,owner)!=='trapResult'))fail('E_TRAP_TYPE: typed Result<int,Error> local requires checked trap initializer');
         if(expr.localType==='inferredTrap'&&!['trapResult','trapOptionResult'].includes(type))fail('inferred trap local requires Result');
+        if(expr.localType==='inferredInt'&&type!=='int')fail('inferred val requires int in program-v2; use an explicit supported type');
         if(expr.localType==='directionalInferred'&&!['int','float','trapResult','trapOptionResult'].includes(type))fail('directional binding requires supported scalar or trapped Result');
         if(expr.localType==='constInt'){
           // Narrow, fail-closed constant-expression subset: evaluate only
