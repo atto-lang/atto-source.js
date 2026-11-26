@@ -217,6 +217,8 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     busy = true;
     try {
       pop_clean(pending);
+      // A terminal cleanup failure cannot leave outer recovery scopes live.
+      if (pending.kind !== 'return') while (frames.length) pop_clean(pending);
       return pending.kind === 'return' ? Object.freeze({kind:'returned',value}) : terminal_view(pending);
     } finally {
       busy = false;
