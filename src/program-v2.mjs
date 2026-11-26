@@ -299,7 +299,7 @@ function tokenize(source) {
         {
           if(!/[ \t\r\n\v\f]/.test(source[pos+1]??''))
             fail('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+word+'!',start);
-          if(word==='trap'&&!['=','|>','return'].includes(result.at(-1)?.value))
+          if(word==='trap'&&!['=','|>','return','('].includes(result.at(-1)?.value))
             fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: typed guest effects and Result lowering required',start);
           if(word!=='trap'&&!['{',';','then','else','do'].includes(result.at(-1)?.value))
             fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: exceptional control must be a statement',start);
@@ -347,12 +347,20 @@ function tokenize(source) {
  * Match lexer tokens, never raw text: comments containing 'trap' are inert.
  */
 function rejectUnsupportedTrapEffect(tokens) {
+  const admitted = new Set();
   for (let i=0;i<tokens.length;i++) {
     const token=tokens[i];
     if (token.kind==='id' && (token.value==='trap'||token.value==='trap!')) {
       // Only the statically validated inferred local binding slice is admitted.
       // All other contexts retain the existing fail-closed admission.
-      if(tokens[i-3]?.value==='val'&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='=')continue;
+      if(tokens[i-3]?.value==='val'&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='='){admitted.add(i);continue;}
+      // Closed typed Result<int,Error> locals are the same validated trap IR.
+      if(tokens.slice(i-9,i-2).map(t=>t.value).join(' ')==='val Result < int , Error >'&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='='){admitted.add(i);continue;}
+      // A nested trap may only follow the opening parentheses of an already
+      // admitted trap operand. The typed parser still validates the whole tree.
+      let outer=i-1;
+      while(tokens[outer]?.value==='(')outer--;
+      if(outer<i-1&&admitted.has(outer)){admitted.add(i);continue;}
       if(token.value==='trap!'&&tokens[i-1]?.value==='|>')continue;
       if(tokens[i-1]?.value==='return'&&tokens[i+1]?.kind==='id'&&
          tokens.slice(i+2,i+10).map(t=>t.value).join(' ')==='. unwrap ( ) |> match < int'&&tokens[i+10]?.value==='>'&&tokens[i+11]?.value==='over')continue;
@@ -762,7 +770,9 @@ class Parser {
         // Function-scope scalar locals; only typed string let may rebind.
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
         // Keep existing Option, Result, string, bool, and directional bindings.
-        const localType=(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
+        const typedTrapResult=this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')==='Result < int , Error >';
+        if(typedTrapResult)this.i+=6;
+        const localType=typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
         const name=this.name();
         if(this.peek().value===';')fail('E_MISSING_INITIALIZER: explicit initializer required',this.peek());
         const directional=this.takeDirection('<');
@@ -1414,7 +1424,7 @@ function resolveProgram(parsed) {
       case 'intrinsic': {
         const results={
           'Option.some':'option<int>','Option.none':'option<int>',
-          'Option.is_some':'bool','Option.unwrap_or':'int','Option.unwrap':'int','Result.unwrap':'int',
+          'Option.is_some':'bool','Option.unwrap_or':'int','Option.unwrap':'int','Result.unwrap':'int','Option.expect':'int','Result.expect':'int',
           'Result.ok':'result<int,int>','Result.err':'result<int,int>',
           'Result.is_ok':'bool','Result.unwrap_or':'int','Result.unwrap_err_or':'int'
         };
@@ -1496,6 +1506,7 @@ function resolveProgram(parsed) {
         const slot=nextCaptureSlot++;
         const init=resolve(expr.init,owner,depth+1,bindings);
         const type=['inferredTrap','directionalInferred'].includes(expr.localType)?resolvedType(init,owner):expr.localType==='constInt'?'int':expr.localType;
+        if(expr.localType==='trapResult'&&(init.kind!=='trap'||resolvedType(init,owner)!=='trapResult'))fail('E_TRAP_TYPE: typed Result<int,Error> local requires checked trap initializer');
         if(expr.localType==='inferredTrap'&&!['trapResult','trapOptionResult'].includes(type))fail('inferred trap local requires Result');
         if(expr.localType==='directionalInferred'&&!['int','float','trapResult','trapOptionResult'].includes(type))fail('directional binding requires supported scalar or trapped Result');
         if(expr.localType==='constInt'){
@@ -1625,20 +1636,34 @@ function resolveProgram(parsed) {
         const local=bindings.findLast(b=>b.name===expr.qualifier);
         if(local){
           if(['option<int>','result<int,int>'].includes(local.type)){
-            if(expr.name!=='unwrap'||expr.args.length!==0)fail('unsupported typed local method/arity');
             const option=local.type==='option<int>';
-            return {kind:'intrinsic',name:option?'Option.unwrap':'Result.unwrap',args:[{kind:option?'optionCapture':'resultCapture',slot:local.slot}]};
+            const receiver={kind:option?'optionCapture':'resultCapture',slot:local.slot};
+            if(expr.name==='expect'){
+              if(owner.ownerKind==='method'||expr.args.length!==1||expr.args[0].name!==null)fail('E_EXPECT: one positional string message required');
+              const message=resolve(expr.args[0].expr,owner,depth+1,bindings);
+              if(resolvedType(message,owner)!=='string')fail('E_EXPECT: string message required');
+              return {kind:'intrinsic',name:option?'Option.expect':'Result.expect',args:[receiver,message]};
+            }
+            if(expr.name!=='unwrap'||expr.args.length!==0)fail('unsupported typed local method/arity');
+            return {kind:'intrinsic',name:option?'Option.unwrap':'Result.unwrap',args:[receiver]};
           }
           if(!['trapResult','trapOptionResult'].includes(local.type)||!['is_ok','is_err','unwrap'].includes(expr.name)||expr.args.length!==0)fail('unsupported local Result method/arity');
           const option=local.type==='trapOptionResult';
           return {kind:option?'trapOptionMethod':'trapMethod',name:expr.name,receiver:{kind:option?'trapOptionCapture':'trapCapture',slot:local.slot}};
         }
-        if(expr.qualifier!==null&&owner.params.includes(expr.qualifier)&&expr.name==='unwrap'){
+        if(expr.qualifier!==null&&owner.params.includes(expr.qualifier)&&['unwrap','expect'].includes(expr.name)){
           const index=owner.params.indexOf(expr.qualifier), type=owner.paramTypes?.[index];
-          if(expr.args.length!==0||!['option<int>','result<int,int>'].includes(type))
+          if(!['option<int>','result<int,int>'].includes(type)||owner.ownerKind==='method')
             fail('unsupported typed parameter method/arity');
-          if(owner.ownerKind==='method')fail('checked unwrap in methods unsupported');
-          return {kind:'intrinsic',name:type==='option<int>'?'Option.unwrap':'Result.unwrap',args:[{kind:'param',index}]};
+          const receiver={kind:'param',index};
+          if(expr.name==='expect'){
+            if(expr.args.length!==1||expr.args[0].name!==null)fail('E_EXPECT: one positional string message required');
+            const message=resolve(expr.args[0].expr,owner,depth+1,bindings);
+            if(resolvedType(message,owner)!=='string')fail('E_EXPECT: string message required');
+            return {kind:'intrinsic',name:type==='option<int>'?'Option.expect':'Result.expect',args:[receiver,message]};
+          }
+          if(expr.args.length!==0)fail('unsupported typed parameter method/arity');
+          return {kind:'intrinsic',name:type==='option<int>'?'Option.unwrap':'Result.unwrap',args:[receiver]};
         }
         if(expr.qualifier==='Option'||expr.qualifier==='Result'){
           const key=expr.qualifier+'.'+expr.name;
@@ -1881,7 +1906,7 @@ function emitProgram(program) {
       case 'intrinsic': {
         const funcs={
           'Option.some':'_some','Option.none':'_none',
-          'Option.is_some':'_is_some','Option.unwrap_or':'_option_or','Option.unwrap':'_optionUnwrap','Result.unwrap':'_resultUnwrap',
+          'Option.is_some':'_is_some','Option.unwrap_or':'_option_or','Option.unwrap':'_optionUnwrap','Result.unwrap':'_resultUnwrap','Option.expect':'_optionExpect','Result.expect':'_resultExpect',
           'Result.ok':'_ok','Result.err':'_err',
           'Result.is_ok':'_is_ok','Result.unwrap_or':'_result_or',
           'Result.unwrap_err_or':'_error_or'
@@ -1994,7 +2019,7 @@ function emitProgram(program) {
     }
   }
   function containsCheckedUnwrap(value){
-    return !!value&&typeof value==='object'&&((value.kind==='intrinsic'&&['Option.unwrap','Result.unwrap'].includes(value.name))||Object.values(value).some(containsCheckedUnwrap));
+    return !!value&&typeof value==='object'&&((value.kind==='intrinsic'&&['Option.unwrap','Result.unwrap','Option.expect','Result.expect'].includes(value.name))||Object.values(value).some(containsCheckedUnwrap));
   }
   const hasCheckedUnwrap=containsCheckedUnwrap(program);
   if(program.functions.some(fn=>['option<int>','result<int,int>'].includes(fn.returnType)||
@@ -2027,7 +2052,7 @@ function emitProgram(program) {
   // programs that actually use trap; keep ordinary ADT artifact overhead low.
   function containsTrap(value){
     if(!value||typeof value!=='object')return false;
-    if(['trap','trapMethod','trapOptionMethod'].includes(value.kind)||(value.kind==='intrinsic'&&['Option.unwrap','Result.unwrap'].includes(value.name))||(value.kind==='adtMatch'&&value.adt==='trapResult'))return true;
+    if(['trap','trapMethod','trapOptionMethod'].includes(value.kind)||(value.kind==='intrinsic'&&['Option.unwrap','Result.unwrap','Option.expect','Result.expect'].includes(value.name))||(value.kind==='adtMatch'&&value.adt==='trapResult'))return true;
     return Object.values(value).some(containsTrap);
   }
   function containsGuestEffect(value){
@@ -2049,7 +2074,10 @@ function emitProgram(program) {
       ...(hasCheckedUnwrap?[
       'function _unwrapFailure(name,message,original){const e=new Error(message,{cause:original});Object.defineProperty(e,"name",{value:name});_checkedUnwrapBrand.add(e);throw Object.freeze(e);}',
       'function _optionUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Option unwrap carrier");const x=_checkoption(v);if(x.kind==="Some")return x.value;return _unwrapFailure("OptionUnwrapError","cannot unwrap None",undefined);}',
-      'function _resultUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Result unwrap carrier");const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",x.value);}'
+      'function _resultUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Result unwrap carrier");const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",x.value);}',
+      'function _expectPanic(message,cause){if(typeof message!=="string")throw new TypeError("expect message must be string");const e=new Error(message,{cause});Object.defineProperty(e,"effect",{value:"panic",enumerable:true});throw Object.freeze(e);}',
+      'function _optionExpect(v,message){if(!_tagBrand.has(v))throw new TypeError("untrusted Option expect carrier");if(typeof message!=="string")throw new TypeError("expect message must be string");const x=_checkoption(v);if(x.kind==="Some")return x.value;return _expectPanic(message,undefined);}',
+      'function _resultExpect(v,message){if(!_tagBrand.has(v))throw new TypeError("untrusted Result expect carrier");if(typeof message!=="string")throw new TypeError("expect message must be string");const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _expectPanic(message,x.value);}'
       ]:[]),
       'function _checkTrapResult(v){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}',
       'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult"||t==="trapOptionResult"){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}const result=t==="option<int>"?_tag("Ok",_checkoption(v)):t==="int"?_ok(v):_checkresult(v);_trapBrand.add(result);return result;}catch(e){if(!_isOrdinaryGuest(e))throw e;const result=_tag("Err",e);_trapBrand.add(result);return result;}}',
