@@ -121,7 +121,7 @@ function symbolName(s){
  * Copy after validation, never return caller-owned IR references.
  * Direct object inputs are trusted data only, not a JavaScript sandbox.
  */
-export function validateProgramIRV2(input) {
+export function validateProgramIRV2(input, allowScalarWhile = false) {
   if(input===null||typeof input!=='object'||Array.isArray(input))
     fail('program: expected object');
   const rawKeys=Reflect.ownKeys(input);
@@ -389,6 +389,7 @@ export function validateProgramIRV2(input) {
         };
       }
       case 'scalarWhile': {
+        if(allowScalarWhile!==true)fail('scalar while requires strict source admission');
         // Checked i64 state only. This validates structural/type safety,
         // not a source-level proof or termination certificate.
         record(expr,['kind','slot','init','condition','update','body'],'scalar while');
