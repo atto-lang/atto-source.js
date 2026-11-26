@@ -63,3 +63,40 @@ export function verifyReceipt(key,envelope,secret){
  !timingSafeEqual(sha(b.subarray(HEADER)),b.subarray(48,80)))fail(INVALID);
  return Buffer.from(b.subarray(HEADER));}finally{s.fill(0);}
 }
+
+// Trusted host admission only: the current pin and master must be
+// independently supplied. No durable authority or executable loading grant.
+const LEDGER_BAD='E_CACHE_LEDGER: invalid or stale record';
+const LEDGER_MAGIC=Buffer.from('ATTOLED1');
+function ledgerScope(scope){
+ try{return id(scope);}catch{fail(LEDGER_BAD);}
+}
+function ledgerBytes(value,max){
+ try{return owned(value,max);}catch{fail(LEDGER_BAD);}
+}
+function ledgerEpoch(epoch){
+ if(typeof epoch!=='bigint'||epoch<1n||epoch>0xffffffffffffffffn)fail(LEDGER_BAD);
+ const b=Buffer.alloc(8);b.writeBigUInt64BE(epoch);return b;
+}
+function deriveLedgerKey(scope,epoch,master){
+ const [length,name]=ledgerScope(scope),e=ledgerEpoch(epoch);
+ const s=ledgerBytes(master,32);
+ try{
+  if(s.length!==32||timingSafeEqual(s,Buffer.alloc(32)))fail(LEDGER_BAD);
+  return createHmac('sha256',s).update('atto.compiler.local-receipt-key.v1\0','ascii').update(length).update(name).update(e).digest();
+ }finally{s.fill(0);}
+}
+export function makeLedgerRecord(scope,epoch,master){
+ const [length,name]=ledgerScope(scope),e=ledgerEpoch(epoch);
+ const k=deriveLedgerKey(scope,epoch,master);
+ try{return Buffer.concat([LEDGER_MAGIC,length,name,e,sha(k)]);}finally{k.fill(0);}
+}
+export function admitLedgerRecord(scope,record,currentPin,master){
+ const [length,name]=ledgerScope(scope),b=ledgerBytes(record,564),pin=ledgerBytes(currentPin,32);
+ if(pin.length!==32||b.length!==52+name.length||!timingSafeEqual(sha(b),pin)||
+    !timingSafeEqual(b.subarray(0,8),LEDGER_MAGIC)||!timingSafeEqual(b.subarray(8,12),length)||
+    !timingSafeEqual(b.subarray(12,12+name.length),name))fail(LEDGER_BAD);
+ const k=deriveLedgerKey(scope,b.readBigUInt64BE(12+name.length),master);
+ if(!timingSafeEqual(sha(k),b.subarray(20+name.length))){k.fill(0);fail(LEDGER_BAD);}
+ return k;
+}
