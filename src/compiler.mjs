@@ -1,3 +1,4 @@
+import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
 import {createScalarIR} from './scalar-ir.mjs';
 import {emitCold,ScalarEmissionSession} from './scalar-emitter.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
@@ -88,9 +89,11 @@ function lex(src) {
          out.at(-1).value==='.')
         throw new CompileError(
           'Topic.try_publish requires checked actor/group, share! and Result lowering; JS scalar backend unsupported',loc);
+      if (missingBangKeywordSeparator(s, src.slice(i)))
+        throw new CompileError('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+s+'!',loc);
       // Record the first contextual ownership bang so the typed Future
       // preflight can still diagnose its legacy and canonical spellings.
-      if(['copy','take','borrow','share'].includes(s) && src[i]==='!' &&
+      if(['copy','take','move','borrow','share'].includes(s) && src[i]==='!' &&
           src[i+1]!=='=' &&
           !(src.slice(i+1,i+3)==='eq' && !/[A-Za-z0-9_]/.test(src[i+3]??'')))
         ownershipBang ??= loc;
