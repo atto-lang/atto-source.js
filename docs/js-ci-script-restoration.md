@@ -1,0 +1,3 @@
+# JS CI admission and migration regression repair
+
+Current main already restores all eleven named commands. Preserve existing compiler and numeric parity reports, add the bounded syntax gate before the existing arithmetic smoke, and guard every workflow npm command. Repair stale package self-references and exact tenant denial-message assertions without altering runtime admission. Migrate the declaration-only manifest to the explicit Atto JS identity and upstreams while retaining strict legacy validation, negative identity checks, and the not-attested disclaimer. No workflow or isolation gate is removed. Exact-head execution required.

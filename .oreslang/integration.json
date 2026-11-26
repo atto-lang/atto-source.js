@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "protocol": "oreslang-ecosystem-integration",
+  "repository": "atto-lang/atto-source.js",
+  "role": "compiler",
+  "upstreams": [
+    "atto-common-source",
+    "atto-target-profiles"
+  ],
+  "evidence": "not-attested",
+  "note": "Declared integration touchpoints only; no CI or runtime parity is asserted."
+}

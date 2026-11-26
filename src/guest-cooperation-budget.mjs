@@ -12,6 +12,11 @@ export const MAX_METERED_BLOCK_WEIGHT = 128;
 export class GuestFuelExhausted extends Error {
   constructor() { super('logical guest fuel exhausted'); this.name = 'GuestFuelExhausted'; }
 }
+export class GuestCooperationFailed extends Error {
+  constructor(message='logical guest cooperation hook failed') {
+    super(message); this.name='GuestCooperationFailed';
+  }
+}
 
 export class GuestCooperationBudget {
   #remaining;
@@ -21,6 +26,10 @@ export class GuestCooperationBudget {
   // Counts recursive/helper/basic-block work too, not just loop edges.
   #dispatch_work = 0;
   #polls = 0;
+  // A failed or reentrant host scheduler hook must never silently resume a
+  // partially observed logical guest task.
+  #failed = false;
+  #poll_in_progress = false;
 
   constructor(fuel = MAX_FUEL) {
     if (!Number.isSafeInteger(fuel) || fuel < 1 || fuel > MAX_FUEL)
@@ -35,7 +44,15 @@ export class GuestCooperationBudget {
 
   // Reset dispatch fairness only. Never reset poll phase or hard fuel:
   // repeated 127-backedge resumptions must not suppress all slow polls.
-  begin_dispatch() { this.#dispatch_ticks = 0; this.#dispatch_work = 0; }
+  begin_dispatch() {
+    if(this.#poll_in_progress) {
+      this.#failed=true; // even a swallowed reentry attempt poisons the task
+      throw new GuestCooperationFailed('reentrant scheduler poll');
+    }
+    if(this.#failed) throw new GuestCooperationFailed();
+    this.#dispatch_ticks = 0;
+    this.#dispatch_work = 0;
+  }
 
   // A backedge is a completed unit of guest work. The hot path has no
   // clock read, scheduler call, Promise or Worker operation.
@@ -49,6 +66,11 @@ export class GuestCooperationBudget {
   // returns checkpoint eligibility without claiming a resumable yield.
   // Failed charges neither spend fuel nor advance the poll phase.
   charge_operation(weight) {
+    if(this.#poll_in_progress) {
+      this.#failed=true; // even a swallowed reentry attempt poisons the task
+      throw new GuestCooperationFailed('reentrant scheduler poll');
+    }
+    if(this.#failed) throw new GuestCooperationFailed();
     if (!Number.isSafeInteger(weight) || weight < 1 ||
         weight > MAX_METERED_BLOCK_WEIGHT)
       throw new RangeError('invalid guest work weight');
@@ -59,6 +81,38 @@ export class GuestCooperationBudget {
     this.#ticks = total & (COOPERATION_POLL_INTERVAL - 1);
     if (total < COOPERATION_POLL_INTERVAL) return false;
     this.#polls++;
+    return true;
+  }
+
+  // Opt-in compiler/host bridge. Hard fuel is charged for every bounded
+  // operation, but the expensive scheduler callback runs ONLY when a full
+  // 128-unit interval has been committed. This returns eligibility to the
+  // host, never authorization to suspend an unsafe guest stack or lock.
+  // No asynchronous callbacks or lexical guest closures are transported.
+  charge_and_poll(weight, trustedSlowPoll) {
+    if(typeof trustedSlowPoll!=='function')
+      throw new TypeError('trusted synchronous slow-poll callback required');
+    const due=this.charge_operation(weight);
+    if(!due) return false;
+    this.#poll_in_progress=true;
+    try {
+      const receipt=Object.freeze({
+        remaining_fuel:this.#remaining,
+        poll_index:this.#polls,
+        work_units_this_dispatch:this.#dispatch_work
+      });
+      // A valid host poll reports by external ownership, not by returning
+      // a Promise or a mutable authority handle.
+      if(trustedSlowPoll(receipt)!==undefined)
+        throw new GuestCooperationFailed('slow poll must complete synchronously');
+      if(this.#failed)
+        throw new GuestCooperationFailed('reentrant scheduler poll');
+    } catch(error) {
+      this.#failed=true;
+      throw error;
+    } finally {
+      this.#poll_in_progress=false;
+    }
     return true;
   }
 }

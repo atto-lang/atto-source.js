@@ -1,0 +1,5 @@
+// trap Option Result Err Ok Some None are inert in a comment.
+pub fnc main(): int {
+  /* ordinary Result<Err> and trap are not parsed from comments */
+  return 42;
+}
