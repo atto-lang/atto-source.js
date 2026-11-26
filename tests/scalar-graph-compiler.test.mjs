@@ -36,3 +36,27 @@ test('real frontend rejects unknown or ambiguous imports and wrong argument arit
  assert.throws(()=>buildScalarGraph({source,providers:[p,{...p,packageId:'tax@1'}]}),/ambiguous/);
  assert.throws(()=>buildScalarGraph({source,providers:[{...p,imports:[{alias:'cart',exportName:'missing'}]}]}),/unknown provider export/);
 });
+
+test('real compiler graph rejects rehashed invalid provider UTF-8 and lossy consumer strings',async()=>{
+ const d=await mkdtemp(join(tmpdir(),'atto-artifact-text-'));
+ try{
+   const a=await provider(d,'a','cart@1','cart',40),b=await provider(d,'b','tax@1','tax',2);
+   const artifact=buildScalarGraph({source,providers:[a.build,b.build]});
+   const good=pins(artifact,[a.runtime,b.runtime]);
+   assert.equal((await linkTrustedScalarGraph(good)).main(),42n);
+   const lossy={...artifact,moduleSource:artifact.moduleSource+'//'+String.fromCharCode(0xd800)};
+   assert.equal(hashText(lossy.moduleSource),hashText(artifact.moduleSource+'//\ufffd'));
+   await assert.rejects(linkTrustedScalarGraph({...good,artifact:lossy,expectedModuleSha256:hashText(lossy.moduleSource)}),/digest or size mismatch/);
+   const dir=b.runtime.options.directory;
+   const bytes=Buffer.concat([await readFile(join(dir,'module.mjs')),Buffer.from([47,47,255])]);
+   const {createHash}=await import('node:crypto');
+   const digest=createHash('sha256').update(bytes).digest('hex');
+   const manifest=JSON.parse(await readFile(join(dir,'manifest.json'),'utf8'));
+   manifest.moduleSha256=digest;
+   const raw=JSON.stringify(manifest);
+   await writeFile(join(dir,'module.mjs'),bytes);
+   await writeFile(join(dir,'manifest.json'),raw);
+   const bad={...b.runtime,options:{...b.runtime.options,expectedModuleSha256:digest,expectedManifestSha256:hashText(raw)}};
+   await assert.rejects(linkTrustedScalarGraph(pins(artifact,[a.runtime,bad])),/invalid package module UTF-8/);
+ }finally{await rm(d,{recursive:true,force:true});}
+});
