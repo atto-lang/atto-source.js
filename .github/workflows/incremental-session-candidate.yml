@@ -4,6 +4,8 @@ on:
     paths:
       - 'src/compiler.mjs'
       - 'tests/incremental-session.test.mjs'
+      - 'tests/compiler-cache-envelope.test.mjs'
+      - 'src/compiler-cache-envelope.node.mjs'
       - '.github/workflows/incremental-session-candidate.yml'
   workflow_dispatch:
 permissions: {contents: read}
@@ -17,4 +19,4 @@ jobs:
       - name: Execute real compiler candidate
         run: |
           set -eu
-          node --test tests/compiler.test.mjs tests/incremental-session.test.mjs
+          node --test tests/compiler.test.mjs tests/incremental-session.test.mjs tests/compiler-cache-envelope.test.mjs
