@@ -9,6 +9,19 @@ const ID=/^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const DEC=/^(?:0|[1-9][0-9]*|-[1-9][0-9]*)$/;
 const MIN=-(1n<<63n), MAX=(1n<<63n)-1n;
 const LIMIT_NODES=30000,LIMIT_DEPTH=192;
+// Both source and supplied IR must preserve exact Unicode scalar sequences.
+// Strict JS equality is equivalent to exact UTF-8 byte equality on this domain.
+export function validLocalString(value){
+  if(typeof value!=='string'||value.length>256)return false;
+  for(let i=0;i<value.length;i++){
+    const u=value.charCodeAt(i);
+    if(u>=0xd800&&u<=0xdbff){
+      const low=value.charCodeAt(++i);
+      if(!(low>=0xdc00&&low<=0xdfff))return false;
+    }else if(u>=0xdc00&&u<=0xdfff)return false;
+  }
+  return new TextEncoder().encode(value).length<=256;
+}
 const CLASS_RESERVED=new Set([
   'default','new','class','export','import','null','true','false','this','super',
   'extends','static','constructor','prototype','__proto__','define','pub','as',
@@ -308,7 +321,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
     // No implicit truthiness or numeric coercions, including in supplied IR.
     if(expected==='bool'&&['int','neg','binary'].includes(desc.value))
       fail('boolean expression required');
-    if(expected!=='bool'&&['bool','compare','boolCompare','symbolCompare','not'].includes(desc.value))
+    if(expected!=='bool'&&['bool','compare','boolCompare','stringCompare','symbolCompare','not'].includes(desc.value))
       fail('boolean value cannot be used as non-bool');
     if(expected!=='int'&&['int','neg','binary'].includes(desc.value))
       fail('integer expression cannot be used as non-int');
@@ -393,7 +406,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         return {kind:'bool',value:expr.value};
       case 'string':
         record(expr,['kind','value'],'local string');
-        if(allowScalarWhile===true||expected!=='string'||typeof expr.value!=='string'||expr.value.length>256||!/^[\x20-\x7e]*$/.test(expr.value))fail('invalid local string literal/type');
+        if(allowScalarWhile===true||expected!=='string'||!validLocalString(expr.value))fail('invalid local string literal/type');
         return {kind:'string',value:expr.value};
       case 'symbol':
         record(expr,['kind','value'],'symbol');
@@ -578,6 +591,13 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         if(!['<','>','<=','>=','==','!='].includes(expr.op))fail('unsupported comparator');
         return {kind:'compare',op:expr.op,left:node(expr.left,owner,depth+1,'int',active),
           right:node(expr.right,owner,depth+1,'int',active)};
+      case 'stringCompare':
+        record(expr,['kind','op','left','right'],'local string compare');
+        if(allowScalarWhile===true||expected!=='bool'||!['==','!='].includes(expr.op))
+          fail('invalid local string comparison');
+        return {kind:'stringCompare',op:expr.op,
+          left:node(expr.left,owner,depth+1,'string',active),
+          right:node(expr.right,owner,depth+1,'string',active)};
       case 'boolCompare':
         record(expr,['kind','op','left','right'],'Boolean compare');
         if(expected!=='bool'||!['==','!='].includes(expr.op))
