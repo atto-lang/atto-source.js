@@ -404,3 +404,6 @@ export function compile_durable_counter_actor_v1(source) {
   ].join('\n');
   return {backend:'js',guest_abi:'atto.js.durable.counter.v1',module_source:code};
 }
+
+// Schema-only AOT checkpoint emitter; not ordinary worker admission.
+export {compile_durable_scalar_codec_v1} from './durable-scalar-codec-v1.mjs';
