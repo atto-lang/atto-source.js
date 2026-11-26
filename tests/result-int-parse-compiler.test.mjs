@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {transpile_to_worker as transpile} from '../src/transpile-worker.mjs';
+import {transpile_to_worker as transpile, TranspileError} from '../src/transpile-worker.mjs';
 
 function source(text, err='0', positive='value') {
   return 'pub fnc parse_id(string text): Result<int, Error> {\n'+
