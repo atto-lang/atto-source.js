@@ -362,7 +362,7 @@ export function compileToIR(source) {
  // It does not introduce a new Atto import syntax or permit unresolved names
  // in compileToIR/compileIR. External slots are typed declarations, never
  // executable provider bodies. The private scalar emitter omits those slots.
-export function compileScalarConsumer(source, providerEntries) {
+function compileConsumerWithMemo(source, providerEntries, prior) {
   if (!Array.isArray(providerEntries) || providerEntries.length === 0 || providerEntries.length > 128)
     throw new CompileError('invalid scalar provider interface');
   const local = parseScalarSource(source);
@@ -375,10 +375,16 @@ export function compileScalarConsumer(source, providerEntries) {
   const entries = ir.functions.slice(external.length).filter(f=>f.pub)
     .map(({name,params,resultType})=>({name,params,resultType}));
   if (!entries.length) throw new CompileError('consumer requires public entrypoint');
-  return {moduleSource:emitScalarIR(ir,external.length),publicInterface:entries};
+  const result=emitScalarIR(ir,external.length,prior);
+  return {...result,publicInterface:entries};
 }
-export function compileIR(input) { return emitScalarIR(input,0); }
-function emitScalarIR(input, externalCount) {
+export function compileScalarConsumer(source, providerEntries) {
+  const result=compileConsumerWithMemo(source,providerEntries,new Map());
+  return {moduleSource:result.code,publicInterface:result.publicInterface};
+}
+export function compileIR(input) { return emitScalarIR(input,0,new Map()).code; }
+function emitScalarIR(input, externalCount, prior) {
+  const next=new Map();let emitted=0,reused=0;
   const ir = validateScalarIR(input);
   const fns = ir.functions;
   function lower(e, depth = 0) {
@@ -415,22 +421,44 @@ function emitScalarIR(input, externalCount) {
   }
   fns.forEach((f,i) => {
     if(i<externalCount)return;
-    const params = f.params.map((_,j) => '_p' + j);
-    out.push('function _f' + i + '(' + params.join(',') + '){');
-    params.forEach(p => out.push('_int(' + p + ');'));
-    out.push('return ' + lower(f.body) + ';', '}');
+    // Checked IR is canonical; external slots/arity are validated anew.
+    // Count the external boundary in the key, so closed and bound forms
+    // cannot share a fragment even when the local slot happens to match.
+    const key=JSON.stringify([externalCount,i,f]);
+    let body=prior.get(key);
+    if(body===undefined){
+      const params=f.params.map((_,j)=>'_p'+j);
+      body=['function _f'+i+'('+params.join(',')+'){',...params.map(p=>'_int('+p+');'),'return '+lower(f.body)+';','}'].join('\n');
+      emitted++;
+    }else reused++;
+    next.set(key,body);out.push(body);
   });
   if(externalCount){
     out.push('const api=Object.create(null);');
     fns.forEach((f,i)=>{if(f.pub)out.push('api['+JSON.stringify(f.name)+']=_f'+i+';');});
     out.push('return Object.freeze(api);','}');
-    return out.join('\n')+'\n';
+    return {code:out.join('\n')+'\n',next,emitted,reused};
   }
   // String-literal export names prevent ECMAScript keyword collisions.
   fns.forEach((f,i) => {
     if (f.pub) out.push('export { _f' + i + ' as ' + JSON.stringify(f.name) + ' };');
   });
-  return out.join('\n') + '\n';
+  return {code:out.join('\n')+'\n',next,emitted,reused};
+}
+// One previous fully validated scalar unit per session. No persisted
+// authority, skipped frontend checks or cross-namespace claim.
+export class IncrementalSession {
+  #memo=new Map();
+  build(source,{cold=false}={}){
+    const r=emitScalarIR(compileToIR(source),0,cold?new Map():this.#memo);
+    this.#memo=r.next;
+    return {code:r.code,emitted:r.emitted,reused:r.reused};
+  }
+  buildConsumer(source,providerEntries,{cold=false}={}){
+    const r=compileConsumerWithMemo(source,providerEntries,cold?new Map():this.#memo);
+    this.#memo=r.next;
+    return {moduleSource:r.code,publicInterface:r.publicInterface,emitted:r.emitted,reused:r.reused};
+  }
 }
 export function compile(source) {
   return compileIR(compileToIR(source));
