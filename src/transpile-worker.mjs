@@ -43,7 +43,7 @@ function tokenize(source) {
       i+=bang[0].length;
       continue;
     }
-    const token = /^(?:"(?:\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})|[^"\\\x00-\x1f])*"|->|<<<|>>>|<<|>>|\^\^|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;,+*\-.=<>?^&|])/.exec(tail);
+    const token = /^(?:"(?:\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})|[^"\\\x00-\x1f])*"|->|<<<|>>>|<<|>>|\^\^|&&|\|\||==|!=|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;,+*\-.=<>?^&|])/.exec(tail);
     if (!token) throw new TranspileError('E_UNSUPPORTED_TOKEN');
     tokens.push(token[0]);
     if (tokens.length > MAX_TOKENS) throw new TranspileError('E_TOKEN_LIMIT');
@@ -136,96 +136,152 @@ export function transpile_to_worker(source) {
   const expect=token=>{if(tokens[i++]!==token)throw new TranspileError('E_UNSUPPORTED_SYNTAX');};
   if (peek()==='pub') i++;
   expect('fnc'); expect('main'); expect('('); expect(')'); expect(':'); expect('int'); expect('{');
-  // Every admitted inline body has a statically proven non-suspending scalar type.
-  const result_type=node=>node?.kind==='inline_task'?node.payload_type:'int';
-  let inline_count=0;
+  // The restricted worker subset has only typed primitive lexical slots.
+  // The emitted identifiers are compiler-generated; user spellings never enter JS.
+  let inline_count=0, next_slot=0;
+  const scopes=[new Map()];
+  const result_type=node=>node.type;
+  const lookup=name=>{
+    for(let j=scopes.length-1;j>=0;j--)if(scopes[j].has(name))return scopes[j].get(name);
+    throw new TranspileError('E_UNBOUND');
+  };
+  const reserved=new Set(['let','val','int','bool','void','true','false','return','sync','task','do','if','then','else','fi','await','defer','new','match','spawn','end','fnc','pub','AND','OR','XOR','eq','!eq']);
+  const identifier=()=>{
+    const n=tokens[i++];
+    if(!/^[A-Za-z_][A-Za-z_0-9]*$/.test(n??'')||reserved.has(n))
+      throw new TranspileError('E_UNSUPPORTED_SYNTAX');
+    return n;
+  };
+  const fail_type=()=>{throw new TranspileError('E_TASK_RETURN_TYPE');};
+  const typed=(node,type)=>{if(result_type(node)!==type)fail_type();return node;};
+  const precedence={'||':0,'OR':0,'&&':1,'AND':1,'XOR':2,'==':3,'!=':3,'eq':3,'|':4,'^^':5,'&':6,'<<<':7,'>>>':7,'+':8,'-':8,'*':9};
   const parse_expression=(min_prec=0,depth=0,discard_inline=false)=>{
     if(depth>=MAX_DEPTH)throw new TranspileError('E_NESTING_LIMIT');
     let left;
     if(peek()==='('){i++;left=parse_expression(0,depth+1);expect(')');}
     else if(peek()==='sync'){
-      // Inline on the caller, without a child Future, TaskId or worker admission.
-      // Only pure i64 expressions/empty void bodies are admitted by this parser.
       i++;expect('task');
       if(++inline_count>64)throw new TranspileError('E_TASK_LIMIT');
       let declared=null;
       if(peek()==='<'){
         i++;declared=tokens[i++];
-        // A do-sync task is a void-only statement, never a discarded T.
-        if(discard_inline&&declared!=='void')
-          throw new TranspileError('E_TASK_RETURN_TYPE');
-        if(declared!=='int'&&declared!=='void')
-          throw new TranspileError('E_TASK_UNSUPPORTED');
+        if(discard_inline&&declared!=='void')fail_type();
+        if(!['int','bool','void'].includes(declared))throw new TranspileError('E_TASK_UNSUPPORTED');
         expect('>');
       }
       expect('{');
-      let body=null;
-      if(peek()==='return'||peek()==='^'){
-        i++;
-        // Bare return exits a void inline body; return expr produces T.
-        if(peek()===';')i++;
-        else{
-          body=parse_expression(0,depth+1);
-          if(result_type(body)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
-          expect(';');
+      scopes.push(new Map());
+      let steps,body=null;
+      try {
+        steps=parse_steps(depth+1);
+        if(peek()==='return'||peek()==='^'){
+          i++;
+          if(peek()===';')i++;
+          else{
+            body=parse_expression(0,depth+1);
+            if(discard_inline||body.type==='void')fail_type();
+            expect(';');
+          }
         }
-      }
-      expect('}');
-      const actual=body===null?'void':'int';
-      if(declared!==null&&declared!==actual)
-        throw new TranspileError('E_TASK_RETURN_TYPE');
-      left={kind:'inline_task',payload_type:actual,body};
+        expect('}');
+      } finally {scopes.pop();}
+      const actual=body===null?'void':body.type;
+      if(declared!==null&&declared!==actual)fail_type();
+      left={kind:'inline_task',payload_type:actual,type:actual,steps,body};
+    }
+    else if(peek()==='if'){
+      i++;const condition=typed(parse_expression(0,depth+1),'bool');expect('then');
+      const yes=parse_expression(0,depth+1);expect('else');const no=parse_expression(0,depth+1);expect('fi');
+      if(yes.type==='void'||yes.type!==no.type)fail_type();
+      left={kind:'choose',condition,yes,no,type:yes.type};
     }
     else if(peek()==='-'){
       i++;
-      if(/^\d+$/.test(peek()??'') && checked_decimal(peek(),INT_MAX+1n)===INT_MAX+1n) {left={value:INT_MIN};i++;}
-      else {const arg=parse_expression(7,depth+1);
-        if(result_type(arg)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
-        left={op:'neg',arg};}
+      if(/^\d+$/.test(peek()??'') && checked_decimal(peek(),INT_MAX+1n)===INT_MAX+1n) {left={value:INT_MIN,type:'int'};i++;}
+      else {const arg=typed(parse_expression(10,depth+1),'int');left={op:'neg',arg,type:'int'};}
     }
     else if(/^\d+$/.test(peek()??'')){
-      const value=checked_decimal(tokens[i++]);
-      left={value};
-    } else throw new TranspileError('E_UNSUPPORTED_EXPRESSION');
-    const precedence={'|':0,'^^':1,'&':2,'<<<':3,'>>>':3,'+':4,'-':4,'*':5};
+      const value=checked_decimal(tokens[i++]);left={value,type:'int'};
+    }else if(peek()==='true'||peek()==='false'){
+      left={kind:'bool',value:tokens[i++]==='true',type:'bool'};
+    }else if(/^[A-Za-z_][A-Za-z_0-9]*$/.test(peek()??'')&&!reserved.has(peek())){
+      const slot=lookup(tokens[i++]);left={kind:'local',slot:slot.id,type:slot.type};
+    }else throw new TranspileError('E_UNSUPPORTED_EXPRESSION');
     while(Object.hasOwn(precedence,peek()) && precedence[peek()]>=min_prec){
-      if(result_type(left)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
       const op=tokens[i++];
       const right=parse_expression(precedence[op]+1,depth+1);
-      if(result_type(right)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
-      left={op,left,right};
+      if(['&&','||','AND','OR','XOR'].includes(op)){
+        typed(left,'bool');typed(right,'bool');
+        left={kind:'boolop',op,left,right,type:'bool'};
+      }else if(['==','!=','eq'].includes(op)){
+        if(left.type==='void'||left.type!==right.type)fail_type();
+        left={kind:'compare',op,left,right,type:'bool'};
+      }else{
+        // Preserve existing integer bitwise operators; bool ^^ is eager XOR.
+        if(op==='^^'&&left.type==='bool'&&right.type==='bool')
+          left={kind:'boolop',op,left,right,type:'bool'};
+        else {typed(left,'int');typed(right,'int');left={op,left,right,type:'int'};}
+      }
+    }
+    if(min_prec===0&&peek()==='?'){
+      i++;const condition=typed(left,'bool');const yes=parse_expression(0,depth+1);
+      expect(':');const no=parse_expression(0,depth+1);
+      if(yes.type==='void'||yes.type!==no.type)fail_type();
+      left={kind:'choose',condition,yes,no,type:yes.type};
     }
     return left;
   };
-  // Discarded inline task expressions require an explicit 'do' statement.
-  // Bare 'sync task { ... }' is an expression, not a statement.
-  // Spawned 'do task' / 'await task' still require a real scheduler.
-  const preludes=[];
-  while(peek()==='do'){
-    i++;
-    if(peek()!=='sync')throw new TranspileError('E_TASK_UNSUPPORTED');
-    const item=parse_expression(0,0,true);
-    if(item.kind!=='inline_task')throw new TranspileError('E_TASK_UNSUPPORTED');
-    if(item.payload_type!=='void')throw new TranspileError('E_TASK_RETURN_TYPE');
-    preludes.push(item);
-    if(peek()===';')i++;
-    else if(!['return','^','do'].includes(peek())) {
-      if(peek()==='sync'&&tokens[i+1]==='task')
-        throw new TranspileError('E_SYNTAX');
-      throw new TranspileError('E_UNSUPPORTED_SYNTAX');
+  function parse_steps(depth){
+    if(depth>=MAX_DEPTH)throw new TranspileError('E_NESTING_LIMIT');
+    const out=[];
+    while(true){
+      if(peek()==='let'||peek()==='val'){
+        const mutable=tokens[i++]==='let';
+        const declared=['int','bool'].includes(peek())?tokens[i++]:null;
+        const name=identifier();
+        if(scopes.at(-1).has(name))throw new TranspileError('E_DUPLICATE_LOCAL');
+        expect('=');const init=parse_expression(0,depth+1);expect(';');
+        if(init.type==='void'||(declared!==null&&declared!==init.type))fail_type();
+        const slot={id:next_slot++,type:init.type,mutable};
+        scopes.at(-1).set(name,slot);out.push({kind:'bind',slot:slot.id,mutable,init});
+      }else if(tokens[i+1]==='='){
+        const slot=lookup(identifier());
+        if(!slot.mutable)throw new TranspileError('E_IMMUTABLE_ASSIGNMENT');
+        expect('=');const value=typed(parse_expression(0,depth+1),slot.type);expect(';');
+        out.push({kind:'set',slot:slot.id,value});
+      }else if(peek()==='do'){
+        i++;if(peek()!=='sync')throw new TranspileError('E_TASK_UNSUPPORTED');
+        const item=parse_expression(0,depth+1,true);
+        if(item.kind!=='inline_task')throw new TranspileError('E_TASK_UNSUPPORTED');
+        typed(item,'void');out.push({kind:'expr',value:item});
+        if(peek()===';')i++;
+        else if(!['return','^','do','}'].includes(peek())){
+          if(peek()==='sync'&&tokens[i+1]==='task')throw new TranspileError('E_SYNTAX');
+          throw new TranspileError('E_UNSUPPORTED_SYNTAX');
+        }
+      }else break;
     }
+    if(peek()==='sync'&&tokens[i+1]==='task')throw new TranspileError('E_SYNTAX');
+    return out;
   }
-  if(peek()==='sync'&&tokens[i+1]==='task')
-    throw new TranspileError('E_SYNTAX');
+  const preludes=parse_steps(0);
   if(peek()==='^')i++;else expect('return');
-  const ast=parse_expression();
-  if(result_type(ast)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
+  const ast=typed(parse_expression(),'int');
   expect(';');expect('}');
   if(i!==tokens.length)throw new TranspileError('E_TRAILING_SOURCE');
   let uses_shift=false;
   const emit=node=>{
     if(node.kind==='inline_task')
-      return node.body===null?'(()=>{})()':'(()=>{return '+emit(node.body)+';})()';
+      return '(()=>{'+node.steps.map(emit_step).join('')+
+        (node.body===null?'':'return '+emit(node.body)+';')+'})()';
+    if(node.kind==='local')return '_v'+node.slot;
+    if(node.kind==='bool')return node.value?'true':'false';
+    if(node.kind==='choose')return '(('+emit(node.condition)+')?('+emit(node.yes)+'):('+emit(node.no)+'))';
+    if(node.kind==='compare')return '(('+emit(node.left)+')'+(node.op==='!='?'!==':'===')+'('+emit(node.right)+'))';
+    if(node.kind==='boolop'){
+      const op=['&&','AND'].includes(node.op)?'&&':['||','OR'].includes(node.op)?'||':'!==';
+      return '(('+emit(node.left)+')'+op+'('+emit(node.right)+'))';
+    }
     if(Object.hasOwn(node,'value'))return `${node.value}n`;
     if(node.op==='neg')return `checked(-(${emit(node.arg)}))`;
     const op=node.op;
@@ -242,7 +298,12 @@ export function transpile_to_worker(source) {
     }
     return 'checked(('+left+') '+(op==='^^'?'^':op)+' ('+right+'))';
   };
-  const prelude_code=preludes.map(node=>'  '+emit(node)+';\n').join('');
+  const emit_step=node=>{
+    if(node.kind==='bind')return (node.mutable?'let ':'const ')+'_v'+node.slot+'='+emit(node.init)+';';
+    if(node.kind==='set')return '_v'+node.slot+'='+emit(node.value)+';';
+    return emit(node.value)+';';
+  };
+  const prelude_code=preludes.map(node=>'  '+emit_step(node)+'\n').join('');
   const result_code=emit(ast);
   const code=`// Generated by AttoLang JS subset backend; no eval or source passthrough.\n`+
     `const MAX=9223372036854775807n,MIN=-9223372036854775808n;\n`+
