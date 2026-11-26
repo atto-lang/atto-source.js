@@ -116,8 +116,9 @@ export function compileIntConstLambdaDirect(tokens) {
   }
   // Scalarize only literal, immutable tuples in this closed source profile.
   // No general tuple object, ownership-sensitive projection or adapter ABI.
-  const parseArgs = () => {
+  const parseArgs = (tupleSyntax = false) => {
     const args = [];
+    let separated = false;
     expect('(');
     if (!has(')')) {
       do {
@@ -131,12 +132,18 @@ export function compileIntConstLambdaDirect(tokens) {
         const p = binding.params[args.length];
         if (p.type !== null && p.type !== type) fail('E_TYPE', 'lambda argument type mismatch', token);
         args.push({type,value});
-      } while (take(','));
+        if (!take(',')) break;
+        separated = true;
+        if (tupleSyntax && has(')')) break;
+      } while (true);
     }
+    if (tupleSyntax && args.length === 1 && !separated)
+      fail('E_SYNTAX', 'a one-element tuple requires a trailing comma');
     expect(')');
     return args;
   };
   const literalTuple = () => {
+    if (has('(')) return parseArgs(true);
     if (binding.functionName === 'tuple')
       fail('E_UNSUPPORTED', 'tuple constructor identity is shadowed');
     expect('tuple');
@@ -162,7 +169,7 @@ export function compileIntConstLambdaDirect(tokens) {
   };
   expect('return');
   let args;
-  if ((has('tuple') && binding.functionName !== 'tuple') || (saved && has(saved.identifier))) {
+  if (has('(') || (has('tuple') && binding.functionName !== 'tuple') || (saved && has(saved.identifier))) {
     args = tupleOperand();
     expect('|>'); requireCallable(); expect('.'); expect('apply');
   } else {
