@@ -55,7 +55,8 @@ function provesArithmetic(a,b,op){
   return false;
 }
 export function lowerVerifiedQuantitySource(tokens,report,strict=false){
-  const refinementEntry=tokens[0]?.value==='type'&&tokens[2]?.value==='='&&['int','i64','i32'].includes(tokens[3]?.value)&&tokens[4]?.value==='where';
+  const declarationOffset=tokens[0]?.value==='declare'?1:0;
+  const refinementEntry=tokens[declarationOffset]?.value==='type'&&tokens[declarationOffset+2]?.value==='='&&['int','i64','i32'].includes(tokens[declarationOffset+3]?.value)&&tokens[declarationOffset+4]?.value==='where';
   if(!refinementEntry&&(tokens[0]?.value!=='define'||!['dimension','unit'].includes(tokens[1]?.value)))return null;
   let at=0,budget=256;
   const peek=()=>tokens[Math.min(at,tokens.length-1)];
@@ -118,7 +119,8 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     compatible(want.unit,got.unit);
     if(!contains(want.range,got.range))fail(code,'unproved refinement on normal result');
   };
-  while(take('type')){
+  while(peek().value==='type'||peek().value==='declare'){
+    take('declare');expect('type');
     if(aliases.size>=128)fail('E_UNIT_LIMIT','too many aliases');
     if(['int','i64','i32'].includes(peek().value))fail('E_REFINEMENT_DUPLICATE','reserved carrier');
     const n=identifier();

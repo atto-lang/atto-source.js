@@ -24,7 +24,10 @@ test('typed guest effect IR refuses unsupported kinds and malformed message reco
     assert.throws(()=>compileProgramIRV2(ir),/error: program IR:/);
   }
 });
-test('unwrap panic preserves original ordinary guest error and bypasses outer trap',async()=>{
-  const g=await guest("fnc f():int{throw new Error(\"ordinary\");} fnc g():int{val r=trap f();return r.unwrap();} pub fnc main():int{val r=trap g();return r.is_err()?42:0;}");
-  assert.throws(()=>g.main(),e=>e.name==='ResultUnwrapPanic'&&e.cause.message==='ordinary'&&e.cause.effect==='throw');
+test('checked unwrap preserves original ordinary guest error and is captured by outer trap',async()=>{
+  const source='fnc f():int{throw new Error("ordinary");} fnc g():int{val r=trap f();return r.unwrap();}';
+  const g=await guest(source+' pub fnc main():int{val r=trap g();return r.is_err()?42:0;}');
+  assert.equal(g.main(),42n);
+  const raw=await guest(source+' pub fnc main():int{return g();}');
+  assert.throws(()=>raw.main(),e=>e.name==='ResultUnwrapError'&&e.cause.message==='ordinary'&&e.cause.effect==='throw');
 });
