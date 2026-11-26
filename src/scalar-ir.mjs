@@ -44,7 +44,7 @@ function array(value, maximum, context) {
     fail(context + ': invalid array size');
   const keys = Reflect.ownKeys(value);
   if (keys.length !== value.length + 1 ||
-      keys.some(k => k !== 'length' && (!/^(?:0|[1-9][0-9]*)$/.test(k) || Number(k) >= value.length)))
+      keys.some(k => k !== 'length' && (typeof k !== 'string' || !/^(?:0|[1-9][0-9]*)$/.test(k) || Number(k) >= value.length)))
     fail(context + ': unexpected array properties');
   for (let i = 0; i < value.length; i++) {
     const desc = Object.getOwnPropertyDescriptor(value, i);
@@ -200,7 +200,7 @@ export function validateScalarIR(ir) {
     state[i] = 2;
   }
   functions.forEach((_, i) => visit(i));
-  if (ir.schemaVersion === SCALAR_IR_SEQ_VERSION && !usesSeq) fail('scalar IR v2 requires sequence');
+  if (ir.schemaVersion === SCALAR_IR_SEQ_VERSION && !usesSeq) fail('unsupported IR version: scalar IR v2 requires sequence');
   return {
     schemaVersion: ir.schemaVersion,
     dialect: SCALAR_IR_DIALECT,

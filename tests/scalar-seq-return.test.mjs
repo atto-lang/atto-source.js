@@ -51,3 +51,23 @@ test('scoped sequence and bare final call argument compile and execute',async()=
   const guest=await import('data:text/javascript;base64,'+Buffer.from(trapped).toString('base64'));
   assert.throws(()=>guest.main(),/DIVISION_BY_ZERO|division by zero/i);
 });
+
+test('sequence IR arrays reject noncanonical keys and preserve legacy version diagnostics',()=>{
+  const seq=compileToIR(source('return seq 1,42;'));
+  const old=compileToIR(source('return 42;'));
+  assert.throws(()=>validateScalarIR({...old,schemaVersion:2}),/unsupported IR version/);
+  const variants=[
+    items=>{delete items[0];items[Symbol('field')]=1;},
+    items=>{items.extra=true;},
+    items=>{delete items[0];},
+    items=>{Object.setPrototypeOf(items,Object.create(Array.prototype));}
+  ];
+  for(const mutate of variants){
+    const copy=structuredClone(seq);mutate(copy.functions[0].body.items);
+    assert.throws(()=>validateScalarIR(copy),/error: scalar IR:/);
+  }
+  const copy=structuredClone(seq);let calls=0;
+  Object.defineProperty(copy.functions[0].body.items,'0',{enumerable:true,get(){calls++;return {kind:'int',value:'1'};}});
+  assert.throws(()=>validateScalarIR(copy),/sparse or accessor array/);
+  assert.equal(calls,0);
+});
