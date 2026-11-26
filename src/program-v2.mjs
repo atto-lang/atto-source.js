@@ -5,6 +5,7 @@ import {TESTING_SCALAR_SOURCE, TESTING_SCALAR_EXPORTS} from './compiler-owned-te
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
 import {rejectUnsupportedHttpActors} from './http-actor-admission.mjs';
 import {isCoreConstructor,isProtectedPreludeIdentity} from './automatic-prelude.mjs';
+import {coreBooleanIntrinsic,isCoreBooleanUnit} from './core-boolean-intrinsics.mjs';
 /**
  * Experimental Oreslang program-to-ESM v2 slice:
  * flat runtime modules, private/public functions, qualified calls, integer matches.
@@ -358,7 +359,7 @@ function rejectUnsupportedStaticSelect(tokens) {
   }
 }
 class Parser {
-  constructor(tokens) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;}
+  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;}
   peek() {return this.tokens[this.i];}
   eat(s) {if(this.peek().value === s) {this.i++; return true;} return false;}
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
@@ -1140,8 +1141,12 @@ class Parser {
       if(first==='None')return {kind:'call',qualifier:'Option',name:'none',args:[]};
       return {kind:'variable', name:first};
     }
-    if(qualifier===null&&['And','Or','Xor'].includes(symbol))
+    if(qualifier===null&&coreBooleanIntrinsic(symbol))
       return this.namedBooleanReduction(symbol,token);
+    if(this.coreBooleanModules.has(qualifier)){
+      if(!coreBooleanIntrinsic(symbol))fail('E_CORE_BOOL_IMPORT: unknown core Boolean export '+symbol,token);
+      return this.namedBooleanReduction(symbol,token);
+    }
     const args=this.argumentsAfterOpen();
     // Named integer operations retain their semantics; raw % remains reserved.
     // The binary ops below are internal IR names, never source syntax.
@@ -1751,6 +1756,7 @@ function emitProgram(program) {
           if(d>MAX_DEPTH)fail('loop codegen depth exceeded');
           if(step.kind==='bind')return (step.mutable?'let ':'const ')+'_v'+step.slot+'='+emitExpr(step.init,d+1)+';';
           if(step.kind==='set')return '_v'+step.slot+'='+emitExpr(step.value,d+1)+';';
+          if(step.kind==='loopExit')return 'if('+emitExpr(step.condition,d+1)+'){'+step.exit+';}';
           return 'while('+emitExpr(step.condition,d+1)+'){'+emitSteps(step.steps,d+1)+'}';
         }).join('');
         return '(()=>{'+expr.states.map(s=>'let _v'+s.slot+'='+emitExpr(s.init,depth+1)+';').join('')+
@@ -1886,7 +1892,7 @@ function emitProgram(program) {
       case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'numericCompare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
       case 'scalarWhileMany': {
-        const visit=steps=>steps.some(s=>s.kind==='loop'?usesSymbol(s.condition)||visit(s.steps):usesSymbol(s.init??s.value));
+        const visit=steps=>steps.some(s=>s.kind==='loop'?usesSymbol(s.condition)||visit(s.steps):s.kind==='loopExit'?usesSymbol(s.condition):usesSymbol(s.init??s.value));
         return expr.states.some(s=>usesSymbol(s.init))||usesSymbol(expr.condition)||visit(expr.steps)||usesSymbol(expr.body);
       }
       case 'scalarWhile':return [expr.init,expr.condition,expr.update,expr.body].some(usesSymbol);
@@ -1933,7 +1939,7 @@ function emitProgram(program) {
       case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'numericCompare':case 'symbolCompare':
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
       case 'scalarWhileMany': {
-        const visit=steps=>steps.some(s=>s.kind==='loop'?usesPortableRuntime(s.condition)||visit(s.steps):usesPortableRuntime(s.init??s.value));
+        const visit=steps=>steps.some(s=>s.kind==='loop'?usesPortableRuntime(s.condition)||visit(s.steps):s.kind==='loopExit'?usesPortableRuntime(s.condition):usesPortableRuntime(s.init??s.value));
         return expr.states.some(s=>usesPortableRuntime(s.init))||usesPortableRuntime(expr.condition)||visit(expr.steps)||usesPortableRuntime(expr.body);
       }
       case 'scalarWhile':return [expr.init,expr.condition,expr.update,expr.body].some(usesPortableRuntime);
@@ -2122,6 +2128,38 @@ const TESTING_SCALAR_IMPORT_IDS = new Set([
   'std/testing_scalar', 'std/testing_scalar.atto',
   'atto.std/testing_scalar', 'atto.std/testing_scalar.atto'
 ]);
+// Closed compiler-owned module import. No file lookup, source splice, host
+// import or ordinary eager forwarding function. Until lexical alias scoping
+// is expanded, all uses of a core module alias must be qualified calls.
+function lowerCompilerOwnedBooleanImports(tokens){
+  let i=0;
+  const aliases=new Set();
+  while(tokens[i]?.value==='import'&&tokens[i+1]?.value==='module'&&
+        tokens[i+3]?.value==='from'&&tokens[i+4]?.kind==='str'&&
+        isCoreBooleanUnit(tokens[i+4].value)){
+    const alias=tokens[i+2],end=tokens[i+5];
+    if(alias?.kind!=='id'||!TOKEN_NAME.test(alias.value)||end?.value!==';'||
+       aliases.has(alias.value)||aliases.size>=8||
+       CLASS_METHOD_RESERVED.has(alias.value)||GENERATOR_RESERVED.has(alias.value)||
+       isProtectedPreludeIdentity(alias.value)||coreBooleanIntrinsic(alias.value)||
+       ['Integer','Symbol','main'].includes(alias.value)||alias.value.startsWith('__atto_'))
+      fail('E_CORE_BOOL_IMPORT: invalid, reserved or duplicate module alias',alias);
+    aliases.add(alias.value);i+=6;
+  }
+  if(!aliases.size)return {rootTokens:tokens,aliases};
+  const rootTokens=tokens.slice(i);
+  for(let j=0;j<rootTokens.length;j++){
+    const t=rootTokens[j];
+    if(t.kind==='id'&&aliases.has(t.value)){
+      if(rootTokens[j-1]?.value==='.'||rootTokens[j+1]?.value!=='.'||
+         rootTokens[j+2]?.kind!=='id'||!coreBooleanIntrinsic(rootTokens[j+2].value)||
+         rootTokens[j+3]?.value!=='(')
+        fail('E_CORE_BOOL_IMPORT: alias is reserved for qualified core Boolean calls',t);
+    }
+  }
+  return {rootTokens,aliases};
+}
+
 function lowerCompilerOwnedTestingImports(tokens) {
   let i=0,declarations=0;
   const locals=new Map(),seenExports=new Set();
@@ -2240,8 +2278,9 @@ export function compileToProgramIRV2(source) {
   if(quantity!==null)return validateProgramIRV2({
     schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,integerModel:PROGRAM_IR_INT_MODEL,...quantity
   });
-  const linked=lowerCompilerOwnedTestingImports(mixed??tokens);
-  const parsed=bindCompilerOwnedTestingImports(new Parser(linked.rootTokens).parse(),linked.locals);
+  const core=lowerCompilerOwnedBooleanImports(mixed??tokens);
+  const linked=lowerCompilerOwnedTestingImports(core.rootTokens);
+  const parsed=bindCompilerOwnedTestingImports(new Parser(linked.rootTokens,core.aliases).parse(),linked.locals);
   const program=resolveProgram(parsed);
   return validateProgramIRV2({
     schemaVersion:PROGRAM_IR_VERSION,
