@@ -214,7 +214,7 @@ function tokenize(source) {
       }
       if (word.length > 128) fail('identifier limit',start);
       // Mandatory separator after the entire contextual keyword suffix.
-      if (['trap','throw','raise','panic','copy','take','borrow','share','pin','drop','pipe','rpipe','stop','expand'].includes(word) && source[pos]==='!' &&
+      if (['trap','throw','raise','panic','copy','take','move','borrow','share','pin','drop','pipe','rpipe','stop','expand'].includes(word) && source[pos]==='!' &&
           source[pos+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(source.slice(pos))) {
         const after=pos+(word==='copy' && source[pos+1]==='!' ? 2 : 1);
         if (!/[ \t\r\n\v\f]/.test(source[after]??'')) fail('E_BANG_KEYWORD_WHITESPACE: whitespace required after bang keyword',start);
@@ -224,6 +224,9 @@ function tokenize(source) {
       if(['trap','throw','raise','panic'].includes(word) && source[pos]==='!' &&
          source[pos+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(source.slice(pos)))
         {if(word!=='trap'||result.at(-1)?.value!=='=')fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: typed guest effects and Result lowering required',start);advance();word='trap!';}
+      if(['copy','take','move','borrow','share'].includes(word) && source[pos]==='!' &&
+         source[pos+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(source.slice(pos)))
+        fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: checked ownership lowering required',start);
       emit('id',word,start);
     } else if (/[0-9]/.test(c)) {
       let number = '';
