@@ -510,24 +510,38 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     boundary(result,v,'E_REFINEMENT_RETURN');
     return v.ir;
   }
-  function readContracts(params,types,result,pub){
-    const checks=[];let count=0;
-    const cmp=()=>{const op=({'eq':'==','gte':'>=','lte':'<='})[peek().value]??peek().value;
-      if(!['==','<','<=','>','>='].includes(op))fail('E_REFINEMENT_CONTRACT','expected comparison');at++;return op;};
+  function contractAnnotations(){
+    const spans=[];
+    while(take('@')){
+      if(spans.length>=16)fail('E_REFINEMENT_CONTRACT','contract budget');
+      const require=take('requires');if(!require&&!take('ensures'))fail('E_REFINEMENT_CONTRACT','unsupported annotation');
+      expect('(');const start=at;
+      while(peek().value!==')'){
+        if(at-start>=32||peek().kind==='eof'||['(','{','}',';','@'].includes(peek().value))fail('E_REFINEMENT_CONTRACT','invalid bounded annotation predicate');
+        at++;
+      }
+      const end=at;expect(')');spans.push({start,end,require});
+    }
+    return spans;
+  }
+  function readContracts(params,types,result,pub,annotations){
+    const checks=[];let count=annotations.length;
+    if(pub&&count)fail('E_REFINEMENT_CONTRACT','contract budget or entrypoint');
+    const cmp=require=>{const op=({'eq':'==','gte':'>=','lte':'<='})[peek().value]??peek().value;
+      if(!['==','<','<=','>','>='].includes(op)&&!(require&&op==='!='))fail('E_REFINEMENT_CONTRACT','expected comparison');at++;return op;};
     const bound=want=>{
       const [,n]=integer(take('-'));let u=scalar();
       const dot=take('.');
       if(dot||peek().value==='<'){expect('<');u=lookup(name());expect('>');}
       compatible(want.unit,u);return n;
     };
-    while(['requires','ensures'].includes(peek().value)){
-      if(pub||++count>16)fail('E_REFINEMENT_CONTRACT','contract budget or entrypoint');
-      const require=take('requires');if(!require)expect('ensures');
-      const key=name(),op=cmp();
+    const clause=require=>{
+      const key=name(),op=cmp(require);
       if(require){
         const i=params.indexOf(key);if(i<0)fail('E_REFINEMENT_CONTRACT','unknown parameter');
         const p=types[i],n=bound(p);
-        const b=op==='<'?[MIN,n-1n]:op==='<='?[MIN,n]:op==='>'?[n+1n,MAX]:op==='>='?[n,MAX]:[n,n];
+        if(op==='!='&&n!==0n&&n!==-1n)fail('E_REFINEMENT_CONTRACT','only zero and minus-one exclusions are represented');
+        const b=op==='!='?[MIN,MAX,bit(n)]:op==='<'?[MIN,n-1n]:op==='<='?[MIN,n]:op==='>'?[n+1n,MAX]:op==='>='?[n,MAX]:[n,n];
         const range=intersect(p.range,b);if(!range)fail('E_REFINEMENT_EMPTY','contradictory requires');
         types[i]={...p,range};locals.set(key,{...locals.get(key),range});
       }else{
@@ -537,6 +551,13 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
           compatible(result.unit,types[i].unit);checks.push({op,param:i});
         }else checks.push({op,n:bound(result)});
       }
+    };
+    const headerEnd=at;
+    for(const {start,end,require} of annotations){at=start;clause(require);if(at!==end)fail('E_REFINEMENT_CONTRACT','trailing annotation predicate tokens');}
+    at=headerEnd;
+    while(['requires','ensures'].includes(peek().value)){
+      if(pub||++count>16)fail('E_REFINEMENT_CONTRACT','contract budget or entrypoint');
+      const require=take('requires');if(!require)expect('ensures');clause(require);
     }
     return checks;
   }
@@ -570,6 +591,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
   const functions=[];
   for(;;){
     if(functions.length>=32)fail('E_UNIT_LIMIT','too many functions');
+    const annotations=contractAnnotations();
     const pub=take('pub');expect('fnc');const n=identifier();
     if(pub&&n!=='main'&&aliases.size)fail('E_REFINEMENT_EXPORT','private refinement helper required');
     if(pub!==(n==='main')||signatures.has(n)||aliases.has(n)||units.has(n)||dims.has(n))fail('E_UNIT_NAME','invalid function name or visibility');
@@ -588,8 +610,8 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     }
     expect('->');const result=type();
     if(pub&&(params.length||!same(result.unit,scalar())||!contains(result.range,FULL)))fail('E_UNIT_ERASURE','main requires zero arguments and plain int result');
-    const contractStart=at,checks=readContracts(params,types,result,pub);
-    const contracted=at!==contractStart;
+    const contractStart=at,checks=readContracts(params,types,result,pub,annotations);
+    const contracted=annotations.length!==0||at!==contractStart;
     let closer='}';
     if(!take('{')){
       if(take('::'))closer='end';

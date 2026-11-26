@@ -304,7 +304,7 @@ function tokenize(source) {
       fail("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",start);
     } else if (source.startsWith('^^',pos)) {
       emit('sym','^^',start); advance(); advance();
-    } else if ('(){}[]:,;+-*/=.<>!?^&|'.includes(c)) {
+    } else if ('(){}[]:,;+-*/=.<>!?^&|@'.includes(c)) {
       emit('sym',c,start); advance();
     } else fail('unsupported character',start);
   }
