@@ -18,7 +18,9 @@ test('numeric integration preserves current-main guard and lazy boolean semantic
 });
 test('numeric integration does not open unsupported effect and ownership admission',()=>{
   for(const [source,diagnostic] of [
-    ['pub fnc main():int {return copy! x;}','OWNERSHIP_BANG_BACKEND_UNSUPPORTED'],
+    ['pub fnc main():int {return copy! x;}','unresolved identifier x'],
+    ['pub fnc main():int {return copy! Some(42);}','E_COPY_UNSUPPORTED_TYPE'],
+    ['pub fnc main():int {return borrow! mut x;}','OWNERSHIP_BANG_BACKEND_UNSUPPORTED'],
     ['pub fnc main():int {return trap 1;}','trap requires verified ordinary-throw effect'],
     ['pub fnc main():int {select first {} return 42;}','static select requires checked'],
     ['pub fnc main():int {return panic! Error("bad");}','EXCEPTION_BANG_BACKEND_UNSUPPORTED'],
