@@ -9,7 +9,6 @@
 const MAX_FRAMES = 128;
 const MAX_REGISTRATIONS = 1024;
 const MAX_SUPPRESSED = 16;
-const NEXT = Symbol('private recovery delegation');
 const failure_rank = new Map([['return',0],['throw',1],['raise',2],['panic',3],['cancel',4],['host-fatal',5]]);
 
 const failure_kinds = new Set(['throw', 'raise', 'panic', 'cancel', 'host-fatal']);
@@ -97,7 +96,7 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     if (registrations >= MAX_REGISTRATIONS) throw new RangeError('E_UNWIND_REGISTRATION_LIMIT');
     registrations++;
   }
-  function cleanup(frame, pending) {
+  function* cleanup(frame, pending) {
     // Retire each cleanup before execution: even an error cannot run it twice.
     for (let i = frame.defers.length - 1; i >= 0; i--) {
       const callback = frame.defers[i];
@@ -105,9 +104,7 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
       registrations--;
       enter_callback();
       try {
-        const result = callback();
-        if (result && typeof result.then === 'function')
-          throw new TypeError('E_ASYNC_CLEANUP_UNSUPPORTED');
+        yield { ...callback, args:[], diagnostic:'E_ASYNC_CLEANUP_UNSUPPORTED' };
       } catch (error) {
         callback_failure(pending,error,'E_HOST_CALLBACK_FAILED');
       } finally {
@@ -119,9 +116,9 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     frame.catches.length = 0;
     frame.active = false;
   }
-  function pop_clean(pending) {
+  function* pop_clean(pending) {
     const frame = frames.pop();
-    cleanup(frame, pending);
+    yield* cleanup(frame, pending);
     return frame;
   }
   function recovered(value) {
@@ -131,7 +128,7 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     active_callback.recovered.add(token);
     return token;
   }
-  function dispatch_failure(kind, error) {
+  function* dispatch_failure_steps(kind, error) {
     check_available();
     if (!failure_kinds.has(kind)) throw new TypeError('E_INVALID_FAILURE_KIND');
     require_error(error);
@@ -159,11 +156,10 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
       }
       if (catcher && pending.kind === 'throw') {
         // Phase 2a: unwind inner scopes, preserving the handling frame.
-        while (frames.length - 1 > catcher.frame_index) pop_clean(pending);
+        while (frames.length - 1 > catcher.frame_index) yield* pop_clean(pending);
         if (pending.kind === 'throw') {
           try {
-            const result = catcher.handler(error);
-            if (result && typeof result.then === 'function') throw new TypeError('E_ASYNC_CATCH_UNSUPPORTED');
+            const result = yield {handler:catcher.handler, suspends:false, args:[error], diagnostic:'E_ASYNC_CATCH_UNSUPPORTED'};
             return Object.freeze({kind:'caught', value:result, error});
           } catch (host_error) {
             merge_failure(pending,'host-fatal',host_error instanceof Error ? host_error : new Error('E_HOST_CATCH_FAILED'));
@@ -173,10 +169,11 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
       // Phase 2b: no eligible catch (or fatal host callback); perform cleanup
       // from the innermost frame outwards, then offer LIFO recovery callbacks.
       while (frames.length) {
-        const frame = pop_clean(pending);
+        const frame = yield* pop_clean(pending);
         if (!recoverable_kinds.has(pending.kind)) continue;
         for (let i = frame.recovers.length - 1; i >= 0; i--) {
           const handler = frame.recovers[i];
+          const NEXT = Symbol('invocation-local recovery delegation');
           let valid = true;
           let delegated = false;
           const cursor = Object.freeze(Object.assign(Object.create(null), {
@@ -190,7 +187,7 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
           const error_view = Object.freeze({message:pending.error.message, is_raise:pending.kind==='raise'});
           enter_callback(true);
           try {
-            const result = handler(error_view, cursor);
+            const result = yield { ...handler, args:[error_view,cursor], diagnostic:'E_ASYNC_RECOVER_UNSUPPORTED' };
             if (delegated || !result || !active_callback.recovered.has(result))
               throw new TypeError('E_RECOVERY_DECISION_REQUIRED');
             return Object.freeze({kind:'recovered', value:result.value, error:pending.error});
@@ -209,20 +206,77 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
       busy = false;
     }
   }
-  function return_frame(value) {
+  function* return_frame_steps(value) {
     check_available();
     if (!frames.length) throw new Error('E_NO_ACTIVE_FRAME');
     // Preserve the evaluated return slot before callbacks run.
     const pending = pending_outcome('return',null);
     busy = true;
     try {
-      pop_clean(pending);
+      yield* pop_clean(pending);
       // A terminal cleanup failure cannot leave outer recovery scopes live.
-      if (pending.kind !== 'return') while (frames.length) pop_clean(pending);
+      if (pending.kind !== 'return') while (frames.length) yield* pop_clean(pending);
       return pending.kind === 'return' ? Object.freeze({kind:'returned',value}) : terminal_view(pending);
     } finally {
       busy = false;
     }
+  }
+  // Both entry points drive the same ordered unwind machine. A synchronous
+  // entry rejects *before* removing frames if any registered callback may
+  // suspend (conservative for outer frames and unselected recovery handlers).
+  function sync_preflight() {
+    check_available();
+    if (frames.some(f => [...f.defers,...f.recovers].some(c => c?.suspends)))
+      throw new Error('E_SUSPENDING_UNWIND_REQUIRES_ASYNC_ENTRY');
+  }
+  function invoke_sync(action) {
+    const result = action.handler(...action.args);
+    if (result && typeof result.then === 'function') {
+      // A mistakenly returned native Promise must not trigger an unhandled
+      // rejection. No success or suspension support is inferred from it.
+      if (result instanceof Promise) result.catch(()=>{});
+      throw new TypeError(action.diagnostic);
+    }
+    return result;
+  }
+  function run_sync(steps) {
+    let step = steps.next();
+    while (!step.done) {
+      let result;
+      try { result = invoke_sync(step.value); }
+      catch (error) { step = steps.throw(error); continue; }
+      step = steps.next(result);
+    }
+    return step.value;
+  }
+  async function run_async(steps) {
+    let step = steps.next();
+    while (!step.done) {
+      const action = step.value;
+      let result;
+      try {
+        result = action.suspends ? await action.handler(...action.args) : invoke_sync(action);
+      } catch (error) { step = steps.throw(error); continue; }
+      step = steps.next(result);
+    }
+    return step.value;
+  }
+  function return_frame(value) {
+    sync_preflight();
+    return run_sync(return_frame_steps(value));
+  }
+  function dispatch_failure(kind,error) {
+    sync_preflight();
+    return run_sync(dispatch_failure_steps(kind,error));
+  }
+  // Trusted host reference only: no external cancellation/deadline or
+  // guest scheduler admission is implied. Pending cancellation is modeled
+  // by dispatch_failure_async('cancel', error).
+  function return_frame_async(value) {
+    return run_async(return_frame_steps(value));
+  }
+  function dispatch_failure_async(kind,error) {
+    return run_async(dispatch_failure_steps(kind,error));
   }
   return Object.freeze({
     owner,
@@ -235,11 +289,19 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     },
     register_defer(handler) {
       const frame = current_frame(); require_function(handler); reserve();
-      frame.defers.push(handler);
+      frame.defers.push({handler,suspends:false});
     },
     register_recover(handler) {
       const frame = current_frame(); require_function(handler); reserve();
-      frame.recovers.push(handler);
+      frame.recovers.push({handler,suspends:false});
+    },
+    register_susp_defer(handler) {
+      const frame = current_frame(); require_function(handler); reserve();
+      frame.defers.push({handler,suspends:true});
+    },
+    register_susp_recover(handler) {
+      const frame = current_frame(); require_function(handler); reserve();
+      frame.recovers.push({handler,suspends:true});
     },
     register_catch(error_type, handler) {
       const frame = current_frame(); require_function(handler);
@@ -251,6 +313,8 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     },
     return_frame,
     dispatch_failure,
+    return_frame_async,
+    dispatch_failure_async,
     recovered,
     signal_failure,
     retire() {
