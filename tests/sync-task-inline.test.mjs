@@ -238,3 +238,27 @@ test('inline task writeback, lazy branches and panic preserve one-shot tenant ex
     }
   }
 });
+
+
+test('arithmetic right shift preserves main semantics in lexical inline tasks',async()=>{
+  for(const [body,want] of [
+    ['return -8 ashr 2;','-2'],
+    ['return -1 ashr 63;','-1'],
+    ['return 9223372036854775807 ashr 63;','0'],
+    ['return -9223372036854775808 ashr 63;','-1'],
+    ['return -8 ashr 0;','-8'],
+    ['return -8 >>> 2;','4611686018427387902'],
+    ['return -8 ashr 1+1;','-2'],
+    ['let int n = 0; val int x = -8 ashr sync task<int> { n = n+1; return 2; }; return x+n+43;','42']
+  ])assert.equal(await execute(main(body)),want,body);
+  for(const body of ['return 1 ashr -1;','return 1 ashr 64;'])
+    assert.throws(()=>transpile_to_worker(main(body)),e=>e.code==='E_SHIFT_DISTANCE',body);
+  for(const body of ['return true ashr 1;','return 1 ashr false;'])
+    assert.throws(()=>transpile_to_worker(main(body)),e=>e.code==='E_TASK_RETURN_TYPE',body);
+  for(const distance of [-1,64]){
+    const {module_source}=transpile_to_worker(main('let int n = '+distance+'; return -8 ashr n;'));
+    const mod=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(module_source));
+    const tenant=await mod.create_tenant({tenant:'shift-test',generation:1});
+    await assert.rejects(()=>tenant.on_message(),/E_GUEST_SHIFT_DISTANCE/);
+  }
+});
