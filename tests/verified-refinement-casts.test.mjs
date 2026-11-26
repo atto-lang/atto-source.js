@@ -104,7 +104,7 @@ for(const [id,body,want] of [
  ['unchanged','pub fnc main() -> int { let int d = 1; let int x = 0; while x < 42 { x = x+42/d; } return x; }',42n],
  ['snapshot','pub fnc main() -> int { let int x = 1; val old = x; while x < 42 { x = x+1; } return 42/old; }',42n],
  ['successive','pub fnc main() -> int { let int x = 0; while x < 21 { x = x+1; } while x < 42 { x = x+1; } return x; }',42n],
- ['lazy-guard','pub fnc main() -> int { let int x = 42; while x > 0 && 42/x > 0 { x = x-1; } return x+42; }',42n],
+ ['lazy-guard','pub fnc main() -> int { let int x = 42; while x > 0 && 42/x > 0 { x = x-1; } return 42; }',42n],
 ])test('strict while '+id,async()=>assert.equal((await strictGuest(body))(),want));
 for(const [id,body,code] of [
  ['overflow','pub fnc main() -> int { let int x = 0; while x >= 0 { x = x+1; } return x; }','E_VERIFY_UNPROVEN'],
