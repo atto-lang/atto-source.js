@@ -620,6 +620,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       else if(tokens[at+1]?.value==='='){key=identifier();}
       else{want=type();key=identifier();}
       if(locals.has(key))fail('E_UNIT_DUPLICATE','duplicate local');
+      if(strict&&peek().value===';')fail('E_MISSING_INITIALIZER','explicit initializer required');
       expect('=');
       if(strict&&peek().value==='Array'){
         if(want!==null)fail('E_VERIFY_UNSUPPORTED','fixed array requires inferred val');
