@@ -5,6 +5,8 @@ on:
       - 'src/scalar-package-interface.mjs'
       - 'src/compiler.mjs'
       - 'src/scalar-consumer-link.node.mjs'
+      - 'src/link-trusted-scalar-consumer.node.mjs'
+      - 'tests/scalar-consumer-runtime-fixtures.test.mjs'
       - 'tests/scalar-consumer-link.test.mjs'
       - 'src/build-package.mjs'
       - 'src/package-admission.mjs'
@@ -32,4 +34,4 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           git rev-parse HEAD HEAD^{tree}
           node --version
-          node --test tests/scalar-consumer-link.test.mjs tests/scalar-package-loader-fixtures.test.mjs tests/scalar-package-linkage-v2.test.mjs tests/package-admission-security.test.mjs tests/compiler.test.mjs
+          node --test tests/scalar-consumer-runtime-fixtures.test.mjs tests/scalar-consumer-link.test.mjs tests/scalar-package-loader-fixtures.test.mjs tests/scalar-package-linkage-v2.test.mjs tests/package-admission-security.test.mjs tests/compiler.test.mjs
