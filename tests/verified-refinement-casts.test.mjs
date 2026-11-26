@@ -114,3 +114,10 @@ for(const [id,body,code] of [
  ['immutable-target','pub fnc main() -> int { val int x = 1; while x < 42 { x = x+1; } return x; }','E_VERIFY_UNSUPPORTED'],
  ['break','pub fnc main() -> int { let int x = 1; while x < 42 { break; } return x; }','E_VERIFY_UNSUPPORTED'],
 ])test('strict while rejects '+id,()=>assert.throws(()=>compileVerifiedStrict(pre+body),new RegExp(code+':')));
+
+test('raw IR cannot opt in to strict while through ordinary emitter',()=>{
+ const ir=compileToProgramIRV2(main('42'));
+ ir.functions[0].body={kind:'scalarWhile',slot:0,init:{kind:'int',value:'0'},
+   condition:{kind:'bool',value:false},update:{kind:'int',value:'1'},body:{kind:'capture',slot:0}};
+ assert.throws(()=>compileProgramIRV2(ir),/scalar while requires strict source admission/);
+});
