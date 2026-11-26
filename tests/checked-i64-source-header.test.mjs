@@ -37,11 +37,10 @@ test('quoted and block-comment lookalikes never select or invalidate checked pro
   const ordinary='/*\n// oreslang:checked-i64-v1\n*/\n';
   assert.doesNotThrow(()=>compileProgramV2(ordinary+MAIN));
   assert.doesNotThrow(()=>compileProgramV2(DIRECTIVE+ordinary+MAIN));
-  // Quoted token lookalikes are still invalid Oreslang source because this
-  // experimental JS grammar has no string expressions, but they must never
-  // be mistaken for an authentic header by the pre-tokenization scanner.
+  // Bounded string locals are now lexed, but a quoted top-level token is
+  // still not a declaration and must never select the checked profile.
   assert.throws(()=>compileProgramV2('"// oreslang:checked-i64-v1"\n'+MAIN),
-    /unsupported character/);
+    /unsupported declaration/);
 });
 test('seeded adversarial spacing never upgrades a displaced marker',()=>{
   for(let i=0;i<128;i++){
@@ -52,5 +51,14 @@ test('seeded adversarial spacing never upgrades a displaced marker',()=>{
     const nested='/* outer /* nested\n'+malformed+'*/ outer */\n';
     assert.doesNotThrow(()=>compileProgramV2(nested+MAIN));
     assert.doesNotThrow(()=>compileProgramV2(DIRECTIVE+nested+MAIN));
+  }
+});
+
+test('quoted local header lookalike stays inert in actual emitted ESM',async()=>{
+  const src='pub fnc main(): int { val string text = "// oreslang:checked-i64-v2"; return 43; }';
+  for(const prefix of ['',DIRECTIVE]){
+    const js=compileProgramV2(prefix+src);
+    const guest=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+    assert.equal(guest.main(),43n);
   }
 });

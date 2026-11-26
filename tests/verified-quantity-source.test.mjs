@@ -17,7 +17,21 @@ for(const [e,code] of [['42<Second>.<Millis>','E_UNIT_ATTACHMENT'],['(1<Second> 
 }
 test('checked scalar profile routes to validated IR',async()=>assert.equal((await guest('42.<Second> / 1<Second>',compileAttoScalarV1))(),42n));
 test('intermediate overflow survives attachment',async()=>assert.throws(await guest('(9223372036854775807 + 1).<Second> / 1<Second>'),e=>e.code==='integer_overflow'));
-test('reject unsupported refinement and bare scalar division',()=>{
- assert.throws(()=>compileProgramV2(pre+' type Duration = int where units in Second; pub fnc main() -> int { return 42; }'));
+test('reject unsupported refinement carrier and bare untyped scalar division',()=>{
+ assert.throws(()=>compileProgramV2(pre+' type Duration = i32 where self > 2147483647 and units in Second; pub fnc main() -> int { return 42; }'),/E_REFINEMENT_EMPTY/);
+ assert.throws(()=>compileProgramV2(pre+' type Duration = float where units in Second; pub fnc main() -> int { return 42; }'),/E_REFINEMENT_BOUND/);
  assert.throws(()=>compileProgramV2(source('84 / 2')),/E_UNIT_SCALAR_DIVISION/);
+});
+
+
+
+test('contracted delimiter forms execute real equivalent ESM guests',async()=>{
+ const head=pre+' type Bounded = int where self >= 1 and self <= 42; fnc f(int x) -> int requires x >= 1 requires x <= 42';
+ const tail=' pub fnc main() -> int { return f(2); }';
+ for(const body of [' { return 84/x; }','\nbegin return 84/x; end',' :: return 84/x; end','\n:: return 84/x; end']){
+   const guest=await import('data:text/javascript;base64,'+Buffer.from(compileProgramV2(head+body+tail)).toString('base64'));
+   assert.equal(guest.main(),42n);
+ }
+ for(const body of [' begin return 84/x; end',' :: return 84/x; }',' :: return 84/x;'])
+   assert.throws(()=>compileProgramV2(head+body+tail));
 });

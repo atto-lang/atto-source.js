@@ -1,5 +1,5 @@
-// %, ^ and ^^ are reserved. Integer.rem/mod/bitXor and Xor(a, b) replace them
-// with the same checked signed-i64 semantics in both JS compilers.
+// Raw % remains reserved in both compilers. Program-v2 admits canonical
+// integer ^^ and caret returns; the legacy scalar profile is unchanged.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp, writeFile, rm} from 'node:fs/promises';
@@ -44,8 +44,8 @@ for (const [label, compiler] of Object.entries(COMPILERS)) {
   test(label + ': reserved operators are rejected with their replacement', () => {
     for (const [source, message] of [
       [intMain('9 % 4'), /'%' is reserved.*Integer\.rem/],
-      [intMain('5 ^ 3'), /'\^' is reserved.*Integer\.bitXor/],
-      [boolMain('true ^^ false'), /'\^\^' is reserved.*Xor\(a, b\)/],
+      [intMain('5 ^ 3'), label==='program-v2'?/E_OPERATOR_CARET.*\^\^/:/'\^' is reserved.*Integer\.bitXor/],
+      [boolMain('true ^^ false'), label==='program-v2'?/boolean expression required/:/'\^\^' is reserved.*Xor\(a, b\)/],
       [intMain('Integer.pow(2, 3)'), /Integer\.pow is unsupported/],
     ]) assert.throws(() => compiler(source), message, source);
   });
@@ -83,4 +83,9 @@ test('program-v2: malformed calls and shadowing are rejected, not silently rebou
     ['define module Integer as\n  pub fnc rem(int a, int b): int { return 7; }\nend\n' + intMain('Integer.rem(1, 2)'),
       /reserved portable intrinsic module name Integer/],
   ]) assert.throws(() => compileProgramV2(source), message, source);
+});
+
+test('program-v2: canonical integer XOR agrees with named bitXor', async()=>{
+  assert.equal(await evaluate(compileProgramV2,intMain('5 ^^ 3')),6n);
+  assert.equal(await evaluate(compileProgramV2,intMain('Integer.bitXor(5, 3)')),6n);
 });

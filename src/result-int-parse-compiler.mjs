@@ -34,9 +34,15 @@ function value(token) {
 }
 function int_value(token, negative) {
   if (!/^[0-9]+$/.test(token ?? '')) fail('E_TYPE');
-  const n = BigInt(token) * (negative ? -1n : 1n);
-  if (n < MIN || n > MAX) fail('E_INT_OVERFLOW');
-  return n;
+  // Source is bounded to 64 KiB, but a 60,000-digit match arm must not
+  // allocate a giant BigInt just to learn it is outside signed i64.
+  const significant=token.replace(/^0+/,'')||'0';
+  const limit=negative?'9223372036854775808':'9223372036854775807';
+  if(significant.length>limit.length||
+     (significant.length===limit.length&&significant>limit))
+    fail('E_INT_OVERFLOW');
+  const magnitude=BigInt(significant);
+  return negative?-magnitude:magnitude;
 }
 export function transpile_result_int_parse_tokens(toks) {
   // Fail-closed grammar: one checked parser function followed by one main,
