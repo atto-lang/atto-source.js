@@ -396,6 +396,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
         else{want=type();key=identifier();}
         if(mut&&!want)fail('E_VERIFY_UNSUPPORTED','mutable loop local requires declared type');
         if(current.has(key))fail('E_UNIT_DUPLICATE','duplicate loop local');
+        if(peek().value===';')fail('E_MISSING_INITIALIZER','explicit initializer required');
         expect('=');const value=expr(0,0);expect(';');
         if(want)boundary(want,value,'E_REFINEMENT_BINDING');
         if(nextStrictSlot>=64)fail('E_UNIT_LIMIT','strict local slot budget');
@@ -452,6 +453,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       else{want=type();key=identifier();}
       if(isMutable&&want===null)fail('E_VERIFY_UNSUPPORTED','strict mutable scalar requires declared type');
       if(facts.has(key))fail('E_UNIT_DUPLICATE','duplicate local');
+      if(peek().value===';')fail('E_MISSING_INITIALIZER','explicit initializer required');
       expect('=');
       if(peek().value==='Array'){
         if(isMutable||want!==null||onExit)fail('E_VERIFY_UNSUPPORTED','fixed array requires nonescaping inferred val');
