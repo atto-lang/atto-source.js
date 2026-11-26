@@ -959,7 +959,7 @@ class Parser {
       }
       if(this.eat('define')){
         const afterVisibility=['pub','private'].includes(this.peek().value)?this.tokens[this.i++].value:null;
-        if(prefixVisibility&&afterVisibility)fail('duplicate/conflicting visibility modifier',this.peek());
+        if(prefixVisibility&&afterVisibility)fail(prefixVisibility==='pub'&&afterVisibility==='pub'?'duplicate pub modifier':'duplicate/conflicting visibility modifier',this.peek());
         const declarationPub=(prefixVisibility||afterVisibility)==='pub';
         const declarationPrivate=(prefixVisibility||afterVisibility)==='private';
         if(this.peek().value==='symbol')
