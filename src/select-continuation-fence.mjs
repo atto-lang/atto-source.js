@@ -114,7 +114,26 @@ export class SelectContinuationFence {
   }
 
   /** Claim before invocation; close the lease in a finally block. */
-  tryClaim(ticket){
+  tryClaim(ticket){return this.#claim(ticket);}
+
+  /**
+   * Actor-lane dispatch boundary. Validate the callback before claiming;
+   * retain execution credit until its synchronous or asynchronous work ends.
+   * The caller still owns scheduling and actor-lane affinity.
+   */
+  async tryInvoke(ticket,callback){
+    if(typeof callback!=='function')throw new TypeError('continuation callback must be a function');
+    const lease=this.#claim(ticket);
+    if(lease===null)return false;
+    try{
+      await callback();
+      return true;
+    }finally{
+      lease.close();
+    }
+  }
+
+  #claim(ticket){
     if(!this.#matches(ticket,true)||this.#closed)return null;
     const generation=this.#generation;
     let active=true;
