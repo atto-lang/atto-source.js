@@ -97,7 +97,7 @@ class Parser {
     // before materializing the source plan.
     if(literal!==0n)for(const s of futures)s.moved=true;
     const args=literal===0n?'0n,()=>[[],[]]':count+',()=>[['+cases.join(',')+'],['+projects.join(',')+']]';
-    const code='_startBatch('+args+','+JSON.stringify(policy)+',_owned)';
+    const code='_startBatch('+args+','+JSON.stringify(policy)+',_owned,_fence)';
     return direct?expr('array','(await '+code+')'):expr('futureArray',code);
   }
   // Called after select; infer only the two already-checked ready-only shapes.
@@ -166,21 +166,30 @@ class Parser {
 const runtime = `import {SelectableI64Channel as _Channel} from '@atto-lang/source-js/selectable-i64-channel';
 import {SelectableI64Future as _Future} from '@atto-lang/source-js/selectable-i64-future';
 import {CountedSelectI64Batch as _Batch} from '@atto-lang/source-js/counted-select-i64-batch';
+import {SelectContinuationFence as _Fence} from '@atto-lang/source-js/select-continuation-fence';
 function _i(v){if(typeof v!=='bigint'||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new RangeError('E_I64_OVERFLOW');return v;}
 function _write(c,v){if(!c.tryWrite(v))throw new Error('E_READY_ONLY: channel write would suspend');}
 function _read(c){const r=c.tryRead();if(!r.ok)throw new Error('E_READY_ONLY: channel read would suspend');return _i(r.value);}
 function _at(a,i){if(i<0||i>=a.length)throw new RangeError('E_ARRAY_BOUNDS');return _i(a[i]);}
 function _ready(project){const f=new _Future();try{f.resolve(_i(project()));}catch(e){f.fail(e);}return f;}
 function _awaitReady(f){const s=f.subscribeReady(()=>{});try{const c=f.createResultCell();if(!f.tryCommit(s,c))throw new Error('E_READY_ONLY: Future would suspend');if(c.status!=='value')throw c.error??new Error('Future failed');return _i(c.value);}finally{s.close();}}
-function _startBatch(count,plan,policy,owned){
+function _startBatch(count,plan,policy,owned,fence){
   if(typeof count!=='bigint'||count<0n||count>16n)throw new RangeError('SelectCountInvalid');
   const n=Number(count),[s,p]=n===0?[[],[]]:plan();
-  const b=new _Batch(n,s,policy,p);
-  const record={batch:b,cancelled:false,driver:null};
-  owned.add(record);
-  record.driver=_batch(record,n,s.length);
-  record.driver.then(()=>owned.delete(record),()=>owned.delete(record));
-  return record.driver;
+  // The invocation owns the physical driver, not just its logical result.
+  const ticket=fence.register(),lease=fence.tryClaim(ticket);
+  if(lease===null){ticket.close();throw new Error('counted guest execution admission failed');}
+  try{
+    const b=new _Batch(n,s,policy,p);
+    const record={batch:b,cancelled:false,driver:null};
+    owned.add(record);
+    record.driver=(async()=>{
+      try{return await _batch(record,n,s.length);}
+      finally{lease.close();}
+    })();
+    record.driver.then(()=>owned.delete(record),()=>owned.delete(record));
+    return record.driver;
+  }catch(error){lease.close();throw error;}
 }
 async function _batch(record,n,arms){
   const b=record.batch,completion=b.completion;completion.catch(()=>{});
@@ -198,17 +207,19 @@ async function _batch(record,n,arms){
 }
 // A failed main cannot leave a queued owner driver consuming channel data.
 // Revoke first, then join all physical owner continuations before exiting.
-async function _drain(owned){
+async function _drain(owned,fence){
+  fence.close();
   const pending=[...owned],errors=[];
   for(const record of pending){
     record.cancelled=true;
     try{record.batch.cancel();}catch(e){errors.push(e);}
   }
   await Promise.allSettled(pending.map(record=>record.driver));
+  if(!fence.retirementReady)errors.push(new Error('counted guest physical execution not retired'));
   if(errors.length)throw new AggregateError(errors,'counted guest retirement failure');
 }
 `;
 export function compileCountedReadyV1(source){
   const body=new Parser(source).parse();
-  return runtime+'\nexport async function main(){\nconst _owned=new Set();\ntry {\n'+body+'\n}finally{await _drain(_owned);}\n}\n';
+  return runtime+'\nexport async function main(){\nconst _owned=new Set();\nconst _fence=new _Fence({maxTickets:128});\ntry {\n'+body+'\n}finally{await _drain(_owned,_fence);}\n}\n';
 }
