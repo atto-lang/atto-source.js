@@ -277,6 +277,11 @@ function tokenize(source) {
       emit('sym',c,start); advance();
     } else if (c==='%') {
       fail("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",start);
+    } else if (c==='^' && !source.startsWith('^^',pos) &&
+        result.at(-1)?.value==='{' && ['?',':'].includes(result.at(-2)?.value)) {
+      // Only a direct ternary block's initial result marker is admitted.
+      // The parser still validates the complete arm; no infix XOR alias.
+      emit('sym',c,start); advance();
     } else if (c==='^') {
       fail(source.startsWith('^^',pos)
         ? "'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)"
@@ -668,8 +673,8 @@ class Parser {
         statements.push({kind:'local',name,init,localType});
       } else if(this.eat('if')) {
         const condition=this.expression();
-        // Canonical statement-only `if`; retain old ; do syntax.
-        if(!this.eat('then')){this.expect(';');this.expect('do');}
+        // Canonical imperative suffix do; retain legacy then and ; do.
+        if(!this.eat('do')&&!this.eat('then')){this.expect(';');this.expect('do');}
         const yes=this.statementSequence(['else','fi'],depth+1);
         const no=this.eat('else')?this.statementSequence(['fi'],depth+1):[];
         this.expect('fi');
@@ -859,9 +864,9 @@ class Parser {
         const op = this.peek().value;
         if (op==='?' && min<=1) {
           this.i++;
-          const yes=this.expression();
+          const yes=this.ternaryArm(0);
           this.expect(':');
-          const no=this.expression(1); // right associative, branches remain lazy
+          const no=this.ternaryArm(1); // right associative, branches remain lazy
           left={kind:'if',condition:left,yes,no};
           continue;
         }
@@ -885,6 +890,15 @@ class Parser {
       }
       return left;
     } finally {this.depth--;}
+  }
+  ternaryArm(min) {
+    if(!this.eat('{'))return this.expression(min);
+    if(!this.eat('return')&&!this.eat('^'))
+      fail('ternary block requires an explicit result; lexical prefixes are unsupported',this.peek(),'E_VALUE_ARM');
+    const value=this.expression();
+    this.eat(';');
+    if(!this.eat('}'))fail("single-result ternary block requires closing '}'",this.peek(),'E_VALUE_ARM');
+    return value;
   }
   primary() {
     if(this.eat('!')||this.eat('not'))return {kind:'not',inner:this.expression(30)};

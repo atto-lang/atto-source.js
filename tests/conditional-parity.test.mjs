@@ -127,3 +127,24 @@ test('CLI --program-v2 uses canonical conditionals and writes runnable ESM',asyn
     assert.equal(m.choose(false),2n);
   }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('explicit ternary blocks use lazy typed IR and do not return from the callable',async()=>{
+  const source='pub fnc choose(bool b): int {val int x=b ? { return 40; } : { ^ 5; }; return x+2;}';
+  const {choose}=await compiled(source);
+  assert.equal(choose(true),42n);
+  assert.equal(choose(false),7n);
+  const {lazy}=await compiled('pub fnc lazy(bool b): int {return b ? {^ 42;} : {return Integer.rem(1,0);};}');
+  assert.equal(lazy(true),42n);
+  assert.throws(()=>lazy(false),/ORES_I64_DIVISION_BY_ZERO/);
+  const {action}=await compiled('pub fnc action(bool b): int {if b do return 42; fi return 7;}');
+  assert.equal(action(true),42n);
+  assert.equal(action(false),7n);
+});
+
+test('direct braces cannot fall back to aggregate or implicit tail syntax',()=>{
+  for(const arm of ['{}','{status: 42}','{42}','{val int x=42; return x;}'])
+    assert.throws(()=>compileProgramV2('pub fnc bad(): int {return true ? '+arm+' : 7;}'),
+      e=>e.code==='E_VALUE_ARM');
+  assert.throws(()=>compileProgramV2('pub fnc bad(): int {return false ? 7 : {};}'),
+    e=>e.code==='E_VALUE_ARM');
+});
