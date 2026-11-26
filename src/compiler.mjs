@@ -292,18 +292,19 @@ class Parser {
     if(module)this.expect('end');
     if(this.peek().kind!=='eof')throw new CompileError('trailing tokens',this.peek());
     if(!functions.length)throw new CompileError('no functions');
-    const seen=new Set();
+    const resolved=new Map();
     for(const entry of exports){
-      if(seen.has(entry.name))throw new CompileError('duplicate export '+entry.name);
-      seen.add(entry.name);
       if(entry.kind!==null&&entry.kind!=='fnc')
         throw new CompileError('export kind mismatch '+entry.name);
       const family=functions.filter(f=>f.name===entry.name);
       if(!family.length)throw new CompileError('unbound export '+entry.name);
       if(entry.visibility==='package'&&family.some(f=>f.pub))
         throw new CompileError('package export conflicts with public declaration '+entry.name);
-      if(entry.visibility==='public')family.forEach(f=>{f.pub=true;});
+      const prior=resolved.get(entry.name);
+      if(prior&&prior.visibility!==entry.visibility)throw new CompileError('conflicting export visibility '+entry.name);
+      if(!prior)resolved.set(entry.name,{visibility:entry.visibility,family});
     }
+    for(const entry of resolved.values())if(entry.visibility==='public')entry.family.forEach(f=>{f.pub=true;});
     return functions;
   }
   expr(min=0){
