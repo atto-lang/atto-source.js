@@ -1059,24 +1059,35 @@ class Parser {
       this.expect('task');
       if(this.eat('<')){this.expect('int');this.expect('>');}
       this.expect('{');
-      const locals=[];
-      while(this.eat('val')){
-        this.expect('int');
-        const name=this.name();
-        if(GENERATOR_RESERVED.has(name)||name==='task'||name==='sync')
-          fail('E_TASK_LOCAL: reserved task-local name',this.peek());
+      const locals=[], declarations=new Map();
+      while(true){
+        let name,rebind=false;
+        if(this.peek().value==='val'||this.peek().value==='let'){
+          const mutable=this.eat('let');
+          if(!mutable)this.expect('val');
+          this.expect('int');
+          name=this.name();
+          if(GENERATOR_RESERVED.has(name)||name==='task'||name==='sync'||declarations.has(name))
+            fail('E_TASK_LOCAL: reserved or duplicate task-local name',this.peek());
+          declarations.set(name,mutable);
+        }else if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
+          name=this.name();
+          if(declarations.get(name)!==true)
+            fail('E_TASK_LOCAL_WRITE: only this task\'s mutable local may be assigned',this.peek());
+          rebind=true;
+        }else break;
         this.expect('=');
         const init=this.expression();
         this.expect(';');
-        locals.push({name,init});
-        if(locals.length>64)fail('E_TASK_LOCAL: local budget exceeded',this.peek());
+        locals.push({name,init,rebind});
+        if(locals.length>64)fail('E_TASK_LOCAL: local and write budget exceeded',this.peek());
       }
       if(!this.eat('return')&&!this.eat('^'))
         fail('E_TASK_RETURN_TYPE: scalar inline task requires a terminal int return',this.peek());
       let inner=this.expression();
       this.expect(';');this.expect('}');
       for(let i=locals.length-1;i>=0;i--)
-        inner={kind:'local',name:locals[i].name,init:locals[i].init,localType:'int',body:inner};
+        inner={kind:'local',name:locals[i].name,init:locals[i].init,localType:'int',taskRebind:locals[i].rebind,body:inner};
       return {kind:'inlineScalarTask',inner};
     }
     if(this.eat('await'))return {kind:'immediateAwait',inner:this.expression(30)};
@@ -1400,12 +1411,18 @@ function resolveProgram(parsed) {
         return inner;
       }
       case 'local': {
-        if(owner.ownerKind==='method'||owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))
+        // Only the inline parser can synthesize taskRebind, and only for
+        // a previously declared mutable local in the same task. Resolve the
+        // initializer against the prior version, then publish a fresh IR slot.
+        if(owner.ownerKind==='method'||owner.params.includes(expr.name)||
+           (!expr.taskRebind&&bindings.some(b=>b.name===expr.name))||
+           (expr.taskRebind&&bindings.findLast(b=>b.name===expr.name)?.type!=='int'))
           fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
         if(nextCaptureSlot>=MAX_TOKENS)fail('local slot budget exceeded');
         const slot=nextCaptureSlot++;
         const init=resolve(expr.init,owner,depth+1,bindings);
         const type=['inferredTrap','directionalInferred'].includes(expr.localType)?resolvedType(init,owner):expr.localType==='constInt'?'int':expr.localType;
+        if(expr.taskRebind&&resolvedType(init,owner)!=='int')fail('E_TASK_LOCAL_WRITE: int assignment required');
         if(expr.localType==='inferredTrap'&&!['trapResult','trapOptionResult'].includes(type))fail('inferred trap local requires Result');
         if(expr.localType==='directionalInferred'&&!['int','float','trapResult','trapOptionResult'].includes(type))fail('directional binding requires supported scalar or trapped Result');
         if(expr.localType==='constInt'){

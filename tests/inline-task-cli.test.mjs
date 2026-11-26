@@ -60,3 +60,24 @@ test('actual scalar CLI checks, publishes and executes task ESM; rejected input 
     assert.deepEqual((await readdir(dir)).sort(),['bad.atto','good.atto','good.mjs']);
   }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('task-local mutable int versions preserve lexical evaluation and snapshots',async()=>{
+  for(const source of [
+    'pub fnc main():int{return sync task<int>{let int x=1;x=40; x=x+2;return x;};}',
+    'pub fnc main():int{return sync task{let int x=20;val int before=x;x=22;return before+x;};}',
+    'pub fnc main():int{return sync task{let int x=40;x=sync task{let int y=x;y=y+1;return y;};return x+1;};}',
+    'pub fnc main():int{return sync task{let int x=20;x=x+1;return x;}+sync task{let int x=22;x=x-1;return x;};}',
+  ])assert.equal((await load(source)).main(),42n,source);
+  const m=await load('pub fnc main():int{return sync task{let int x=0;x=9223372036854775807+1;x=42;return x;};}');
+  assert.throws(()=>m.main(),/overflow/i);
+});
+test('mutable task writes cannot mutate immutable, outer or undeclared names',()=>{
+  for(const source of [
+    'pub fnc main():int{return sync task{val int x=1;x=42;return x;};}',
+    'pub fnc main():int{val int x=1;return sync task{x=42;return x;};}',
+    'pub fnc main():int{return sync task{let int x=1;return sync task{x=42;return x;};};}',
+    'pub fnc main():int{return sync task{x=42;return x;};}',
+    'pub fnc main():int{return sync task{let int x=0;x=true;return x;};}',
+    'pub fnc main():int{return sync task{let int x=0;let int x=42;return x;};}',
+  ])assert.throws(()=>compileAttoScalarV1(source),undefined,source);
+});
