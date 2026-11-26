@@ -422,6 +422,50 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           ...(named?{paramOrder:order}:{})
         };
       }
+      case 'scalarWhileMany': {
+        if(allowScalarWhile!==true||owner>=headers.length)fail('scalar loop requires strict source admission');
+        record(expr,['kind','states','condition','steps','body'],'scalar loop');
+        const scope=[...active],writable=new Set();
+        const slot=id=>{
+          if(!Number.isSafeInteger(id)||Object.is(id,-0)||id<0||id>=LIMIT_NODES||captureSlots[owner].has(id))
+            fail('invalid or repeated loop slot');
+          captureSlots[owner].add(id);return id;
+        };
+        const states=sequence(expr.states,64,'loop states').map(state=>{
+          record(state,['slot','init'],'loop state');
+          const init=node(state.init,owner,depth+1,'int',active);
+          const id=slot(state.slot);scope.push(id);writable.add(id);return {slot:id,init};
+        });
+        const steps=(items,outer,allowed,d)=>{
+          if(d>16)fail('loop statement depth');
+          const local=[...outer],mut=new Set(allowed);
+          return sequence(items,128,'loop statements').map(step=>{
+            if(++nodes>LIMIT_NODES)fail('expression complexity exceeded');
+            const kind=Object.getOwnPropertyDescriptor(step??{},'kind');
+            if(!kind||!Object.hasOwn(kind,'value'))fail('invalid loop statement');
+            if(kind.value==='set'){
+              record(step,['kind','slot','value'],'loop assignment');
+              if(!mut.has(step.slot)||!local.includes(step.slot))fail('assignment outside mutable loop scope');
+              return {kind:'set',slot:step.slot,value:node(step.value,owner,depth+d+1,'int',local)};
+            }
+            if(kind.value==='bind'){
+              record(step,['kind','slot','mutable','init'],'loop binding');
+              if(typeof step.mutable!=='boolean')fail('invalid loop binding mutability');
+              const init=node(step.init,owner,depth+d+1,'int',local),id=slot(step.slot);
+              local.push(id);if(step.mutable)mut.add(id);
+              return {kind:'bind',slot:id,mutable:step.mutable,init};
+            }
+            if(kind.value==='loop'){
+              record(step,['kind','condition','steps'],'nested loop');
+              return {kind:'loop',condition:node(step.condition,owner,depth+d+1,'bool',local),
+                steps:steps(step.steps,local,mut,d+1)};
+            }
+            fail('invalid loop statement kind');
+          });
+        };
+        return {kind:'scalarWhileMany',states,condition:node(expr.condition,owner,depth+1,'bool',scope),
+          steps:steps(expr.steps,scope,writable,1),body:node(expr.body,owner,depth+1,expected,scope)};
+      }
       case 'scalarWhile': {
         if(allowScalarWhile!==true)fail('scalar while requires strict source admission');
         // Checked i64 state only. This validates structural/type safety,
