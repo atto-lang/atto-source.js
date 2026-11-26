@@ -1,3 +1,4 @@
+import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
 import { transpile_result_int_parse_tokens } from './result-int-parse-compiler.mjs';
 // Deliberately a strict AttoLang subset, not the full frontend.
 // Unsupported syntax MUST fail closed. Never splice source into generated JS.
@@ -26,6 +27,9 @@ function tokenize(source) {
     const tail = source.slice(i);
     const match = /^(?:[\s\u0085]+|\/\/[^\r\n\u0085\u2028\u2029]*|\/\*[\s\S]*?\*\/)/.exec(tail);
     if (match) { i += match[0].length; continue; }
+    const contextualWord = /^[A-Za-z_][A-Za-z_0-9]*/.exec(tail)?.[0];
+    if (contextualWord && missingBangKeywordSeparator(contextualWord, tail.slice(contextualWord.length)))
+      throw new TranspileError('E_BANG_KEYWORD_WHITESPACE');
     // Only the four exceptional-control words may consume a contiguous bang.
     // Never widen arbitrary identifiers to name!; preserve != / !eq boundaries.
     // Full effects stay fail-closed in this trusted checked-Result subset.

@@ -1,3 +1,4 @@
+import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
 import {validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 import {TESTING_SCALAR_SOURCE, TESTING_SCALAR_EXPORTS} from './compiler-owned-testing-scalar.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
@@ -255,7 +256,9 @@ function tokenize(source) {
       if (word.length > 128) fail('identifier limit',start);
       // Never parse a contextual ownership bang as a macro or ordinary call;
       // this ESM compiler lacks typechecked move/borrow/share lowering.
-      if (['copy','take','borrow','share'].includes(word) && source[pos]==='!' &&
+      if (missingBangKeywordSeparator(word, source.slice(pos)))
+        fail('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+word+'!',start);
+      if (['copy','take','move','borrow','share'].includes(word) && source[pos]==='!' &&
           source[pos+1]!=='=' &&
           !(source.slice(pos+1,pos+3)==='eq' && !/[A-Za-z0-9_]/.test(source[pos+3]??'')))
         fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);

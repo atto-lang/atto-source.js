@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {compileToIR} from '../src/compiler.mjs';
 import {compileProgramV2} from '../src/program-v2.mjs';
 import {transpile_to_worker,TranspileError} from '../src/transpile-worker.mjs';
 
@@ -46,5 +47,16 @@ test('unsupported exceptional bang invocations are not silently reinterpreted',(
       error=>String(error).includes('E_BANG_KEYWORD_WHITESPACE'),keyword);
     assert.throws(()=>transpile_to_worker(source),
       error=>error instanceof TranspileError&&error.code==='E_BANG_KEYWORD_WHITESPACE',keyword);
+  }
+});
+
+test('all 16 complete keyword suffixes deny compact spellings in three actual JS frontends',()=>{
+  for(const keyword of ['trap!','throw!','raise!','panic!','copy!','copy!!','take!','move!',
+    'borrow!','share!','pin!','drop!','pipe!','rpipe!','stop!','expand!']){
+    for(const tail of ['value','(42)','/* gap */ value','','\u00a0value']){
+      const source='pub fnc main():int{return '+keyword+tail+';}';
+      for(const compile of [compileToIR,compileProgramV2,transpile_to_worker])
+        assert.throws(()=>compile(source),/E_BANG_KEYWORD_WHITESPACE/,keyword+tail);
+    }
   }
 });
