@@ -228,7 +228,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
     if(paramTypes.includes('error')&&(f.pub||params.includes('Error')||seenModules.has('Error')))
       fail('E_ERROR_BINDING: Error parameters require private callable and unshadowed core Error');
     const returnType=typed?f.returnType:'int';
-    if(returnType!=='void'&&!types.includes(returnType))fail('unsupported function return type');
+    if(returnType!=='void'&&!types.includes(returnType)&&!(returnType==='result<int,string>'&&!f.pub))fail('unsupported function return type');
     if(returnType==='void'&&f.body!==null)fail('void function body must be null');
     if(returnType!=='void'&&(f.body===null||typeof f.body!=='object'))
       fail('nonvoid function requires an expression body');
@@ -679,6 +679,9 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           'Result.expect':[['result<int,int>','string'],'int'],
           'Result.ok':[['int'],'result<int,int>'],
           'Result.err':[['int'],'result<int,int>'],
+          'Result.stringOk':[['int'],'result<int,string>'],
+          'Result.stringErr':[['string'],'result<int,string>'],
+          'Result.stringUnwrap':[['result<int,string>'],'int'],
           'Result.is_ok':[['result<int,int>'],'bool'],
           'Result.unwrap_or':[['result<int,int>','int'],'int'],
           'Result.unwrap_err_or':[['result<int,int>','int'],'int']
@@ -883,7 +886,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
       case 'rethrow':case 'throwError':return true;
       case 'call':case 'namedCall':return n.args.some(ordinary)||escapes(n.target);
       case 'trapMethod':case 'trapOptionMethod':return n.name==='unwrap'||ordinary(n.receiver);
-      case 'intrinsic':return ['Option.unwrap','Result.unwrap'].includes(n.name)||n.args.some(ordinary);
+      case 'intrinsic':return ['Option.unwrap','Result.unwrap','Result.stringUnwrap'].includes(n.name)||n.args.some(ordinary);
       case 'methodCall':case 'namedMethodCall':return true; // no method effect summaries yet
       case 'binary':return ['+','-','*','/','%','mod','<<','>>','<<<','>>>','ashr'].includes(n.op)||ordinary(n.left)||ordinary(n.right);
       case 'neg':case 'i32Check':case 'refinementCheck':return true;

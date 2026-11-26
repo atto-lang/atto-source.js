@@ -463,8 +463,9 @@ class Parser {
       return 'option<int>';
     }
     if(this.eat('Result')){
-      this.expect('<');this.expect('int');this.expect(',');this.expect('int');this.expect('>');
-      return 'result<int,int>';
+      this.expect('<');this.expect('int');this.expect(',');
+      if(this.eat('String')){this.expect('>');return 'result<int,string>';}
+      this.expect('int');this.expect('>');return 'result<int,int>';
     }
     fail('unsupported scalar type (int, bool, Symbol, Option<int>, Result<int,int>)',this.peek());
   }
@@ -1020,6 +1021,11 @@ class Parser {
       while (true) {
         const token=this.peek();
         let op=token.value, width=1;
+        if(op==='.' && ['unwrap','is_none','is_some'].includes(this.tokens[this.i+1]?.value)){
+          if(++stages>128)fail('postfix chain exceeds 128 stages',token);
+          this.i++;const name=this.name();this.expect('(');
+          left={kind:'methodCall',receiver:left,name,args:this.argumentsAfterOpen()};continue;
+        }
         if(op==='|>' && min===0){
           this.i++;
           if(++stages>128)fail('pipeline exceeds 128 stages',token);
@@ -1428,6 +1434,7 @@ function resolveProgram(parsed) {
           'Option.some':'option<int>','Option.none':'option<int>',
           'Option.is_some':'bool','Option.unwrap_or':'int','Option.unwrap':'int','Result.unwrap':'int','Option.expect':'int','Result.expect':'int',
           'Result.ok':'result<int,int>','Result.err':'result<int,int>',
+          'Result.stringOk':'result<int,string>','Result.stringErr':'result<int,string>','Result.stringUnwrap':'int',
           'Result.is_ok':'bool','Result.unwrap_or':'int','Result.unwrap_err_or':'int'
         };
         return results[expr.name];
@@ -1562,6 +1569,14 @@ function resolveProgram(parsed) {
           fail('nested method calls inside method body unsupported in convergence slice');
         const receiver=resolve(expr.receiver,owner,depth+1,bindings);
         const receiverType=resolvedType(receiver,owner);
+        if(['option<int>','result<int,int>','result<int,string>'].includes(receiverType)){
+          if(expr.args.length!==0)fail('checked ADT method requires zero arguments');
+          if(expr.name==='unwrap')return {kind:'intrinsic',name:receiverType==='option<int>'?'Option.unwrap':receiverType==='result<int,string>'?'Result.stringUnwrap':'Result.unwrap',args:[receiver]};
+          if(receiverType==='option<int>'&&['is_some','is_none'].includes(expr.name)){
+            const test={kind:'intrinsic',name:'Option.is_some',args:[receiver]};return expr.name==='is_none'?{kind:'not',inner:test}:test;
+          }
+          fail('unsupported checked ADT method');
+        }
         if(!receiverType.startsWith('class:'))fail('method receiver is not a class value');
         const classIndex=Number(receiverType.slice(6));
         const table=classTables[classIndex],cls=classes[classIndex];
@@ -1685,7 +1700,8 @@ function resolveProgram(parsed) {
           if(expr.args.some(a=>a.name!==null))
             fail('named arguments are unsupported for portable intrinsic '+key);
           if(expr.args.length!==sig[0])fail('intrinsic arity mismatch '+key);
-          return {kind:'intrinsic',name:key,args:expr.args.map(a=>resolve(a.expr,owner,depth+1,bindings))};
+          const typedKey=owner.returnType==='result<int,string>'&&['Result.ok','Result.err'].includes(key)?(key==='Result.ok'?'Result.stringOk':'Result.stringErr'):key;
+          return {kind:'intrinsic',name:typedKey,args:expr.args.map(a=>resolve(a.expr,owner,depth+1,bindings))};
         }
         if(owner.ownerKind==='method')
           fail('function calls inside method body unsupported in convergence slice');
@@ -1909,7 +1925,7 @@ function emitProgram(program) {
         const funcs={
           'Option.some':'_some','Option.none':'_none',
           'Option.is_some':'_is_some','Option.unwrap_or':'_option_or','Option.unwrap':'_optionUnwrap','Result.unwrap':'_resultUnwrap','Option.expect':'_optionExpect','Result.expect':'_resultExpect',
-          'Result.ok':'_ok','Result.err':'_err',
+          'Result.ok':'_ok','Result.err':'_err','Result.stringOk':'_stringOk','Result.stringErr':'_stringErr','Result.stringUnwrap':'_stringResultUnwrap',
           'Result.is_ok':'_is_ok','Result.unwrap_or':'_result_or',
           'Result.unwrap_err_or':'_error_or'
         };
@@ -2021,7 +2037,7 @@ function emitProgram(program) {
     }
   }
   function containsCheckedUnwrap(value){
-    return !!value&&typeof value==='object'&&((value.kind==='intrinsic'&&['Option.unwrap','Result.unwrap','Option.expect','Result.expect'].includes(value.name))||Object.values(value).some(containsCheckedUnwrap));
+    return !!value&&typeof value==='object'&&((value.kind==='intrinsic'&&['Option.unwrap','Result.unwrap','Result.stringUnwrap','Option.expect','Result.expect'].includes(value.name))||Object.values(value).some(containsCheckedUnwrap));
   }
   const hasCheckedUnwrap=containsCheckedUnwrap(program);
   if(program.functions.some(fn=>['option<int>','result<int,int>'].includes(fn.returnType)||
@@ -2050,11 +2066,15 @@ function emitProgram(program) {
 
     );
   }
+  if(program.functions.some(fn=>fn.returnType==='result<int,string>'))out.push(
+    'function _stringOk(v){return _tag("Ok",_check(v));}',
+    'function _stringErr(v){if(typeof v!=="string")throw new TypeError("typed Result string required");return _tag("Err",v);}'
+  );
   // Validated IR is bounded plain data. Emit private trap helpers only for
   // programs that actually use trap; keep ordinary ADT artifact overhead low.
   function containsTrap(value){
     if(!value||typeof value!=='object')return false;
-    if(['trap','trapMethod','trapOptionMethod'].includes(value.kind)||(value.kind==='intrinsic'&&['Option.unwrap','Result.unwrap','Option.expect','Result.expect'].includes(value.name))||(value.kind==='adtMatch'&&value.adt==='trapResult'))return true;
+    if(['trap','trapMethod','trapOptionMethod'].includes(value.kind)||(value.kind==='intrinsic'&&['Option.unwrap','Result.unwrap','Result.stringUnwrap','Option.expect','Result.expect'].includes(value.name))||(value.kind==='adtMatch'&&value.adt==='trapResult'))return true;
     return Object.values(value).some(containsTrap);
   }
   function containsGuestEffect(value){
@@ -2077,6 +2097,7 @@ function emitProgram(program) {
       'function _unwrapFailure(name,message,original){const e=new Error(message,{cause:original});Object.defineProperty(e,"name",{value:name});_checkedUnwrapBrand.add(e);throw Object.freeze(e);}',
       'function _optionUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Option unwrap carrier");const x=_checkoption(v);if(x.kind==="Some")return x.value;return _unwrapFailure("OptionUnwrapError","cannot unwrap None",undefined);}',
       'function _resultUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Result unwrap carrier");const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",x.value);}',
+      ...(program.functions.some(fn=>fn.returnType==='result<int,string>')?['function _stringResultUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Result unwrap carrier");if(v.kind==="Ok")return _check(v.value);if(v.kind!=="Err"||typeof v.value!=="string")throw new TypeError("invalid typed Result payload");return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",v.value);}']:[]),
       'function _expectPanic(message,cause){if(typeof message!=="string")throw new TypeError("expect message must be string");const e=new Error(message,{cause});Object.defineProperty(e,"effect",{value:"panic",enumerable:true});throw Object.freeze(e);}',
       'function _optionExpect(v,message){if(!_tagBrand.has(v))throw new TypeError("untrusted Option expect carrier");if(typeof message!=="string")throw new TypeError("expect message must be string");const x=_checkoption(v);if(x.kind==="Some")return x.value;return _expectPanic(message,undefined);}',
       'function _resultExpect(v,message){if(!_tagBrand.has(v))throw new TypeError("untrusted Result expect carrier");if(typeof message!=="string")throw new TypeError("expect message must be string");const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _expectPanic(message,x.value);}'
