@@ -3,6 +3,9 @@ on:
   pull_request:
     paths:
       - 'src/scalar-package-interface.mjs'
+      - 'src/compiler.mjs'
+      - 'src/scalar-consumer-link.node.mjs'
+      - 'tests/scalar-consumer-link.test.mjs'
       - 'src/build-package.mjs'
       - 'src/package-admission.mjs'
       - 'src/load-trusted-package.node.mjs'
@@ -29,4 +32,4 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           git rev-parse HEAD HEAD^{tree}
           node --version
-          node --test tests/scalar-package-loader-fixtures.test.mjs tests/scalar-package-linkage-v2.test.mjs tests/package-admission-security.test.mjs tests/compiler.test.mjs
+          node --test tests/scalar-consumer-link.test.mjs tests/scalar-package-loader-fixtures.test.mjs tests/scalar-package-linkage-v2.test.mjs tests/package-admission-security.test.mjs tests/compiler.test.mjs
