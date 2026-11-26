@@ -70,8 +70,12 @@ test('Worker Future preflight ignores comments and preserves actual emitted scal
  assert.equal((await (await mod.create_tenant({tenant:'future-probe',generation:1})).on_message()).value,'42');
 });
 
-test('Worker rejects sealed Future nominal redefinitions in additional declaration forms',()=>{
- for(const kind of ['enum','contract','interface','trait','type','alias','namespace','module','record'])
-  for(const name of ['Future','TaskFuture','ActorFuture'])
-   assert.throws(()=>transpile_to_worker('define '+kind+' '+name+' as end'),e=>e instanceof TranspileError&&e.code==='E_RESERVED',kind+' '+name);
+test('both frontends reject sealed Future nominal redefinitions in additional declaration forms',()=>{
+ for(const kind of ['class','actor','struct','enum','contract','interface','trait','type','alias','namespace','module','record'])
+  for(const name of ['Future','TaskFuture','ActorFuture']){
+   const source='define '+kind+' '+name+' as end';
+   assert.throws(()=>compileToIR(source),/error: E_RESERVED:/,kind+' '+name);
+   assert.throws(()=>compile(source),/error: E_RESERVED:/,kind+' '+name);
+   assert.throws(()=>transpile_to_worker(source),e=>e instanceof TranspileError&&e.code==='E_RESERVED',kind+' '+name);
+  }
 });
