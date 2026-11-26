@@ -9,6 +9,8 @@ import {compile,compileToIR} from '../src/compiler.mjs';
 const program=e=>'pub fnc main(): int { return '+e+'; }';
 const positives=[
   ['Pair.of("count",42).second',42n],
+  ['Pair.of("a",1+2).second',3n],
+  ['Pair.of<int>("a",(10+11)*2).second',42n],
   ['Pair.of<int>("count",42).second',42n],
   ['Pair.of<string,int>("count",42).second',42n],
   ['Pair.of("first-name",42).second',42n],
@@ -31,8 +33,10 @@ const negatives=[
   ['Pair.of("a",5)','E_PRODUCT_ESCAPE_UNSUPPORTED'],
   ['Pair.of("a",5).first','E_PRODUCT_PROJECTION_UNSUPPORTED'],
   ['Pair.of("a",5).value','E_PRODUCT_PROJECTION_UNSUPPORTED'],
+  ['Pair.of("a",missing).second','unknown'],
+  ['Pair.of("a",true).second','unknown'],
+  ['Entry.of(1,1+2).value','expected )'],
   ['Entry.of(1,2).second','E_PRODUCT_PROJECTION_UNSUPPORTED'],
-  ['Pair.of("a",1+2).second','expected )'],
   ['Pair.of("a",9223372036854775808).second','integer outside signed i64'],
   ['Pair.of("a",5,6).second','expected )'],
   ['Pair.of("a").second','expected ,'],
@@ -63,4 +67,19 @@ test('CLI rejects invalid Pair without publishing JS',async()=>{
     assert.match(result.stderr,/E_PAIR_KEY_TYPE/);
     await assert.rejects(readFile(output),{code:'ENOENT'});
   }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('Pair second preserves dynamic checked scalar calls and parameters',async()=>{
+  const src='fnc twice(int x): int { return x*2; } pub fnc main(int n): int { return Pair.of("key",twice(n)).second; }';
+  const js=compile(src);
+  const module=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+  assert.equal(module.main(21n),42n);
+  assert.equal(module.main(-3n),-6n);
+});
+
+test('Pair second preserves trapping scalar expression instead of dropping it',async()=>{
+  const src=program('Pair.of("key",Integer.mod(1,0)).second');
+  const js=compile(src);
+  const module=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+  assert.throws(()=>module.main(),/DIVISION_BY_ZERO/);
 });
