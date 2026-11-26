@@ -1485,10 +1485,18 @@ function emitProgram(program) {
       case 'symbol':return '_symbol('+JSON.stringify(expr.value)+')';
       case 'bool': return expr.value?'true':'false';
       case 'param':return '_p'+expr.index;
+      case 'scalarWhile': {
+        const v='_v'+expr.slot;
+        return '(('+v+')=>{while('+emitExpr(expr.condition,depth+1)+'){'+v+'='+emitExpr(expr.update,depth+1)+';}return '+emitExpr(expr.body,depth+1)+';})('+emitExpr(expr.init,depth+1)+')';
+      }
       case 'capture':case 'floatCapture':case 'trapCapture':case 'trapOptionCapture':return '_v'+expr.slot;
       case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
+      case 'i32Check':
+        return '((v)=>{_check(v);if(v<-2147483648n||v>2147483647n){const e=new RangeError("E_I32_OVERFLOW: checked signed 32-bit overflow");Object.defineProperty(e,"code",{value:"i32_overflow",enumerable:true});throw Object.freeze(e);}return v;})('+emitExpr(expr.inner,depth+1)+')';
+      case 'refinementCheck':
+        return '((v)=>{_check(v);if(v<'+expr.minimum+'n||v>'+expr.maximum+'n){const e=new RangeError("E_REFINEMENT_CHECK_FAILED: checked refinement violated");Object.defineProperty(e,"code",{value:"refinement_violation",enumerable:true});throw Object.freeze(e);}return v;})('+emitExpr(expr.inner,depth+1)+')';
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
       case 'trap':return '_trap(()=>('+emitExpr(expr.inner,depth+1)+'),'+JSON.stringify(expr.operandType)+')';
       case 'trapMethod':case 'trapOptionMethod':return '_trapMethod('+JSON.stringify(expr.name)+','+emitExpr(expr.receiver,depth+1)+','+(expr.kind==='trapOptionMethod')+')';
@@ -1604,13 +1612,14 @@ function emitProgram(program) {
       case 'call':case 'namedCall':case 'intrinsic':return expr.args.some(usesSymbol);
       case 'binary':case 'floatBin':case 'compare':case 'numericCompare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
+      case 'scalarWhile':return [expr.init,expr.condition,expr.update,expr.body].some(usesSymbol);
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
       case 'tryCatch':return usesSymbol(expr.body)||usesSymbol(expr.handler);
       case 'seqVoidCall':return usesSymbol(expr.call)||usesSymbol(expr.value);
       case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
       case 'trap':return usesSymbol(expr.inner);
       case 'trapMethod':case 'trapOptionMethod':return usesSymbol(expr.receiver);
-      case 'neg':case 'floatNeg':case 'not':return usesSymbol(expr.inner);
+      case 'i32Check':case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesSymbol(expr.inner);
       case 'match':case 'adtMatch':return usesSymbol(expr.subject)||
         expr.arms.some(arm=>usesSymbol(arm.body));
       default:return false;
@@ -1646,12 +1655,13 @@ function emitProgram(program) {
       case 'call':case 'namedCall':return expr.args.some(usesPortableRuntime);
       case 'binary':case 'floatBin':case 'compare':case 'numericCompare':case 'symbolCompare':
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
+      case 'scalarWhile':return [expr.init,expr.condition,expr.update,expr.body].some(usesPortableRuntime);
       case 'if':return usesPortableRuntime(expr.condition)||
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
       case 'tryCatch':return usesPortableRuntime(expr.body)||usesPortableRuntime(expr.handler);
       case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
       case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
-      case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
+      case 'i32Check':case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
       case 'match':return usesPortableRuntime(expr.subject)||
         expr.arms.some(arm=>usesPortableRuntime(arm.body));
       case 'adtMatch':return true;
@@ -1912,6 +1922,20 @@ export function compileToProgramIRV2(source) {
     ...program
   });
 }
+// Strict verification admits only the explicitly checked quantity frontend.
+ // An unverified ordinary source path must never be used as a fallback.
+export function compileVerifiedStrict(source) {
+  const tokens=tokenize(source);
+  rejectExecutionDomains(tokens,fail);
+  rejectUnsupportedHttpActors(tokens,fail);
+  rejectUnsupportedStaticSelect(tokens);
+  rejectUnsupportedTrapEffect(tokens);
+  const quantity=lowerVerifiedQuantitySource(tokens,fail,true);
+  if(quantity===null)fail('E_VERIFY_UNSUPPORTED: strict profile requires typed quantity source',tokens[0]);
+  return emitProgram(validateProgramIRV2({
+    schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,integerModel:PROGRAM_IR_INT_MODEL,...quantity
+  },true));
+}
 export function compileProgramIRV2(ir) {
   return emitProgram(validateProgramIRV2(ir));
 }
@@ -1936,7 +1960,7 @@ export function compileAttoScalarV1(source) {
     switch(expr.kind){
       case 'int':case 'param':case 'capture':return;
       case 'local':visit(expr.init);visit(expr.body);return;
-      case 'neg':return visit(expr.inner);
+      case 'i32Check':case 'refinementCheck':case 'neg':return visit(expr.inner);
       case 'binary':
         if(!['+','-','*','/','%','mod','^','&','|','<<<','>>>'].includes(expr.op))
           fail('AttoLang scalar-v1 removed or unsupported operator '+expr.op);
