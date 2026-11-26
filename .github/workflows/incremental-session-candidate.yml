@@ -3,6 +3,13 @@ on:
   pull_request:
     paths:
       - 'src/compiler.mjs'
+      - 'src/scalar-ir.mjs'
+      - 'src/execution-domain-admission.mjs'
+      - 'src/http-actor-admission.mjs'
+      - 'src/string-literal-syntax.mjs'
+      - 'src/core-future-ownership.mjs'
+      - 'src/bang-keyword-separator.mjs'
+      - 'tests/compiler.test.mjs'
       - 'tests/incremental-session.test.mjs'
       - 'tests/compiler-cache-envelope.test.mjs'
       - 'src/compiler-cache-envelope.node.mjs'

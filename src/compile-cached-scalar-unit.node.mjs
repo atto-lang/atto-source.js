@@ -9,6 +9,7 @@ import {TrustedArtifactStore} from './compiler-artifact-store.node.mjs';
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const files=Object.freeze(['compiler.mjs','scalar-ir.mjs','execution-domain-admission.mjs',
  'http-actor-admission.mjs','string-literal-syntax.mjs','core-future-ownership.mjs',
+ 'bang-keyword-separator.mjs',
  'compiler-cache-envelope.node.mjs','compiler-artifact-store.node.mjs','compile-cached-scalar-unit.node.mjs'].sort());
 // The list is deliberately explicit; CI must audit new compiler imports.
 // A mutable installation is outside this API's trust model.

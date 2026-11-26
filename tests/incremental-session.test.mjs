@@ -60,3 +60,25 @@ test('persistent compiler output executes across process restart',async()=>{
  console.log('PERSISTENT_JS|cold=42|warm-child=42|edit=43|rollback|corruption-and-links-denied');
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('64-function edit regenerates one fragment with clean-build equivalence',async()=>{
+ const units=Array.from({length:63},(_,i)=>`fnc helper_${i}(int x): int { return x+${i}; }`);
+ const source=units.join('\n')+'\npub fnc main(): int { return helper_41(1); }';
+ const s=new IncrementalSession();
+ const cold=s.build(source,{cold:true});
+ assert.deepEqual([cold.emitted,cold.reused],[64,0]);
+ assert.equal(cold.code,compile(source));
+ assert.equal(await run(cold.code),42n);
+ const warm=s.build(source);
+ assert.deepEqual([warm.emitted,warm.reused],[0,64]);
+ assert.equal(warm.code,cold.code);
+ const edited=source.replace('helper_41(int x): int { return x+41; }','helper_41(int x): int { return x+42; }');
+ assert.notEqual(edited,source);
+ const next=s.build(edited);
+ assert.deepEqual([next.emitted,next.reused],[1,63]);
+ assert.equal(next.code,compile(edited));
+ assert.equal(await run(next.code),43n);
+ const rebuilt=s.build(edited,{cold:true});
+ assert.deepEqual([rebuilt.emitted,rebuilt.reused],[64,0]);
+ assert.equal(rebuilt.code,next.code);
+});
