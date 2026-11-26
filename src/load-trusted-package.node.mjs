@@ -20,8 +20,11 @@ export async function loadTrustedNodePackage(options){
     throw new PackageAdmissionError('module exports do not match reviewed manifest');
   }
   for(const entry of declared){
-    if(typeof Object.getOwnPropertyDescriptor(namespace,entry)?.value!=='function')
+    const fn=Object.getOwnPropertyDescriptor(namespace,entry)?.value;
+    if(typeof fn!=='function')
       throw new PackageAdmissionError('reviewed entrypoint is not a function');
+    if(manifest.schemaVersion===2&&fn.length!==manifest.publicInterface.find(e=>e.name===entry).params.length)
+      throw new PackageAdmissionError('reviewed entrypoint arity differs from manifest');
   }
   return Object.freeze({
     manifest,
