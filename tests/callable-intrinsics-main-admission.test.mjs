@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {compile, compileToIR, IncrementalSession} from '../src/compiler.mjs';
+import {compile, compileToIR, IncrementalSession, CompileError} from '../src/compiler.mjs';
 
 const source = 'pub fnc main(): int { const fnc f = |int x| : int -> x + 1; return f.apply((41,)); }';
 
@@ -37,4 +37,15 @@ test('ordinary scalar and incremental entrypoints remain equivalent', () => {
   assert.equal(new IncrementalSession().build(ordinary).code, compile(ordinary));
   assert.equal(compile('// literal | in comment\n'+ordinary), compile(ordinary));
   assert.throws(() => compile('pub fnc main(): int { return 40 | 2; }'), /error:/);
+});
+
+test('unrelated bar syntax retains the scalar compiler diagnostic type', () => {
+  for (const text of [
+    'pub fnc main(): int { this.handle_state(critical-write |s| -> { s.counter += 1; }); return 42; }',
+    'pub fnc main(): int { this.handle_state(critical-read |s| -> { s.counter; }); return 42; }',
+    'pub fnc main(): int { return 40 | 2; }',
+  ]) {
+    for (const entry of [compile, compileToIR])
+      assert.throws(() => entry(text), error => error instanceof CompileError && /^error: /.test(error.message), text);
+  }
 });
