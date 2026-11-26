@@ -193,8 +193,13 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
       fail('function: expected plain data object');
     const keys=Reflect.ownKeys(f);
     const typed=keys.includes('paramTypes')||keys.includes('returnType');
-    record(f,typed?['module','name','kind','pub','params','body','paramTypes','returnType']:
-      ['module','name','kind','pub','params','body'],'function');
+    const explicitThrows=keys.includes('throws');
+    const fields=typed?['module','name','kind','pub','params','body','paramTypes','returnType']:
+      ['module','name','kind','pub','params','body'];
+    if(explicitThrows)fields.push('throws');
+    record(f,fields,'function');
+    const throws=explicitThrows?sequence(f.throws,1,'ordinary throws row'):null;
+    if(throws!==null&&throws.some(t=>t!=='Error'))fail('E_EFFECT: only Error is admitted in this throws profile');
     const module=f.module===null?null:ident(f.module,'owner module');
     if(module!==null && !seenModules.has(module))fail('missing owner module '+module);
     const name=ident(f.name,'function name');
@@ -223,7 +228,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
     slots.add(slot);
     if(module===null&&f.pub)exportNames.add(name);
     return {module,name,kind:f.kind,pub:f.pub,params,
-      ...(typed?{paramTypes:[...paramTypes],returnType}: {})};
+      ...(typed?{paramTypes:[...paramTypes],returnType}: {}),...(explicitThrows?{throws:[...throws]}:{})};
   });
   const generatorHeaders=sourceGenerators.map(gen=>{
     record(gen,['module','name','pub','params','paramTypes','elementType','yields'],'generator');
@@ -790,6 +795,45 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
     color[i]=1;for(const j of graph[i])visit(j);color[i]=2;
   }
   functions.forEach((_,i)=>visit(i));
+  // Conservative ordinary guest effect analysis, independent of source AST.
+  // The existing closed IR has no recursion. Memoization bounds transitive
+  // analysis; legacy declarations are inferred, not treated as pure.
+  const effects=new Map(),visiting=new Set();
+  function escapes(i){
+    if(effects.has(i))return effects.get(i);
+    if(visiting.has(i))fail('E_EFFECT: recursive effect graph unsupported');
+    visiting.add(i);
+    const fn=functions[i];
+    // Checked integer parameter admission can signal arithmetic overflow.
+    // For well-typed guest arguments this check cannot fail; do not treat
+    // malformed host arguments as a guest source effect.
+    const result=ordinary(fn.body);
+    visiting.delete(i);effects.set(i,result);return result;
+  }
+  function ordinary(n){
+    if(n===null||typeof n!=='object')return false;
+    switch(n.kind){
+      case 'trap':return false;
+      case 'tryCatch':return ordinary(n.handler);
+      case 'guestEffect':return n.effect==='throw';
+      case 'rethrow':return true;
+      case 'call':case 'namedCall':return n.args.some(ordinary)||escapes(n.target);
+      case 'trapMethod':case 'trapOptionMethod':return n.name==='unwrap'||ordinary(n.receiver);
+      case 'intrinsic':return ['Option.unwrap','Result.unwrap'].includes(n.name)||n.args.some(ordinary);
+      case 'methodCall':case 'namedMethodCall':return true; // no method effect summaries yet
+      case 'binary':return ['+','-','*','/','%','mod','<<','>>','<<<','>>>'].includes(n.op)||ordinary(n.left)||ordinary(n.right);
+      case 'neg':case 'i32Check':case 'refinementCheck':return true;
+      default:return Object.values(n).some(v=>Array.isArray(v)?v.some(ordinary):ordinary(v));
+    }
+  }
+  for(let i=0;i<functions.length;i++){
+    const fn=functions[i];
+    if(fn.throws?.length===0&&escapes(i))
+      fail('E_EFFECT: undeclared escaping ordinary throw in '+fn.name);
+    // A declared Error must not resolve to a shadowed nominal type.
+    if(fn.throws?.length&&([...headers,...generatorHeaders,...classHeaders].some(h=>h.name==='Error')||seenModules.has('Error')||fn.params.includes('Error')))
+      fail('E_EFFECT: throws(Error) requires unshadowed core Error');
+  }
   return {
     schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,
     integerModel:PROGRAM_IR_INT_MODEL,sourceNamespace:namespace,
