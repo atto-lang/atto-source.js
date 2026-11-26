@@ -1053,7 +1053,8 @@ class Parser {
     if(typed){this.expect('int');this.expect('>');}
     const subject=injectedSubject??this.expression();
     const hasOver=this.eat('over');
-    if((typed||injectedSubject!==null)&&!hasOver)fail('typed or pipeline match requires over',this.peek());
+    if(injectedSubject!==null&&!hasOver)fail('pipeline match requires over and takes its subject from the left-hand value',this.peek());
+    if(typed&&!hasOver)fail('typed scalar match requires over',this.peek());
     const braced=this.eat('{');
     const arms=[],seen=new Set();
     let family=null,wildcard=false;
@@ -1124,7 +1125,7 @@ class Parser {
       if(arms.length!==2||required.some(tag=>!tags.has(tag)))
         fail('non-exhaustive ADT match; expected '+required.join('/'));
       return {kind:'adtMatch',adt:option?'option<int>':'result<int,int>',
-        subject,arms:arms.map(arm=>({tag:arm.tag,bind:arm.bind,body:arm.body}))};
+        typed,subject,arms:arms.map(arm=>({tag:arm.tag,bind:arm.bind,body:arm.body}))};
     }
     if(!wildcard)fail('scalar int match requires exhaustive wildcard/else');
     return {kind:'match',subject,arms:arms.map(arm=>({value:arm.value,body:arm.body}))};
@@ -1426,6 +1427,8 @@ function resolveProgram(parsed) {
           }
           return {tag:arm.tag,slot,body:resolve(arm.body,owner,depth+1,scope)};
         });
+        if(expr.typed&&arms.some(arm=>resolvedType(arm.body,owner)!=='int'))
+          fail('explicit match<int> requires integer arm results');
         return {kind:'adtMatch',adt:expr.adt,subject,arms};
       }
       default: fail('unsupported expression node');
