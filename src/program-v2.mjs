@@ -270,7 +270,7 @@ function tokenize(source) {
         {
           if(!/[ \t\r\n\v\f]/.test(source[pos+1]??''))
             fail('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+word+'!',start);
-          if(word==='trap'&&!['=','|>'].includes(result.at(-1)?.value))
+          if(word==='trap'&&!['=','|>','return'].includes(result.at(-1)?.value))
             fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: typed guest effects and Result lowering required',start);
           if(word!=='trap'&&!['{',';','then','else','do'].includes(result.at(-1)?.value))
             fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: exceptional control must be a statement',start);
@@ -325,6 +325,8 @@ function rejectUnsupportedTrapEffect(tokens) {
       // All other contexts retain the existing fail-closed admission.
       if(tokens[i-3]?.value==='val'&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='=')continue;
       if(token.value==='trap!'&&tokens[i-1]?.value==='|>')continue;
+      if(tokens[i-1]?.value==='return'&&tokens[i+1]?.kind==='id'&&
+         tokens.slice(i+2,i+10).map(t=>t.value).join(' ')==='. unwrap ( ) |> match < int'&&tokens[i+10]?.value==='>'&&tokens[i+11]?.value==='over')continue;
       fail('trap requires verified ordinary-throw effect and cleanup lowering; Option/Result values alone are not a trap boundary',token);
     }
   }
@@ -1055,6 +1057,7 @@ class Parser {
     return value;
   }
   primary() {
+    if(this.eat('trap!')||this.eat('trap'))return {kind:'trap',inner:this.expression(30)};
     if(this.eat('await'))return {kind:'immediateAwait',inner:this.expression(30)};
     if(this.eat('!')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
     if(this.eat('new')){
@@ -1157,7 +1160,9 @@ class Parser {
           if(tag==='None') {
             if(this.peek().value==='(')fail('None has no payload',this.peek());
           } else {
-            this.expect('(');bind=this.name();this.expect(')');
+            this.expect('(');
+            if(tag==='Err'&&this.eat(')'))bind=null;
+            else {bind=this.name();this.expect(')');}
             if(bind==='_'||['None','Some','Ok','Err'].includes(bind))
               fail('unsupported ADT payload binding name',at);
           }
@@ -1174,6 +1179,7 @@ class Parser {
       const key=tag==='integer'?'int:'+value:tag;
       if(seen.has(key))fail('duplicate match pattern '+key);
       seen.add(key);
+      if(typed&&this.eat(':'))this.expect('int');
       const arrow=this.eat('->');
       if(!arrow&&(canonicalDefault||this.peek().value!=='{'))
         fail("match expression arms require '->'",this.peek());
@@ -1291,7 +1297,7 @@ function resolveProgram(parsed) {
       case 'intrinsic': {
         const results={
           'Option.some':'option<int>','Option.none':'option<int>',
-          'Option.is_some':'bool','Option.unwrap_or':'int',
+          'Option.is_some':'bool','Option.unwrap_or':'int','Option.unwrap':'int','Result.unwrap':'int',
           'Result.ok':'result<int,int>','Result.err':'result<int,int>',
           'Result.is_ok':'bool','Result.unwrap_or':'int','Result.unwrap_err_or':'int'
         };
@@ -1486,6 +1492,13 @@ function resolveProgram(parsed) {
           const option=local.type==='trapOptionResult';
           return {kind:option?'trapOptionMethod':'trapMethod',name:expr.name,receiver:{kind:option?'trapOptionCapture':'trapCapture',slot:local.slot}};
         }
+        if(expr.qualifier!==null&&owner.params.includes(expr.qualifier)&&expr.name==='unwrap'){
+          const index=owner.params.indexOf(expr.qualifier), type=owner.paramTypes?.[index];
+          if(expr.args.length!==0||!['option<int>','result<int,int>'].includes(type))
+            fail('unsupported typed parameter method/arity');
+          if(owner.ownerKind==='method')fail('checked unwrap in methods unsupported');
+          return {kind:'intrinsic',name:type==='option<int>'?'Option.unwrap':'Result.unwrap',args:[{kind:'param',index}]};
+        }
         if(expr.qualifier==='Option'||expr.qualifier==='Result'){
           const key=expr.qualifier+'.'+expr.name;
           const signatures={
@@ -1533,6 +1546,10 @@ function resolveProgram(parsed) {
         if(owner.ownerKind==='method')
           fail('ADT match inside method body unsupported in convergence slice');
         const subject=resolve(expr.subject,owner,depth+1,bindings);
+        const subjectType=resolvedType(subject,owner);
+        const adt=expr.adt==='result<int,int>'&&subjectType==='trapResult'?'trapResult':expr.adt;
+        if(adt==='trapResult'&&expr.arms.some(arm=>arm.tag==='Err'&&arm.bind!==null))
+          fail('checked Error binding unsupported in this profile; use Err()');
         const arms=expr.arms.map(arm=>{
           let slot=null,scope=bindings;
           if(arm.bind!==null){
@@ -1546,7 +1563,7 @@ function resolveProgram(parsed) {
         });
         if(expr.typed&&arms.some(arm=>resolvedType(arm.body,owner)!=='int'))
           fail('explicit match<int> requires integer arm results');
-        return {kind:'adtMatch',adt:expr.adt,subject,arms};
+        return {kind:'adtMatch',adt,subject,arms};
       }
       default: fail('unsupported expression node');
     }
@@ -1717,7 +1734,7 @@ function emitProgram(program) {
       case 'intrinsic': {
         const funcs={
           'Option.some':'_some','Option.none':'_none',
-          'Option.is_some':'_is_some','Option.unwrap_or':'_option_or',
+          'Option.is_some':'_is_some','Option.unwrap_or':'_option_or','Option.unwrap':'_optionUnwrap','Result.unwrap':'_resultUnwrap',
           'Result.ok':'_ok','Result.err':'_err',
           'Result.is_ok':'_is_ok','Result.unwrap_or':'_result_or',
           'Result.unwrap_err_or':'_error_or'
@@ -1727,7 +1744,7 @@ function emitProgram(program) {
         return target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
       }
       case 'adtMatch': {
-        const check=expr.adt==='option<int>'?'_checkoption':'_checkresult';
+        const check=expr.adt==='trapResult'?'_checkTrapResult':expr.adt==='option<int>'?'_checkoption':'_checkresult';
         const lines=['(()=>{const _subject='+emitExpr(expr.subject,depth+1)+';'+check+'(_subject);switch(_subject.kind){'];
         for(const arm of expr.arms){
           lines.push('case '+JSON.stringify(arm.tag)+':{');
@@ -1856,7 +1873,7 @@ function emitProgram(program) {
   // programs that actually use trap; keep ordinary ADT artifact overhead low.
   function containsTrap(value){
     if(!value||typeof value!=='object')return false;
-    if(['trap','trapMethod','trapOptionMethod'].includes(value.kind))return true;
+    if(['trap','trapMethod','trapOptionMethod'].includes(value.kind)||(value.kind==='intrinsic'&&['Option.unwrap','Result.unwrap'].includes(value.name))||(value.kind==='adtMatch'&&value.adt==='trapResult'))return true;
     return Object.values(value).some(containsTrap);
   }
   function containsGuestEffect(value){
@@ -1872,6 +1889,10 @@ function emitProgram(program) {
   if(containsTrap(program)||containsCatch(program))out.push('function _isOrdinaryGuest(e){return _arithmeticBrand.has(e)||(typeof _ordinaryGuestBrand!=="undefined"&&_ordinaryGuestBrand.has(e))||(typeof _checkedUnwrapBrand!=="undefined"&&_checkedUnwrapBrand.has(e));}');
   if(containsTrap(program))out.push(
       'const _trapBrand=new WeakSet(),_checkedUnwrapBrand=new WeakSet();',
+      'function _unwrapFailure(name,message,original){const e=new Error(message,{cause:original});Object.defineProperty(e,"name",{value:name});_checkedUnwrapBrand.add(e);throw Object.freeze(e);}',
+      'function _optionUnwrap(v){const x=_checkoption(v);if(x.kind==="Some")return x.value;return _unwrapFailure("OptionUnwrapError","cannot unwrap None",undefined);}',
+      'function _resultUnwrap(v){const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",x.value);}',
+      'function _checkTrapResult(v){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}',
       'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult"||t==="trapOptionResult"){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}const result=t==="option<int>"?_tag("Ok",_checkoption(v)):t==="int"?_ok(v):_checkresult(v);_trapBrand.add(result);return result;}catch(e){if(!_isOrdinaryGuest(e))throw e;const result=_tag("Err",e);_trapBrand.add(result);return result;}}',
       'function _trapMethod(m,result,option){if(!_trapBrand.has(result))throw new TypeError("invalid trap Result");if(m==="is_ok")return result.kind==="Ok";if(m==="is_err")return result.kind==="Err";if(m==="unwrap"&&result.kind==="Ok")return option?_checkoption(result.value):_check(result.value);if(m==="unwrap"){const e=new Error("cannot unwrap Err",{cause:result.value});Object.defineProperty(e,"name",{value:"ResultUnwrapError"});_checkedUnwrapBrand.add(e);throw Object.freeze(e);}throw new TypeError("invalid trap Result method");}'
   );
