@@ -1914,7 +1914,8 @@ function emitProgram(program) {
     'function _guestEffect(kind,message){const e=new Error(message);Object.defineProperty(e,"effect",{value:kind,enumerable:true});if(kind==="throw")_ordinaryGuestBrand.add(e);throw Object.freeze(e);}'
   );
   function containsCatch(value){return !!value&&typeof value==='object'&&(value.kind==='tryCatch'||Object.values(value).some(containsCatch));}
-  const hasErrorParameter=program.functions.some(fn=>fn.paramTypes?.includes('error'));
+  function containsTypedThrow(value){return !!value&&typeof value==='object'&&(value.kind==='throwError'||Object.values(value).some(containsTypedThrow));}
+  const hasErrorParameter=program.functions.some(fn=>fn.paramTypes?.includes('error'))||containsTypedThrow(program);
   if(containsTrap(program)||containsCatch(program)||hasErrorParameter)out.push('function _isOrdinaryGuest(e){return _arithmeticBrand.has(e)||(typeof _ordinaryGuestBrand!=="undefined"&&_ordinaryGuestBrand.has(e))||(typeof _checkedUnwrapBrand!=="undefined"&&_checkedUnwrapBrand.has(e));}');
   if(hasErrorParameter)out.push('function _checkGuestError(e){if(!_isOrdinaryGuest(e))throw new TypeError("untrusted guest Error");return e;}');
   if(containsTrap(program))out.push(
