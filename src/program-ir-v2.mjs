@@ -285,6 +285,8 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
   let nodes=0;
   const captureSlots=owners.map(()=>new Set());
   const floatSlots=owners.map(()=>new Set());
+  const optionSlots=owners.map(()=>new Set());
+  const resultSlots=owners.map(()=>new Set());
   const trapSlots=owners.map(()=>new Set());
   const trapOptionSlots=owners.map(()=>new Set());
   const caughtSlots=owners.map(()=>new Set());
@@ -482,26 +484,28 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           update:node(expr.update,owner,depth+1,'int',scoped),
           body:node(expr.body,owner,depth+1,expected,scoped)};
       }
-      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':{
+      case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':{
         record(expr,['kind','slot','init','body'],'immutable local');
         if(owner>=headers.length||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
           fail('invalid or repeated local slot');
         captureSlots[owner].add(expr.slot);
-        const t=desc.value==='trapOptionLocal'?'trapOptionResult':desc.value==='trapLocal'?'trapResult':desc.value==='floatLocal'?'float':'int';
+        const t=desc.value==='optionLocal'?'option<int>':desc.value==='resultLocal'?'result<int,int>':desc.value==='trapOptionLocal'?'trapOptionResult':desc.value==='trapLocal'?'trapResult':desc.value==='floatLocal'?'float':'int';
         const init=node(expr.init,owner,depth+1,t,active);
         if(t==='trapResult')trapSlots[owner].add(expr.slot);
         if(t==='trapOptionResult')trapOptionSlots[owner].add(expr.slot);
         if(t==='float')floatSlots[owner].add(expr.slot);
+        if(t==='option<int>')optionSlots[owner].add(expr.slot);
+        if(t==='result<int,int>')resultSlots[owner].add(expr.slot);
         return {kind:desc.value,slot:expr.slot,init,body:node(expr.body,owner,depth+1,expected,[...active,expr.slot])};
       }
-      case 'capture':case 'floatCapture':case 'trapCapture':case 'trapOptionCapture':
+      case 'capture':case 'floatCapture':case 'trapCapture':case 'trapOptionCapture':case 'optionCapture':case 'resultCapture':
         record(expr,['kind','slot'],'capture');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            (!active.includes(expr.slot)||caughtSlots[owner].has(expr.slot)))fail('ADT capture outside its typed payload scope');
-        const captureType=trapOptionSlots[owner].has(expr.slot)?'trapOptionResult':trapSlots[owner].has(expr.slot)?'trapResult':floatSlots[owner].has(expr.slot)?'float':'int';
+        const captureType=optionSlots[owner].has(expr.slot)?'option<int>':resultSlots[owner].has(expr.slot)?'result<int,int>':trapOptionSlots[owner].has(expr.slot)?'trapOptionResult':trapSlots[owner].has(expr.slot)?'trapResult':floatSlots[owner].has(expr.slot)?'float':'int';
         if(captureType==='int'&&expected!=='int')fail('ADT int payload capture type mismatch');
-        if(expected!==captureType||desc.value!==(captureType==='trapOptionResult'?'trapOptionCapture':captureType==='trapResult'?'trapCapture':captureType==='float'?'floatCapture':'capture'))
+        if(expected!==captureType||desc.value!==(captureType==='option<int>'?'optionCapture':captureType==='result<int,int>'?'resultCapture':captureType==='trapOptionResult'?'trapOptionCapture':captureType==='trapResult'?'trapCapture':captureType==='float'?'floatCapture':'capture'))
           fail('capture type mismatch');
         return {kind:desc.value,slot:expr.slot};
       case 'param':
