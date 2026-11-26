@@ -49,8 +49,8 @@ test('self calls accept named arguments and preserve their lexical evaluation or
     '  pick(int a,int b):int{return a;}',
     '  pub choose():int{return self.pick(b:2,a:40+2);}',
     '  pub choose_implicit():int{return pick(b:2,a:40+2);}',
-    '  pub fail_first():int{return self.pick(b:1%0,a:9223372036854775807+1);}',
-    '  pub overflow_first():int{return pick(a:9223372036854775807+1,b:1%0);}',
+    '  pub fail_first():int{return self.pick(b:Integer.rem(1, 0),a:9223372036854775807+1);}',
+    '  pub overflow_first():int{return pick(a:9223372036854775807+1,b:Integer.rem(1, 0));}',
     'end'
   ].join('\n');
   const ir=compileToProgramIRV2(s);

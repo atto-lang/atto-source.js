@@ -427,7 +427,7 @@ class Parser {
     if(!next||next.kind!=='id')return false;
     // Reject obsolete generic-looking declarations too, without enabling generic methods.
     if(marker==='method'&&(after?.value==='('||after?.value==='<'))
-      fail('OBSOLETE_METHOD_INTRODUCER: use mtd or a bare method name',this.peek());
+      fail('OBSOLETE_METHOD_INTRODUCER: obsolete method introducer; use mtd or a bare method name',this.peek());
     if(after?.value!=='(')return false;
     const value=next.value;
     if(CLASS_METHOD_RESERVED.has(value)&&!CLASS_METHOD_CALLABLE_KEYWORDS.has(value))
