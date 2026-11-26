@@ -329,7 +329,7 @@ class Parser {
 }
 // The isolated parser is a bootstrap adapter. Future language frontends
 // should produce this versioned IR instead of duplicating parser semantics.
-export function compileToIR(source) {
+function parseScalarSource(source) {
   const {tokens,ownershipBang}=lex(source);
   // Reject affine Future violations at the compiler core boundary before IR.
   // Valid Future code still cannot execute in the scalar-only JS backend.
@@ -342,7 +342,10 @@ export function compileToIR(source) {
   rejectUnloweredInvertedClasses(tokens);
   rejectUnloweredActorHeap(tokens);
   rejectUnsupportedSelect(tokens);
-  const parsed=new Parser(tokens).parse();
+  return new Parser(tokens).parse();
+}
+export function compileToIR(source) {
+  const parsed=parseScalarSource(source);
   try {
     return createScalarIR(parsed);
   } catch (error) {
@@ -355,7 +358,27 @@ export function compileToIR(source) {
     throw error;
   }
 }
-export function compileIR(input) {
+// This separate entry point is a bounded, explicit build-time import table.
+ // It does not introduce a new Atto import syntax or permit unresolved names
+ // in compileToIR/compileIR. External slots are typed declarations, never
+ // executable provider bodies. The private scalar emitter omits those slots.
+export function compileScalarConsumer(source, providerEntries) {
+  if (!Array.isArray(providerEntries) || providerEntries.length === 0 || providerEntries.length > 128)
+    throw new CompileError('invalid scalar provider interface');
+  const local = parseScalarSource(source);
+  const external = providerEntries.map(entry => {
+    if (!entry || entry.resultType !== 'int' || !Array.isArray(entry.params))
+      throw new CompileError('invalid scalar provider signature');
+    return {name:entry.name, params:[...entry.params], pub:false, body:{kind:'int', n:0n}};
+  });
+  const ir = createScalarIR([...external,...local]);
+  const entries = ir.functions.slice(external.length).filter(f=>f.pub)
+    .map(({name,params,resultType})=>({name,params,resultType}));
+  if (!entries.length) throw new CompileError('consumer requires public entrypoint');
+  return {moduleSource:emitScalarIR(ir,external.length),publicInterface:entries};
+}
+export function compileIR(input) { return emitScalarIR(input,0); }
+function emitScalarIR(input, externalCount) {
   const ir = validateScalarIR(input);
   const fns = ir.functions;
   function lower(e, depth = 0) {
@@ -380,12 +403,29 @@ export function compileIR(input) {
     '// Oreslang JS scalar subset. Signed i64 wrapping is PROVISIONAL, not proven Java parity.',
     'function _int(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang int requires a signed i64 BigInt");return v;}',
   ];
+  if (externalCount) {
+    out.push('export function bindProvider(bindings){',
+      'if(!Array.isArray(bindings)||bindings.length!=='+externalCount+')throw new TypeError("invalid provider bindings");');
+    for(let i=0;i<externalCount;i++){
+      const params=fns[i].params.map((_,j)=>'_p'+j);
+      out.push('const _b'+i+'=bindings['+i+'];',
+        'if(typeof _b'+i+'!=="function")throw new TypeError("missing provider binding");',
+        'function _f'+i+'('+params.join(',')+'){return _int(_b'+i+'('+params.map(p=>'_int('+p+')').join(',')+'));}');
+    }
+  }
   fns.forEach((f,i) => {
+    if(i<externalCount)return;
     const params = f.params.map((_,j) => '_p' + j);
     out.push('function _f' + i + '(' + params.join(',') + '){');
     params.forEach(p => out.push('_int(' + p + ');'));
     out.push('return ' + lower(f.body) + ';', '}');
   });
+  if(externalCount){
+    out.push('const api=Object.create(null);');
+    fns.forEach((f,i)=>{if(f.pub)out.push('api['+JSON.stringify(f.name)+']=_f'+i+';');});
+    out.push('return Object.freeze(api);','}');
+    return out.join('\n')+'\n';
+  }
   // String-literal export names prevent ECMAScript keyword collisions.
   fns.forEach((f,i) => {
     if (f.pub) out.push('export { _f' + i + ' as ' + JSON.stringify(f.name) + ' };');
