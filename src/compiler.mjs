@@ -320,15 +320,6 @@ class Parser {
       return left;
     }finally{this.depth--;}
   }
-  pureProductInt(){
-    const negative=this.match('-');
-    const t=this.peek();
-    if(t.kind!=='int')throw new CompileError('E_PRODUCT_LITERAL_UNSUPPORTED: expected pure int literal',t);
-    this.pos++;
-    const n=BigInt(t.value.replaceAll('_',''));
-    if(n>I64_MAX+(negative?1n:0n))throw new CompileError('integer outside signed i64',t);
-    return negative?-n:n;
-  }
   productProjection(){
     const at=this.peek(), pair=at.value==='Pair';
     this.pos+=3;
@@ -353,19 +344,20 @@ class Parser {
       if(!/^[\x20-\x7e]*$/.test(raw) || /[\\$]/.test(raw))
         throw new CompileError('E_PAIR_KEY_UNSUPPORTED: scalar projection requires plain static string',key);
       this.pos++;
-    }else first=this.pureProductInt();
+    }else first=this.expr();
     this.expect(',');
-    // A proven pure static string key has no guest effects or owned
-    // resources to discard. Keep the second expression in checked scalar
-    // IR; never evaluate or duplicate it at compile time. Entry still
-    // requires pure integer literals until both eager operands can lower.
-    const second=pair?this.expr():this.pureProductInt();
+    // Pair's proven static key has no effects. Entry must evaluate both
+    // scalar expressions exactly once, in source order, even if one is discarded.
+    const second=this.expr();
     this.expect(')');
     if(!this.match('.'))throw new CompileError('E_PRODUCT_ESCAPE_UNSUPPORTED: owned product ABI unavailable',at);
     const field=this.id();
     if(pair && field==='second')return second;
-    if(!pair && field==='key')return {kind:'int',n:first};
-    if(!pair && field==='value')return {kind:'int',n:second};
+    if(!pair && (field==='key'||field==='value')){
+      // Preserve the old literal-only byte output. No dynamic operand is folded.
+      if(first.kind==='int'&&second.kind==='int')return field==='key'?first:second;
+      return {kind:'entryProjection',field,first,second};
+    }
     throw new CompileError('E_PRODUCT_PROJECTION_UNSUPPORTED: incompatible or non-scalar member',at);
   }
   primary(){
@@ -466,6 +458,12 @@ function emitValidated(input,prior) {
           lower(e.left, depth+1) + ',' + lower(e.right, depth+1) + ')';
       return 'BigInt.asIntN(64,(' + lower(e.left, depth+1) + ')' + e.op + '(' +
         lower(e.right, depth+1) + '))';
+    }
+    if (e.kind === 'entryProjection') {
+      // Argument evaluation is eager and left-to-right, with no mutable
+      // aggregate object or host property lookup. Both expressions lower once.
+      return '((a,b)=>'+(e.field==='key'?'a':'b')+')('+
+        lower(e.first, depth+1)+','+lower(e.second, depth+1)+')';
     }
     if (e.kind === 'call') {
       return '_f' + e.target + '(' + e.args.map(arg => lower(arg, depth+1)).join(',') + ')';

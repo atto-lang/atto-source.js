@@ -4,7 +4,7 @@ import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {compile,compileToIR} from '../src/compiler.mjs';
+import {compile,compileToIR,compileIR,IncrementalSession} from '../src/compiler.mjs';
 
 const program=e=>'pub fnc main(): int { return '+e+'; }';
 const positives=[
@@ -35,7 +35,9 @@ const negatives=[
   ['Pair.of("a",5).value','E_PRODUCT_PROJECTION_UNSUPPORTED'],
   ['Pair.of("a",missing).second','unresolved identifier missing'],
   ['Pair.of("a",true).second','unresolved identifier true'],
-  ['Entry.of(1,1+2).value','expected )'],
+  ['Entry.of(1,missing).key','unresolved identifier missing'],
+  ['Entry.of(missing,1).value','unresolved identifier missing'],
+  ['Entry.of(1,true).key','unresolved identifier true'],
   ['Entry.of(1,2).second','E_PRODUCT_PROJECTION_UNSUPPORTED'],
   ['Pair.of("a",9223372036854775808).second','positive int outside signed i64'],
   ['Pair.of("a",5,6).second','expected )'],
@@ -82,4 +84,48 @@ test('Pair second preserves trapping scalar expression instead of dropping it',a
   const js=compile(src);
   const module=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
   assert.throws(()=>module.main(),/DIVISION_BY_ZERO/);
+});
+
+test('dynamic Entry projection evaluates both scalar operands in source order',async()=>{
+  const source='fnc first(int x): int { return x+1; } fnc second(int x): int { return x*2; } pub fnc main(int n): int { return Entry.of<int,int>(first(n),second(n)).value; }';
+  const ir=compileToIR(source);
+  assert.deepEqual(ir.functions[2].body,{kind:'entryProjection',field:'value',
+    first:{kind:'call',target:0,args:[{kind:'param',index:0}]},
+    second:{kind:'call',target:1,args:[{kind:'param',index:0}]}});
+  const js=compileIR(JSON.parse(JSON.stringify(ir)));
+  assert.equal(js,compile(source));
+  assert.ok(js.includes('return ((a,b)=>b)(_f0(_p0),_f1(_p0));'));
+  const m=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+  assert.equal(m.main(21n),42n);
+  const key=compile(source.replace('.value;','.key;'));
+  const k=await import('data:text/javascript;base64,'+Buffer.from(key).toString('base64'));
+  assert.equal(k.main(41n),42n);
+  const cache=new IncrementalSession();
+  assert.equal(cache.build(source).code,js);
+  assert.equal(cache.build(source).reused,3);
+  const edited=source.replace('x*2','x*3');
+  const built=cache.build(edited);
+  assert.equal(built.code,compile(edited));
+  assert.equal(built.emitted,1);
+});
+test('discarded Entry operands cannot drop runtime traps or unresolved calls',async()=>{
+  for(const expr of ['Entry.of(42,Integer.mod(1,0)).key',
+    'Entry.of(Integer.mod(1,0),42).value','Entry.of(Integer.mod(1,0),Integer.mod(2,0)).value']){
+    const m=await import('data:text/javascript;base64,'+Buffer.from(compile(program(expr))).toString('base64'));
+    assert.throws(()=>m.main(),/DIVISION_BY_ZERO/);
+  }
+  assert.throws(()=>compile('pub fnc main(): int { return Entry.of(42,main()).key; }'),/recursive call cycle/);
+});
+test('entry projection IR rejects forged fields and validates both operands',()=>{
+  const ir=compileToIR(program('Entry.of(20+22,3).key'));
+  const body=ir.functions[0].body;
+  const replace=expr=>({...ir,functions:[{...ir.functions[0],body:expr}]});
+  for(const expr of [{...body,field:'constructor'},{...body,extra:true},
+    {...body,second:{kind:'call',target:999,args:[]}},{...body,first:{kind:'eval',source:'x'}}])
+    assert.throws(()=>compileIR(replace(expr)),/scalar IR/);
+  let accessed=0;
+  const forged={...body};
+  Object.defineProperty(forged,'second',{enumerable:true,get(){accessed++;return body.second;}});
+  assert.throws(()=>compileIR(replace(forged)),/accessor/);
+  assert.equal(accessed,0);
 });

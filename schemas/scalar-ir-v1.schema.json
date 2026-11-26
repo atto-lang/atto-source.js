@@ -95,6 +95,9 @@
         },
         {
           "$ref": "#/$defs/call"
+        },
+        {
+          "$ref": "#/$defs/entryProjection"
         }
       ]
     },
@@ -196,6 +199,33 @@
           "items": {
             "$ref": "#/$defs/expr"
           }
+        }
+      }
+    },
+    "entryProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "field",
+        "first",
+        "second"
+      ],
+      "properties": {
+        "kind": {
+          "const": "entryProjection"
+        },
+        "field": {
+          "enum": [
+            "key",
+            "value"
+          ]
+        },
+        "first": {
+          "$ref": "#/$defs/expr"
+        },
+        "second": {
+          "$ref": "#/$defs/expr"
         }
       }
     }
