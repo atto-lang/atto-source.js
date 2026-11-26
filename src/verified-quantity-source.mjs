@@ -280,8 +280,19 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       if(right.range[0]===right.range[1]){
         // Only the exact original immutable binding can be narrowed.
         for(const [key,v] of facts)if(left.ir===v.ir){
-          yes.set(key,{...v,range:restrict(v.range,op,right.range[0])});
-          no.set(key,{...v,range:restrict(v.range,inverse[op],right.range[0])});
+          const edge=(cmp)=>{
+            const n=right.range[0];
+            // A contradictory singleton on a split path cannot execute its
+            // inequality edge. Use only the representable guard domain there,
+            // not an unchecked/bottom proof of arbitrary expressions.
+            if(cmp==='!='&&bit(n)&&v.range[0]===n&&v.range[1]===n){
+              const domain=v.width===32?NARROW:FULL;
+              return normalize(domain[0],domain[1],bit(n));
+            }
+            return restrict(v.range,cmp,n);
+          };
+          yes.set(key,{...v,range:edge(op)});
+          no.set(key,{...v,range:edge(inverse[op])});
         }
       }
       return {ir:{kind:'compare',op,left:left.ir,right:right.ir},yes,no};
