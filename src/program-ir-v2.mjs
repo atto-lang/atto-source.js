@@ -121,7 +121,7 @@ function symbolName(s){
  * Copy after validation, never return caller-owned IR references.
  * Direct object inputs are trusted data only, not a JavaScript sandbox.
  */
-export function validateProgramIRV2(input) {
+export function validateProgramIRV2(input, allowScalarWhile = false) {
   if(input===null||typeof input!=='object'||Array.isArray(input))
     fail('program: expected object');
   const rawKeys=Reflect.ownKeys(input);
@@ -422,6 +422,66 @@ export function validateProgramIRV2(input) {
           ...(named?{paramOrder:order}:{})
         };
       }
+      case 'scalarWhileMany': {
+        if(allowScalarWhile!==true||owner>=headers.length)fail('scalar loop requires strict source admission');
+        record(expr,['kind','states','condition','steps','body'],'scalar loop');
+        const scope=[...active],writable=new Set();
+        const slot=id=>{
+          if(!Number.isSafeInteger(id)||Object.is(id,-0)||id<0||id>=LIMIT_NODES||captureSlots[owner].has(id))
+            fail('invalid or repeated loop slot');
+          captureSlots[owner].add(id);return id;
+        };
+        const states=sequence(expr.states,64,'loop states').map(state=>{
+          record(state,['slot','init'],'loop state');
+          const init=node(state.init,owner,depth+1,'int',active);
+          const id=slot(state.slot);scope.push(id);writable.add(id);return {slot:id,init};
+        });
+        const steps=(items,outer,allowed,d)=>{
+          if(d>16)fail('loop statement depth');
+          const local=[...outer],mut=new Set(allowed);
+          return sequence(items,128,'loop statements').map(step=>{
+            if(++nodes>LIMIT_NODES)fail('expression complexity exceeded');
+            const kind=Object.getOwnPropertyDescriptor(step??{},'kind');
+            if(!kind||!Object.hasOwn(kind,'value'))fail('invalid loop statement');
+            if(kind.value==='set'){
+              record(step,['kind','slot','value'],'loop assignment');
+              if(!mut.has(step.slot)||!local.includes(step.slot))fail('assignment outside mutable loop scope');
+              return {kind:'set',slot:step.slot,value:node(step.value,owner,depth+d+1,'int',local)};
+            }
+            if(kind.value==='bind'){
+              record(step,['kind','slot','mutable','init'],'loop binding');
+              if(typeof step.mutable!=='boolean')fail('invalid loop binding mutability');
+              const init=node(step.init,owner,depth+d+1,'int',local),id=slot(step.slot);
+              local.push(id);if(step.mutable)mut.add(id);
+              return {kind:'bind',slot:id,mutable:step.mutable,init};
+            }
+            if(kind.value==='loop'){
+              record(step,['kind','condition','steps'],'nested loop');
+              return {kind:'loop',condition:node(step.condition,owner,depth+d+1,'bool',local),
+                steps:steps(step.steps,local,mut,d+1)};
+            }
+            fail('invalid loop statement kind');
+          });
+        };
+        return {kind:'scalarWhileMany',states,condition:node(expr.condition,owner,depth+1,'bool',scope),
+          steps:steps(expr.steps,scope,writable,1),body:node(expr.body,owner,depth+1,expected,scope)};
+      }
+      case 'scalarWhile': {
+        if(allowScalarWhile!==true)fail('scalar while requires strict source admission');
+        // Checked i64 state only. This validates structural/type safety,
+        // not a source-level proof or termination certificate.
+        record(expr,['kind','slot','init','condition','update','body'],'scalar while');
+        if(owner>=headers.length||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
+           expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
+          fail('invalid or repeated loop slot');
+        captureSlots[owner].add(expr.slot);
+        const init=node(expr.init,owner,depth+1,'int',active);
+        const scoped=[...active,expr.slot];
+        return {kind:'scalarWhile',slot:expr.slot,init,
+          condition:node(expr.condition,owner,depth+1,'bool',scoped),
+          update:node(expr.update,owner,depth+1,'int',scoped),
+          body:node(expr.body,owner,depth+1,expected,scoped)};
+      }
       case 'local':case 'floatLocal':case 'trapLocal':case 'trapOptionLocal':{
         record(expr,['kind','slot','init','body'],'immutable local');
         if(owner>=headers.length||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
@@ -451,6 +511,18 @@ export function validateProgramIRV2(input) {
         if((owners[owner].paramTypes?.[expr.index]??'int')!==expected)
           fail('parameter type mismatch');
         return {kind:'param',index:expr.index};
+      case 'i32Check': {
+        record(expr,['kind','inner'],'checked i32');
+        if(expected!=='int')fail('checked i32 requires integer');
+        return {kind:'i32Check',inner:node(expr.inner,owner,depth+1,'int',active)};
+      }
+      case 'refinementCheck': {
+        record(expr,['kind','inner','minimum','maximum'],'checked refinement');
+        if(expected!=='int')fail('checked refinement requires signed-i64 value');
+        const minimum=int(expr.minimum),maximum=int(expr.maximum);
+        if(BigInt(minimum)>BigInt(maximum))fail('empty refinement range');
+        return {kind:'refinementCheck',inner:node(expr.inner,owner,depth+1,'int',active),minimum,maximum};
+      }
       case 'neg':
         record(expr,['kind','inner'],'neg');
         if(expected!=='int')fail('int negation in boolean context');
