@@ -155,7 +155,7 @@ export function transpile_to_worker(source) {
   };
   const fail_type=()=>{throw new TranspileError('E_TASK_RETURN_TYPE');};
   const typed=(node,type)=>{if(result_type(node)!==type)fail_type();return node;};
-  const precedence={'||':0,'OR':0,'&&':2,'AND':2,'XOR':1,'|':3,'^^':4,'&':5,'==':6,'!=':6,'eq':6,'<<<':7,'>>>':7,'+':8,'-':8,'*':9};
+  const precedence={'||':0,'OR':0,'&&':2,'AND':2,'XOR':1,'|':3,'^^':4,'&':5,'==':6,'!=':6,'eq':6,'<<<':7,'>>>':7,'ashr':7,'+':8,'-':8,'*':9};
   const parse_expression=(min_prec=0,depth=0,discard_inline=false)=>{
     if(depth>=MAX_DEPTH)throw new TranspileError('E_NESTING_LIMIT');
     let left;
@@ -295,7 +295,7 @@ export function transpile_to_worker(source) {
     if(node.op==='neg')return `checked(-(${emit(node.arg)}))`;
     const op=node.op;
     const left=emit(node.left),right=emit(node.right);
-    if(op==='<<<'||op==='>>>'){
+    if(op==='<<<'||op==='>>>'||op==='ashr'){
       uses_shift=true;
       const static_count=Object.hasOwn(node.right,'value')?node.right.value:
         node.right.op==='neg'&&Object.hasOwn(node.right.arg,'value')?-node.right.arg.value:null;
@@ -303,7 +303,9 @@ export function transpile_to_worker(source) {
         throw new TranspileError('E_SHIFT_DISTANCE');
       return op==='<<<'
         ? 'BigInt.asIntN(64, ('+left+') << checked_shift('+right+'))'
-        : 'BigInt.asIntN(64, BigInt.asUintN(64, ('+left+')) >> checked_shift('+right+'))';
+        : op==='ashr'
+          ? 'BigInt.asIntN(64, ('+left+') >> checked_shift('+right+'))'
+          : 'BigInt.asIntN(64, BigInt.asUintN(64, ('+left+')) >> checked_shift('+right+'))';
     }
     return 'checked(('+left+') '+(op==='^^'?'^':op)+' ('+right+'))';
   };
