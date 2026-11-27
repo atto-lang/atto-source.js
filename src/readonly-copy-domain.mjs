@@ -56,7 +56,11 @@ export class ReadonlyCopyDomain {
     for(const id of r.reach){const child=this.#node(id);if(child.initial)error('E_COPY_LAYOUT');if(child.noncopyable)error('E_COPY_FORBIDDEN');}
     if(this.#roots.size>=this.#limits.maxRoots)error('E_COPY_BUDGET');
     const id=token();this.#nodes.set(id,{dynamic:n.dynamic,noncopyable:false,initial:false,slots:new Map(n.slots)});
-    return this.#publish(id,this.#walk(id));
+    const reach=this.#walk(id);
+    // Independent writable outer slots cannot be promised if a retained
+    // descendant reaches the original root. Fail before publishing holders.
+    if(reach.has(r.id))error('E_COPY_SHALLOW_ALIAS');
+    return this.#publish(id,reach);
   }
   #slot(root,id,key,value){
     const n=this.#write(root,id);
