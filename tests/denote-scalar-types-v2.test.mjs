@@ -65,3 +65,26 @@ test('literal denotations fail closed before integer erasure at unproved boundar
     'denote type Dice = 5 | 6; denote type Dice = int; pub fnc main(): int { return 42; }'
   ]) assert.throws(()=>compileProgramV2(source),undefined,source);
 });
+
+test('forward denotations preserve scalar identity and literal membership',async()=>{
+  const forward='denote type First = Second; denote type Second = int; pub fnc main(): First { val First a = 42; return a; }';
+  const control='pub fnc main(): int { val int a = 42; return a; }';
+  assert.deepEqual(compileToProgramIRV2(forward),compileToProgramIRV2(control));
+  assert.equal(await (await load(forward)).main(),42n);
+  const union='denote type First = Second; denote type Second = 5 | 6; pub fnc main(): int { val First a = 5; return a + 37; }';
+  assert.equal(await (await load(union)).main(),42n);
+  assert.throws(()=>compileProgramV2(union.replace('a = 5','a = 8')),/not a proven member/);
+});
+test('unused forward alias cycles and unresolved targets are distinguished',()=>{
+  for(const decl of ['denote type A = A;','denote type A = B; denote type B = A;',
+                     'denote type A = B; denote type B = C; denote type C = B;']){
+    assert.throws(()=>compileProgramV2(decl+' pub fnc main(): int { return 42; }'),/cyclic type denotation/);
+  }
+  assert.throws(()=>compileProgramV2('denote type A = Missing; pub fnc main(): int { return 42; }'),/unresolved denotation target Missing/);
+});
+test('bounded iterative resolution admits 512 names but not a 513th',async()=>{
+  const chain=n=>Array.from({length:n},(_,i)=>'denote type Alias'+i+' = '+(i===n-1?'int':'Alias'+(i+1))+';').join('\n')+
+    '\npub fnc main(): Alias0 { return 42; }';
+  assert.equal(await (await load(chain(512))).main(),42n);
+  assert.throws(()=>compileProgramV2(chain(513)),/denotation count limit/);
+});
