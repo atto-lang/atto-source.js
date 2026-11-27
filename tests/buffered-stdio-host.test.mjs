@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {BufferedStdioHost} from '../src/buffered-stdio-host.mjs';
+import {BufferedStdioHost,GenerationStdioHost} from '../src/buffered-stdio-host.mjs';
 function gate(){let open;const promise=new Promise(r=>{open=r;});return {promise,open};}
 test('bounded bytes include in-flight; waiters FIFO; cancellation is precommit only',async()=>{
  const entered=gate(), release=gate(), out=[];
@@ -27,7 +27,9 @@ test('abort settles accepted, pending and close receipts; ignores late physical 
  const a=q.admit('A');await a.admitted;await entered.promise;
  const b=q.admit('B');assert.equal(q.abort(),true);
  assert.equal((await a.delivered).code,'ABORTED');assert.equal((await b.admitted).code,'ABORTED');
- assert.equal((await q.seal()).code,'ABORTED');release.open();await Promise.resolve();
+ assert.equal((await q.seal()).code,'ABORTED');
+ assert.equal(q.accounting.acceptedBytes,1);assert.equal(q.accounting.acceptedRecords,1);
+ release.open();await q.physicallyDrained;
  assert.equal((await a.delivered).code,'ABORTED');assert.equal(q.accounting.acceptedBytes,0);
 });
 test('quota, malformed unicode, sink rejection and seal are explicit',async()=>{
@@ -45,4 +47,27 @@ test('seal rejects pending but drains previously accepted',async()=>{
  assert.equal((await b.admitted).code,'CLOSED');release.open();
  assert.equal((await a.delivered).ok,true);assert.equal((await closed).ok,true);
  assert.equal((await q.admit('c').admitted).code,'CLOSED');
+});
+
+test('retirement revokes pending producer and does not authorize new generation',async()=>{
+ const entered=gate(),release=gate(),out=[];
+ const q=new BufferedStdioHost(async s=>{entered.open();await release.promise;out.push(s);},1,8,2,8);
+ const owners=new GenerationStdioHost(q,2);
+ const a=owners.openOwner(),b=owners.openOwner();
+ assert.throws(()=>owners.openOwner(),RangeError);
+ await owners.admit(a,'A').admitted;await entered.promise;
+ const drop=owners.admit(a,'DROP');
+ assert.equal((await owners.admit(a,'busy').admitted).code,'OWNER_BUSY');
+ assert.equal(owners.retire(a),true);assert.equal((await drop.admitted).code,'STALE_OWNER');
+ assert.equal((await owners.admit(a,'bad').admitted).code,'STALE_OWNER');
+ const c=owners.openOwner();assert.notEqual(a,c);
+ const keep=owners.admit(c,'C');assert.equal(owners.retire(b),true);
+ release.open();assert.equal((await keep.admitted).ok,true);await q.seal();
+ assert.deepEqual(out,['A','C']);
+});
+test('retirement between commitment and readiness cannot publish a fresh success',async()=>{
+ const q=new BufferedStdioHost(async()=>{},1,8,2,8),owners=new GenerationStdioHost(q);
+ const a=owners.openOwner(),h=owners.admit(a,'A');
+ owners.retire(a);assert.equal((await h.admitted).code,'STALE_OWNER');assert.equal(h.cancel(),false);
+ await q.seal();
 });

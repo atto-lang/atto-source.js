@@ -15,6 +15,7 @@ function receipt() {
 export class BufferedStdioHost {
   #sink; #maxRecords; #maxBytes; #maxWaiters; #maxPendingBytes;
   #queue=[]; #waiting=[]; #active=null; #bytes=0; #pendingBytes=0;
+  #physicallyDrained=receipt();
   #scheduled=false; #running=false; #sealed=false; #failure=null; #closed=receipt();
   constructor(sink, maxRecords=1024, maxBytes=4194304, maxWaiters=64, maxPendingBytes=1048576) {
     if (typeof sink !== 'function') throw new TypeError('trusted sink function required');
@@ -85,17 +86,25 @@ export class BufferedStdioHost {
     try {
       for(let i=0;i<32&&this.#queue.length&&!this.#failure;i++) {
         const e=this.#queue.shift();this.#active=e;
+        let sinkFailed=false;
         try {await this.#sink(e.text);}
-        catch {this.abort('SINK_FAILURE');return;}
-        if(this.#active!==e)return; // terminal abort won, no late success
-        this.#active=null;this.#bytes-=e.bytes;this.#finish(e,OK);this.#promote();
+        catch {sinkFailed=true;this.abort('SINK_FAILURE');}
+        // The active record stays charged until its physical sink call exits,
+        // even after abort has revoked the delivery receipt.
+        this.#active=null;this.#bytes-=e.bytes;
+        if(this.#failure||sinkFailed)return;
+        this.#finish(e,OK);this.#promote();
       }
     } finally {this.#running=false;this.#finishClose();this.#schedule();}
   }
   #finishClose() {
-    if(this.#sealed&&!this.#active&&!this.#queue.length)
+    if(this.#sealed&&!this.#active&&!this.#queue.length) {
       this.#closed.resolve(this.#failure??OK);
+      this.#physicallyDrained.resolve(this.#failure??OK);
+    }
   }
+  // Terminal receipt and actual sink quiescence are different witnesses.
+  get physicallyDrained() { return this.#physicallyDrained.promise; }
   seal() {
     if(!this.#sealed) {
       this.#sealed=true;
@@ -112,7 +121,47 @@ export class BufferedStdioHost {
     for(const e of this.#waiting)this.#reject(e,this.#failure);
     for(const e of this.#queue)this.#finish(e,this.#failure);
     if(this.#active)this.#finish(this.#active,this.#failure);
-    this.#waiting=[];this.#queue=[];this.#active=null;
-    this.#pendingBytes=0;this.#bytes=0;this.#finishClose();return true;
+    this.#waiting=[];this.#queue=[];
+    this.#pendingBytes=0;this.#bytes=this.#active?.bytes??0;
+    this.#closed.resolve(this.#failure);this.#finishClose();return true;
+  }
+}
+
+// Worker-local wrapper: trusted runtime supplies an opaque object for each live
+// logical execution generation. Never export raw handles to guest Wasm.
+// The caller must validate tenant/actor authority before issuing an owner.
+export class GenerationStdioHost {
+  #buffer; #owners=new Map(); #limit;
+  constructor(buffer, maxOwners=1024) {
+    if(!(buffer instanceof BufferedStdioHost))throw new TypeError('trusted buffer required');
+    this.#buffer=buffer;this.#limit=bounded(maxOwners,1024);
+  }
+  openOwner() {
+    if(this.#owners.size>=this.#limit)throw new RangeError('stdio owner quota');
+    const owner=Object.freeze(Object.create(null));
+    this.#owners.set(owner,new Set());return owner;
+  }
+  admit(owner,text) {
+    const pending=this.#owners.get(owner);
+    if(!pending)return Object.freeze({admitted:Promise.resolve(failed('STALE_OWNER')),cancel:()=>false});
+    // One unresolved admission per logical producer.
+    if(pending.size)return Object.freeze({admitted:Promise.resolve(failed('OWNER_BUSY')),cancel:()=>false});
+    const raw=this.#buffer.admit(text);
+    const token={raw,revoked:false,receipt:receipt()};
+    pending.add(token);
+    raw.admitted.then(outcome=>{
+      pending.delete(token);
+      token.receipt.resolve(token.revoked?failed('STALE_OWNER'):outcome);
+    });
+    return Object.freeze({admitted:token.receipt.promise,cancel:()=>raw.cancel()});
+  }
+  retire(owner) {
+    const pending=this.#owners.get(owner);
+    if(!pending)return false;
+    this.#owners.delete(owner);
+    for(const token of pending) {
+      token.revoked=true;token.raw.cancel();token.receipt.resolve(failed('STALE_OWNER'));
+    }
+    pending.clear();return true;
   }
 }
