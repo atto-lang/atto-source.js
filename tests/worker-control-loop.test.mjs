@@ -311,3 +311,36 @@ test('closed loop rejects new TaskCooperateRequest and clears bounded pending hi
   assert.equal(h.loop.stats.cooperatePending,0);
   assert.equal(h.loop.requestCooperate('a',1),false);
 });
+
+test('active DATA and CONTROL quanta pin their owner through return or throw',()=>{
+  for (const lane of ['admitData','admitControl']) {
+    for (const fails of [false,true]) {
+      const h=harness(), seen=[];
+      assert.equal(h.loop.attachOwner('a',1),true);
+      assert.equal(h.loop.attachOwner('b',1),true);
+      assert.equal(h.loop[lane]('a',1,()=>{
+        seen.push(h.loop.retireOwner('a',1));
+        seen.push(h.loop.close());
+        seen.push(h.loop.attachOwner('a',2));
+        // The unrelated idle owner is not pinned by this turn.
+        seen.push(h.loop.retireOwner('b',1));
+        if(fails) throw Error('expected callback failure');
+      }),true);
+      h.step();
+      // Assert outside the callback: onTurnError intentionally catches throws.
+      assert.deepEqual(seen,[false,false,false,true]);
+      assert.equal(h.loop.stats.closed,false);
+      assert.equal(h.loop.stats.owners,1);
+      assert.equal(h.loop.stats.errors,fails?1:0);
+      assert.equal(h.loop.retireOwner('a',1),true);
+      assert.equal(h.loop.attachOwner('a',2),true);
+      assert.equal(h.loop.admitData('a',1,()=>{}),false);
+      assert.equal(h.loop.admitData('a',2,()=>seen.push(42)),true);
+      h.drain();
+      assert.equal(seen.at(-1),42);
+      assert.equal(h.loop.retireOwner('a',2),true);
+      h.loop.close();
+      assert.equal(h.loop.stats.closed,true);
+    }
+  }
+});
