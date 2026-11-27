@@ -1198,6 +1198,8 @@ class Parser {
     }finally{this.taskParsing=false;}
   }
   primary() {
+    if(this.peek().kind==='id' && this.peek().value==='spawn' && this.tokens[this.i+1]?.kind==='id')
+      fail('actor spawn requires typed initialization, resource admission and runtime lowering',this.peek(),'E_SPAWN_OPTIONS_UNSUPPORTED');
     // Identical narrow single-break scalar profile to Rust #727.
     // Keep the computed expression boundary; do not admit bare named
     // callable references or a general state-loop result join.
