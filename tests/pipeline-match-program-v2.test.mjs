@@ -126,3 +126,21 @@ test('compile-time Pattern constants cannot escape or be silently widened',()=>{
   ];
   for(const src of invalid)assert.throws(()=>compileProgramV2(src),/error:/,src);
 });
+
+test('scalar type aliases resolve before pattern lowering',async()=>{
+  const direct='pub fnc main():int { return match 7 over is in [int,bool] -> 42 end; }';
+  for(const src of [
+    'type X = int | bool; pub fnc main():int { return match 7 over is X -> 42 end; }',
+    'type X = int | bool; const Pattern p = is X; pub fnc main():int { return match 7 over on p -> 42 end; }',
+    'type X = int; type Y = X | bool; const Pattern[] z = [is Y]; pub fnc main():int { return match 7 over is in z -> 42 end; }'
+  ]){
+    assert.deepEqual(compileToProgramIRV2(src),compileToProgramIRV2(direct));
+    assert.equal((await load(src)).main(),42n);
+  }
+  for(const src of [
+    'type X = Y; type Y = X; pub fnc main():int { return 42; }',
+    'type X = int; type Y = X | Int; pub fnc main():int { return 42; }',
+    'type X = int; pub fnc main():int { return X; }',
+    'type X = int; const Pattern X = on 5; pub fnc main():int { return 42; }'
+  ])assert.throws(()=>compileProgramV2(src),/error:/,src);
+});

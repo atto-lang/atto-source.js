@@ -387,7 +387,7 @@ function rejectUnsupportedStaticSelect(tokens) {
   }
 }
 class Parser {
-  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;this.patternConstants=new Map();this.patternUses=new Set();this.patternTypeNames=new Set();}
+  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;this.patternConstants=new Map();this.patternUses=new Set();this.patternTypeNames=new Set();this.patternTypeAliases=new Map();this.patternAliasUses=new Set();}
   peek() {return this.tokens[this.i];}
   eat(s) {if(this.peek().value === s) {this.i++; return true;} return false;}
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
@@ -974,6 +974,12 @@ class Parser {
     const modules=[],functions=[],generators=[],classes=[],usedModules=new Set(),usedClasses=new Set();
     const exportDeclarations=[];
     while(this.peek().kind!=='eof'){
+      if(this.peek().value==='type'&&this.tokens[this.i+2]?.value==='='){
+        if(functions.length||modules.length||classes.length||generators.length||exportDeclarations.length)
+          fail('scalar pattern type aliases must precede runtime declarations in this profile',this.peek());
+        this.readPatternTypeAlias();
+        continue;
+      }
       if(this.peek().value==='const'&&this.tokens[this.i+1]?.value==='Pattern'){
         if(functions.length||modules.length||classes.length||generators.length||exportDeclarations.length)
           fail('compile-time Pattern declarations must precede runtime declarations in this profile',this.peek());
@@ -1043,6 +1049,8 @@ class Parser {
       const t=this.tokens[i];
       if(t.kind==='id'&&this.patternConstants.has(t.value)&&!this.patternUses.has(i))
         fail('compile-time Pattern name cannot escape or be shadowed',t);
+      if(t.kind==='id'&&this.patternTypeAliases.has(t.value)&&!this.patternAliasUses.has(i))
+        fail('scalar pattern alias requires a resolved type position; general alias use unsupported',t);
     }
     for(const name of this.patternTypeNames){
       if(usedClasses.has(name)||usedModules.has(name))fail('scalar pattern type name shadowed by declaration '+name,this.peek());
@@ -1459,9 +1467,33 @@ class Parser {
     if(!values.length&&!types.length)fail('empty pattern set',this.peek());
     return {values,types};
   }
-  patternTypeList() {
-    const aliases=new Map([['int','int'],['Int','int'],['bool','bool'],['boolean','bool'],
+  scalarPatternTypeAtom() {
+    const builtin=new Map([['int','int'],['Int','int'],['bool','bool'],['boolean','bool'],
       ['string','string'],['String','string'],['float','float'],['f64','float']]);
+    const at=this.peek(),type=builtin.get(at.value),resolved=this.patternTypeAliases.get(at.value);
+    if(at.kind!=='id'||(type===undefined&&resolved===undefined))
+      fail('unknown or forward/cyclic scalar pattern type',at);
+    if(resolved!==undefined)this.patternAliasUses.add(this.i);
+    else this.patternTypeNames.add(at.value);
+    this.i++;
+    return {values:[],types:resolved===undefined?[type]:resolved};
+  }
+  readPatternTypeAlias() {
+    this.expect('type');const index=this.i,name=this.name();
+    if(this.patternConstants.has(name)||this.patternTypeAliases.has(name)||
+       GENERATOR_RESERVED.has(name)||['Pattern','Int','String','string','float','f64','boolean','bool','int'].includes(name))
+      fail('duplicate or reserved scalar pattern alias',this.tokens[index]);
+    if(this.patternTypeAliases.size>=128)fail('scalar pattern alias declaration limit',this.peek());
+    this.expect('=');const parts=[];
+    do {
+      if(parts.length>=64)fail('scalar type alias alternative limit',this.peek());
+      parts.push(this.scalarPatternTypeAtom());
+    } while(this.eat('|'));
+    this.expect(';');
+    this.patternAliasUses.add(index);
+    this.patternTypeAliases.set(name,this.combinePatterns(parts).types);
+  }
+  patternTypeList() {
     const list=this.eat('in'),parts=[];
     if(list&&this.peek().value!=='['){
       const entry=this.patternRef(true);
@@ -1470,9 +1502,7 @@ class Parser {
     }
     if(list)this.expect('[');
     do {
-      const at=this.peek(),type=aliases.get(at.value);
-      if(at.kind!=='id'||type===undefined)fail('expected supported scalar type in type list',at);
-      this.patternTypeNames.add(at.value);this.i++;parts.push({values:[],types:[type]});
+      parts.push(this.scalarPatternTypeAtom());
     } while(list&&this.eat(','));
     if(list)this.expect(']');
     return this.combinePatterns(parts);
@@ -1520,7 +1550,7 @@ class Parser {
     const array=this.eat('[');
     if(array)this.expect(']');
     const index=this.i,name=this.name();
-    if(this.patternConstants.has(name)||GENERATOR_RESERVED.has(name)||name==='Pattern')
+    if(this.patternConstants.has(name)||this.patternTypeAliases.has(name)||GENERATOR_RESERVED.has(name)||name==='Pattern')
       fail('duplicate or reserved compile-time Pattern name',this.tokens[index]);
     if(this.patternConstants.size>=128)fail('compile-time Pattern declaration limit',this.peek());
     this.expect('=');
