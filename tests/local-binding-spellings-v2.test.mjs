@@ -35,3 +35,13 @@ test('malformed, incompatible and duplicate declarations fail before ESM emissio
     'const mut int x = 1; x = 42;','int x = 1; x = 42;'])
     assert.throws(()=>compileProgramV2(source(body)),undefined,body);
 });
+
+test('root integer let shadowing evaluates initializer in preceding environment',async()=>{
+  const program=source('let int x=10; let x :int=x+10; let x as int=x+22;');
+  const renamed='pub fnc main(): int { let int a=10; let b :int=a+10; let c as int=b+22; return c; }';
+  assert.deepEqual(compileToProgramIRV2(program),compileToProgramIRV2(renamed));
+  assert.equal(await execute(program),42n);
+  for(const body of ['const int x=1; let int x=42;',
+    'let int x=1; const int x=42;','val int x=1; let x as int=42;'])
+    assert.throws(()=>compileProgramV2(source(body)),/LOCAL_DUPLICATE_OR_SHADOW/);
+});
