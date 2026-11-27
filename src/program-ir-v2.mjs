@@ -637,12 +637,12 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
       }
       case 'taskDefer':{
         record(expr,['kind','message','body'],'inline task cleanup');
-        if(!taskDepth||expected!=='int'||allowStdout!==true||moduleNames.length||classHeaders.length||generatorHeaders.length||headers.some(f=>f.name==='stdio'||f.params.includes('stdio'))||!validLocalString(expr.message))fail('E_SYNC_TASK_PROFILE: invalid cleanup capability');
+        if(!taskDepth||expected!=='int'||allowStdout!==true||moduleNames.length||classHeaders.length||generatorHeaders.length||headers.some(f=>f.name==='stdio'||f.name==='process'||f.params.includes('stdio')||f.params.includes('process'))||!validLocalString(expr.message))fail('E_SYNC_TASK_PROFILE: invalid cleanup capability');
         return {kind:'taskDefer',message:expr.message,body:node(expr.body,owner,depth+1,'int',active)};
       }
       case 'stdoutSeq': {
         record(expr,['kind','message','body'],'stdout sequence');
-        if(allowStdout!==true||allowScalarWhile===true||owner>=headers.length||moduleNames.length||classHeaders.length||generatorHeaders.length||headers.some(f=>f.name==='stdio'||f.params.includes('stdio'))||!validLocalString(expr.message))fail('E_STDOUT_PROFILE: explicit bounded stdout capability required');
+        if(allowStdout!==true||allowScalarWhile===true||owner>=headers.length||moduleNames.length||classHeaders.length||generatorHeaders.length||headers.some(f=>f.name==='stdio'||f.name==='process'||f.params.includes('stdio')||f.params.includes('process'))||!validLocalString(expr.message))fail('E_STDOUT_PROFILE: explicit bounded stdout capability required');
         return {kind:'stdoutSeq',message:expr.message,body:node(expr.body,owner,depth+1,expected,active)};
       }
       case 'seqVoidCall': {
