@@ -20,3 +20,15 @@ The supplied owner/identity/runtime remain trusted host authority. Fatal
 scheduler failure and STOP deadlines still need explicit lifecycle handling.
 The bounded source fixture is not a substitute for the shared conformance
 corpus, nor evidence for other compiler backends.
+
+## Body await and single recovery callback extension
+
+The same explicit profile also accepts `return await input;` and one
+`recover |err, cursor| -> { return await fallback; };` registration.
+Binders are reserved lexical names (not yet usable in expressions). Each
+Future parameter has exactly one lexical use; recovery-only input is not
+subscribed on a normal exit. The body uses the existing scheduler driver
+and physical lease; a failed body Future enters recoverable raise rather
+than cleanup panic, LIFO cleanup precedes recovery, cancellation bypasses
+recovery, and a failed recovery Future becomes panic. This is not general
+body expression/control-flow lowering or unrestricted recovery semantics.

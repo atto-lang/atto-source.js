@@ -4,12 +4,17 @@ import {tokenizeCountedProfileSource} from './program-v2.mjs';
 const MAX=(1n<<63n)-1n, MIN=-(1n<<63n);
 const RESERVED=new Set(['pub','suspends','fnc','run','Future','int','defer','await','return','recover','let','val','const','borrow','mut','self','new','select','if','true','false','raise','throw','panic']);
 class Parser {
-  constructor(source){this.tokens=tokenizeCountedProfileSource(source);this.i=0;this.params=new Map();this.used=new Set();this.defers=[];}
+  constructor(source){this.tokens=tokenizeCountedProfileSource(source);this.i=0;this.params=new Map();this.used=new Set();this.defers=[];this.recovery=null;}
   peek(){return this.tokens[this.i];}
   fail(message){const t=this.peek();throw new Error('E_SCHEDULED_UNWIND_PROFILE: '+message+' at '+t.line+':'+t.col);}
   eat(v){const t=this.peek();if((t.kind==='id'||t.kind==='sym')&&t.value===v){this.i++;return true;}return false;}
   need(v){if(!this.eat(v))this.fail('expected '+v);}
   name(){const t=this.peek();if(t.kind!=='id'||! /^[A-Za-z_][A-Za-z_0-9]*$/.test(t.value)||RESERVED.has(t.value))this.fail('lexical parameter required');this.i++;return t.value;}
+  consumeFuture(){
+    const n=this.name();
+    if(!this.params.has(n)||this.used.has(n))this.fail('expected unused Future<int> parameter');
+    this.used.add(n);return this.params.get(n);
+  }
   parse(){
     this.need('pub');this.need('suspends');this.need('fnc');this.need('run');this.need('(');
     do {
@@ -18,27 +23,40 @@ class Parser {
       if(this.params.has(n))this.fail('duplicate parameter');this.params.set(n,this.params.size);
     }while(this.eat(','));
     this.need(')');this.need(':');this.need('int');this.need('{');
-    while(this.eat('defer')){
-      this.need('await');const n=this.name();
-      if(!this.params.has(n)||this.used.has(n))this.fail('expected unused Future<int> parameter');
-      this.used.add(n);this.defers.push(this.params.get(n));this.need(';');
+    while(true){
+      if(this.eat('defer')){
+        this.need('await');this.defers.push(this.consumeFuture());this.need(';');
+      }else if(this.eat('recover')){
+        if(this.recovery!==null)this.fail('one recovery callback supported');
+        this.need('|');const err=this.name();this.need(',');const cursor=this.name();this.need('|');
+        if(err===cursor||this.params.has(err)||this.params.has(cursor))this.fail('recovery binder collision');
+        this.need('->');this.need('{');this.need('return');this.need('await');
+        this.recovery=this.consumeFuture();this.need(';');this.need('}');this.need(';');
+      }else break;
     }
-    if(this.used.size!==this.params.size)this.fail('each Future<int> parameter must be consumed exactly once');
-    this.need('return');const neg=this.eat('-');const t=this.peek();
-    if(t.kind!=='int')this.fail('return requires a signed i64 literal');
-    this.i++;const value=BigInt(t.value.replaceAll('_',''))*(neg?-1n:1n);
-    if(value<MIN||value>MAX)this.fail('i64 literal overflow');
+    this.need('return');let body=null,value=null;
+    if(this.eat('await'))body=this.consumeFuture();
+    else {
+      const neg=this.eat('-');const t=this.peek();
+      if(t.kind!=='int')this.fail('return requires a signed i64 literal or awaited Future<int>');
+      this.i++;value=BigInt(t.value.replaceAll('_',''))*(neg?-1n:1n);
+      if(value<MIN||value>MAX)this.fail('i64 literal overflow');
+    }
+    if(this.recovery!==null&&body===null)this.fail('recovery requires a fallible body await');
+    if(this.used.size!==this.params.size)this.fail('each Future<int> parameter must have exactly one lexical use');
     this.need(';');this.need('}');if(this.peek().kind!=='eof')this.fail('trailing source');
-    return {params:this.params.size,defers:this.defers,value};
+    return {params:this.params.size,defers:this.defers,recovery:this.recovery,body,value};
   }
 }
 // AOT ESM, not eval or dynamic function construction. The trusted embedder
 // passes the backend runtime module namespace; browser and Node use same bytes.
 export function compileScheduledUnwindV1(source){
   const p=new Parser(source).parse();
-  const registrations=p.defers.map(slot=>'  _ctx.register_scheduled_defer(()=>_rt.deferFuture(_ctx,_f['+slot+']));').join('\n');
+  const registrations=p.defers.map(slot=>'  _ctx.register_scheduled_defer(()=>_rt.deferFuture(_ctx,_f['+slot+']));');
+  if(p.recovery!==null)registrations.push('  _ctx.register_scheduled_recover(()=>_rt.recoverFuture(_ctx,_f['+p.recovery+']));');
+  const exit=p.body===null?'_ctx.return_frame_scheduled('+p.value+'n,_loop,_owner,_done)':'_ctx.run_body_scheduled(()=>_rt.awaitFuture(_ctx,_f['+p.body+']),_loop,_owner,_done)';
   return 'export function start(_rt,_loop,_owner,_identity,_futures,_done){\n'+
     '  const _f=_rt.validateFutures(_futures,'+p.params+');\n'+
-    '  const _ctx=_rt.createContext(_identity);\n  _ctx.push_frame(1);\n'+registrations+'\n'+
-    '  return _ctx.return_frame_scheduled('+p.value+'n,_loop,_owner,_done);\n}\n';
+    '  const _ctx=_rt.createContext(_identity);\n  _ctx.push_frame(1);\n'+registrations.join('\n')+'\n'+
+    '  return '+exit+';\n}\n';
 }

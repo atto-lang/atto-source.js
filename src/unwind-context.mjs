@@ -135,11 +135,11 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     active_callback.recovered.add(token);
     return token;
   }
-  function* dispatch_failure_steps(kind, error) {
+  function* dispatch_failure_steps(kind, error, prior_pending=null) {
     check_available();
     if (!failure_kinds.has(kind)) throw new TypeError('E_INVALID_FAILURE_KIND');
     require_error(error);
-    const pending = pending_outcome(kind,error);
+    const pending = prior_pending ?? pending_outcome(kind,error);
     busy = true;
     active_pending = pending;
     cancel_requested = kind === 'cancel';
@@ -241,6 +241,30 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
       cancel_requested = false;
       busy = false;
     }
+  }
+  // A compiled body quantum uses the same physical lease and ticket driver.
+  // Preserve the original failure identity; only escaping cleanup/recovery
+  // errors become panic, never ordinary body raise/throw.
+  function* run_body_steps(handler) {
+    check_available();
+    if (!frames.length) throw new Error('E_NO_ACTIVE_FRAME');
+    const pending=pending_outcome('return',null);
+    let value;
+    busy=true;active_pending=pending;cancel_requested=false;
+    enter_callback();
+    try {
+      value=yield {handler,suspends:true,scheduled:true,args:[]};
+    } catch(error) {
+      const signal=active_callback?.signals.get(error);
+      if(signal) {
+        active_callback.signals.delete(error);
+        merge_failure(pending,signal.kind,signal.error);
+      } else merge_failure(pending,'host-fatal',error instanceof Error?error:new Error('E_BODY_CALLBACK_FAILED'));
+    } finally {
+      active_callback=null;active_pending=null;awaiting_callback=false;cancel_requested=false;busy=false;
+    }
+    if(pending.kind==='return')return yield* return_frame_steps(value);
+    return yield* dispatch_failure_steps(pending.kind,pending.error,pending);
   }
   // Both entry points drive the same ordered unwind machine. A synchronous
   // entry rejects *before* removing frames if any registered callback may
@@ -491,6 +515,10 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     dispatch_failure_async,
     request_cancel,
     return_frame_scheduled,
+    run_body_scheduled(handler,scheduler,owner_key,on_done) {
+      require_quantum(handler);
+      return start_scheduled(run_body_steps(handler),scheduler,owner_key,on_done);
+    },
     dispatch_failure_scheduled,
     suspend_step,
     get unwind_busy() { return busy || scheduled_admission; },
