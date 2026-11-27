@@ -64,7 +64,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
   const take=v=>peek().value===v?(at++,true):false;
   const expect=v=>{if(!take(v))fail('E_SYNTAX','expected '+v);};
   const name=()=>{const t=peek();if(t.kind!=='id')fail('E_UNIT_NAME','expected name');at++;return t.value;};
-  const dims=new Set(),bases=new Set(),units=new Map(),aliases=new Map(),signatures=new Map();
+  const dims=new Map(),bases=new Set(),units=new Map(),aliases=new Map(),signatures=new Map();
   let locals=new Map(),nextStrictSlot=0;
   const lookup=n=>{if(!units.has(n))fail('E_UNIT_NAME','unknown unit '+n);return units.get(n);};
   const integer=(negative=false)=>{
@@ -81,10 +81,36 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     const n=name();
     if(['int','i64','i32','float','bool','void','string','define','unit','dimension','main','return','as','fnc','pub'].includes(n))fail('E_RESERVED','reserved quantity name');
     if(dims.has(n)||units.has(n))fail('E_UNIT_DUPLICATE','duplicate quantity name');
-    if(dimension){expect(';');dims.add(n);continue;}
+    if(dimension){
+      let powers=new Map([[n,1]]);
+      if(take('=')){
+        if(strict)fail('E_VERIFY_UNSUPPORTED','compound dimension pilot is not strict-profile admitted');
+        const dimensionFactor=()=>{
+          const key=name();
+          if(!dims.has(key))fail('E_UNIT_NAME','unknown or forward dimension '+key);
+          return dims.get(key);
+        };
+        powers=new Map(dimensionFactor());
+        let factors=1;
+        while(peek().value==='*'||peek().value==='/'){
+          if(++factors>128)fail('E_UNIT_LIMIT','compound dimension factor budget exceeded');
+          const divide=take('/');if(!divide)expect('*');
+          for(const [key,exponent] of dimensionFactor()){
+            const next=(powers.get(key)??0)+(divide?-exponent:exponent);
+            if(Math.abs(next)>64)fail('E_UNIT_LIMIT','dimension exponent exceeds 64');
+            if(next===0)powers.delete(key);else powers.set(key,next);
+          }
+          if(powers.size>32)fail('E_UNIT_LIMIT','too many dimensions');
+        }
+        if(powers.size===0)fail('E_UNIT_DIMENSION','dimensionless named kinds require nominal kind admission');
+        if([...dims.values()].some(other=>other.size===powers.size&&[...powers].every(([k,v])=>other.get(k)===v)))
+          fail('E_UNIT_DIMENSION','equal dimension vectors require explicit nominal kind admission');
+      }
+      expect(';');dims.set(n,powers);continue;
+    }
     expect(':');const dim=name();
     if(!dims.has(dim))fail('E_UNIT_NAME','unknown dimension');
-    const powers=new Map([[dim,1]]);
+    const powers=new Map(dims.get(dim));
     let unit={powers,n:1n,d:1n};
     if(take('=')){
       let base,f=1n,divide=false;
