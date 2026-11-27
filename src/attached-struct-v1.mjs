@@ -105,7 +105,7 @@ class Reader{
     return val(type,'(('+params.join(',')+')=>'+plan.id+'('+plan.order.map(i=>params[i]).join(',')+'))('+entries.map(e=>e.code).join(',')+')');
   }
   bind(){
-    this.need('let');const mut=this.eat('mut');let name=this.name(),annotation=null;if(this.owners.has(name)){annotation=name;name=this.name()}
+    this.need('let');const mut=this.eat('mut');let name=this.name(),annotation=null;if(this.eat(':')){annotation=this.type();demand(this.owners.has(annotation),'expected nominal value type')}else if(this.owners.has(name)){annotation=name;name=this.name()}
     demand(!this.values.has(name)&&!this.owners.has(name)&&this.values.size<64,'binding identity/limit');this.need('=');const copy=this.eat('copy!');let type,code;
     const prior=this.values.get(this.peek());
     if(this.peek()==='new')fail('reference construction cannot initialize an attached value struct');
