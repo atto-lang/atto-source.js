@@ -68,11 +68,16 @@ test('contextual make in constructor arguments uses a unique viable nominal form
   assert.equal(await run(compileAttachedStruct(point+scene+body)),42n);
   assert.equal(await run(compileAttachedStruct(point+scene+body.replace('make {','make Point {'))),42n);
   const other=point.replaceAll('Point','Other');
-  // Existing attachment constructors only accept direct field/parameter maps;
-  // use a second nominal field owner in the first formal with an extra parameter.
-  const ambiguous=scene.replace(' mtd int',' constructor(int bias,Other other,Point origin){self.origin=origin;self.bias=bias;} mtd int');
-  assert.throws(()=>compileAttachedStruct(point+other+ambiguous+body),/ambiguous or missing contextual constructor argument owner/);
-  assert.equal(await run(compileAttachedStruct(point+other+ambiguous+body.replace('make {','make Point {'))),42n);
+  const overloaded=scene.replace(' mtd int',' constructor(int bias,Other other,Point origin){self.origin=origin;self.bias=bias;} mtd int');
+  assert.equal(await run(compileAttachedStruct(point+other+overloaded+body)),42n);
+  const ambiguous=overloaded.replace(' mtd int',' constructor(int bias,Point origin,Other other){self.origin=origin;self.bias=bias;} mtd int');
+  const three=body.replace('Scene(1,make {y:2,x:39})','Scene(1,make {y:2,x:39},make Other {x:0,y:0})');
+  assert.throws(()=>compileAttachedStruct(point+other+ambiguous+three),/ambiguous or missing contextual constructor argument owner/);
+  assert.equal(await run(compileAttachedStruct(point+other+ambiguous+three.replace('make {','make Point {'))),42n);
+  // Nested delimiters and comments must not change the outer arity.
+  assert.equal(await run(compileAttachedStruct(point+other+overloaded+body.replace('Scene(1,','Scene((1), /* , ) */ '))),42n);
+  for(const bad of ['Scene(1,,make {y:2,x:39})','Scene(1,make {y:2,x:39},)','Scene(1,make {y:2,x:39}) )','Scene(1,make {y:2,x:39)'])
+    assert.throws(()=>compileAttachedStruct(point+scene+body.replace('Scene(1,make {y:2,x:39})',bad)),/E_ATTACHED_STRUCT/);
   for(const bad of ['new {y:2,x:39}','make {x:39}','make Other {x:39,y:2}','make {x:39,y:true}'])
     assert.throws(()=>compileAttachedStruct(point+other+scene+body.replace('make {y:2,x:39}',bad)),/E_ATTACHED_STRUCT/);
   assert.throws(()=>compileAttachedStruct(point+scene+body.replace('Scene(1,','Scene(make {x:1,y:2},')),/E_ATTACHED_STRUCT/);
