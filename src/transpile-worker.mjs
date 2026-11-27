@@ -1,3 +1,4 @@
+import {compileDeferredStdoutWorker} from './program-v2.mjs';
 import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
 import { transpile_result_int_parse_tokens } from './result-int-parse-compiler.mjs';
 // Deliberately a strict AttoLang subset, not the full frontend.
@@ -93,7 +94,7 @@ function reject_unsupported_mutex_constructor(tokens) {
     throw new TranspileError('E_LOCK_UNSUPPORTED');
   }
 }
-function checked_tokens(source) {
+function check_raw_source(source) {
   if (typeof source !== 'string' || new TextEncoder().encode(source).byteLength > MAX_SOURCE) throw new TranspileError('E_SOURCE_LIMIT');
   // Raw terminal controls and NUL must not be hidden in comments or
   // visually interfere with reviewing source code before compilation.
@@ -116,9 +117,19 @@ function checked_tokens(source) {
   // Trojan Source controls can reorder displayed source invisibly.
   if (/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(source))
     throw new TranspileError('E_BIDI_CONTROL');
+}
+function checked_tokens(source) {
+  check_raw_source(source);
   const tokens=normalize_generic_closers(tokenize(source));
   reject_unsupported_mutex_constructor(tokens);
   return tokens;
+}
+// Explicit separate profile: never fallback from legacy Worker admission.
+export function transpile_deferred_stdout_worker(source,{allowDeferredStdout=false}={}) {
+  check_raw_source(source);
+  if(allowDeferredStdout!==true)throw new TranspileError('E_PERMISSION');
+  const module_source=compileDeferredStdoutWorker(source,{allowDeferredStdout:true});
+  return {backend:'js',trusted:true,guest_abi:'atto.js.browser.deferred-stdout.v1',module_source};
 }
 export function transpile_to_worker(source) {
   const tokens=checked_tokens(source);

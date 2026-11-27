@@ -7,6 +7,7 @@ import {TextDecoder} from 'node:util';
 import {compile, check} from '../src/compiler.mjs';
 import {compileCountedReadyV1} from '../src/counted-select-ready-compiler.mjs';
 import {staticFactsV0} from '../src/static-facts-v0.node.mjs';
+import {transpile_deferred_stdout_worker} from '../src/transpile-worker.mjs';
 import {compileProgramV2, checkProgramV2, compileAttoScalarV1, checkAttoScalarV1} from '../src/program-v2.mjs';
 import {compileClassMethodsV1,checkClassMethodsV1} from '../src/class-methods-v1.mjs';
 import {compileFreestandingCore,checkFreestandingCore} from '../src/freestanding-core.mjs';
@@ -68,11 +69,15 @@ try {
   // until cross-backend semantics and host ABI have been independently validated.
   const countedReady=rawArgs[0]==='--counted-ready-v1';
   const extended=rawArgs[0]==='--program-v2';
+  const deferredWorker=rawArgs[0]==='--program-v2-worker';
   const attoScalar=rawArgs[0]==='--atto-scalar-v1';
   const methodOnly=rawArgs[0]==='--class-methods-v1';
   const freestanding=rawArgs[0]==='--freestanding-core';
   const linkedCore=rawArgs[0]==='--linked-core';
-  let args=(countedReady||extended||attoScalar||methodOnly||freestanding||linkedCore)?rawArgs.slice(1):rawArgs;
+  let args=(countedReady||extended||deferredWorker||attoScalar||methodOnly||freestanding||linkedCore)?rawArgs.slice(1):rawArgs;
+  const allowDeferredStdout=args[0]==='--allow-deferred-stdout';
+  if(allowDeferredStdout){if(!extended&&!deferredWorker)throw Error('E_PERMISSION: stdout grant requires program-v2 profile');args=args.slice(1);}
+  if(deferredWorker&&!allowDeferredStdout)throw Error('E_PERMISSION: worker profile requires compile grant');
   let coreInput=null,coreSha256=null;
   if(linkedCore) {
     if(!args[0]?.startsWith('--core=')||args[0].length<8)
@@ -88,12 +93,12 @@ try {
   }
   const checkOnly=args[0]==='--check';
   const factOnly=args[0]==='--static-facts';
-  if (factOnly && (countedReady||extended||attoScalar||methodOnly||freestanding||linkedCore)) throw Error('facts mode does not admit alternate dialects');
+  if (factOnly && (countedReady||extended||deferredWorker||attoScalar||methodOnly||freestanding||linkedCore)) throw Error('facts mode does not admit alternate dialects');
   const input=checkOnly||factOnly?args[1]:args[0];
   const extras=args.slice(checkOnly||factOnly?2:1);
   if (!input || input.startsWith('--') || extras.length>1 ||
       (extras.length && !extras[0].startsWith('--out=')))
-    throw Error('usage: oreslang-jsc [--counted-ready-v1|--program-v2|--atto-scalar-v1|--class-methods-v1|--freestanding-core|--linked-core --core=/absolute/core.ores [--core-sha256=HEX]] [--check] input.ores [--out=/absolute/output.mjs]');
+    throw Error('usage: oreslang-jsc [--counted-ready-v1|--program-v2|--program-v2-worker|--atto-scalar-v1|--class-methods-v1|--freestanding-core|--linked-core --core=/absolute/core.ores [--core-sha256=HEX]] [--allow-deferred-stdout (program-v2 only)] [--check] input.ores [--out=/absolute/output.mjs]');
   if ((checkOnly||factOnly) && extras.length) throw Error('check/facts modes do not accept --out');
   const source=await readSource(resolve(input), {rejectBom:factOnly});
   const coreSource=linkedCore?await readSource(resolve(coreInput)):null;
@@ -106,7 +111,8 @@ try {
     if (countedReady) compileCountedReadyV1(source);
     else if (linkedCore) checkLinkedFreestandingCore({coreSource,appSource:source});
     else if (freestanding) checkFreestandingCore(source);
-    else if (extended) checkProgramV2(source);
+    else if (deferredWorker) transpile_deferred_stdout_worker(source,{allowDeferredStdout});
+    else if (extended) checkProgramV2(source,{allowDeferredStdout});
     else if (attoScalar) checkAttoScalarV1(source);
     else if (methodOnly) checkClassMethodsV1(source);
     else check(source);
@@ -114,7 +120,8 @@ try {
   } else {
     const output=countedReady?compileCountedReadyV1(source):linkedCore?compileLinkedFreestandingCore({coreSource,appSource:source}):
       freestanding?compileFreestandingCore(source):
-      extended?compileProgramV2(source):
+      deferredWorker?transpile_deferred_stdout_worker(source,{allowDeferredStdout}).module_source:
+      extended?compileProgramV2(source,{allowDeferredStdout}):
       attoScalar?compileAttoScalarV1(source):
       methodOnly?compileClassMethodsV1(source):compile(source);
     if (!extras.length) await writeStdout(output);
