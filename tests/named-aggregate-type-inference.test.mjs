@@ -129,3 +129,31 @@ test('bounded Pair/Record grammar rejects malformed, ambiguous and unsafe forms'
   ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),undefined,body);
   assert.throws(()=>compileToIR('pub fnc main(int a):int{const Record r=(x=a); const v={...r}; return v.x;}'),/E_RECORD_SPREAD/);
 });
+
+
+test('stored Pair<int> three spellings, literal keys and typed aliases lower identically',async()=>{
+  const spellings=['const x := 42;','const x = x := 42;','const x = Pair.of("x", 42);',
+    'const x = "x" := 42;','const x = Pair.of<int>("x", 42);'];
+  const generated=[];
+  for(const declaration of spellings){
+    const body=declaration+' const Pair<int> p=x; return p.value;';
+    assert.equal(await run(body),42n);
+    generated.push(compileIR(compileToIR('pub fnc main(): int { '+body+' }')));
+  }
+  assert.equal(new Set(generated).size,1,'same nominal scalar lowering for all spellings');
+  assert.equal(await run('const y=7; const x=y:=42; return x.value+y-7;'),42n);
+});
+test('Pair aliases cannot confer scalar, Record or mutation authority',()=>{
+  for(const body of [
+    'const x=42; const Pair<int> p=x; return 0;',
+    'const x={value:42}; const Pair<int> p=x; return 0;',
+    'const x:=true; const Pair<int> p=x; return 0;',
+    'const x:=missing; return 0;',
+    'const x=x:=x; return 0;',
+    'const x:=42; const Pair<int> p=x; return p;',
+    'const x:=42; const Pair<int> p=x; p.value=3; return p.value;',
+    'const x=Pair.of(7,42); return x.value;',
+    'const x=Pair.of("x",42); const x:=3; return x.value;',
+    'const Pair=42; const x=Pair.of("x",42); return x.value;',
+  ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),undefined,body);
+});
