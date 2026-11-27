@@ -9,7 +9,7 @@ export function compileToCheckedU64IRV1(source) {
   if (typeof source !== 'string' || source.length > 16384) fail('source budget');
   // This explicit profile admits only ASCII identifiers, decimal literals and
   // listed punctuation; no comments, strings, imports or effects.
-  const token = /[ \t\r\n]+|[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[(){}:,;+*\-]/y;
+  const token = /[ \t\r\n]+|[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[(){}:,;+*\/\-]/y;
   const ts = [];
   for (let i = 0; i < source.length;) {
     token.lastIndex = i;
@@ -53,7 +53,7 @@ export function compileToCheckedU64IRV1(source) {
     }
     for (;;) {
       const op = peek();
-      const prec = op === '*' ? 2 : op === '+' || op === '-' ? 1 : 0;
+      const prec = op === '*' || op === '/' ? 2 : op === '+' || op === '-' ? 1 : 0;
       if (prec === 0 || prec < min) break;
       at++;
       if (++nodes > 2048) fail('expression budget');
@@ -158,7 +158,7 @@ export function validateCheckedU64IRV1(input) {
     }
     if(kind==='u64Binary') {
       const n=record(raw,['kind','op','left','right']);
-      if(!['+','-','*'].includes(n.op))fail('IR operator');
+      if(!['+','-','*','/'].includes(n.op))fail('IR operator');
       const [left,l]=visit(n.left,owner,depth+1),[right,r]=visit(n.right,owner,depth+1);
       if(1+l+r>10000)fail('expanded work budget');return [{...n,left,right},1+l+r];
     }
@@ -175,11 +175,13 @@ export function validateCheckedU64IRV1(input) {
 }
 export function compileCheckedU64IRV1(input) {
   const {functions}=validateCheckedU64IRV1(input);
+  let usesDivision=false;
   function emit(n) {
     if (n.kind === 'u64') return n.value + 'n';
     if (n.kind === 'param') return 'p' + n.index;
     if (n.kind === 'call') return 'f' + n.target + '(' + n.args.map(emit).join(',') + ')';
-    const helper = n.op === '+' ? 'add' : n.op === '-' ? 'sub' : 'mul';
+    if(n.op==='/')usesDivision=true;
+    const helper = n.op === '+' ? 'add' : n.op === '-' ? 'sub' : n.op === '*' ? 'mul' : 'div';
     return helper + '(' + emit(n.left) + ',' + emit(n.right) + ')';
   }
   const out = [
@@ -193,6 +195,7 @@ export function compileCheckedU64IRV1(input) {
     const params = fn.params.map((_,j)=>'p'+j);
     out.push('function f'+i+'('+params.join(',')+'){'+params.map(p=>'check('+p+');').join('')+'return check('+emit(fn.body)+');}');
   });
+  if(usesDivision)out.push('function div(a,b){if(b===0n){const e=new RangeError("E_U64_DIVISION_BY_ZERO");e.code="division_by_zero";throw e;}return check(a/b); }');
   out.push('export {f'+functions.findIndex(f=>f.name==='main')+' as main};');
   return out.join('\n')+'\n';
 }
