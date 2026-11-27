@@ -896,6 +896,7 @@ class Parser {
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
+        case 'deferStdout':add(expr.body);break;
         case 'local':add(expr.init);add(expr.body);break;
         case 'newClass':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'methodCall':
@@ -1163,6 +1164,12 @@ class Parser {
             fail('E_TASK_LOCAL: reserved or duplicate task-local name',this.peek());
           declarations.set(name,mutable);
         }else if(this.eat('defer')){
+          if(['stdio','process'].includes(this.peek().value)&&this.tokens[this.i+1]?.value==='.'){
+            const receiver=this.name();this.expect('.');this.expect(receiver==='stdio'?'out':'stdout');this.expect('.');this.expect('write');this.expect('(');
+            const literal=this.peek();if(literal.kind!=='localString'||literal.literal.length>256||!/^[\x20-\x7e]*$/.test(literal.literal))fail('E_TASK_STDOUT: bounded printable ASCII literal required',literal);
+            this.i++;this.expect(')');this.expect(';');
+            locals.push({stdout:receiver,text:literal.literal});if(locals.length>64)fail('E_TASK_LOCAL: local and write budget exceeded',this.peek());continue;
+          }
           name=this.name();
           if(declarations.has(name))fail('E_TASK_DEFER: cleanup target must be an enclosing mutable int',this.peek());
           deferred=true;
@@ -1185,7 +1192,7 @@ class Parser {
       let inner=this.expression();
       this.expect(';');this.expect('}');
       for(let i=locals.length-1;i>=0;i--)
-        inner={kind:'local',name:locals[i].name,init:locals[i].init,localType:'int',taskRebind:locals[i].rebind,taskOuterWrite:locals[i].outerWrite,taskDeferred:locals[i].deferred,body:inner};
+        inner=locals[i].stdout?{kind:'deferStdout',receiver:locals[i].stdout,text:locals[i].text,body:inner}:{kind:'local',name:locals[i].name,init:locals[i].init,localType:'int',taskRebind:locals[i].rebind,taskOuterWrite:locals[i].outerWrite,taskDeferred:locals[i].deferred,body:inner};
       return {kind:'inlineScalarTask',inner};
     }
     if(this.eat('trap!')||this.eat('trap'))return {kind:'trap',inner:this.expression(30)};
@@ -1489,7 +1496,7 @@ function resolveProgram(parsed) {
       }
       case 'if':return resolvedType(expr.yes,owner);
       case 'seqVoidCall':return resolvedType(expr.value,owner);
-      case 'setIntLocal':case 'deferIntLocal':return resolvedType(expr.body,owner);
+      case 'setIntLocal':case 'deferIntLocal':case 'deferStdout':return resolvedType(expr.body,owner);
       case 'mutableIntLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return resolvedType(expr.body,owner);
       case 'adtMatch':return resolvedType(expr.arms[0].body,owner);
       default:fail('cannot infer resolved expression type '+expr.kind);
@@ -1554,6 +1561,7 @@ function resolveProgram(parsed) {
             case 'int':case 'variable':return;
             case 'inlineScalarTask':case 'neg':admit(e.inner,d+1);return;
             case 'binary':admit(e.left,d+1);admit(e.right,d+1);return;
+            case 'deferStdout':admit(e.body,d+1);return;
             case 'local':admit(e.init,d+1);admit(e.body,d+1);return;
             case 'call':
               if(e.qualifier!==null&&e.name==='unwrap'&&e.args.length===0)return;
@@ -1571,6 +1579,7 @@ function resolveProgram(parsed) {
             case 'int':case 'param':case 'capture':case 'optionCapture':case 'resultCapture':return;
             case 'neg':checkResolved(n.inner,d+1);return;
             case 'binary':checkResolved(n.left,d+1);checkResolved(n.right,d+1);return;
+            case 'deferStdout':checkResolved(n.body,d+1);return;
             case 'local':case 'setIntLocal':case 'deferIntLocal':checkResolved(n.init,d+1);checkResolved(n.body,d+1);return;
             case 'intrinsic':
               if(n.args.length===1&&((n.name==='Option.unwrap'&&n.args[0].kind==='optionCapture')||(n.name==='Result.unwrap'&&n.args[0].kind==='resultCapture')))return;
@@ -1588,6 +1597,10 @@ function resolveProgram(parsed) {
         // only statically typed i64 values, and erase the identity operator.
         if(resolvedType(inner,owner)!=='int')fail('await requires immediate int in program-v2; asynchronous await unsupported');
         return inner;
+      }
+      case 'deferStdout':{
+        if(owner.name!=='main'||owner.module!==null||owner.ownerKind==='method'||owner.params.length||bindings.some(b=>b.name===expr.receiver)||modules.includes(expr.receiver)||classes.some(c=>c.name===expr.receiver)||functions.some(f=>f.name===expr.receiver))fail('E_TASK_STDOUT: unshadowed root main capability required');
+        return {kind:'deferStdout',text:expr.text,body:resolve(expr.body,owner,depth+1,bindings)};
       }
       case 'local': {
         const previous=bindings.findLast(b=>b.name===expr.name);
@@ -1905,6 +1918,8 @@ function resolveProgram(parsed) {
   };
 }
 function emitProgram(program) {
+  const hasDeferredStdout=n=>!!n&&typeof n==='object'&&(n.kind==='deferStdout'||Object.values(n).some(hasDeferredStdout));
+  const stdout=hasDeferredStdout(program);
   const out=[
     '// experimental Oreslang program-v2, provisional signed-64 integer model',
     'const _arithmeticBrand=new WeakSet();',
@@ -1944,6 +1959,7 @@ function emitProgram(program) {
         return '(('+v+')=>{while('+emitExpr(expr.condition,depth+1)+'){'+v+'='+emitExpr(expr.update,depth+1)+';}return '+emitExpr(expr.body,depth+1)+';})('+emitExpr(expr.init,depth+1)+')';
       }
       case 'capture':case 'floatCapture':case 'boolCapture':case 'stringCapture':case 'trapCapture':case 'trapOptionCapture':case 'optionCapture':case 'resultCapture':case 'errorCapture':return '_v'+expr.slot;
+      case 'deferStdout':return '(()=>{try{return '+emitExpr(expr.body,depth+1)+';}finally{_writeDeferred(_stdout,'+JSON.stringify(expr.text)+');}})()';
       case 'deferIntLocal':return '(()=>{try{return '+emitExpr(expr.body,depth+1)+';}finally{_v'+expr.slot+'='+emitExpr(expr.init,depth+1)+';}})()';
       case 'setIntLocal':return '((_v'+expr.slot+'='+emitExpr(expr.init,depth+1)+'),('+emitExpr(expr.body,depth+1)+'))';
       case 'mutableIntLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
@@ -2078,6 +2094,7 @@ function emitProgram(program) {
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
       case 'tryCatch':return usesSymbol(expr.body)||usesSymbol(expr.handler);
       case 'seqVoidCall':return usesSymbol(expr.call)||usesSymbol(expr.value);
+      case 'deferStdout':return usesSymbol(expr.body);
       case 'setIntLocal':case 'deferIntLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
       case 'mutableIntLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
       case 'trap':return usesSymbol(expr.inner);
@@ -2127,6 +2144,7 @@ function emitProgram(program) {
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
       case 'tryCatch':return usesPortableRuntime(expr.body)||usesPortableRuntime(expr.handler);
       case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
+      case 'deferStdout':return usesPortableRuntime(expr.body);
       case 'setIntLocal':case 'deferIntLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'mutableIntLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'i32Check':case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
@@ -2248,9 +2266,10 @@ function emitProgram(program) {
     out.push('return Object.freeze(_iter);');
     out.push('}');
   });
+  if(stdout)out.push('function _writeDeferred(buffer,text){if(buffer===null||buffer.text.length+text.length>4096)throw new Error("E_PERMISSION: deferred stdout denied or quota exceeded");buffer.text+=text;}');
   program.functions.forEach((fn,i)=>{
     const params=fn.params.map((_,j)=>'_p'+j);
-    out.push('function _f'+i+'('+params.join(',')+'){');
+    out.push('function _f'+i+'('+(stdout?'_stdout':params.join(','))+'){');
     params.forEach((p,j)=>{
       const type=fn.paramTypes?.[j]??'int';
       const check={int:'_check',bool:'_checkbool',symbol:'_checksymbol',error:'_checkGuestError',
@@ -2296,7 +2315,10 @@ function emitProgram(program) {
     out.push('Object.freeze(_module'+i+');');
     out.push('export { _module'+i+' as '+JSON.stringify(module)+' };');
   });
-  for(const [name,group] of publicCallableGroups(null)) {
+  if(stdout){
+    out.push('export function main(){throw new Error("E_PERMISSION: deferred stdout requires explicit runtime grant");}');
+    out.push('export function runWithDeferredStdout(grant){if(grant!==true||arguments.length!==1)throw new Error("E_PERMISSION: deferred stdout requires explicit runtime grant");const buffer={text:""};const value=_f0(buffer);return Object.freeze({value,stdout:buffer.text});}');
+  }else for(const [name,group] of publicCallableGroups(null)) {
     out.push('export { '+exportCallableGroup(group)+' as '+JSON.stringify(name)+' };');
   }
   (program.classes??[]).forEach((cls,i)=>{
@@ -2451,7 +2473,7 @@ function admitUnusedRefinementsBeforeCheckedUnwrap(tokens){
   return remainder;
 }
 
-export function compileToProgramIRV2(source) {
+export function compileToProgramIRV2(source, deferredStdoutGrant=false) {
   const tokens=tokenize(source);
   rejectExecutionDomains(tokens,fail,{inlineScalarTasks:true});
   rejectUnsupportedHttpActors(tokens,fail);
@@ -2471,7 +2493,7 @@ export function compileToProgramIRV2(source) {
     dialect:PROGRAM_IR_DIALECT,
     integerModel:PROGRAM_IR_INT_MODEL,
     ...program
-  });
+  },false,deferredStdoutGrant);
 }
 // Strict verification admits only the explicitly checked quantity frontend.
  // An unverified ordinary source path must never be used as a fallback.
@@ -2487,11 +2509,11 @@ export function compileVerifiedStrict(source) {
     schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,integerModel:PROGRAM_IR_INT_MODEL,...quantity
   },true));
 }
-export function compileProgramIRV2(ir) {
-  return emitProgram(validateProgramIRV2(ir));
+export function compileProgramIRV2(ir, deferredStdoutGrant=false) {
+  return emitProgram(validateProgramIRV2(ir,false,deferredStdoutGrant));
 }
-export function compileProgramV2(source) {
-  return emitProgram(compileToProgramIRV2(source));
+export function compileProgramV2(source, deferredStdoutGrant=false) {
+  return emitProgram(compileToProgramIRV2(source,deferredStdoutGrant));
 }
 export function checkProgramV2(source) {
   compileProgramV2(source);

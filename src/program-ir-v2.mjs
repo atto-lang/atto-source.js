@@ -134,7 +134,7 @@ function symbolName(s){
  * Copy after validation, never return caller-owned IR references.
  * Direct object inputs are trusted data only, not a JavaScript sandbox.
  */
-export function validateProgramIRV2(input, allowScalarWhile = false) {
+export function validateProgramIRV2(input, allowScalarWhile = false, deferredStdoutGrant = false) {
   if(input===null||typeof input!=='object'||Array.isArray(input))
     fail('program: expected object');
   const rawKeys=Reflect.ownKeys(input);
@@ -314,6 +314,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
   const trapOptionSlots=owners.map(()=>new Set());
   const caughtSlots=owners.map(()=>new Set());
   const errorSlots=owners.map(()=>new Set());
+  let stdoutCount=0;
   function node(expr,owner,depth=0,expected='int',active=[]){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('expression complexity exceeded');
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid expression');
@@ -525,6 +526,13 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           condition:node(expr.condition,owner,depth+1,'bool',scoped),
           update:node(expr.update,owner,depth+1,'int',scoped),
           body:node(expr.body,owner,depth+1,expected,scoped)};
+      }
+      case 'deferStdout':{
+        record(expr,['kind','text','body'],'deferred stdout');
+        if(deferredStdoutGrant!==true||allowScalarWhile===true)fail('E_PERMISSION: deferred stdout requires explicit compile grant');
+        if(owner!==0||headers.length!==1||headers[0].name!=='main'||headers[0].module!==null||!headers[0].pub||headers[0].params.length||namespace!==null||moduleNames.length||generatorHeaders.length||classHeaders.length||hasFileExports||expected!=='int')fail('E_TASK_STDOUT: root main only');
+        if(++stdoutCount>16||typeof expr.text!=='string'||expr.text.length>256||!/^[\x20-\x7e]*$/.test(expr.text))fail('E_TASK_STDOUT: literal or output quota exceeded');
+        return {kind:'deferStdout',text:expr.text,body:node(expr.body,owner,depth+1,'int',active)};
       }
       case 'deferIntLocal':case 'setIntLocal':{
         record(expr,['kind','slot','init','body'],'mutable integer assignment');
