@@ -6,6 +6,7 @@ import {isIdentifier} from './portable-unicode-identifier-v1.mjs';
 export const PROGRAM_IR_VERSION=2;
 export const PROGRAM_IR_DIALECT='oreslang.program';
 export const PROGRAM_IR_INT_MODEL='signed-i64-checked-provisional';
+
 const DEC=/^(?:0|[1-9][0-9]*|-[1-9][0-9]*)$/;
 const MIN=-(1n<<63n), MAX=(1n<<63n)-1n;
 const LIMIT_NODES=30000,LIMIT_DEPTH=192;
@@ -134,7 +135,7 @@ function symbolName(s){
  * Copy after validation, never return caller-owned IR references.
  * Direct object inputs are trusted data only, not a JavaScript sandbox.
  */
-export function validateProgramIRV2(input, allowScalarWhile = false) {
+export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout = false) {
   if(input===null||typeof input!=='object'||Array.isArray(input))
     fail('program: expected object');
   const rawKeys=Reflect.ownKeys(input);
@@ -228,7 +229,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
     if(paramTypes.includes('error')&&(f.pub||params.includes('Error')||seenModules.has('Error')))
       fail('E_ERROR_BINDING: Error parameters require private callable and unshadowed core Error');
     const returnType=typed?f.returnType:'int';
-    if(returnType!=='void'&&!types.includes(returnType))fail('unsupported function return type');
+    if(returnType!=='void'&&!types.includes(returnType)&&!(returnType==='result<int,string>'&&!f.pub))fail('unsupported function return type');
     if(returnType==='void'&&f.body!==null)fail('void function body must be null');
     if(returnType!=='void'&&(f.body===null||typeof f.body!=='object'))
       fail('nonvoid function requires an expression body');
@@ -311,6 +312,9 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
   const resultSlots=owners.map(()=>new Set());
   const trapSlots=owners.map(()=>new Set());
   const trapOptionSlots=owners.map(()=>new Set());
+  const trapBoolSlots=owners.map(()=>new Set()),optionBoolSlots=owners.map(()=>new Set());
+  const mutableTaskSlots=owners.map(()=>new Set());
+  let taskDepth=0;
   const caughtSlots=owners.map(()=>new Set());
   const errorSlots=owners.map(()=>new Set());
   function node(expr,owner,depth=0,expected='int',active=[]){
@@ -370,17 +374,18 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
       case 'trap':
         record(expr,['kind','operandType','inner'],'typed arithmetic trap');
         const option=['option<int>','trapOptionResult'].includes(expr.operandType);
-        if(expected!==(option?'trapOptionResult':'trapResult')||
-           !['int','option<int>','result<int,int>','trapResult','trapOptionResult'].includes(expr.operandType))
+        const bool=['bool','trapBoolResult'].includes(expr.operandType);
+        if(expected!==(bool?'trapBoolResult':option?'trapOptionResult':'trapResult')||
+           !['int','bool','option<int>','result<int,int>','trapResult','trapOptionResult','trapBoolResult'].includes(expr.operandType))
           fail('trap operand/result type mismatch');
         return {kind:'trap',operandType:expr.operandType,inner:node(expr.inner,owner,depth+1,expr.operandType,active)};
-      case 'trapMethod':case 'trapOptionMethod':{
+      case 'trapMethod':case 'trapOptionMethod':case 'trapBoolMethod':{
         record(expr,['kind','name','receiver'],'trap Result method');
-        const option=desc.value==='trapOptionMethod';
-        if(!['is_ok','is_err','unwrap'].includes(expr.name)||expected!==(expr.name==='unwrap'?(option?'option<int>':'int'):'bool'))
+        const option=desc.value==='trapOptionMethod',bool=desc.value==='trapBoolMethod';
+        if(!['is_ok','is_err','unwrap'].includes(expr.name)||expected!==(expr.name==='unwrap'?(bool?'bool':option?'option<int>':'int'):'bool'))
           fail('trap Result method type mismatch');
         return {kind:desc.value,name:expr.name,
-          receiver:node(expr.receiver,owner,depth+1,option?'trapOptionResult':'trapResult',active)};
+          receiver:node(expr.receiver,owner,depth+1,bool?'trapBoolResult':option?'trapOptionResult':'trapResult',active)};
       }
       case 'floatNeg':
         record(expr,['kind','inner'],'float negation');
@@ -525,17 +530,20 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           update:node(expr.update,owner,depth+1,'int',scoped),
           body:node(expr.body,owner,depth+1,expected,scoped)};
       }
-      case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':{
+      case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':{
         record(expr,['kind','slot','init','body'],'immutable local');
         if(owner>=headers.length||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
           fail('invalid or repeated local slot');
         captureSlots[owner].add(expr.slot);
-        const t=desc.value==='optionLocal'?'option<int>':desc.value==='resultLocal'?'result<int,int>':desc.value==='trapOptionLocal'?'trapOptionResult':desc.value==='trapLocal'?'trapResult':desc.value==='floatLocal'?'float':desc.value==='boolLocal'?'bool':desc.value==='stringLocal'?'string':'int';
+        const t=desc.value==='optionBoolLocal'?'option<bool>':desc.value==='trapBoolLocal'?'trapBoolResult':desc.value==='optionLocal'?'option<int>':desc.value==='resultLocal'?'result<int,int>':desc.value==='trapOptionLocal'?'trapOptionResult':desc.value==='trapLocal'?'trapResult':desc.value==='floatLocal'?'float':desc.value==='boolLocal'?'bool':desc.value==='stringLocal'?'string':'int';
         if(allowScalarWhile===true&&(t==='bool'||t==='string'))fail('ordinary-only local type');
         const init=node(expr.init,owner,depth+1,t,active);
+        if(desc.value==='taskMutableLocal'){if(allowScalarWhile||taskDepth)fail('E_SYNC_TASK_PROFILE: invalid mutable capture declaration');mutableTaskSlots[owner].add(expr.slot);}
         if(t==='trapResult')trapSlots[owner].add(expr.slot);
         if(t==='trapOptionResult')trapOptionSlots[owner].add(expr.slot);
+        if(t==='trapBoolResult')trapBoolSlots[owner].add(expr.slot);
+        if(t==='option<bool>')optionBoolSlots[owner].add(expr.slot);
         if(t==='float')floatSlots[owner].add(expr.slot);
         if(t==='bool')boolSlots[owner].add(expr.slot);
         if(t==='string')stringSlots[owner].add(expr.slot);
@@ -543,13 +551,13 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         if(t==='result<int,int>')resultSlots[owner].add(expr.slot);
         return {kind:desc.value,slot:expr.slot,init,body:node(expr.body,owner,depth+1,expected,[...active,expr.slot])};
       }
-      case 'capture':case 'floatCapture':case 'boolCapture':case 'stringCapture':case 'trapCapture':case 'trapOptionCapture':case 'optionCapture':case 'resultCapture':
+      case 'capture':case 'floatCapture':case 'boolCapture':case 'stringCapture':case 'trapCapture':case 'trapOptionCapture':case 'trapBoolCapture':case 'optionBoolCapture':case 'optionCapture':case 'resultCapture':
         record(expr,['kind','slot'],'capture');
         if(!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            (!active.includes(expr.slot)||caughtSlots[owner].has(expr.slot)||errorSlots[owner].has(expr.slot)))fail('ADT capture outside its typed payload scope');
-        const captureType=optionSlots[owner].has(expr.slot)?'option<int>':resultSlots[owner].has(expr.slot)?'result<int,int>':trapOptionSlots[owner].has(expr.slot)?'trapOptionResult':trapSlots[owner].has(expr.slot)?'trapResult':floatSlots[owner].has(expr.slot)?'float':boolSlots[owner].has(expr.slot)?'bool':stringSlots[owner].has(expr.slot)?'string':'int';
+        const captureType=optionBoolSlots[owner].has(expr.slot)?'option<bool>':trapBoolSlots[owner].has(expr.slot)?'trapBoolResult':optionSlots[owner].has(expr.slot)?'option<int>':resultSlots[owner].has(expr.slot)?'result<int,int>':trapOptionSlots[owner].has(expr.slot)?'trapOptionResult':trapSlots[owner].has(expr.slot)?'trapResult':floatSlots[owner].has(expr.slot)?'float':boolSlots[owner].has(expr.slot)?'bool':stringSlots[owner].has(expr.slot)?'string':'int';
         if(captureType==='int'&&expected!=='int')fail('ADT int payload capture type mismatch');
-        if(expected!==captureType||desc.value!==(captureType==='option<int>'?'optionCapture':captureType==='result<int,int>'?'resultCapture':captureType==='trapOptionResult'?'trapOptionCapture':captureType==='trapResult'?'trapCapture':captureType==='float'?'floatCapture':captureType==='bool'?'boolCapture':captureType==='string'?'stringCapture':'capture'))
+        if(expected!==captureType||desc.value!==(captureType==='option<bool>'?'optionBoolCapture':captureType==='trapBoolResult'?'trapBoolCapture':captureType==='option<int>'?'optionCapture':captureType==='result<int,int>'?'resultCapture':captureType==='trapOptionResult'?'trapOptionCapture':captureType==='trapResult'?'trapCapture':captureType==='float'?'floatCapture':captureType==='bool'?'boolCapture':captureType==='string'?'stringCapture':'capture'))
           fail('capture type mismatch');
         return {kind:desc.value,slot:expr.slot};
       case 'param':
@@ -617,6 +625,31 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         return {kind:'if',condition:node(expr.condition,owner,depth+1,'bool',active),
           yes:node(expr.yes,owner,depth+1,expected,active),
           no:node(expr.no,owner,depth+1,expected,active)};
+      case 'taskScope':{
+        record(expr,['kind','body'],'inline sync task');
+        if(taskDepth||allowScalarWhile||owner>=headers.length||expected!=='int')fail('E_SYNC_TASK_PROFILE: invalid task boundary');
+        taskDepth++;try{return {kind:'taskScope',body:node(expr.body,owner,depth+1,'int',active)};}finally{taskDepth--;}
+      }
+      case 'taskSet':{
+        record(expr,['kind','slot','value','body'],'inline task assignment');
+        if(!taskDepth||expected!=='int'||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||!active.includes(expr.slot)||!mutableTaskSlots[owner].has(expr.slot))fail('E_SYNC_TASK_PROFILE: invalid mutable capture');
+        return {kind:'taskSet',slot:expr.slot,value:node(expr.value,owner,depth+1,'int',active),body:node(expr.body,owner,depth+1,'int',active)};
+      }
+      case 'taskDefer':{
+        record(expr,['kind','message','body'],'inline task cleanup');
+        if(!taskDepth||expected!=='int'||allowStdout!==true||moduleNames.length||classHeaders.length||generatorHeaders.length||headers.some(f=>f.name==='stdio'||f.name==='process'||f.params.includes('stdio')||f.params.includes('process'))||!validLocalString(expr.message))fail('E_SYNC_TASK_PROFILE: invalid cleanup capability');
+        return {kind:'taskDefer',message:expr.message,body:node(expr.body,owner,depth+1,'int',active)};
+      }
+      case 'rootStdoutDefer': {
+        record(expr,['kind','message','body'],'root stdout cleanup');
+        if(taskDepth||expected!=='int'||allowStdout!==true||allowScalarWhile===true||owner>=headers.length||moduleNames.length||classHeaders.length||generatorHeaders.length||headers.some(f=>f.name==='stdio'||f.name==='process'||f.params.includes('stdio')||f.params.includes('process'))||!validLocalString(expr.message))fail('E_STDOUT_PROFILE: invalid root cleanup capability');
+        return {kind:'rootStdoutDefer',message:expr.message,body:node(expr.body,owner,depth+1,'int',active)};
+      }
+      case 'stdoutSeq': {
+        record(expr,['kind','message','body'],'stdout sequence');
+        if(allowStdout!==true||allowScalarWhile===true||owner>=headers.length||moduleNames.length||classHeaders.length||generatorHeaders.length||headers.some(f=>f.name==='stdio'||f.name==='process'||f.params.includes('stdio')||f.params.includes('process'))||!validLocalString(expr.message))fail('E_STDOUT_PROFILE: explicit bounded stdout capability required');
+        return {kind:'stdoutSeq',message:expr.message,body:node(expr.body,owner,depth+1,expected,active)};
+      }
       case 'seqVoidCall': {
         record(expr,['kind','call','value'],'void-call sequence');
         const effectKind=expr.call&&typeof expr.call==='object'&&
@@ -671,6 +704,9 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         const signatures={
           'Option.some':[['int'],'option<int>'],
           'Option.none':[[],'option<int>'],
+          'Option.boolSome':[['bool'],'option<bool>'],
+          'Option.boolNone':[[],'option<bool>'],
+          'Option.boolUnwrap':[['option<bool>'],'bool'],
           'Option.is_some':[['option<int>'],'bool'],
           'Option.unwrap_or':[['option<int>','int'],'int'],
           'Option.unwrap':[['option<int>'],'int'],
@@ -679,6 +715,9 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           'Result.expect':[['result<int,int>','string'],'int'],
           'Result.ok':[['int'],'result<int,int>'],
           'Result.err':[['int'],'result<int,int>'],
+          'Result.stringOk':[['int'],'result<int,string>'],
+          'Result.stringErr':[['string'],'result<int,string>'],
+          'Result.stringUnwrap':[['result<int,string>'],'int'],
           'Result.is_ok':[['result<int,int>'],'bool'],
           'Result.unwrap_or':[['result<int,int>','int'],'int'],
           'Result.unwrap_err_or':[['result<int,int>','int'],'int']
@@ -882,8 +921,8 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
       case 'guestEffect':return n.effect==='throw';
       case 'rethrow':case 'throwError':return true;
       case 'call':case 'namedCall':return n.args.some(ordinary)||escapes(n.target);
-      case 'trapMethod':case 'trapOptionMethod':return n.name==='unwrap'||ordinary(n.receiver);
-      case 'intrinsic':return ['Option.unwrap','Result.unwrap'].includes(n.name)||n.args.some(ordinary);
+      case 'trapMethod':case 'trapOptionMethod':case 'trapBoolMethod':return n.name==='unwrap'||ordinary(n.receiver);
+      case 'intrinsic':return ['Option.unwrap','Option.boolUnwrap','Result.unwrap','Result.stringUnwrap'].includes(n.name)||n.args.some(ordinary);
       case 'methodCall':case 'namedMethodCall':return true; // no method effect summaries yet
       case 'binary':return ['+','-','*','/','%','mod','<<','>>','<<<','>>>','ashr'].includes(n.op)||ordinary(n.left)||ordinary(n.right);
       case 'neg':case 'i32Check':case 'refinementCheck':return true;
