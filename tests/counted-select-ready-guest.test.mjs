@@ -112,3 +112,25 @@ test('raw Future select binds concrete scalar or counted type without erasing ca
       assert.throws(()=>compileCountedReadyV1(prefix+body),/E_COUNTED_READY_PROFILE/);
   }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('direct closed callable await invokes integer lambda without allocating a Future',async()=>{
+  const prefix='suspends fnc main(): int { const Channel<int> a = Channel.new<int>(1); const Array[int] b = await select(0) { when readch a: int n -> { return n; } }; ';
+  const dir=await mkdtemp(join(process.cwd(),'.counted-ready-'));
+  try {
+    const path=join(dir,'direct-callable.mjs');
+    await writeFile(path,compileCountedReadyV1(prefix+'const int x = await || -> 33; const int y = await (|| -> 3 * 3); return x+y; }'));
+    assert.equal(await (await import(pathToFileURL(path))).main(),42n);
+    const overflow=join(dir,'overflow.mjs');
+    await writeFile(overflow,compileCountedReadyV1(prefix+'return await || -> 9223372036854775807 + 1; }'));
+    await assert.rejects((await import(pathToFileURL(overflow))).main(),/E_I64_OVERFLOW/);
+    for(const body of [
+      'return await or -> 42; }',
+      'return await |int x| -> x; }',
+      'return await || -> true; }',
+      'const int capture = 42; return await || -> capture; }',
+      'return await || -> { return 42; }; }',
+      'return await || -> 40 < 42; }',
+      'if (await || -> 42) == 42 then return 42; fi return 0; }'
+    ])assert.throws(()=>compileCountedReadyV1(prefix+body),/E_COUNTED_READY_PROFILE/,body);
+  }finally{await rm(dir,{recursive:true,force:true});}
+});

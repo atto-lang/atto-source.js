@@ -332,7 +332,8 @@ function tokenize(source, scheduledFutureFormals=false) {
     } else if (source.startsWith('&&',pos) || source.startsWith('||',pos)) {
       // Atto's symbolic boolean operators are aliases of the existing
       // lazy `and`/`or` IR. Never lower these to eager JS bitwise ops.
-      emit('id',source.startsWith('&&',pos)?'and':'or',start);
+      const spelling=source.slice(pos,pos+2);
+      emit('id',spelling==='&&'?'and':'or',{...start,spelling});
       advance(); advance();
     } else if (['<=','>=','==','!='].some(op=>source.startsWith(op,pos))) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
