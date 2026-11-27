@@ -41,6 +41,45 @@ const cases = [
     "source": "pub fnc main(): int {\n  val Option<int> missing = None;\n  val Result<int, Error> ignored = trap! missing.expect(\"explicit panic control\");\n  return 101;\n}\n"
   }
 ];
+// Exact new corpus from conformance #703; historic v6 pins untouched.
+cases.push(...[
+  {
+    "path": "canonical-stdout-v1/stdio-direct.atto",
+    "git_blob_sha1": "fcb8c1b56322b1b068007513cd60791504de5918",
+    "expected": {
+      "result": 42,
+      "stdout": "AB"
+    },
+    "source": "pub fnc main(): int {\n  stdio.out.write(\"A\");\n  stdio.out.write(\"B\");\n  return 42;\n}\n"
+  },
+  {
+    "path": "canonical-stdout-v1/process-direct.atto",
+    "git_blob_sha1": "0d4a07d1c1ccf6c9f1083816a3740091a8467641",
+    "expected": {
+      "result": 42,
+      "stdout": "AB"
+    },
+    "source": "pub fnc main(): int {\n  process.stdout.write(\"A\");\n  process.stdout.write(\"B\");\n  return 42;\n}\n"
+  },
+  {
+    "path": "canonical-stdout-v1/mixed-defer.atto",
+    "git_blob_sha1": "7d1868164d3263bb8158c590a7ad0c36e069bb56",
+    "expected": {
+      "result": 42,
+      "stdout": "CBA"
+    },
+    "source": "pub fnc main(): int {\n  defer stdio.out.write(\"A\");\n  defer process.stdout.write(\"B\");\n  stdio.out.write(\"C\");\n  return 42;\n}\n"
+  },
+  {
+    "path": "canonical-stdout-v1/mixed-trapped-task.atto",
+    "git_blob_sha1": "5b122c0396240cee7d0be125f952655560b1e78d",
+    "expected": {
+      "result": 42,
+      "stdout": "ED"
+    },
+    "source": "pub fnc main(): int {\n  let int count = 0;\n  val Option<int> missing = None;\n  val Result<int, Error> failure = trap! sync task<int> {\n    count = count + 2;\n    defer stdio.out.write(\"D\");\n    defer process.stdout.write(\"E\");\n    val int value = missing.unwrap();\n    count = count + 100;\n    return value;\n  };\n  guard failure.is_err(), count eq 2 { return 1; }\n  return count + 40;\n}\n"
+  }
+]);
 function blob(source) {
   const bytes=Buffer.from(source,'utf8');
   return createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex');
