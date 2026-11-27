@@ -36,7 +36,7 @@ function snapshotFrame(o) {
   return frame;
 }
 export function createWorkerCompletionCapabilitiesV1({loop,owner,epoch,maxPending=1024}={}) {
-  if(!loop||!['attachOwner','retireOwner','beginSuspension','complete','cancel']
+  if(!loop||!['attachOwner','requestRetireOwner','beginSuspension','complete','cancel']
       .every(k=>typeof loop[k]==='function'))throw new TypeError('E_COMPLETION_LOOP');
   if(typeof owner!=='string'||!OWNER.test(owner)||!validEpoch(epoch)||
       !validLimit(maxPending))throw new TypeError('E_COMPLETION_IDENTITY');
@@ -120,7 +120,7 @@ export function createWorkerCompletionCapabilitiesV1({loop,owner,epoch,maxPendin
       byGrant.delete(record.grant);
     }
     active.clear();
-    loop.retireOwner(owner,epoch);
+    loop.requestRetireOwner(owner,epoch);
     return true;
   }
   return Object.freeze({
