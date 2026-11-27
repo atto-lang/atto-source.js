@@ -278,8 +278,11 @@ function tokenize(source) {
         }
       // Lexical declaration gate, before callbacks can trigger generic syntax
       // errors. Quoted/comment text and unrelated state identifiers stay inert.
-      if (word==='container' && result.at(-1)?.kind==='id' && result.at(-1).value==='state' &&
-          (result.at(-2)?.value==='define' || (result.at(-2)?.value==='pub' && result.at(-3)?.value==='define')))
+      // Attached actor/class state is protected too; do not fall through to
+      // a generic declaration parser or mistake string tokens for keywords.
+      const stateDeclWord = (offset, value) => result.at(offset)?.kind==='id' && result.at(offset).value===value;
+      if ((word==='container' || word==='on') && stateDeclWord(-1,'state') &&
+          (stateDeclWord(-2,'define') || (stateDeclWord(-2,'pub') && stateDeclWord(-3,'define'))))
         fail('STATE_CONTAINER_BACKEND_UNSUPPORTED: typed protected-state loans and native ESM lowering required',start);
       emit('id',word,start);
     } else if (/[0-9]/.test(c)) {

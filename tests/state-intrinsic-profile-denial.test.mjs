@@ -22,3 +22,17 @@ test('ordinary scalar control and inert state words still compile and execute',a
     assert.equal(ns.main(),42n);
   }
 });
+
+test('attached actor and class state declarations fail closed in every compiler API',()=>{
+  for(const prefix of ['define state on actor','pub define state on actor','define pub state /* nested /* x */ */ on actor','define state on class']){
+    const source=prefix+' C as { let int count: 0; }\npub fnc main(): int { return 42; }';
+    for(const c of compilers)assert.throws(()=>c(source),/STATE_CONTAINER_BACKEND_UNSUPPORTED/,c.name+': '+prefix);
+  }
+});
+test('commented attachment spelling is inert in executable scalar source',async()=>{
+  const source='pub fnc main(): int { /* define state on actor C */ return 42; }';
+  for(const c of [compile,compileProgramV2,compileAttoScalarV1]){
+    const ns=await import('data:text/javascript,'+encodeURIComponent(c(source)));
+    assert.equal(ns.main(),42n);
+  }
+});
