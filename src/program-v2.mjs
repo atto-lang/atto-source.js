@@ -1270,7 +1270,9 @@ class Parser {
         this.expect('val');
         const name=this.generatorIdentifier();
         if(name==='recur'||names.has(name))fail('duplicate or reserved loop state',at);
-        this.expect(':');this.expect('int');this.expect('=');
+        // Omitted annotation is checked as int by the existing closedRecur IR.
+        // Explicit non-int state types remain outside this scalar profile.
+        if(this.eat(':'))this.expect('int');this.expect('=');
         const init=this.expression();
         states.push({name,init});names.add(name);
       }while(this.eat(','));
