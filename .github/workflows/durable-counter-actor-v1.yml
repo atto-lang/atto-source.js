@@ -1,0 +1,31 @@
+name: Compiled JS durable counter profile
+on:
+  pull_request:
+    paths:
+      - 'src/transpile-worker.mjs'
+      - 'src/durable-scalar-codec-v1.mjs'
+      - 'tests/durable-scalar-codec-v1.test.mjs'
+      - 'tests/durable-counter-actor-v1.test.mjs'
+      - '.github/workflows/durable-counter-actor-v1.yml'
+permissions:
+  contents: read
+jobs:
+  emitted-js:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Exact source guest emission and execution
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test -z "$(git status --porcelain)"
+          git rev-parse HEAD^{tree}
+          node --version
+          node --test tests/durable-counter-actor-v1.test.mjs tests/durable-scalar-codec-v1.test.mjs
+          npm test

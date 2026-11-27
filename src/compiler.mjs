@@ -1,3 +1,4 @@
+import {identifierCharAt,isIdentifierStart,isIdentifierPart,isIdentifier} from './portable-unicode-identifier-v1.mjs';
 import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
 import {createScalarIR, validateScalarIR} from './scalar-ir.mjs';
 import {rejectExecutionDomains} from './execution-domain-admission.mjs';
@@ -82,8 +83,11 @@ function lex(src) {
       continue;
     }
     const loc={line,col};
-    if(/[A-Za-z_]/.test(src[i])){
-      let s='';while(i<src.length&&/[A-Za-z0-9_]/.test(src[i])){s+=src[i];advance();}
+    if(src[i]==='⧖'||src[i]==='∂'){
+      add('id','suspends',loc);advance();continue;
+    }
+    if(isIdentifierStart(identifierCharAt(src,i))){
+      let s='';while(i<src.length&&isIdentifierPart(identifierCharAt(src,i))){const ch=identifierCharAt(src,i);s+=ch;for(let j=0;j<ch.length;j++)advance();}
       // A typed Topic receiver may be a local, parameter or import. Until
       // scalar ESM owns actor/group capabilities, share! and Result lowering,
       // reject actual member publication before producing source/IR artifacts.
@@ -98,14 +102,14 @@ function lex(src) {
       // preflight can still diagnose its legacy and canonical spellings.
       if(['copy','take','move','borrow','share'].includes(s) && src[i]==='!' &&
           src[i+1]!=='=' &&
-          !(src.slice(i+1,i+3)==='eq' && !/[A-Za-z0-9_]/.test(src[i+3]??'')))
+          !(src.slice(i+1,i+3)==='eq' && !isIdentifierPart(identifierCharAt(src,i+3))))
         ownershipBang ??= loc;
-      // Lexical declaration gate, before callbacks can trigger generic syntax
-      // errors. Quoted/comment text and unrelated state identifiers stay inert.
+      // Reject unsupported protected containers before scalar artifacts exist.
       if (s==='container' && out.at(-1)?.kind==='id' && out.at(-1).value==='state' &&
-          (out.at(-2)?.value==='define' || (out.at(-2)?.value==='pub' && out.at(-3)?.value==='define')))
+          ((out.at(-2)?.kind==='id' && out.at(-2).value==='define') ||
+           (out.at(-2)?.kind==='id' && out.at(-2).value==='pub' && out.at(-3)?.kind==='id' && out.at(-3).value==='define')))
         throw new CompileError('STATE_CONTAINER_BACKEND_UNSUPPORTED: typed protected-state loans and native ESM lowering required',loc);
-      add('id',s,loc);
+      add('id',s==='susp'?'suspends':s,loc);
     }else if(/[0-9]/.test(src[i])){
       let s='';while(i<src.length&&/[0-9_]/.test(src[i])){s+=src[i];advance();}
       if(!/^[0-9]+(?:_[0-9]+)*$/.test(s))throw new CompileError('invalid integer literal',loc);
@@ -122,10 +126,10 @@ function lex(src) {
       }
       while(i<literal.end)advance();
       add(literal.kind,literal,loc);
-    }else if(src.startsWith('->',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
+    }else if(src.startsWith('->',i)||src.startsWith('<-',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
     else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
     else if(src[i]==='^')throw new CompileError(src.startsWith('^^',i)?"'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)":"'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",loc);
-    else if('(){}[]:,;+-*/=.!<>'.includes(src[i])){add('sym',src[i],loc);advance();}
+    else if('(){}[]:,;+-*/=.!<>@•'.includes(src[i])){add('sym',src[i],loc);advance();}
     else throw new CompileError('unsupported character',loc);
   }
   out.push({kind:'eof',value:'<eof>',line,col});
@@ -193,12 +197,29 @@ function rejectUnloweredActorHeap(tokens) {
 }
 
 function rejectUnsupportedSelect(tokens) {
-  const startsStaticSelect = next =>
+  const bodyStart = next =>
     next && ['{','over','first','fair','random'].includes(next.value);
+  // Compute matching parentheses once. A bare select(args) call remains
+  // legal; a count followed by the static body is a contextual keyword.
+  const stack=[], matching=new Map();
+  for(let i=0;i<tokens.length;i++) {
+    if(tokens[i].kind !== 'sym') continue;
+    if(tokens[i].value==='(') stack.push(i);
+    if(tokens[i].value===')' && stack.length) matching.set(stack.pop(),i);
+  }
+  function startsStaticSelect(i) {
+    const next=tokens[i+1];
+    if(!next) return false;
+    if(bodyStart(next) || next.value==='<') return true;
+    if(next.kind!=='sym' || next.value!=='(') return false;
+    const end=matching.get(i+1);
+    return end!==undefined && bodyStart(tokens[end+1]);
+  }
   for (let i=0;i<tokens.length;i++) {
     const token=tokens[i];
-    if (token.kind === 'id' && token.value === 'select' &&
-        startsStaticSelect(tokens[i+1])) {
+    const declaration=['fnc','routine','mtd'].includes(tokens[i-1]?.value);
+    if (token.kind === 'id' && token.value === 'select' && !declaration &&
+        startsStaticSelect(i)) {
       throw new CompileError(
         'static select requires checked Channel/Future arbitration, actor-lane continuation, ownership and cancellation lowering in the JS backend',
         token
@@ -206,8 +227,28 @@ function rejectUnsupportedSelect(tokens) {
     }
   }
 }
+// In this scalar-only parser, no product may escape to a dynamic JS object.
+// Check the entire lexed compilation unit before recognizing an intrinsic,
+// including forward function declarations and parameters with the same name.
+function productFactoryAt(tokens, i) {
+  return tokens[i]?.kind==='id' && ['Pair','Entry'].includes(tokens[i].value)
+    && tokens[i+1]?.value==='.' && tokens[i+2]?.value==='of';
+}
+function rejectAmbiguousProductFactories(tokens) {
+  const active=new Set(tokens.filter((_,i)=>productFactoryAt(tokens,i)).map(t=>t.value));
+  if(!active.size)return;
+  for(let i=0;i<tokens.length;i++){
+    const t=tokens[i];
+    if(t.kind!=='id')continue;
+    if(active.has(t.value) && (!productFactoryAt(tokens,i)
+       || ['.','::'].includes(tokens[i-1]?.value)))
+      throw new CompileError('E_PRODUCT_SCOPE_UNSUPPORTED: competing '+t.value+' reference',t);
+    if(['import','use','macro'].includes(t.value))
+      throw new CompileError('E_PRODUCT_SCOPE_UNSUPPORTED: scalar factory requires a source-local identity',t);
+  }
+}
 class Parser {
-  constructor(tokens){this.ts=tokens;this.pos=0;this.depth=0;}
+  constructor(tokens){this.ts=tokens;this.pos=0;this.depth=0;this.guarantees=[];}
   peek(){return this.ts[this.pos];}
   match(v){if(this.peek().value===v){this.pos++;return true;}return false;}
   expect(v){if(!this.match(v))throw new CompileError('expected '+v+', found '+this.peek().value,this.peek());}
@@ -228,17 +269,33 @@ class Parser {
     const functions=[],exports=[];
     while(this.peek().kind!=='eof'&&!(module&&this.peek().value==='end')){
       if(this.peek().value==='export'){
+        if(module)throw new CompileError('file export requires file-root scope',this.peek());
         if(exports.length>=1024)throw new CompileError('file export budget',this.peek());
         exports.push(this.exportDeclaration());continue;
       }
       if(functions.length>=512)throw new CompileError('function limit',this.peek());
+      const markers=new Map();
+      while(this.match('@')){
+        const token=this.peek(), marker=this.id();
+        if(!['noalloc','nocopy'].includes(marker)||markers.has(marker))
+          throw new CompileError('E_ANNOTATION: unknown or duplicate guarantee',token);
+        markers.set(marker,token);
+      }
       // Accept only one define and one pub, in either canonical order.
       // Deliberately do not admit pub define module in this scalar subset.
-      let pub=this.match('pub');
-      if(pub){this.match('define');}
-      else if(this.match('define')){pub=this.match('pub');}
+      let visibility=null, defined=false;
+      while(['pub','private','define'].includes(this.peek().value)) {
+        if(this.match('define')) { if(defined)throw new CompileError('duplicate define modifier',this.peek());defined=true; }
+        else { if(visibility!==null)throw new CompileError('conflicting visibility modifier',this.peek());visibility=this.peek().value;this.pos++; }
+      }
+      const pub=visibility==='pub', writtenPrivate=visibility==='private';
       const at=this.peek();
-      if(!this.match('fnc')&&!this.match('routine'))throw new CompileError('unsupported declaration',at);
+      const abbreviated=at.value==='int' && this.ts[this.pos+1]?.value==='<-';
+      if(markers.size && at.value!=='fnc' && !abbreviated)
+        throw new CompileError('E_ANNOTATION: guarantee requires named callable',at);
+      if(!abbreviated&&!this.match('fnc')&&!this.match('routine'))throw new CompileError('unsupported declaration',at);
+      const returnFirst=this.peek().value==='int' && ['•','<-'].includes(this.ts[this.pos+1]?.value);
+      if(returnFirst){this.expect('int');this.pos++;}
       const name=this.id();this.expect('(');const params=[];
       if(!this.match(')')){
         do{if(params.length>=128)throw new CompileError('parameter limit');this.expect('int');const v=this.id();if(params.includes(v))throw new CompileError('duplicate parameter '+v);params.push(v);}while(this.match(','));
@@ -247,31 +304,38 @@ class Parser {
       // The bootstrap parser only supports int functions with a single
       // return expression. Support canonical arrow/end spellings without
       // pretending to support arbitrary statement bodies or async functions.
-      const arrow=this.match('->');
-      if(!arrow)this.expect(':');
-      this.expect('int');
+      let arrow=false;
+      if(!returnFirst){
+        arrow=this.match('->');
+        if(!arrow)this.expect(':');
+        this.expect('int');
+        if(!arrow)arrow=this.match('->');
+      }
       const braced=this.match('{');
       if(!braced&&!arrow)throw new CompileError('expected { for colon function body',this.peek());
       if(!braced){if(!this.match('as'))this.match('::');}
       this.expect('return');
       const body=this.expr();this.expect(';');this.expect(braced?'}':'end');
-      functions.push({name,params,body,pub});
+      functions.push({name,params,body,pub,...(writtenPrivate?{writtenPrivate:true}:{})});
+      for(const [marker,token] of markers)this.guarantees.push({marker,token});
     }
     if(module)this.expect('end');
     if(this.peek().kind!=='eof')throw new CompileError('trailing tokens',this.peek());
     if(!functions.length)throw new CompileError('no functions');
-    const seen=new Set();
+    const resolved=new Map();
     for(const entry of exports){
-      if(seen.has(entry.name))throw new CompileError('duplicate export '+entry.name);
-      seen.add(entry.name);
       if(entry.kind!==null&&entry.kind!=='fnc')
         throw new CompileError('export kind mismatch '+entry.name);
       const family=functions.filter(f=>f.name===entry.name);
       if(!family.length)throw new CompileError('unbound export '+entry.name);
+      if(family.some(f=>f.writtenPrivate))throw new CompileError('explicit private declaration cannot be exported: '+entry.name);
       if(entry.visibility==='package'&&family.some(f=>f.pub))
         throw new CompileError('package export conflicts with public declaration '+entry.name);
-      if(entry.visibility==='public')family.forEach(f=>{f.pub=true;});
+      const prior=resolved.get(entry.name);
+      if(prior&&prior.visibility!==entry.visibility)throw new CompileError('conflicting export visibility '+entry.name);
+      if(!prior)resolved.set(entry.name,{visibility:entry.visibility,family});
     }
+    for(const entry of resolved.values())if(entry.visibility==='public')entry.family.forEach(f=>{f.pub=true;});
     return functions;
   }
   expr(min=0){
@@ -288,8 +352,49 @@ class Parser {
       return left;
     }finally{this.depth--;}
   }
+  productProjection(){
+    const at=this.peek(), pair=at.value==='Pair';
+    this.pos+=3;
+    if(this.match('<')){
+      if(pair && this.match('string')){this.expect(',');this.expect('int');}
+      else{
+        this.expect('int');
+        if(pair && this.peek().value===',')
+          throw new CompileError('E_PAIR_KEY_TYPE: Pair first generic argument must be string',this.peek());
+        if(!pair){this.expect(',');this.expect('int');}
+      }
+      this.expect('>');
+    }
+    this.expect('(');
+    let first;
+    if(pair){
+      const key=this.peek();
+      if(key.kind!=='string')throw new CompileError('E_PAIR_KEY_TYPE: Pair requires a string key',key);
+      // Lexer validates quoted source syntax. Only plain static keys are
+      // admitted here: no interpolation, escaped or allocated runtime values.
+      const raw=key.value.raw.slice(1,-1);
+      if(!/^[\x20-\x7e]*$/.test(raw) || /[\\$]/.test(raw))
+        throw new CompileError('E_PAIR_KEY_UNSUPPORTED: scalar projection requires plain static string',key);
+      this.pos++;
+    }else first=this.expr();
+    this.expect(',');
+    // Pair's proven static key has no effects. Entry must evaluate both
+    // scalar expressions exactly once, in source order, even if one is discarded.
+    const second=this.expr();
+    this.expect(')');
+    if(!this.match('.'))throw new CompileError('E_PRODUCT_ESCAPE_UNSUPPORTED: owned product ABI unavailable',at);
+    const field=this.id();
+    if(pair && field==='second')return second;
+    if(!pair && (field==='key'||field==='value')){
+      // Preserve the old literal-only byte output. No dynamic operand is folded.
+      if(first.kind==='int'&&second.kind==='int')return field==='key'?first:second;
+      return {kind:'entryProjection',field,first,second};
+    }
+    throw new CompileError('E_PRODUCT_PROJECTION_UNSUPPORTED: incompatible or non-scalar member',at);
+  }
   primary(){
     const t=this.peek();
+    if(productFactoryAt(this.ts,this.pos))return this.productProjection();
     if(this.match('-')){
       // The absolute magnitude 2^63 is legal only as a negated literal.
       // All other positive literals must remain within signed i64.
@@ -350,9 +455,29 @@ export function compileToIR(source) {
   rejectUnloweredInvertedClasses(tokens);
   rejectUnloweredActorHeap(tokens);
   rejectUnsupportedSelect(tokens);
-  const parsed=new Parser(tokens).parse();
+  rejectAmbiguousProductFactories(tokens);
+  // Keep existing affine Future and ownership diagnostics ahead of the
+  // unsupported-effect admission decision; never emit a synchronous guest.
+  const suspension=tokens.find(t=>t.kind==='id'&&t.value==='suspends');
+  if(suspension)throw new CompileError('E_SUSPENDS_UNSUPPORTED: scalar-v1 has no callable continuation lowering',suspension);
+  const parser=new Parser(tokens);
+  const parsed=parser.parse();
   try {
-    return createScalarIR(parsed);
+    const ir=createScalarIR(parsed);
+    // A JS engine's BigInt storage and allocation behavior are not statically
+    // controlled by this ESM backend. Never silently accept @noalloc.
+    const allocation=parser.guarantees.find(x=>x.marker==='noalloc');
+    if(allocation)throw new CompileError('E_NOALLOC: JS engine allocation effects are unverified',allocation.token);
+    const copy=parser.guarantees.find(x=>x.marker==='nocopy');
+    if(copy){
+      // Whole-module, closed scalar proof. No aggregate projections, host
+      // calls, arithmetic helpers or dynamic dispatch admitted in v1.
+      const scalar=e=>e.kind==='int'||e.kind==='param'||
+        (e.kind==='call'&&e.args.every(scalar));
+      if(!ir.functions.every(f=>scalar(f.body)))
+        throw new CompileError('E_NOCOPY: unproven payload-copy effects in scalar module',copy.token);
+    }
+    return ir;
   } catch (error) {
     // Keep the source frontend's stable diagnostics while preserving
     // strict "scalar IR" diagnostics for direct compileIR callers.
@@ -364,7 +489,13 @@ export function compileToIR(source) {
   }
 }
 export function compileIR(input) {
+  return emitValidated(input,new Map()).code;
+}
+// Canonical checked IR includes exact function slots and call target indices.
+// Full source and IR validation precede reuse; exports are rebuilt every time.
+function emitValidated(input,prior) {
   const ir = validateScalarIR(input);
+  const next=new Map();let emitted=0,reused=0;
   const fns = ir.functions;
   function lower(e, depth = 0) {
     if (depth > 384) throw new CompileError('expression depth limit during lowering');
@@ -379,6 +510,12 @@ export function compileIR(input) {
       return 'BigInt.asIntN(64,(' + lower(e.left, depth+1) + ')' + e.op + '(' +
         lower(e.right, depth+1) + '))';
     }
+    if (e.kind === 'entryProjection') {
+      // Argument evaluation is eager and left-to-right, with no mutable
+      // aggregate object or host property lookup. Both expressions lower once.
+      return '((a,b)=>'+(e.field==='key'?'a':'b')+')('+
+        lower(e.first, depth+1)+','+lower(e.second, depth+1)+')';
+    }
     if (e.kind === 'call') {
       return '_f' + e.target + '(' + e.args.map(arg => lower(arg, depth+1)).join(',') + ')';
     }
@@ -389,16 +526,29 @@ export function compileIR(input) {
     'function _int(v){if(typeof v!=="bigint"||v<-(1n<<63n)||v>(1n<<63n)-1n)throw new TypeError("Oreslang int requires a signed i64 BigInt");return v;}',
   ];
   fns.forEach((f,i) => {
-    const params = f.params.map((_,j) => '_p' + j);
-    out.push('function _f' + i + '(' + params.join(',') + '){');
-    params.forEach(p => out.push('_int(' + p + ');'));
-    out.push('return ' + lower(f.body) + ';', '}');
+    const key=JSON.stringify([i,f]);
+    let body=prior.get(key);
+    if(body===undefined){
+      const params=f.params.map((_,j)=>'_p'+j);
+      body=['function _f'+i+'('+params.join(',')+'){',...params.map(p=>'_int('+p+');'),'return '+lower(f.body)+';','}'].join('\n');
+      emitted++;
+    }else reused++;
+    next.set(key,body);out.push(body);
   });
   // String-literal export names prevent ECMAScript keyword collisions.
   fns.forEach((f,i) => {
     if (f.pub) out.push('export { _f' + i + ' as ' + JSON.stringify(f.name) + ' };');
   });
-  return out.join('\n') + '\n';
+  return {code:out.join('\n')+'\n',next,emitted,reused};
+}
+/** One previous validated scalar module. No persisted cache or skipped type checking. */
+export class IncrementalSession {
+  #memo=new Map();
+  build(source,{cold=false}={}){
+    const result=emitValidated(compileToIR(source),cold?new Map():this.#memo);
+    this.#memo=result.next;
+    return {code:result.code,emitted:result.emitted,reused:result.reused};
+  }
 }
 export function compile(source) {
   return compileIR(compileToIR(source));

@@ -92,7 +92,7 @@ function reject_unsupported_mutex_constructor(tokens) {
     throw new TranspileError('E_LOCK_UNSUPPORTED');
   }
 }
-export function transpile_to_worker(source) {
+function checked_tokens(source) {
   if (typeof source !== 'string' || new TextEncoder().encode(source).byteLength > MAX_SOURCE) throw new TranspileError('E_SOURCE_LIMIT');
   // Raw terminal controls and NUL must not be hidden in comments or
   // visually interfere with reviewing source code before compilation.
@@ -117,6 +117,10 @@ export function transpile_to_worker(source) {
     throw new TranspileError('E_BIDI_CONTROL');
   const tokens=normalize_generic_closers(tokenize(source));
   reject_unsupported_mutex_constructor(tokens);
+  return tokens;
+}
+export function transpile_to_worker(source) {
+  const tokens=checked_tokens(source);
   if(tokens.includes('<<')||tokens.includes('>>'))throw new TranspileError('E_IO_UNSUPPORTED');
   if(tokens[0]==='define')return transpile_actor_tokens(tokens);
   if(tokens.includes('Result')||tokens.includes('match')||tokens.includes('parse')) {
@@ -183,7 +187,7 @@ export function transpile_to_worker(source) {
       const value=checked_decimal(tokens[i++]);
       left={value};
     } else throw new TranspileError('E_UNSUPPORTED_EXPRESSION');
-    const precedence={'|':0,'^^':1,'&':2,'<<<':3,'>>>':3,'+':4,'-':4,'*':5};
+    const precedence={'|':0,'^^':1,'&':2,'<<<':3,'>>>':3,'ashr':3,'+':4,'-':4,'*':5};
     while(Object.hasOwn(precedence,peek()) && precedence[peek()]>=min_prec){
       if(result_type(left)!=='int')throw new TranspileError('E_TASK_RETURN_TYPE');
       const op=tokens[i++];
@@ -226,7 +230,7 @@ export function transpile_to_worker(source) {
     if(node.op==='neg')return `checked(-(${emit(node.arg)}))`;
     const op=node.op;
     const left=emit(node.left),right=emit(node.right);
-    if(op==='<<<'||op==='>>>'){
+    if(op==='<<<'||op==='>>>'||op==='ashr'){
       uses_shift=true;
       const static_count=Object.hasOwn(node.right,'value')?node.right.value:
         node.right.op==='neg'&&Object.hasOwn(node.right.arg,'value')?-node.right.arg.value:null;
@@ -234,7 +238,9 @@ export function transpile_to_worker(source) {
         throw new TranspileError('E_SHIFT_DISTANCE');
       return op==='<<<'
         ? 'BigInt.asIntN(64, ('+left+') << checked_shift('+right+'))'
-        : 'BigInt.asIntN(64, BigInt.asUintN(64, ('+left+')) >> checked_shift('+right+'))';
+        : op==='ashr'
+          ? 'BigInt.asIntN(64, ('+left+') >> checked_shift('+right+'))'
+          : 'BigInt.asIntN(64, BigInt.asUintN(64, ('+left+')) >> checked_shift('+right+'))';
     }
     return 'checked(('+left+') '+(op==='^^'?'^':op)+' ('+right+'))';
   };
@@ -342,3 +348,82 @@ function transpile_actor_tokens(tokens) {
   ].join('\n');
   return {backend:'js',trusted:true,guest_abi:'atto.js.browser.actor-subset.v1',module_source:code};
 }
+
+// Opt-in broker-only profile, identical bounded transition domain to Rust
+// --durable-counter-actor-v1. It never creates a volatile worker actor.
+// Reserved source words must not become state-schema identities merely because
+// this bounded profile erases identifiers before guest emission. Keep the
+// Rust parser's unconditional keyword floor; do not reserve contextual names.
+const DURABLE_COUNTER_RESERVED_NAMES = new Set([
+  "abstract", "actor", "arr", "as", "async", "await", "begin", "block", "break",
+  "catch", "cb", "class", "conforms", "const", "continue", "contract", "cpu", "def",
+  "default", "defer", "define", "do", "done", "durable", "elif", "else", "elseif",
+  "end", "eq", "extends", "false", "fi", "finally", "fnc", "for", "from",
+  "generator", "gpu", "guard", "if", "impl", "implements", "import", "int", "interface",
+  "is", "isoactor", "let", "loop", "match", "matches", "maybe", "module", "mut",
+  "namespace", "nb", "neq", "new", "nlex", "null", "obj", "of", "over",
+  "panic", "persistent", "pipe", "private", "pub", "pure", "quantum", "raise", "readch",
+  "receive", "recover", "return", "routine", "rpipe", "rt", "select", "self", "shared",
+  "spawn", "state", "static", "stop", "struct", "super", "susp", "suspends", "switch",
+  "sync", "task", "then", "throw", "trait", "trap", "true", "try", "type",
+  "typeof", "types", "unsafe", "untrusted", "using", "val", "void", "while", "writech",
+  "yield",
+]);
+export function compile_durable_counter_actor_v1(source) {
+  const tokens=checked_tokens(source);
+  let i=0;
+  const fail=()=>{throw new TranspileError('E_DURABLE_COUNTER_ACTOR_ABI');};
+  const expect=t=>{if(tokens[i++]!==t)fail();};
+  const id=()=>{
+    const t=tokens[i++];
+    if(!/^[A-Za-z_][A-Za-z_0-9]*$/.test(t??'') ||
+       DURABLE_COUNTER_RESERVED_NAMES.has(t))fail();
+    return t;
+  };
+  expect('define');expect('durable');expect('actor');expect('Counter');expect('as');
+  expect('state');const field=id();expect(':');expect('int');expect('=');expect('0');expect(';');
+  expect('receive');expect('(');expect('ActorMail');expect('<');expect('int');expect('>');
+  const mail=id();expect(')');expect('->');expect('void');expect('{');
+  expect('self');expect('.');expect(field);expect('=');expect('self');expect('.');expect(field);
+  expect('+');expect(mail);expect('.');expect('value');expect(';');expect('}');expect('end');
+  if(i!==tokens.length)fail();
+  const encoder=new TextEncoder(), actorBytes=encoder.encode('Counter'), fieldBytes=encoder.encode(field);
+  const fnv=bytes=>{
+    let h=0xcbf29ce484222325n;
+    for(const b of bytes)h=BigInt.asUintN(64,(h^BigInt(b))*0x100000001b3n);
+    return h;
+  };
+  const sized=bytes=>{
+    const a=new Uint8Array(4+bytes.length);
+    new DataView(a.buffer).setUint32(0,bytes.length,true);a.set(bytes,4);return a;
+  };
+  const schema=fnv([...encoder.encode('atto.actor.state.schema.v1'),0,...sized(actorBytes),...sized(fieldBytes),1]);
+  const snapshot=new Uint8Array(36),view=new DataView(snapshot.buffer);
+  snapshot.set(encoder.encode('ATTOST01'));snapshot[8]=1;
+  view.setBigUint64(9,schema,true);view.setUint16(17,1,true);snapshot[19]=1;
+  view.setBigUint64(28,fnv(snapshot.subarray(0,28)),true);
+  const metadata=[1];
+  const append=bytes=>{
+    let n=bytes.length;
+    do{const b=n&127;n>>>=7;metadata.push(n?b|128:b);}while(n);
+    metadata.push(...bytes);
+  };
+  append(actorBytes);append(fieldBytes);metadata.push(1);append(snapshot);
+  // Only fixed code and validated descriptor bytes are emitted. No source
+  // splice, eval, dynamic imports or persistence permissions in the guest.
+  const code=[
+    'export function atto_durable_state_v1(){return Uint8Array.of('+metadata.join(',')+');}',
+    'export function atto_durable_transition_v1(state,op,delta){',
+    " if(typeof state!=='bigint'||typeof op!=='bigint'||typeof delta!=='bigint')throw new TypeError('E_DURABLE_COUNTER_ACTOR_ABI');",
+    ' if(state<0n||state>1000000000n)return -1n;',
+    ' if(op===2n)return delta===0n?state:-1n;',
+    ' if(op!==1n||delta<=0n||delta>1000000000n||state>1000000000n-delta)return -1n;',
+    ' return state+delta;',
+    '}',
+    ''
+  ].join('\n');
+  return {backend:'js',guest_abi:'atto.js.durable.counter.v1',module_source:code};
+}
+
+// Schema-only AOT checkpoint emitter; not ordinary worker admission.
+export {compile_durable_scalar_codec_v1} from './durable-scalar-codec-v1.mjs';
