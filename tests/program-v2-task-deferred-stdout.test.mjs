@@ -25,7 +25,7 @@ test('reject wrong spelling, type, arity, newline, oversized, and shadowed ident
 });
 test('forged serialized IR must not create authority',()=>{
  const ir=compileToProgramIRV2(source('stdio.out.write'),true);const find=(x,k)=>x&&typeof x==='object'?(x.kind===k?x:Object.values(x).map(y=>find(y,k)).find(Boolean)):undefined;
- const bad=JSON.parse(JSON.stringify(ir));find(bad,'deferStdout').text='\\n';assert.throws(()=>compileProgramIRV2(bad,true),/literal or output quota/);
+ for(const payload of [String.fromCharCode(10),String.fromCharCode(13),String.fromCharCode(127),'a'.repeat(257),42]){const bad=JSON.parse(JSON.stringify(ir));find(bad,'deferStdout').text=payload;assert.throws(()=>compileProgramIRV2(bad,true),/literal or output quota/);}
  assert.throws(()=>compileProgramIRV2(ir,{}),/E_PERMISSION/);
 });
 if(process.env.ATTO_SHARED_GUARD_DIR)test('execute byte-pinned shared fixtures unchanged',async()=>{for(const file of ['trap-sync-task-defer.atto','trap-sync-task-defer-process.atto'])await execute(readFileSync(process.env.ATTO_SHARED_GUARD_DIR+'/'+file,'utf8'));});
