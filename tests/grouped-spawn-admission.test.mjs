@@ -11,7 +11,10 @@ test('unlowered grouped spawn denied before JS emission',()=>{
    'spawn Worker() with { init { seed = 42; } }',
    'spawn /* trivia */ Worker() with { init {} }'
  ]) for(const f of frontends)
-   assert.throws(()=>f('pub fnc main():int{return '+expr+';}'),/E_SPAWN_OPTIONS_UNSUPPORTED/,expr);
+   assert.throws(()=>f('pub fnc main():int{return '+expr+';}'), error =>
+     (f===compileProgramV2 || f===compileToProgramIRV2)
+       ? error.code==='E_SPAWN_OPTIONS_UNSUPPORTED'
+       : /E_SPAWN_OPTIONS_UNSUPPORTED/.test(error.message),expr);
 });
 test('spawn lookalikes in comments and longer names remain inert',()=>{
  const source='pub fnc spawn_count():int{return 42;} pub fnc main():int{return spawn_count();} // spawn Worker() with {}\n';
