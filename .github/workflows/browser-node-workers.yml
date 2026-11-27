@@ -1,9 +1,13 @@
 name: Browser and Node Worker smoke
 on:
   push:
+    branches: [main]
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   worker-adapters:
     runs-on: ubuntu-latest

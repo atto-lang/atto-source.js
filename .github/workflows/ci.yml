@@ -1,13 +1,18 @@
 name: JS compiler bootstrap tests
 on:
   push:
+    branches: [main]
   pull_request:
   merge_group:
     types: [checks_requested]
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
+    name: ci-gate
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
