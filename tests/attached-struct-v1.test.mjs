@@ -51,3 +51,12 @@ test('nested contextual make preserves the declared field owner and value isolat
     assert.throws(()=>compileAttachedStruct(source.replace('make {y:2,x:39}',value)),/E_ATTACHED_STRUCT/);
   assert.throws(()=>compileAttachedStruct(source.replace('bias:1','bias:make {x:1,y:2}')),/E_ATTACHED_STRUCT/);
 });
+
+test('colon-annotated contextual make agrees with type-first spelling',async()=>{
+  const source=example.replace('let p = Point(40,2);','let p: Point = make {y:2,x:40};');
+  const typed=source.replace('p: Point','Point p');
+  assert.equal(compileAttachedStruct(source),compileAttachedStruct(typed));
+  assert.equal(await run(compileAttachedStruct(source)),42n);
+  for(const bad of ['let p: int = make {x:40,y:2};','let p: Unknown = make {x:40,y:2};','let p: Point = new {x:40,y:2};'])
+    assert.throws(()=>compileAttachedStruct(example.replace('let p = Point(40,2);',bad)),/E_ATTACHED_STRUCT/);
+});
