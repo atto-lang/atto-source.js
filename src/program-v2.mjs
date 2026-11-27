@@ -804,7 +804,7 @@ class Parser {
         }else init=this.expression();
         this.expect(';');
         if(isConst&&(!directional||localType!=='int'))fail('only directional const int is admitted here',this.peek());
-        statements.push({kind:'local',name,init,localType:isConst?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string'});
+        statements.push({kind:'local',name,init,localType:isConst?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string',taskWritable:readOnlyLet&&localType==='int'});
       } else if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
         if(depth!==0)fail('E_STRING_VIEW_SCOPE: rebinding requires root function scope',this.peek());
         const name=this.name();this.expect('=');
@@ -870,7 +870,7 @@ class Parser {
       else if(stmt.kind==='tryCatch')result={kind:'tryCatch',name:stmt.name,body:this.lowerStatements(stmt.body,null),handler:this.lowerStatements(stmt.handler,null)};
       else if(stmt.kind==='local'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
-        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,rebind:stmt.rebind===true,body:result};
+        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,taskWritable:stmt.taskWritable===true,rebind:stmt.rebind===true,body:result};
       }
       else if(stmt.kind==='stdoutWrite'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: stdout must precede a value return');
@@ -910,7 +910,8 @@ class Parser {
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
-        case 'stdoutSeq':add(expr.body);break;
+        case 'stdoutSeq':case 'taskScope':case 'taskDefer':add(expr.body);break;
+        case 'taskSet':add(expr.value);add(expr.body);break;
         case 'local':add(expr.init);add(expr.body);break;
         case 'newClass':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'methodCall':
@@ -1166,7 +1167,28 @@ class Parser {
     if(!this.eat('}'))fail("single-result ternary block requires closing '}'",this.peek(),'E_VALUE_ARM');
     return value;
   }
+  inlineTask() {
+    if(this.taskParsing)fail('E_SYNC_TASK_PROFILE: nested task unsupported',this.peek());
+    this.taskParsing=true;
+    try{
+      this.expect('task');this.expect('<');this.expect('int');this.expect('>');this.expect('{');
+      const steps=[];let tail=null;
+      while(!this.eat('}')){
+        if(steps.length>=64)fail('E_SYNC_TASK_PROFILE: task statement budget',this.peek());
+        if(tail!==null)fail('E_SYNC_TASK_PROFILE: unreachable task statement',this.peek());
+        if(this.eat('return')){tail=this.expression();this.expect(';');continue;}
+        if(this.eat('val')){this.expect('int');const name=this.name();this.expect('=');const init=this.expression();this.expect(';');steps.push({kind:'bind',name,init});continue;}
+        if(this.eat('defer')){this.expect('stdio');this.expect('.');this.expect('stdout');this.expect('.');this.expect('write');this.expect('(');const t=this.peek();if(t.kind!=='localString')fail('E_SYNC_TASK_PROFILE: literal defer required',t);this.i++;this.expect(')');this.expect(';');steps.push({kind:'defer',message:t.literal});continue;}
+        if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){const name=this.name();this.expect('=');const value=this.expression();this.expect(';');steps.push({kind:'set',name,value});continue;}
+        fail('E_SYNC_TASK_PROFILE: unsupported task statement',this.peek());
+      }
+      if(tail===null)fail('E_SYNC_TASK_PROFILE: explicit task return required',this.peek());
+      for(let i=steps.length-1;i>=0;i--){const step=steps[i];tail=step.kind==='bind'?{kind:'local',name:step.name,init:step.init,localType:'int',body:tail}:step.kind==='defer'?{kind:'taskDefer',message:step.message,body:tail}:{kind:'taskSet',name:step.name,value:step.value,body:tail};}
+      return {kind:'taskScope',body:tail};
+    }finally{this.taskParsing=false;}
+  }
   primary() {
+    if(this.peek().value==='sync'&&this.tokens[this.i+1]?.value==='task'){this.i++;return this.inlineTask();}
     if(this.eat('trap!')||this.eat('trap'))return {kind:'trap',inner:this.expression(30)};
     if(this.eat('await'))return {kind:'immediateAwait',inner:this.expression(30)};
     if(this.eat('!')||this.eat('¬')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
@@ -1474,8 +1496,9 @@ function resolveProgram(parsed) {
       }
       case 'if':return resolvedType(expr.yes,owner);
       case 'seqVoidCall':return resolvedType(expr.value,owner);
-      case 'stdoutSeq':return resolvedType(expr.body,owner);
-      case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return resolvedType(expr.body,owner);
+      case 'stdoutSeq':case 'taskDefer':case 'taskSet':return resolvedType(expr.body,owner);
+      case 'taskScope':return 'int';
+      case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return resolvedType(expr.body,owner);
       case 'adtMatch':return resolvedType(expr.arms[0].body,owner);
       default:fail('cannot infer resolved expression type '+expr.kind);
     }
@@ -1500,6 +1523,7 @@ function resolveProgram(parsed) {
       paramOrder,hasNamed
     };
   }
+  function taskWrites(n,name){return !!n&&typeof n==='object'&&((n.kind==='taskSet'&&n.name===name)||Object.values(n).some(v=>taskWrites(v,name)));}
   function resolve(expr,owner,depth=0,bindings=[]) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
@@ -1579,8 +1603,22 @@ function resolveProgram(parsed) {
           };
           if(typeof fold(init)!=='bigint')fail('directional const int requires int');
         }
-        return {kind:type==='option<bool>'?'optionBoolLocal':type==='trapBoolResult'?'trapBoolLocal':type==='option<int>'?'optionLocal':type==='result<int,int>'?'resultLocal':type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':type==='bool'?'boolLocal':type==='string'?'stringLocal':'local',slot,init,
-          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string'}])};
+        const taskMutable=expr.taskWritable===true&&taskWrites(expr.body,expr.name);
+        return {kind:taskMutable?'taskMutableLocal':type==='option<bool>'?'optionBoolLocal':type==='trapBoolResult'?'trapBoolLocal':type==='option<int>'?'optionLocal':type==='result<int,int>'?'resultLocal':type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':type==='bool'?'boolLocal':type==='string'?'stringLocal':'local',slot,init,
+          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string',taskMutable}])};
+      }
+      case 'taskScope':{
+        if(owner.inlineTask||owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer')fail('E_SYNC_TASK_PROFILE: unsupported task boundary');
+        return {kind:'taskScope',body:resolve(expr.body,{...owner,inlineTask:true},depth+1,bindings)};
+      }
+      case 'taskSet':{
+        const target=bindings.findLast(b=>b.name===expr.name);
+        if(!owner.inlineTask||!target?.taskMutable||target.type!=='int')fail('E_SYNC_TASK_PROFILE: assignment requires writable outer int local');
+        return {kind:'taskSet',slot:target.slot,value:resolve(expr.value,owner,depth+1,bindings),body:resolve(expr.body,owner,depth+1,bindings)};
+      }
+      case 'taskDefer':{
+        if(!owner.inlineTask||owner.params.includes('stdio')||bindings.some(b=>b.name==='stdio')||functions.some(f=>f.name==='stdio')||modules.length||classes.length||generators.length)fail('E_SYNC_TASK_PROFILE: unshadowed literal stdout defer required');
+        return {kind:'taskDefer',message:expr.message,body:resolve(expr.body,owner,depth+1,bindings)};
       }
       case 'stdoutSeq': {
         if(owner.ownerKind==='method'||owner.params.includes('stdio')||bindings.some(b=>b.name==='stdio')||functions.some(f=>f.name==='stdio')||modules.length||classes.length||generators.length)fail('E_STDOUT_PROFILE: unshadowed root callable required');
@@ -1828,8 +1866,9 @@ function resolveProgram(parsed) {
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='tryCatch'){inspect(expr.body,owner);inspect(expr.handler,owner);}
     else if(expr.kind==='seqVoidCall'){inspect(expr.call,owner);inspect(expr.value,owner);}
-    else if(expr.kind==='stdoutSeq')inspect(expr.body,owner);
-    else if(['local','floatLocal','boolLocal','stringLocal','trapLocal','trapOptionLocal','trapBoolLocal','optionBoolLocal','optionLocal','resultLocal'].includes(expr.kind)){inspect(expr.init,owner);inspect(expr.body,owner);}
+    else if(['stdoutSeq','taskScope','taskDefer'].includes(expr.kind))inspect(expr.body,owner);
+    else if(expr.kind==='taskSet'){inspect(expr.value,owner);inspect(expr.body,owner);}
+    else if(['taskMutableLocal','local','floatLocal','boolLocal','stringLocal','trapLocal','trapOptionLocal','trapBoolLocal','optionBoolLocal','optionLocal','resultLocal'].includes(expr.kind)){inspect(expr.init,owner);inspect(expr.body,owner);}
     else if(['trapMethod','trapOptionMethod','trapBoolMethod'].includes(expr.kind))inspect(expr.receiver,owner);
     else if(['neg','floatNeg','not','trap'].includes(expr.kind)) inspect(expr.inner,owner);
     else if(expr.kind==='match'||expr.kind==='adtMatch') {
@@ -1859,7 +1898,7 @@ function resolveProgram(parsed) {
 }
 function emitProgram(program) {
   const hosted=program.functions.some(f=>hasStdout(f.body));
-  function hasStdout(n){return !!n&&typeof n==='object'&&(n.kind==='stdoutSeq'||Object.values(n).some(hasStdout));}
+  function hasStdout(n){return !!n&&typeof n==='object'&&(['stdoutSeq','taskDefer'].includes(n.kind)||Object.values(n).some(hasStdout));}
   const hostArgs=args=>hosted?['_stdout',...args]:args;
   const out=[
     '// experimental Oreslang program-v2, provisional signed-64 integer model',
@@ -1901,7 +1940,7 @@ function emitProgram(program) {
         return '(('+v+')=>{while('+emitExpr(expr.condition,depth+1)+'){'+v+'='+emitExpr(expr.update,depth+1)+';}return '+emitExpr(expr.body,depth+1)+';})('+emitExpr(expr.init,depth+1)+')';
       }
       case 'capture':case 'floatCapture':case 'boolCapture':case 'stringCapture':case 'trapCapture':case 'trapOptionCapture':case 'trapBoolCapture':case 'optionBoolCapture':case 'optionCapture':case 'resultCapture':case 'errorCapture':return '_v'+expr.slot;
-      case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
+      case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'i32Check':
@@ -1946,6 +1985,9 @@ function emitProgram(program) {
       }
       case 'if':return '(('+emitExpr(expr.condition,depth+1)+')?('+
         emitExpr(expr.yes,depth+1)+'):('+emitExpr(expr.no,depth+1)+'))';
+      case 'taskScope':return '('+emitExpr(expr.body,depth+1)+')';
+      case 'taskSet':return '(()=>{_v'+expr.slot+'=_check('+emitExpr(expr.value,depth+1)+');return '+emitExpr(expr.body,depth+1)+';})()';
+      case 'taskDefer':return '(()=>{try{return '+emitExpr(expr.body,depth+1)+';}finally{_writeStdout(_stdout,'+JSON.stringify(expr.message)+');}})()';
       case 'stdoutSeq':return '(()=>{_writeStdout(_stdout,'+JSON.stringify(expr.message)+');return '+emitExpr(expr.body,depth+1)+';})()';
       case 'seqVoidCall':
         return '(()=>{'+emitExpr(expr.call,depth+1)+';return '+
@@ -2037,8 +2079,9 @@ function emitProgram(program) {
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
       case 'tryCatch':return usesSymbol(expr.body)||usesSymbol(expr.handler);
       case 'seqVoidCall':return usesSymbol(expr.call)||usesSymbol(expr.value);
-      case 'stdoutSeq':return usesSymbol(expr.body);
-      case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
+      case 'stdoutSeq':case 'taskScope':case 'taskDefer':return usesSymbol(expr.body);
+      case 'taskSet':return usesSymbol(expr.value)||usesSymbol(expr.body);
+      case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
       case 'trap':return usesSymbol(expr.inner);
       case 'trapMethod':case 'trapOptionMethod':case 'trapBoolMethod':return usesSymbol(expr.receiver);
       case 'i32Check':case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesSymbol(expr.inner);
@@ -2086,8 +2129,9 @@ function emitProgram(program) {
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
       case 'tryCatch':return usesPortableRuntime(expr.body)||usesPortableRuntime(expr.handler);
       case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
-      case 'stdoutSeq':return usesPortableRuntime(expr.body);
-      case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
+      case 'stdoutSeq':case 'taskScope':case 'taskDefer':return usesPortableRuntime(expr.body);
+      case 'taskSet':return usesPortableRuntime(expr.value)||usesPortableRuntime(expr.body);
+      case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'i32Check':case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
       case 'match':return usesPortableRuntime(expr.subject)||
         expr.arms.some(arm=>usesPortableRuntime(arm.body));

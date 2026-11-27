@@ -313,6 +313,8 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
   const trapSlots=owners.map(()=>new Set());
   const trapOptionSlots=owners.map(()=>new Set());
   const trapBoolSlots=owners.map(()=>new Set()),optionBoolSlots=owners.map(()=>new Set());
+  const mutableTaskSlots=owners.map(()=>new Set());
+  let taskDepth=0;
   const caughtSlots=owners.map(()=>new Set());
   const errorSlots=owners.map(()=>new Set());
   function node(expr,owner,depth=0,expected='int',active=[]){
@@ -528,7 +530,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
           update:node(expr.update,owner,depth+1,'int',scoped),
           body:node(expr.body,owner,depth+1,expected,scoped)};
       }
-      case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':{
+      case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':{
         record(expr,['kind','slot','init','body'],'immutable local');
         if(owner>=headers.length||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
@@ -537,6 +539,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
         const t=desc.value==='optionBoolLocal'?'option<bool>':desc.value==='trapBoolLocal'?'trapBoolResult':desc.value==='optionLocal'?'option<int>':desc.value==='resultLocal'?'result<int,int>':desc.value==='trapOptionLocal'?'trapOptionResult':desc.value==='trapLocal'?'trapResult':desc.value==='floatLocal'?'float':desc.value==='boolLocal'?'bool':desc.value==='stringLocal'?'string':'int';
         if(allowScalarWhile===true&&(t==='bool'||t==='string'))fail('ordinary-only local type');
         const init=node(expr.init,owner,depth+1,t,active);
+        if(desc.value==='taskMutableLocal'){if(allowScalarWhile||taskDepth)fail('E_SYNC_TASK_PROFILE: invalid mutable capture declaration');mutableTaskSlots[owner].add(expr.slot);}
         if(t==='trapResult')trapSlots[owner].add(expr.slot);
         if(t==='trapOptionResult')trapOptionSlots[owner].add(expr.slot);
         if(t==='trapBoolResult')trapBoolSlots[owner].add(expr.slot);
@@ -622,6 +625,21 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
         return {kind:'if',condition:node(expr.condition,owner,depth+1,'bool',active),
           yes:node(expr.yes,owner,depth+1,expected,active),
           no:node(expr.no,owner,depth+1,expected,active)};
+      case 'taskScope':{
+        record(expr,['kind','body'],'inline sync task');
+        if(taskDepth||allowScalarWhile||owner>=headers.length||expected!=='int')fail('E_SYNC_TASK_PROFILE: invalid task boundary');
+        taskDepth++;try{return {kind:'taskScope',body:node(expr.body,owner,depth+1,'int',active)};}finally{taskDepth--;}
+      }
+      case 'taskSet':{
+        record(expr,['kind','slot','value','body'],'inline task assignment');
+        if(!taskDepth||expected!=='int'||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||!active.includes(expr.slot)||!mutableTaskSlots[owner].has(expr.slot))fail('E_SYNC_TASK_PROFILE: invalid mutable capture');
+        return {kind:'taskSet',slot:expr.slot,value:node(expr.value,owner,depth+1,'int',active),body:node(expr.body,owner,depth+1,'int',active)};
+      }
+      case 'taskDefer':{
+        record(expr,['kind','message','body'],'inline task cleanup');
+        if(!taskDepth||expected!=='int'||allowStdout!==true||moduleNames.length||classHeaders.length||generatorHeaders.length||headers.some(f=>f.name==='stdio'||f.params.includes('stdio'))||!validLocalString(expr.message))fail('E_SYNC_TASK_PROFILE: invalid cleanup capability');
+        return {kind:'taskDefer',message:expr.message,body:node(expr.body,owner,depth+1,'int',active)};
+      }
       case 'stdoutSeq': {
         record(expr,['kind','message','body'],'stdout sequence');
         if(allowStdout!==true||allowScalarWhile===true||owner>=headers.length||moduleNames.length||classHeaders.length||generatorHeaders.length||headers.some(f=>f.name==='stdio'||f.params.includes('stdio'))||!validLocalString(expr.message))fail('E_STDOUT_PROFILE: explicit bounded stdout capability required');
