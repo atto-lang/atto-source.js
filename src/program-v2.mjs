@@ -920,7 +920,9 @@ class Parser {
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'closedRecur':
           for(const state of expr.states)add(state.init);
-          add(expr.condition);add(expr.result);for(const update of expr.updates)add(update);break;
+          if(expr.guards){for(const g of expr.guards){add(g.condition);add(g.result);}}
+          else{add(expr.condition);add(expr.result);}
+          for(const update of expr.updates)add(update);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
         case 'rootStdoutDefer':case 'stdoutSeq':case 'taskScope':case 'taskDefer':add(expr.body);break;
@@ -1265,16 +1267,23 @@ class Parser {
         const init=this.expression();
         states.push({name,init});names.add(name);
       }while(this.eat(','));
-      this.expect(')');this.expect('{');this.expect('if');
-      const condition=this.expression();this.expect('{');this.expect('break');
-      const result=this.expression();this.expect(';');this.expect('}');
+      this.expect(')');this.expect('{');
+      const guards=[];
+      while(this.eat('if')){
+        if(guards.length>=32)fail('state loop guard limit',at);
+        const condition=this.expression();this.expect('{');this.expect('break');
+        const result=this.expression();this.expect(';');this.expect('}');
+        guards.push({condition,result});
+      }
+      if(!guards.length)fail('state loop requires valued break',at);
       this.expect('recur');this.expect('(');
       const updates=[];
       do{if(updates.length>=32)fail('recur arity limit',at);updates.push(this.expression());}while(this.eat(','));
       this.expect(')');this.expect(';');this.expect('}');
       if(updates.length!==states.length)fail('recur state arity mismatch',at);
       if(this.peek().value==='(')fail('calling a computed value loop',at);
-      return {kind:'closedRecur',states,condition,result,updates};
+      return guards.length===1?{kind:'closedRecur',states,...guards[0],updates}:
+        {kind:'closedRecur',states,guards,updates};
     }
     // Identical narrow single-break scalar profile to Rust #727.
     // Keep the computed expression boundary; do not admit bare named
@@ -1658,8 +1667,9 @@ function resolveProgram(parsed) {
           scope.push({name:s.name,slot,type:'int'});
           return {slot,init};
         });
-        return {kind:'closedRecur',states,condition:operand(expr.condition),
-          result:operand(expr.result),updates:expr.updates.map(operand)};
+        const exits=expr.guards?{guards:expr.guards.map(g=>({condition:operand(g.condition),result:operand(g.result)}))}:
+          {condition:operand(expr.condition),result:operand(expr.result)};
+        return {kind:'closedRecur',states,...exits,updates:expr.updates.map(operand)};
       }
       case 'tryCatch':{
         if(owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer'||owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))fail('E_CATCH_BINDING: explicit return type and nonshadowing binding required');
@@ -2093,11 +2103,12 @@ function emitProgram(program) {
         const e=x=>emitExpr(x,depth+1);
         // All scratch values computed left-to-right before committing
         // any state. One iterative activation, no per-recur call.
+        const exits=expr.guards??[{condition:expr.condition,result:expr.result}];
         return '(()=>{'+expr.states.map(s=>'let _v'+s.slot+'='+e(s.init)+';').join('')+
-          'while(!('+e(expr.condition)+')){'+
+          'while(true){'+exits.map(g=>'if('+e(g.condition)+')return '+e(g.result)+';').join('')+
           expr.updates.map((u,i)=>'const _next'+i+'='+e(u)+';').join('')+
           expr.states.map((s,i)=>'_v'+s.slot+'=_next'+i+';').join('')+
-          '}return '+e(expr.result)+';})()';
+          '}})()';
       }
       case 'scalarWhileMany': {
         const emitSteps=(steps,d)=>steps.map(step=>{

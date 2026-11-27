@@ -470,7 +470,8 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
         // source admission or accept external calls/captures in operands.
         if(allowScalarWhile===true||taskDepth||owner>=headers.length||expected!=='int')
           fail('invalid closed state loop context');
-        record(expr,['kind','states','condition','result','updates'],'closed state loop');
+        const multi=Object.getOwnPropertyDescriptor(expr,'guards')!==undefined;
+        record(expr,multi?['kind','states','guards','updates']:['kind','states','condition','result','updates'],'closed state loop');
         const scope=[];
         const closed=e=>{
           switch(e.kind){
@@ -486,15 +487,23 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
         const states=sequence(expr.states,32,'closed loop states').map(s=>{
           record(s,['slot','init'],'closed state');
           const init=operand(s.init,'int'),id=s.slot;
-          if(!Number.isSafeInteger(id)||Object.is(id,-0)||id<0||id>=LIMIT_NODES||captureSlots[owner].has(id))
+          if(!Number.isSafeInteger(id)||Object.is(id,-0)||id<0||id>=LIMIT_NODES||captureSlots[owner].has(id)||active.includes(id))
             fail('invalid or repeated state slot');
           captureSlots[owner].add(id);scope.push(id);return {slot:id,init};
         });
         if(!states.length)fail('empty state loop');
         const updates=sequence(expr.updates,32,'recur operands');
         if(updates.length!==states.length)fail('recur arity mismatch');
-        return {kind:'closedRecur',states,condition:operand(expr.condition,'bool'),
-          result:operand(expr.result,'int'),updates:updates.map(e=>operand(e,'int'))};
+        let exits;
+        if(multi){
+          const guards=sequence(expr.guards,32,'closed loop guards').map(g=>{
+            record(g,['condition','result'],'closed loop guard');
+            return {condition:operand(g.condition,'bool'),result:operand(g.result,'int')};
+          });
+          if(guards.length<2)fail('multi-guard loop requires at least two exits');
+          exits={guards};
+        }else exits={condition:operand(expr.condition,'bool'),result:operand(expr.result,'int')};
+        return {kind:'closedRecur',states,...exits,updates:updates.map(e=>operand(e,'int'))};
       }
       case 'scalarWhileMany': {
         if(allowScalarWhile!==true||owner>=headers.length)fail('scalar loop requires strict source admission');
