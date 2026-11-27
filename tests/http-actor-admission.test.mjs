@@ -89,3 +89,13 @@ test('CR, NEL and Unicode separators cannot mask actual HTTP actor declarations'
       /checked-i64-v1: malformed, duplicated, displaced or unsupported directive/);
   }
 });
+
+test('all three byte-identical canonical declarations fail before IR and artifact emission', async () => {
+  for (const fixture of ['serial-1x1.atto','explicit-1x1.atto','unsupported-3x4.atto']) {
+    const source = await readFile(new URL('./fixtures/http-actor-v1/'+fixture, import.meta.url), 'utf8');
+    for (const [name, compileSource, frontend] of frontends) {
+      assert.throws(() => frontend(source), unsupported, name+' '+fixture);
+      assert.throws(() => compileSource(source), unsupported, name+' '+fixture);
+    }
+  }
+});

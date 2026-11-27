@@ -15,6 +15,7 @@ import {coreBooleanIntrinsic,isCoreBooleanUnit} from './core-boolean-intrinsics.
  */
 const MAX_BYTES = 262144, MAX_TOKENS = 30000, MAX_DEPTH = 192;
 const MIN = -(1n << 63n), MAX = (1n << 63n) - 1n;
+
 const CLASS_METHOD_RESERVED=new Set([
   'default','new','class','export','import','null','this','super','extends','static',
   'constructor','prototype','__proto__','define','pub','as','end','self','int',
@@ -358,7 +359,7 @@ function rejectUnsupportedTrapEffect(tokens) {
       // All other contexts retain the existing fail-closed admission.
       if(tokens[i-3]?.value==='val'&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='='){admitted.add(i);continue;}
       // Closed typed Result<int,Error> locals are the same validated trap IR.
-      if(tokens.slice(i-9,i-2).map(t=>t.value).join(' ')==='val Result < int , Error >'&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='='){admitted.add(i);continue;}
+      if((tokens.slice(i-9,i-2).map(t=>t.value).join(' ')==='val Result < int , Error >'||tokens.slice(i-9,i-2).map(t=>t.value).join(' ')==='val Result < bool , Error >'||tokens.slice(i-12,i-2).map(t=>t.value).join(' ')==='val Result < Option < int > , Error >')&&tokens[i-2]?.kind==='id'&&tokens[i-1]?.value==='='){admitted.add(i);continue;}
       // A nested trap may only follow the opening parentheses of an already
       // admitted trap operand. The typed parser still validates the whole tree.
       let outer=i-1;
@@ -463,12 +464,13 @@ class Parser {
     if(this.eat('Symbol'))return 'symbol';
     if(this.eat('Error'))return 'error';
     if(this.eat('Option')){
-      this.expect('<');this.expect('int');this.expect('>');
-      return 'option<int>';
+      this.expect('<');if(this.eat('bool')){this.expect('>');return 'option<bool>';}
+      this.expect('int');this.expect('>');return 'option<int>';
     }
     if(this.eat('Result')){
-      this.expect('<');this.expect('int');this.expect(',');this.expect('int');this.expect('>');
-      return 'result<int,int>';
+      this.expect('<');this.expect('int');this.expect(',');
+      if(this.eat('String')){this.expect('>');return 'result<int,string>';}
+      this.expect('int');this.expect('>');return 'result<int,int>';
     }
     fail('unsupported scalar type (int, bool, Symbol, Option<int>, Result<int,int>)',this.peek());
   }
@@ -748,6 +750,17 @@ class Parser {
         if(!this.returnsOnAllPaths(body)||!this.returnsOnAllPaths(handler))
           fail('E_TRY_FALLTHROUGH_UNSUPPORTED: both protected and handler paths must terminate',this.peek());
         statements.push({kind:'tryCatch',name,body,handler});
+      } else if(this.eat('defer')){
+        if(depth!==0||!['stdio . out . write (','process . stdout . write ('].includes(this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')))fail('E_STDOUT_PROFILE: only root literal stdout defer supported',this.peek());
+        this.i+=6;const message=this.peek();
+        if(message.kind!=='localString')fail('E_STDOUT_LITERAL: bounded string literal required',message);
+        this.i++;this.expect(')');this.expect(';');
+        statements.push({kind:'stdoutDefer',message:message.literal});
+      } else if(['stdio . out . write (','process . stdout . write (','stdio . stdout . write ('].includes(this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' '))) {
+        this.i+=6;const message=this.peek();
+        if(message.kind!=='localString')fail('E_STDOUT_LITERAL: bounded string literal required',message);
+        this.i++;this.expect(')');this.expect(';');
+        statements.push({kind:'stdoutWrite',message:message.literal});
       } else if(this.eat('guard')) {
         // Guard's predicate must be a bool. Reuse the typed IR's conditional
         // checker and evaluate each comma-separated predicate at most once,
@@ -781,8 +794,11 @@ class Parser {
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
         // Keep existing Option, Result, string, bool, and directional bindings.
         const typedTrapResult=this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')==='Result < int , Error >';
-        if(typedTrapResult)this.i+=6;
-        let localType=typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
+        const typedTrapOption=this.tokens.slice(this.i,this.i+9).map(t=>t.value).join(' ')==='Result < Option < int > , Error >';
+        const typedTrapBool=this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')==='Result < bool , Error >';
+        if(typedTrapResult||typedTrapBool)this.i+=6;
+        else if(typedTrapOption)this.i+=9;
+        let localType=typedTrapBool?'trapBoolResult':typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
         const name=this.name();
         if(!isConst&&!readOnlyLet&&localType==='inferredTrap'&&this.eat(':')){
           localType=this.valueType();
@@ -798,7 +814,7 @@ class Parser {
         }else init=this.expression();
         this.expect(';');
         if(isConst&&(!directional||localType!=='int'))fail('only directional const int is admitted here',this.peek());
-        statements.push({kind:'local',name,init,localType:isConst?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string'});
+        statements.push({kind:'local',name,init,localType:isConst?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string',taskWritable:readOnlyLet&&localType==='int'});
       } else if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
         if(depth!==0)fail('E_STRING_VIEW_SCOPE: rebinding requires root function scope',this.peek());
         const name=this.name();this.expect('=');
@@ -864,7 +880,11 @@ class Parser {
       else if(stmt.kind==='tryCatch')result={kind:'tryCatch',name:stmt.name,body:this.lowerStatements(stmt.body,null),handler:this.lowerStatements(stmt.handler,null)};
       else if(stmt.kind==='local'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
-        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,rebind:stmt.rebind===true,body:result};
+        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,taskWritable:stmt.taskWritable===true,rebind:stmt.rebind===true,body:result};
+      }
+      else if(stmt.kind==='stdoutWrite'||stmt.kind==='stdoutDefer'){
+        if(result===null)fail('RETURN_EXPLICIT_REQUIRED: stdout must precede a value return');
+        result={kind:stmt.kind==='stdoutDefer'?'rootStdoutDefer':'stdoutSeq',message:stmt.message,body:result};
       }
       else if(stmt.kind==='voidCall'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: void call must precede a value return');
@@ -898,12 +918,15 @@ class Parser {
         case 'tryCatch':add(expr.body);add(expr.handler);break;
         case 'neg':case 'not':case 'trap':case 'immediateAwait':case 'intTypeTest':case 'inlineScalarTask':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
+        case 'closedRecur':
+          for(const state of expr.states)add(state.init);
+          if(expr.guards){for(const g of expr.guards){add(g.condition);add(g.result);}}
+          else{add(expr.condition);add(expr.result);}
+          for(const update of expr.updates)add(update);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
-        case 'scalarRecur':
-          for(const s of expr.states)add(s.init);
-          for(const g of expr.guards){add(g.condition);add(g.value);}
-          for(const a of expr.args)add(a);break;
+        case 'rootStdoutDefer':case 'stdoutSeq':case 'taskScope':case 'taskDefer':add(expr.body);break;
+        case 'taskSet':add(expr.value);add(expr.body);break;
         case 'local':add(expr.init);add(expr.body);break;
         case 'newClass':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'methodCall':
@@ -1037,6 +1060,11 @@ class Parser {
       while (true) {
         const token=this.peek();
         let op=token.value, width=1;
+        if(op==='.' && ['unwrap','is_none','is_some'].includes(this.tokens[this.i+1]?.value)){
+          if(++stages>128)fail('postfix chain exceeds 128 stages',token);
+          this.i++;const name=this.name();this.expect('(');
+          left={kind:'methodCall',receiver:left,name,args:this.argumentsAfterOpen()};continue;
+        }
         if(op==='|>' && min===0){
           this.i++;
           if(++stages>128)fail('pipeline exceeds 128 stages',token);
@@ -1154,12 +1182,102 @@ class Parser {
     if(!this.eat('}'))fail("single-result ternary block requires closing '}'",this.peek(),'E_VALUE_ARM');
     return value;
   }
+  inlineTask() {
+    this.expect('task');
+    const explicit=this.eat('<');if(explicit){this.expect('int');this.expect('>');}
+    this.expect('{');
+    const steps=[], declarations=new Map();let tail=null,scalarOnly=false;
+    while(!this.eat('}')){
+      if(steps.length>=64)fail('E_SYNC_TASK_PROFILE: task statement budget',this.peek());
+      if(tail!==null)fail('E_SYNC_TASK_PROFILE: unreachable task statement',this.peek());
+      if(this.eat('return')||this.eat('^')){tail=this.expression();this.expect(';');continue;}
+      if(this.peek().value==='val'||this.peek().value==='let'){
+        const mutable=this.eat('let');if(!mutable)this.expect('val');this.expect('int');
+        const name=this.name();
+        if(GENERATOR_RESERVED.has(name)||name==='task'||name==='sync'||declarations.has(name))
+          fail('E_TASK_LOCAL: reserved or duplicate task-local name',this.peek());
+        this.expect('=');const init=this.expression();this.expect(';');
+        declarations.set(name,mutable);scalarOnly||=mutable;steps.push({kind:'bind',name,init});continue;
+      }
+      if(this.eat('defer')){
+        if(!['stdio . out . write (','process . stdout . write (','stdio . stdout . write ('].includes(this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')))fail('E_SYNC_TASK_PROFILE: stdout defer required',this.peek());
+        this.i+=6;const t=this.peek();if(t.kind!=='localString')fail('E_SYNC_TASK_PROFILE: literal defer required',t);this.i++;this.expect(')');this.expect(';');steps.push({kind:'defer',message:t.literal});continue;
+      }
+      if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
+        const name=this.name();this.expect('=');const value=this.expression();this.expect(';');
+        if(declarations.has(name)){
+          if(!declarations.get(name))fail('E_TASK_LOCAL_WRITE: only a mutable task local may be assigned',this.peek());
+          scalarOnly=true;steps.push({kind:'bind',name,init:value,taskRebind:true});
+        }else steps.push({kind:'set',name,value});
+        continue;
+      }
+      fail('E_SYNC_TASK_PROFILE: unsupported task statement',this.peek());
+    }
+    if(tail===null)fail('E_SYNC_TASK_PROFILE: explicit task return required',this.peek());
+    for(let i=steps.length-1;i>=0;i--){const step=steps[i];tail=step.kind==='bind'?{kind:'local',name:step.name,init:step.init,localType:'int',taskRebind:step.taskRebind===true,body:tail}:step.kind==='defer'?{kind:'taskDefer',message:step.message,body:tail}:{kind:'taskSet',name:step.name,value:step.value,body:tail};}
+    // Classify the parsed AST, never retry a failed compiler as another profile.
+    const pure=(e,d=0)=>{
+      if(d>MAX_DEPTH)fail('E_TASK_UNSUPPORTED: task expression depth');
+      switch(e.kind){
+        case 'int':case 'variable':return true;
+        case 'inlineScalarTask':case 'neg':return pure(e.inner,d+1);
+        case 'binary':return pure(e.left,d+1)&&pure(e.right,d+1);
+        case 'local':return pure(e.init,d+1)&&pure(e.body,d+1);
+        default:return false;
+      }
+    };
+    if(pure(tail))return {kind:'inlineScalarTask',inner:tail};
+    // Preserve the existing scalar-only admission boundary: a non-scalar AST
+    // is not by itself proof of the checked-effect profile.
+    let checkedEffect=false;
+    const inspect=(e,d=0)=>{
+      if(!e||typeof e!=='object')return;
+      if(d>MAX_DEPTH)fail('E_TASK_UNSUPPORTED: task expression depth');
+      if(e.kind==='immediateAwait')fail('E_TASK_UNSUPPORTED: await in synchronous inline task',this.peek());
+      if(e.kind==='taskSet'||e.kind==='taskDefer'||(e.kind==='methodCall'&&['unwrap','expect'].includes(e.name)))checkedEffect=true;
+      for(const value of Object.values(e))inspect(value,d+1);
+    };
+    inspect(tail);
+    if(!checkedEffect)fail('E_TASK_UNSUPPORTED: task expression requires a checked-effect operation',this.peek());
+    if(!explicit||scalarOnly)fail('E_SYNC_TASK_PROFILE: inferred or mutable task-local profile requires scalar expressions',this.peek());
+    // The checked-effect profile remains explicit and does not admit nested tasks.
+    const nested=e=>!!e&&typeof e==='object'&&(['inlineScalarTask','taskScope'].includes(e.kind)||Object.values(e).some(nested));
+    if(nested(tail))fail('E_SYNC_TASK_PROFILE: nested effectful task unsupported',this.peek());
+    return {kind:'taskScope',body:tail};
+  }
   primary() {
     if(this.peek().kind==='id' && this.peek().value==='spawn' && this.tokens[this.i+1]?.kind==='id')
       fail('actor spawn requires typed initialization, resource admission and runtime lowering',this.peek(),'E_SPAWN_OPTIONS_UNSUPPORTED');
-    // Closed int state loop with guarded valued breaks and a final recur.
-    if(this.peek().value==='loop'&&this.tokens[this.i+1]?.value==='(')
-      return this.scalarRecurExpression();
+    if(this.peek().value==='loop'&&this.tokens[this.i+1]?.value==='('){
+      const at=this.peek();this.i+=2;
+      const states=[],names=new Set();
+      do{
+        if(states.length>=32)fail('state loop arity limit',at);
+        this.expect('val');
+        const name=this.generatorIdentifier();
+        if(name==='recur'||names.has(name))fail('duplicate or reserved loop state',at);
+        this.expect(':');this.expect('int');this.expect('=');
+        const init=this.expression();
+        states.push({name,init});names.add(name);
+      }while(this.eat(','));
+      this.expect(')');this.expect('{');
+      const guards=[];
+      while(this.eat('if')){
+        if(guards.length>=32)fail('state loop guard limit',at);
+        const condition=this.expression();this.expect('{');this.expect('break');
+        const result=this.expression();this.expect(';');this.expect('}');
+        guards.push({condition,result});
+      }
+      if(!guards.length)fail('state loop requires valued break',at);
+      this.expect('recur');this.expect('(');
+      const updates=[];
+      do{if(updates.length>=32)fail('recur arity limit',at);updates.push(this.expression());}while(this.eat(','));
+      this.expect(')');this.expect(';');this.expect('}');
+      if(updates.length!==states.length)fail('recur state arity mismatch',at);
+      if(this.peek().value==='(')fail('calling a computed value loop',at);
+      return guards.length===1?{kind:'closedRecur',states,...guards[0],updates}:
+        {kind:'closedRecur',states,guards,updates};
+    }
     // Identical narrow single-break scalar profile to Rust #727.
     // Keep the computed expression boundary; do not admit bare named
     // callable references or a general state-loop result join.
@@ -1172,41 +1290,7 @@ class Parser {
       if(this.peek().value==='(')fail('calling a computed value loop',this.peek());
       return value;
     }
-    if(this.eat('sync')){
-      this.expect('task');
-      if(this.eat('<')){this.expect('int');this.expect('>');}
-      this.expect('{');
-      const locals=[], declarations=new Map();
-      while(true){
-        let name,rebind=false;
-        if(this.peek().value==='val'||this.peek().value==='let'){
-          const mutable=this.eat('let');
-          if(!mutable)this.expect('val');
-          this.expect('int');
-          name=this.name();
-          if(GENERATOR_RESERVED.has(name)||name==='task'||name==='sync'||declarations.has(name))
-            fail('E_TASK_LOCAL: reserved or duplicate task-local name',this.peek());
-          declarations.set(name,mutable);
-        }else if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
-          name=this.name();
-          if(declarations.get(name)!==true)
-            fail('E_TASK_LOCAL_WRITE: only this task\'s mutable local may be assigned',this.peek());
-          rebind=true;
-        }else break;
-        this.expect('=');
-        const init=this.expression();
-        this.expect(';');
-        locals.push({name,init,rebind});
-        if(locals.length>64)fail('E_TASK_LOCAL: local and write budget exceeded',this.peek());
-      }
-      if(!this.eat('return')&&!this.eat('^'))
-        fail('E_TASK_RETURN_TYPE: scalar inline task requires a terminal int return',this.peek());
-      let inner=this.expression();
-      this.expect(';');this.expect('}');
-      for(let i=locals.length-1;i>=0;i--)
-        inner={kind:'local',name:locals[i].name,init:locals[i].init,localType:'int',taskRebind:locals[i].rebind,body:inner};
-      return {kind:'inlineScalarTask',inner};
-    }
+    if(this.peek().value==='sync'&&this.tokens[this.i+1]?.value==='task'){this.i++;return this.inlineTask();}
     if(this.eat('trap!')||this.eat('trap'))return {kind:'trap',inner:this.expression(30)};
     if(this.eat('await'))return {kind:'immediateAwait',inner:this.expression(30)};
     if(this.eat('!')||this.eat('¬')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
@@ -1276,34 +1360,6 @@ class Parser {
       }
     }
     return {kind:'call',qualifier,name:symbol,args};
-  }
-  scalarRecurExpression(){
-    const at=this.peek(),states=[],names=new Set(),guards=[];
-    this.expect('loop');this.expect('(');
-    do {
-      if(states.length>=32)fail('E_RECUR_ARITY: state limit',at);
-      this.expect('val');const name=this.name();this.expect(':');this.expect('int');
-      if(names.has(name)||GENERATOR_RESERVED.has(name))fail('duplicate or reserved state binding',at);
-      this.expect('=');const init=this.expression();
-      states.push({name,init});names.add(name);
-    }while(this.eat(','));
-    this.expect(')');this.expect('{');
-    while(this.eat('if')){
-      if(guards.length>=32)fail('value loop guard limit',at);
-      const condition=this.expression();this.expect('{');this.expect('break');
-      const value=this.expression();this.expect(';');this.expect('}');this.eat('fi');
-      guards.push({condition,value});
-    }
-    if(!guards.length)fail('E_LOOP_VALUE: value loop requires guarded valued break',at);
-    this.expect('recur');this.expect('(');
-    const args=[];
-    if(!this.eat(')')){
-      do {if(args.length>=32)fail('E_RECUR_ARITY: operand limit',at);args.push(this.expression());}while(this.eat(','));
-      this.expect(')');
-    }
-    if(args.length!==states.length)fail('E_RECUR_ARITY: operand count mismatch',at);
-    this.expect(';');this.expect('}');
-    return {kind:'scalarRecur',states,guards,args};
   }
   namedBooleanReduction(name, token) {
     // Literal packs are private scalar temporaries, never first-class arrays.
@@ -1439,6 +1495,7 @@ function resolveProgram(parsed) {
   const {modules,functions,generators=[],classes=[],exportDeclarations=[]}=parsed;
   const resolvedExports=new Map();
   for(const entry of exportDeclarations) {
+
     const targetClasses=classes.filter(c=>c.name===entry.name);
     const targetFns=functions.filter(f=>f.module===null&&f.name===entry.name);
     if(!targetClasses.length&&!targetFns.length)fail('unknown export '+entry.name);
@@ -1506,11 +1563,14 @@ function resolveProgram(parsed) {
   let nodeCount=0,nextCaptureSlot=0;
   function resolvedType(expr,owner) {
     switch(expr.kind){
-      case 'scalarRecur':case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
+      case 'closedRecur':case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
       case 'float':case 'floatNeg':case 'floatBin':case 'floatCapture':return 'float';
-      case 'trap':return ['option<int>','trapOptionResult'].includes(expr.operandType)?'trapOptionResult':'trapResult';
+      case 'trap':return expr.operandType==='bool'||expr.operandType==='trapBoolResult'?'trapBoolResult':['option<int>','trapOptionResult'].includes(expr.operandType)?'trapOptionResult':'trapResult';
       case 'errorCapture':return 'error';
       case 'optionCapture':return 'option<int>';
+      case 'optionBoolCapture':return 'option<bool>';
+      case 'trapBoolCapture':return 'trapBoolResult';
+      case 'trapBoolMethod':return 'bool';
       case 'resultCapture':return 'result<int,int>';
       case 'trapCapture':return 'trapResult';
       case 'trapOptionCapture':return 'trapOptionResult';
@@ -1528,15 +1588,19 @@ function resolveProgram(parsed) {
       case 'intrinsic': {
         const results={
           'Option.some':'option<int>','Option.none':'option<int>',
+          'Option.boolSome':'option<bool>','Option.boolNone':'option<bool>','Option.boolUnwrap':'bool',
           'Option.is_some':'bool','Option.unwrap_or':'int','Option.unwrap':'int','Result.unwrap':'int','Option.expect':'int','Result.expect':'int',
           'Result.ok':'result<int,int>','Result.err':'result<int,int>',
+          'Result.stringOk':'result<int,string>','Result.stringErr':'result<int,string>','Result.stringUnwrap':'int',
           'Result.is_ok':'bool','Result.unwrap_or':'int','Result.unwrap_err_or':'int'
         };
         return results[expr.name];
       }
       case 'if':return resolvedType(expr.yes,owner);
       case 'seqVoidCall':return resolvedType(expr.value,owner);
-      case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return resolvedType(expr.body,owner);
+      case 'rootStdoutDefer':case 'stdoutSeq':case 'taskDefer':case 'taskSet':return resolvedType(expr.body,owner);
+      case 'taskScope':return 'int';
+      case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return resolvedType(expr.body,owner);
       case 'adtMatch':return resolvedType(expr.arms[0].body,owner);
       default:fail('cannot infer resolved expression type '+expr.kind);
     }
@@ -1561,9 +1625,45 @@ function resolveProgram(parsed) {
       paramOrder,hasNamed
     };
   }
+  const taskWriteCache=new WeakMap();
+  function taskWrites(n,name){
+    if(!n||typeof n!=='object')return false;
+    let byName=taskWriteCache.get(n);if(!byName){byName=new Map();taskWriteCache.set(n,byName);}
+    if(byName.has(name))return byName.get(name);
+    const result=(n.kind==='taskSet'&&n.name===name)||Object.values(n).some(v=>taskWrites(v,name));
+    byName.set(name,result);return result;
+  }
   function resolve(expr,owner,depth=0,bindings=[]) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
+      case 'closedRecur':{
+        if(owner.ownerKind==='method')fail('state loop in method requires ownership lowering');
+        // Resolve closed operands only. No external binding, callable or
+        // effect can be erased into this bounded scalar profile.
+        const scope=[];
+        const closed=(e,d=0)=>{
+          if(d>MAX_DEPTH)fail('state loop expression depth');
+          switch(e.kind){
+            case 'int':case 'bool':return;
+            case 'variable':if(scope.some(s=>s.name===e.name))return;break;
+            case 'neg':case 'not':closed(e.inner,d+1);return;
+            case 'binary':case 'compare':closed(e.left,d+1);closed(e.right,d+1);return;
+            case 'if':closed(e.condition,d+1);closed(e.yes,d+1);closed(e.no,d+1);return;
+          }
+          fail('state loop operand outside closed scalar profile');
+        };
+        const operand=e=>{closed(e);return resolve(e,owner,depth+1,scope);};
+        const states=expr.states.map(s=>{
+          const init=operand(s.init);
+          const slot=nextCaptureSlot++;
+          if(slot>=MAX_TOKENS)fail('state loop slot budget');
+          scope.push({name:s.name,slot,type:'int'});
+          return {slot,init};
+        });
+        const exits=expr.guards?{guards:expr.guards.map(g=>({condition:operand(g.condition),result:operand(g.result)}))}:
+          {condition:operand(expr.condition),result:operand(expr.result)};
+        return {kind:'closedRecur',states,...exits,updates:expr.updates.map(operand)};
+      }
       case 'tryCatch':{
         if(owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer'||owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))fail('E_CATCH_BINDING: explicit return type and nonshadowing binding required');
         if(nextCaptureSlot>=MAX_TOKENS)fail('catch slot budget exceeded');
@@ -1591,33 +1691,12 @@ function resolveProgram(parsed) {
         // receiver evaluation (including errors) exactly once, no fake constant.
         return {kind:'compare',op:'>=',left:inner,right:{kind:'int',value:MIN.toString()}};
       }
-      case 'scalarRecur': {
-        if(owner.ownerKind==='method')fail('state loop method profile unsupported');
-        const scope=[],states=[];
-        // Closed source subset: no calls, captures outside this lexical loop,
-        // ownership, suspension or guest effects.
-        const admit=(e,d=0)=>{
-          if(d>MAX_DEPTH)fail('state loop expression depth');
-          switch(e.kind){
-            case 'int':case 'bool':return;
-            case 'variable':if(scope.some(s=>s.name===e.name))return;break;
-            case 'neg':case 'not':admit(e.inner,d+1);return;
-            case 'binary':case 'compare':admit(e.left,d+1);admit(e.right,d+1);return;
-            case 'if':admit(e.condition,d+1);admit(e.yes,d+1);admit(e.no,d+1);return;
-          }
-          fail('state loop requires closed scalar operands');
-        };
-        const typed=(e,t)=>{admit(e);const v=resolve(e,owner,depth+1,scope);
-          if(resolvedType(v,owner)!==t)fail('state loop operand type mismatch');return v;};
-        for(const s of expr.states){
-          const init=typed(s.init,'int');
-          if(nextCaptureSlot>=MAX_TOKENS)fail('state loop slot budget exceeded');
-          const slot=nextCaptureSlot++;
-          states.push({slot,init});scope.push({name:s.name,slot,type:'int'});
-        }
-        return {kind:'scalarRecur',states,
-          guards:expr.guards.map(g=>({condition:typed(g.condition,'bool'),value:typed(g.value,'int')})),
-          args:expr.args.map(a=>typed(a,'int'))};
+      case 'immediateAwait': {
+        const inner=resolve(expr.inner,owner,depth+1,bindings);
+        // No Future/actor readiness lowering exists in this frontend. Admit
+        // only statically typed i64 values, and erase the identity operator.
+        if(resolvedType(inner,owner)!=='int')fail('await requires immediate int in program-v2; asynchronous await unsupported');
+        return inner;
       }
       case 'inlineScalarTask': {
         // No arbitrary calls, suspension, ownership or external effects in
@@ -1649,19 +1728,17 @@ function resolveProgram(parsed) {
         if(owner.ownerKind==='method'||owner.params.includes(expr.name))
           fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
         if(expr.taskRebind){
-          // Parser admits writes only to a mutable int declared in this inline task.
-          if(expr.rebind||!previous||previous.type!=='int')
-            fail('E_TASK_LOCAL_WRITE: requires previously declared int local');
+          if(expr.rebind||!previous||previous.type!=='int')fail('E_TASK_LOCAL_WRITE: requires previously declared int local');
         }else if(expr.rebind){
           if(!previous||previous.type!=='string'||!previous.writable)
             fail('E_STRING_REBIND: requires writable typed string local');
         }else if(previous)fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
         if(nextCaptureSlot>=MAX_TOKENS)fail('local slot budget exceeded');
         const slot=nextCaptureSlot++;
-        const init=resolve(expr.init,owner,depth+1,bindings);
+        const optionBoolInit=expr.localType==='option<bool>'&&expr.init.kind==='call'&&expr.init.qualifier==='Option'&&['some','none'].includes(expr.init.name);
+        const init=optionBoolInit?{kind:'intrinsic',name:expr.init.name==='some'?'Option.boolSome':'Option.boolNone',args:expr.init.args.map(a=>{if(a.name!==null)fail('named Option constructor argument');return resolve(a.expr,owner,depth+1,bindings);})}:resolve(expr.init,owner,depth+1,bindings);
         const type=['inferredTrap','directionalInferred','inferredInt'].includes(expr.localType)?resolvedType(init,owner):expr.localType==='constInt'?'int':expr.localType;
-        if(expr.localType==='trapResult'&&(init.kind!=='trap'||resolvedType(init,owner)!=='trapResult'))fail('E_TRAP_TYPE: typed Result<int,Error> local requires checked trap initializer');
-        if(expr.taskRebind&&resolvedType(init,owner)!=='int')fail('E_TASK_LOCAL_WRITE: int assignment required');
+        if(['trapResult','trapOptionResult','trapBoolResult'].includes(expr.localType)&&(init.kind!=='trap'||resolvedType(init,owner)!==expr.localType))fail('E_TRAP_TYPE: typed Result local requires matching checked trap initializer');
         if(expr.localType==='inferredTrap'&&!['trapResult','trapOptionResult'].includes(type))fail('inferred trap local requires Result');
         if(expr.localType==='inferredInt'&&type!=='int')fail('inferred val requires int in program-v2; use an explicit supported type');
         if(expr.localType==='directionalInferred'&&!['int','float','trapResult','trapOptionResult'].includes(type))fail('directional binding requires supported scalar or trapped Result');
@@ -1690,8 +1767,28 @@ function resolveProgram(parsed) {
           };
           if(typeof fold(init)!=='bigint')fail('directional const int requires int');
         }
-        return {kind:type==='option<int>'?'optionLocal':type==='result<int,int>'?'resultLocal':type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':type==='bool'?'boolLocal':type==='string'?'stringLocal':'local',slot,init,
-          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string'}])};
+        if(expr.taskRebind&&resolvedType(init,owner)!=='int')fail('E_TASK_LOCAL_WRITE: int assignment required');
+        const taskMutable=expr.taskWritable===true&&taskWrites(expr.body,expr.name);
+        return {kind:taskMutable?'taskMutableLocal':type==='option<bool>'?'optionBoolLocal':type==='trapBoolResult'?'trapBoolLocal':type==='option<int>'?'optionLocal':type==='result<int,int>'?'resultLocal':type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':type==='bool'?'boolLocal':type==='string'?'stringLocal':'local',slot,init,
+          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string',taskMutable}])};
+      }
+      case 'taskScope':{
+        if(owner.inlineTask||owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer')fail('E_SYNC_TASK_PROFILE: unsupported task boundary');
+        return {kind:'taskScope',body:resolve(expr.body,{...owner,inlineTask:true},depth+1,bindings)};
+      }
+      case 'taskSet':{
+        const target=bindings.findLast(b=>b.name===expr.name);
+        if(!owner.inlineTask||!target?.taskMutable||target.type!=='int')fail('E_SYNC_TASK_PROFILE: assignment requires writable outer int local');
+        return {kind:'taskSet',slot:target.slot,value:resolve(expr.value,owner,depth+1,bindings),body:resolve(expr.body,owner,depth+1,bindings)};
+      }
+      case 'taskDefer':{
+        if(!owner.inlineTask||owner.params.some(n=>n==='stdio'||n==='process')||bindings.some(b=>b.name==='stdio'||b.name==='process')||functions.some(f=>f.name==='stdio'||f.name==='process')||modules.length||classes.length||generators.length)fail('E_SYNC_TASK_PROFILE: unshadowed literal stdout defer required');
+        return {kind:'taskDefer',message:expr.message,body:resolve(expr.body,owner,depth+1,bindings)};
+      }
+      case 'rootStdoutDefer':
+      case 'stdoutSeq': {
+        if((expr.kind==='rootStdoutDefer'&&(owner.inlineTask||(owner.returnType??'int')!=='int'))||owner.ownerKind==='method'||owner.params.some(n=>n==='stdio'||n==='process')||bindings.some(b=>b.name==='stdio'||b.name==='process')||functions.some(f=>f.name==='stdio'||f.name==='process')||modules.length||classes.length||generators.length)fail('E_STDOUT_PROFILE: unshadowed root callable required');
+        return {kind:expr.kind,message:expr.message,body:resolve(expr.body,owner,depth+1,bindings)};
       }
       case 'seqVoidCall': {
         if(expr.call.kind!=='call'||expr.call.qualifier!==null)
@@ -1716,6 +1813,14 @@ function resolveProgram(parsed) {
           fail('nested method calls inside method body unsupported in convergence slice');
         const receiver=resolve(expr.receiver,owner,depth+1,bindings);
         const receiverType=resolvedType(receiver,owner);
+        if(['option<int>','result<int,int>','result<int,string>'].includes(receiverType)){
+          if(expr.args.length!==0)fail('checked ADT method requires zero arguments');
+          if(expr.name==='unwrap')return {kind:'intrinsic',name:receiverType==='option<int>'?'Option.unwrap':receiverType==='result<int,string>'?'Result.stringUnwrap':'Result.unwrap',args:[receiver]};
+          if(receiverType==='option<int>'&&['is_some','is_none'].includes(expr.name)){
+            const test={kind:'intrinsic',name:'Option.is_some',args:[receiver]};return expr.name==='is_none'?{kind:'not',inner:test}:test;
+          }
+          fail('unsupported checked ADT method');
+        }
         if(!receiverType.startsWith('class:'))fail('method receiver is not a class value');
         const classIndex=Number(receiverType.slice(6));
         const table=classTables[classIndex],cls=classes[classIndex];
@@ -1736,7 +1841,7 @@ function resolveProgram(parsed) {
       case 'variable': {
         const captured=bindings.findLast(b=>b.name===expr.name);
         if(captured?.type==='caughtError')fail('E_CATCH_BINDING: caught Error is only available for typed rethrow');
-        if(captured)return {kind:captured.type==='error'?'errorCapture':captured.type==='option<int>'?'optionCapture':captured.type==='result<int,int>'?'resultCapture':captured.type==='trapOptionResult'?'trapOptionCapture':captured.type==='trapResult'?'trapCapture':captured.type==='float'?'floatCapture':captured.type==='bool'?'boolCapture':captured.type==='string'?'stringCapture':'capture',slot:captured.slot};
+        if(captured)return {kind:captured.type==='error'?'errorCapture':captured.type==='option<bool>'?'optionBoolCapture':captured.type==='trapBoolResult'?'trapBoolCapture':captured.type==='option<int>'?'optionCapture':captured.type==='result<int,int>'?'resultCapture':captured.type==='trapOptionResult'?'trapOptionCapture':captured.type==='trapResult'?'trapCapture':captured.type==='float'?'floatCapture':captured.type==='bool'?'boolCapture':captured.type==='string'?'stringCapture':'capture',slot:captured.slot};
         const index=owner.params.indexOf(expr.name);
         if(index<0) fail('unresolved identifier '+expr.name);
         return {kind:'param',index};
@@ -1745,7 +1850,7 @@ function resolveProgram(parsed) {
         if(owner.ownerKind==='method')fail('trap in methods unsupported');
         const inner=resolve(expr.inner,owner,depth+1,bindings);
         const operandType=resolvedType(inner,owner);
-        if(!['int','option<int>','result<int,int>','trapResult','trapOptionResult'].includes(operandType))fail('trap requires int, Option<int> or closed Result operand');
+        if(!['int','bool','option<int>','result<int,int>','trapResult','trapOptionResult','trapBoolResult'].includes(operandType))fail('trap requires int, Option<int> or closed Result operand');
         return {kind:'trap',operandType,inner};
       }
       case 'neg':case 'not':{
@@ -1791,6 +1896,14 @@ function resolveProgram(parsed) {
       case 'call': {
         const local=bindings.findLast(b=>b.name===expr.qualifier);
         if(local){
+          if(local.type==='option<bool>'){
+            if(expr.name!=='unwrap'||expr.args.length!==0)fail('unsupported bool Option method/arity');
+            return {kind:'intrinsic',name:'Option.boolUnwrap',args:[{kind:'optionBoolCapture',slot:local.slot}]};
+          }
+          if(local.type==='trapBoolResult'){
+            if(!['is_ok','is_err','unwrap'].includes(expr.name)||expr.args.length!==0)fail('unsupported bool Result method/arity');
+            return {kind:'trapBoolMethod',name:expr.name,receiver:{kind:'trapBoolCapture',slot:local.slot}};
+          }
           if(['option<int>','result<int,int>'].includes(local.type)){
             const option=local.type==='option<int>';
             const receiver={kind:option?'optionCapture':'resultCapture',slot:local.slot};
@@ -1803,7 +1916,7 @@ function resolveProgram(parsed) {
             if(expr.name!=='unwrap'||expr.args.length!==0)fail('unsupported typed local method/arity');
             return {kind:'intrinsic',name:option?'Option.unwrap':'Result.unwrap',args:[receiver]};
           }
-          if(!['trapResult','trapOptionResult'].includes(local.type)||!['is_ok','is_err','unwrap'].includes(expr.name)||expr.args.length!==0)fail('unsupported local Result method/arity');
+          if(!['trapResult','trapOptionResult','trapBoolResult'].includes(local.type)||!['is_ok','is_err','unwrap'].includes(expr.name)||expr.args.length!==0)fail('unsupported local Result method/arity');
           const option=local.type==='trapOptionResult';
           return {kind:option?'trapOptionMethod':'trapMethod',name:expr.name,receiver:{kind:option?'trapOptionCapture':'trapCapture',slot:local.slot}};
         }
@@ -1839,7 +1952,8 @@ function resolveProgram(parsed) {
           if(expr.args.some(a=>a.name!==null))
             fail('named arguments are unsupported for portable intrinsic '+key);
           if(expr.args.length!==sig[0])fail('intrinsic arity mismatch '+key);
-          return {kind:'intrinsic',name:key,args:expr.args.map(a=>resolve(a.expr,owner,depth+1,bindings))};
+          const typedKey=owner.returnType==='result<int,string>'&&['Result.ok','Result.err'].includes(key)?(key==='Result.ok'?'Result.stringOk':'Result.stringErr'):key;
+          return {kind:'intrinsic',name:typedKey,args:expr.args.map(a=>resolve(a.expr,owner,depth+1,bindings))};
         }
         if(owner.ownerKind==='method')
           fail('function calls inside method body unsupported in convergence slice');
@@ -1915,16 +2029,13 @@ function resolveProgram(parsed) {
       // fieldless construction has no call-graph edge in this slice
     } else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
     else if(['binary','floatBin','compare','boolCompare','stringCompare','numericCompare','symbolCompare'].includes(expr.kind)) {inspect(expr.left,owner);inspect(expr.right,owner);}
-    else if(expr.kind==='scalarRecur'){
-      expr.states.forEach(s=>inspect(s.init,owner));
-      expr.guards.forEach(g=>{inspect(g.condition,owner);inspect(g.value,owner);});
-      expr.args.forEach(a=>inspect(a,owner));
-    }
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='tryCatch'){inspect(expr.body,owner);inspect(expr.handler,owner);}
     else if(expr.kind==='seqVoidCall'){inspect(expr.call,owner);inspect(expr.value,owner);}
-    else if(['local','floatLocal','boolLocal','stringLocal','trapLocal','trapOptionLocal','optionLocal','resultLocal'].includes(expr.kind)){inspect(expr.init,owner);inspect(expr.body,owner);}
-    else if(['trapMethod','trapOptionMethod'].includes(expr.kind))inspect(expr.receiver,owner);
+    else if(['rootStdoutDefer','stdoutSeq','taskScope','taskDefer'].includes(expr.kind))inspect(expr.body,owner);
+    else if(expr.kind==='taskSet'){inspect(expr.value,owner);inspect(expr.body,owner);}
+    else if(['taskMutableLocal','local','floatLocal','boolLocal','stringLocal','trapLocal','trapOptionLocal','trapBoolLocal','optionBoolLocal','optionLocal','resultLocal'].includes(expr.kind)){inspect(expr.init,owner);inspect(expr.body,owner);}
+    else if(['trapMethod','trapOptionMethod','trapBoolMethod'].includes(expr.kind))inspect(expr.receiver,owner);
     else if(['neg','floatNeg','not','trap'].includes(expr.kind)) inspect(expr.inner,owner);
     else if(expr.kind==='match'||expr.kind==='adtMatch') {
       inspect(expr.subject,owner);expr.arms.forEach(a=>inspect(a.body,owner));
@@ -1952,6 +2063,9 @@ function resolveProgram(parsed) {
   };
 }
 function emitProgram(program) {
+  const hosted=program.functions.some(f=>hasStdout(f.body));
+  function hasStdout(n){return !!n&&typeof n==='object'&&(['rootStdoutDefer','stdoutSeq','taskDefer'].includes(n.kind)||Object.values(n).some(hasStdout));}
+  const hostArgs=args=>hosted?['_stdout',...args]:args;
   const out=[
     '// experimental Oreslang program-v2, provisional signed-64 integer model',
     'const _arithmeticBrand=new WeakSet();',
@@ -1962,6 +2076,7 @@ function emitProgram(program) {
     // code, NOT the portable guest Error wire ABI or actor CONTROL signal.
     'function _rem(a,b){_check(a);_check(b);if(b===0n)throw _arith("division_by_zero","ORES_I64_DIVISION_BY_ZERO: checked signed 64-bit remainder by zero");return _check(a%b);}'
   ];
+  if(hosted)out.push('function _writeStdout(sink,message){try{if(sink(message)!==undefined)throw new TypeError("stdout sink must return undefined");}catch{throw new TypeError("stdout capability failed");}}');
   function emitExpr(expr,depth=0) {
     if(depth > MAX_DEPTH) fail('codegen depth exceeded');
     switch(expr.kind) {
@@ -1975,15 +2090,16 @@ function emitProgram(program) {
       case 'bool': return expr.value?'true':'false';
       case 'string': return JSON.stringify(expr.value);
       case 'param':return '_p'+expr.index;
-      case 'scalarRecur': {
-        const states=expr.states;
-        const init=states.map(s=>'let _v'+s.slot+'='+emitExpr(s.init,depth+1)+';').join('');
-        const guards=expr.guards.map(g=>'if('+emitExpr(g.condition,depth+1)+')return '+emitExpr(g.value,depth+1)+';').join('');
-        // Stage every operand before mutating any slot. Lexical temporaries
-        // are per iteration and never form recursive JS calls.
-        const staged=expr.args.map((a,i)=>'const _n'+states[i].slot+'='+emitExpr(a,depth+1)+';').join('');
-        const commit=states.map(s=>'_v'+s.slot+'=_n'+s.slot+';').join('');
-        return '(()=>{'+init+'while(true){'+guards+staged+commit+'}})()';
+      case 'closedRecur': {
+        const e=x=>emitExpr(x,depth+1);
+        // All scratch values computed left-to-right before committing
+        // any state. One iterative activation, no per-recur call.
+        const exits=expr.guards??[{condition:expr.condition,result:expr.result}];
+        return '(()=>{'+expr.states.map(s=>'let _v'+s.slot+'='+e(s.init)+';').join('')+
+          'while(true){'+exits.map(g=>'if('+e(g.condition)+')return '+e(g.result)+';').join('')+
+          expr.updates.map((u,i)=>'const _next'+i+'='+e(u)+';').join('')+
+          expr.states.map((s,i)=>'_v'+s.slot+'=_next'+i+';').join('')+
+          '}})()';
       }
       case 'scalarWhileMany': {
         const emitSteps=(steps,d)=>steps.map(step=>{
@@ -2000,8 +2116,8 @@ function emitProgram(program) {
         const v='_v'+expr.slot;
         return '(('+v+')=>{while('+emitExpr(expr.condition,depth+1)+'){'+v+'='+emitExpr(expr.update,depth+1)+';}return '+emitExpr(expr.body,depth+1)+';})('+emitExpr(expr.init,depth+1)+')';
       }
-      case 'capture':case 'floatCapture':case 'boolCapture':case 'stringCapture':case 'trapCapture':case 'trapOptionCapture':case 'optionCapture':case 'resultCapture':case 'errorCapture':return '_v'+expr.slot;
-      case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
+      case 'capture':case 'floatCapture':case 'boolCapture':case 'stringCapture':case 'trapCapture':case 'trapOptionCapture':case 'trapBoolCapture':case 'optionBoolCapture':case 'optionCapture':case 'resultCapture':case 'errorCapture':return '_v'+expr.slot;
+      case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
       // wrapping arithmetic. Check the computed result before returning.
       case 'i32Check':
@@ -2010,7 +2126,7 @@ function emitProgram(program) {
         return '((v)=>{_check(v);if(v<'+expr.minimum+'n||v>'+expr.maximum+'n){const e=new RangeError("E_REFINEMENT_CHECK_FAILED: checked refinement violated");Object.defineProperty(e,"code",{value:"refinement_violation",enumerable:true});throw Object.freeze(e);}return v;})('+emitExpr(expr.inner,depth+1)+')';
       case 'neg':return '_check(-('+emitExpr(expr.inner,depth+1)+'))';
       case 'trap':return '_trap(()=>('+emitExpr(expr.inner,depth+1)+'),'+JSON.stringify(expr.operandType)+')';
-      case 'trapMethod':case 'trapOptionMethod':return '_trapMethod('+JSON.stringify(expr.name)+','+emitExpr(expr.receiver,depth+1)+','+(expr.kind==='trapOptionMethod')+')';
+      case 'trapMethod':case 'trapOptionMethod':case 'trapBoolMethod':return '_trapMethod('+JSON.stringify(expr.name)+','+emitExpr(expr.receiver,depth+1)+','+(expr.kind==='trapBoolMethod'?'"bool"':expr.kind==='trapOptionMethod')+')';
       case 'floatNeg':return '(-('+emitExpr(expr.inner,depth+1)+'))';
       case 'floatBin':return '(('+emitExpr(expr.left,depth+1)+')'+expr.op+'('+emitExpr(expr.right,depth+1)+'))';
       case 'numericCompare':{
@@ -2046,6 +2162,10 @@ function emitProgram(program) {
       }
       case 'if':return '(('+emitExpr(expr.condition,depth+1)+')?('+
         emitExpr(expr.yes,depth+1)+'):('+emitExpr(expr.no,depth+1)+'))';
+      case 'taskScope':return '('+emitExpr(expr.body,depth+1)+')';
+      case 'taskSet':return '(()=>{_v'+expr.slot+'=_check('+emitExpr(expr.value,depth+1)+');return '+emitExpr(expr.body,depth+1)+';})()';
+      case 'rootStdoutDefer':case 'taskDefer':return '(()=>{try{return '+emitExpr(expr.body,depth+1)+';}finally{_writeStdout(_stdout,'+JSON.stringify(expr.message)+');}})()';
+      case 'stdoutSeq':return '(()=>{_writeStdout(_stdout,'+JSON.stringify(expr.message)+');return '+emitExpr(expr.body,depth+1)+';})()';
       case 'seqVoidCall':
         return '(()=>{'+emitExpr(expr.call,depth+1)+';return '+
           emitExpr(expr.value,depth+1)+';})()';
@@ -2065,20 +2185,20 @@ function emitProgram(program) {
         return '(()=>{'+declarations.join('')+'return _receiver['+
           JSON.stringify(method.name)+']('+formal.join(',')+');})()';
       }
-      case 'call':return '_f'+expr.target+'('+expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
+      case 'call':return '_f'+expr.target+'('+hostArgs(expr.args.map(x=>emitExpr(x,depth+1))).join(',')+')';
       case 'namedCall': {
         const declarations=expr.args.map((arg,i)=>
           'const _named'+i+'='+emitExpr(arg,depth+1)+';');
         const formal=new Array(expr.args.length);
         expr.paramOrder.forEach((slot,i)=>{formal[slot]='_named'+i;});
         return '(()=>{'+declarations.join('')+'return _f'+expr.target+'('+
-          formal.join(',')+');})()';
+          hostArgs(formal).join(',')+');})()';
       }
       case 'intrinsic': {
         const funcs={
-          'Option.some':'_some','Option.none':'_none',
+          'Option.some':'_some','Option.none':'_none','Option.boolSome':'_boolSome','Option.boolNone':'_none','Option.boolUnwrap':'_boolOptionUnwrap',
           'Option.is_some':'_is_some','Option.unwrap_or':'_option_or','Option.unwrap':'_optionUnwrap','Result.unwrap':'_resultUnwrap','Option.expect':'_optionExpect','Result.expect':'_resultExpect',
-          'Result.ok':'_ok','Result.err':'_err',
+          'Result.ok':'_ok','Result.err':'_err','Result.stringOk':'_stringOk','Result.stringErr':'_stringErr','Result.stringUnwrap':'_stringResultUnwrap',
           'Result.is_ok':'_is_ok','Result.unwrap_or':'_result_or',
           'Result.unwrap_err_or':'_error_or'
         };
@@ -2112,7 +2232,13 @@ function emitProgram(program) {
     }
   }
   const classMethods=(program.classes??[]).flatMap(cls=>cls.methods);
-  if(program.functions.some(fn=>fn.returnType==='bool'||fn.paramTypes?.includes('bool'))||
+  function containsKind(value,kind){return !!value&&typeof value==='object'&&(value.kind===kind||Object.values(value).some(v=>containsKind(v,kind)));}
+  const hasBoolTrap=containsKind(program,'trapBoolLocal')||containsKind(program,'trapBoolMethod')||containsKind(program,'trapBoolCapture')||containsTypedBoolTrap(program);
+  function containsTypedBoolTrap(v){return !!v&&typeof v==='object'&&((v.kind==='trap'&&['bool','trapBoolResult'].includes(v.operandType))||Object.values(v).some(containsTypedBoolTrap));}
+  function containsIntrinsic(value,name){return !!value&&typeof value==='object'&&((value.kind==='intrinsic'&&value.name===name)||Object.values(value).some(v=>containsIntrinsic(v,name)));}
+  // Validated IR may inline the carrier rather than bind an Option<bool> local.
+  const hasBoolOption=containsKind(program,'optionBoolLocal')||containsIntrinsic(program,'Option.boolSome')||containsIntrinsic(program,'Option.boolUnwrap');
+  if(hasBoolTrap||program.functions.some(fn=>fn.returnType==='bool'||fn.paramTypes?.includes('bool'))||
      classMethods.some(method=>method.returnType==='bool'||method.paramTypes.includes('bool')))
     out.push('function _checkbool(v){if(typeof v!=="boolean")throw new TypeError("Oreslang bool required");return v;}');
   function usesSymbol(expr) {
@@ -2125,7 +2251,6 @@ function emitProgram(program) {
       case 'call':case 'namedCall':case 'intrinsic':return expr.args.some(usesSymbol);
       case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'stringCompare':case 'numericCompare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
-      case 'scalarRecur':return expr.states.some(s=>usesSymbol(s.init))||expr.guards.some(g=>usesSymbol(g.condition)||usesSymbol(g.value))||expr.args.some(usesSymbol);
       case 'scalarWhileMany': {
         const visit=steps=>steps.some(s=>s.kind==='loop'?usesSymbol(s.condition)||visit(s.steps):s.kind==='loopExit'?usesSymbol(s.condition):usesSymbol(s.init??s.value));
         return expr.states.some(s=>usesSymbol(s.init))||usesSymbol(expr.condition)||visit(expr.steps)||usesSymbol(expr.body);
@@ -2134,9 +2259,11 @@ function emitProgram(program) {
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
       case 'tryCatch':return usesSymbol(expr.body)||usesSymbol(expr.handler);
       case 'seqVoidCall':return usesSymbol(expr.call)||usesSymbol(expr.value);
-      case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
+      case 'rootStdoutDefer':case 'stdoutSeq':case 'taskScope':case 'taskDefer':return usesSymbol(expr.body);
+      case 'taskSet':return usesSymbol(expr.value)||usesSymbol(expr.body);
+      case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
       case 'trap':return usesSymbol(expr.inner);
-      case 'trapMethod':case 'trapOptionMethod':return usesSymbol(expr.receiver);
+      case 'trapMethod':case 'trapOptionMethod':case 'trapBoolMethod':return usesSymbol(expr.receiver);
       case 'i32Check':case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesSymbol(expr.inner);
       case 'match':case 'adtMatch':return usesSymbol(expr.subject)||
         expr.arms.some(arm=>usesSymbol(arm.body));
@@ -2166,14 +2293,13 @@ function emitProgram(program) {
   function usesPortableRuntime(expr) {
     if(expr===null)return false;
     switch(expr.kind) {
-      case 'intrinsic':case 'trap':case 'trapMethod':case 'trapOptionMethod':return true;
+      case 'intrinsic':case 'trap':case 'trapMethod':case 'trapOptionMethod':case 'trapBoolMethod':return true;
       case 'newClass':return false;
       case 'methodCall':case 'namedMethodCall':
         return usesPortableRuntime(expr.receiver)||expr.args.some(usesPortableRuntime);
       case 'call':case 'namedCall':return expr.args.some(usesPortableRuntime);
       case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'stringCompare':case 'numericCompare':case 'symbolCompare':
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
-      case 'scalarRecur':return expr.states.some(s=>usesPortableRuntime(s.init))||expr.guards.some(g=>usesPortableRuntime(g.condition)||usesPortableRuntime(g.value))||expr.args.some(usesPortableRuntime);
       case 'scalarWhileMany': {
         const visit=steps=>steps.some(s=>s.kind==='loop'?usesPortableRuntime(s.condition)||visit(s.steps):s.kind==='loopExit'?usesPortableRuntime(s.condition):usesPortableRuntime(s.init??s.value));
         return expr.states.some(s=>usesPortableRuntime(s.init))||usesPortableRuntime(expr.condition)||visit(expr.steps)||usesPortableRuntime(expr.body);
@@ -2183,7 +2309,9 @@ function emitProgram(program) {
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
       case 'tryCatch':return usesPortableRuntime(expr.body)||usesPortableRuntime(expr.handler);
       case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
-      case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
+      case 'rootStdoutDefer':case 'stdoutSeq':case 'taskScope':case 'taskDefer':return usesPortableRuntime(expr.body);
+      case 'taskSet':return usesPortableRuntime(expr.value)||usesPortableRuntime(expr.body);
+      case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'i32Check':case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
       case 'match':return usesPortableRuntime(expr.subject)||
         expr.arms.some(arm=>usesPortableRuntime(arm.body));
@@ -2192,7 +2320,7 @@ function emitProgram(program) {
     }
   }
   function containsCheckedUnwrap(value){
-    return !!value&&typeof value==='object'&&((value.kind==='intrinsic'&&['Option.unwrap','Result.unwrap','Option.expect','Result.expect'].includes(value.name))||Object.values(value).some(containsCheckedUnwrap));
+    return !!value&&typeof value==='object'&&((value.kind==='intrinsic'&&['Option.unwrap','Option.boolUnwrap','Result.unwrap','Result.stringUnwrap','Option.expect','Result.expect'].includes(value.name))||Object.values(value).some(containsCheckedUnwrap));
   }
   const hasCheckedUnwrap=containsCheckedUnwrap(program);
   if(program.functions.some(fn=>['option<int>','result<int,int>'].includes(fn.returnType)||
@@ -2211,6 +2339,7 @@ function emitProgram(program) {
       'function _checkresult(v){return _checktag(v,["Ok","Err"]);}',
       'function _some(v){return _tag("Some",_check(v));}',
       'function _none(){return _tag("None",null);}',
+      ...(hasBoolOption?['function _boolSome(v){if(typeof v!=="boolean")throw new TypeError("bool required");return _tag("Some",v);}']:[]),
       'function _ok(v){return _tag("Ok",_check(v));}',
       'function _err(v){return _tag("Err",_check(v));}',
       'function _is_some(v){return _checkoption(v).kind==="Some";}',
@@ -2221,11 +2350,15 @@ function emitProgram(program) {
 
     );
   }
+  if((program.functions.some(fn=>fn.returnType==='result<int,string>')||containsIntrinsic(program,'Result.stringOk')||containsIntrinsic(program,'Result.stringErr')||containsIntrinsic(program,'Result.stringUnwrap')))out.push(
+    'function _stringOk(v){return _tag("Ok",_check(v));}',
+    'function _stringErr(v){if(typeof v!=="string")throw new TypeError("typed Result string required");return _tag("Err",v);}'
+  );
   // Validated IR is bounded plain data. Emit private trap helpers only for
   // programs that actually use trap; keep ordinary ADT artifact overhead low.
   function containsTrap(value){
     if(!value||typeof value!=='object')return false;
-    if(['trap','trapMethod','trapOptionMethod'].includes(value.kind)||(value.kind==='intrinsic'&&['Option.unwrap','Result.unwrap','Option.expect','Result.expect'].includes(value.name))||(value.kind==='adtMatch'&&value.adt==='trapResult'))return true;
+    if(['trap','trapMethod','trapOptionMethod','trapBoolMethod'].includes(value.kind)||(value.kind==='intrinsic'&&['Option.unwrap','Option.boolUnwrap','Result.unwrap','Result.stringUnwrap','Option.expect','Result.expect'].includes(value.name))||(value.kind==='adtMatch'&&value.adt==='trapResult'))return true;
     return Object.values(value).some(containsTrap);
   }
   function containsGuestEffect(value){
@@ -2247,14 +2380,16 @@ function emitProgram(program) {
       ...(hasCheckedUnwrap?[
       'function _unwrapFailure(name,message,original){const e=new Error(message,{cause:original});Object.defineProperty(e,"name",{value:name});_checkedUnwrapBrand.add(e);throw Object.freeze(e);}',
       'function _optionUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Option unwrap carrier");const x=_checkoption(v);if(x.kind==="Some")return x.value;return _unwrapFailure("OptionUnwrapError","cannot unwrap None",undefined);}',
+      ...(hasBoolOption?['function _boolOptionUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted bool Option");if(v.kind==="Some"&&typeof v.value==="boolean")return v.value;if(v.kind!=="None"||v.value!==null)throw new TypeError("invalid bool Option");return _unwrapFailure("OptionUnwrapError","cannot unwrap None",undefined);}']:[]),
       'function _resultUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Result unwrap carrier");const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",x.value);}',
+      ...((program.functions.some(fn=>fn.returnType==='result<int,string>')||containsIntrinsic(program,'Result.stringOk')||containsIntrinsic(program,'Result.stringErr')||containsIntrinsic(program,'Result.stringUnwrap'))?['function _stringResultUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Result unwrap carrier");if(v.kind==="Ok")return _check(v.value);if(v.kind!=="Err"||typeof v.value!=="string")throw new TypeError("invalid typed Result payload");return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",v.value);}']:[]),
       'function _expectPanic(message,cause){if(typeof message!=="string")throw new TypeError("expect message must be string");const e=new Error(message,{cause});Object.defineProperty(e,"effect",{value:"panic",enumerable:true});throw Object.freeze(e);}',
       'function _optionExpect(v,message){if(!_tagBrand.has(v))throw new TypeError("untrusted Option expect carrier");if(typeof message!=="string")throw new TypeError("expect message must be string");const x=_checkoption(v);if(x.kind==="Some")return x.value;return _expectPanic(message,undefined);}',
       'function _resultExpect(v,message){if(!_tagBrand.has(v))throw new TypeError("untrusted Result expect carrier");if(typeof message!=="string")throw new TypeError("expect message must be string");const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _expectPanic(message,x.value);}'
       ]:[]),
       'function _checkTrapResult(v){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}',
-      'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult"||t==="trapOptionResult"){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}const result=t==="option<int>"?_tag("Ok",_checkoption(v)):t==="int"?_ok(v):_checkresult(v);_trapBrand.add(result);return result;}catch(e){if(!_isOrdinaryGuest(e))throw e;const result=_tag("Err",e);_trapBrand.add(result);return result;}}',
-      'function _trapMethod(m,result,option){if(!_trapBrand.has(result))throw new TypeError("invalid trap Result");if(m==="is_ok")return result.kind==="Ok";if(m==="is_err")return result.kind==="Err";if(m==="unwrap"&&result.kind==="Ok")return option?_checkoption(result.value):_check(result.value);if(m==="unwrap"){const e=new Error("cannot unwrap Err",{cause:result.value});Object.defineProperty(e,"name",{value:"ResultUnwrapError"});_checkedUnwrapBrand.add(e);throw Object.freeze(e);}throw new TypeError("invalid trap Result method");}'
+      'function _trap(thunk,t){try{const v=thunk();if(t==="trapResult"||t==="trapOptionResult"||t==="trapBoolResult"){if(!_trapBrand.has(v))throw new TypeError("invalid trap Result");return v;}const result=t==="option<int>"?_tag("Ok",_checkoption(v)):t==="int"?_ok(v):t==="bool"?_tag("Ok",_checkbool(v)):_checkresult(v);_trapBrand.add(result);return result;}catch(e){if(!_isOrdinaryGuest(e))throw e;const result=_tag("Err",e);_trapBrand.add(result);return result;}}',
+      'function _trapMethod(m,result,option){if(!_trapBrand.has(result))throw new TypeError("invalid trap Result");if(m==="is_ok")return result.kind==="Ok";if(m==="is_err")return result.kind==="Err";if(m==="unwrap"&&result.kind==="Ok")return option==="bool"?_checkbool(result.value):option?_checkoption(result.value):_check(result.value);if(m==="unwrap"){const e=new Error("cannot unwrap Err",{cause:result.value});Object.defineProperty(e,"name",{value:"ResultUnwrapError"});_checkedUnwrapBrand.add(e);throw Object.freeze(e);}throw new TypeError("invalid trap Result method");}'
   );
   (program.classes??[]).forEach((cls,classIndex)=>{
     const local='_class'+classIndex;
@@ -2305,7 +2440,7 @@ function emitProgram(program) {
   });
   program.functions.forEach((fn,i)=>{
     const params=fn.params.map((_,j)=>'_p'+j);
-    out.push('function _f'+i+'('+params.join(',')+'){');
+    out.push('function _f'+i+'('+hostArgs(params).join(',')+'){');
     params.forEach((p,j)=>{
       const type=fn.paramTypes?.[j]??'int';
       const check={int:'_check',bool:'_checkbool',symbol:'_checksymbol',error:'_checkGuestError',
@@ -2334,9 +2469,9 @@ function emitProgram(program) {
     // One dispatcher owns the exported name across ordinary functions and
     // generators. Same-arity collisions were rejected during resolution.
     const name='_dispatch'+(dispatcherNumber++);
-    out.push('function '+name+'(..._args){switch(_args.length){');
+    out.push('function '+name+'(..._args){'+(hosted?'if(typeof _args[0]!=="function")throw new TypeError("explicit stdout capability required");':'')+'switch(_args.length){');
     for(const i of group.functions)
-      out.push('case '+program.functions[i].params.length+':return _f'+i+'(..._args);');
+      out.push('case '+(program.functions[i].params.length+(hosted?1:0))+':return _f'+i+'(..._args);');
     for(const i of group.generators)
       out.push('case '+program.generators[i].params.length+':return _g'+i+'(..._args);');
     out.push('default:throw new TypeError("Oreslang overload arity mismatch");}}');
@@ -2506,7 +2641,7 @@ function admitUnusedRefinementsBeforeCheckedUnwrap(tokens){
   return remainder;
 }
 
-export function compileToProgramIRV2(source) {
+export function compileToProgramIRV2(source, options) {
   const tokens=tokenize(source);
   rejectExecutionDomains(tokens,fail,{inlineScalarTasks:true});
   rejectUnsupportedHttpActors(tokens,fail);
@@ -2526,7 +2661,7 @@ export function compileToProgramIRV2(source) {
     dialect:PROGRAM_IR_DIALECT,
     integerModel:PROGRAM_IR_INT_MODEL,
     ...program
-  });
+  },false,options?.stdout===true);
 }
 // Strict verification admits only the explicitly checked quantity frontend.
  // An unverified ordinary source path must never be used as a fallback.
@@ -2542,11 +2677,11 @@ export function compileVerifiedStrict(source) {
     schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,integerModel:PROGRAM_IR_INT_MODEL,...quantity
   },true));
 }
-export function compileProgramIRV2(ir) {
-  return emitProgram(validateProgramIRV2(ir));
+export function compileProgramIRV2(ir, options) {
+  return emitProgram(validateProgramIRV2(ir,false,options?.stdout===true));
 }
-export function compileProgramV2(source) {
-  return emitProgram(compileToProgramIRV2(source));
+export function compileProgramV2(source, options) {
+  return emitProgram(compileToProgramIRV2(source,options));
 }
 export function checkProgramV2(source) {
   compileProgramV2(source);
