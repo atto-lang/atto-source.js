@@ -164,6 +164,10 @@ function rejectSingletonDeclarations(tokens) {
 // admission. Reject before building IR so a .atto actor heap can never
 // accidentally produce scalar JS that looks like a successful guest compile.
 // Inspect lexed tokens only: strings and comments are not authoritative code.
+function isBoundedMapHeader(tokens,p){
+  return tokens[p]?.kind==='id'&&tokens[p].value==='class'&&tokens[p+1]?.kind==='id'&&
+    ['extends','Map','<'].every((v,i)=>tokens[p+2+i]?.value===v);
+}
 function rejectUnloweredActorHeap(tokens) {
   for (let i=0;i<tokens.length;i++) {
     const at=tokens[i];
@@ -180,6 +184,7 @@ function rejectUnloweredActorHeap(tokens) {
     if(tokens[p]?.value!=='define') continue;
     p++;
     if(tokens[p]?.value==='pub') p++;
+    if(isBoundedMapHeader(tokens,p))continue; // exact typed parser owns this bounded candidate
     if(tokens[p]?.value==='class' || tokens[p]?.value==='actor' ||
        (tokens[p]?.value==='inverted' && tokens[p+1]?.value==='class')) {
       // Keep the existing precise inverted-class diagnostic, which the
@@ -298,6 +303,77 @@ class Parser {
   // Bounded source-local nominal Record declarations. All fields are immutable
   // i64 slots; methods lower to private scalar IR functions with explicit slots.
   // No aggregate ABI, allocation claim, mutation, generic or Map subclass yet.
+  nominalMapDeclaration(){
+    const at=this.peek();
+    this.expect('define');this.expect('class');
+    const name=this.aggregateIdentifier();
+    if(!/^[A-Z][A-Za-z0-9_]{0,63}$/.test(name)||this.nominalRecords.has(name)||
+       /^(Record|Map|Array|Tuple|Pair|Entry|List|Vector|Set|Option|Result|String|Integer|Bool|Float|Decimal|BigInt|Any|Unknown|Object|Error|Symbol|Future|Channel|ActorRef|ActorId|ActorKind|Pointer|RawPointer|Atomic|Mutex|Arc|Weak|Box|Rc|RwLock|ReadLoan|WriteLoan|Function|Fnc|Iterator|Generator|Slice|Buffer|Queue|Stack|BitSet|OrderedMap|FixedArray|FixedList|Void|Never|Type)$/.test(name))
+      throw new CompileError('E_MAP_SUBTYPE_NAME: invalid, reserved or duplicate type',at);
+    if(this.nominalRecords.size>=16)throw new CompileError('E_MAP_SUBTYPE_LIMIT',at);
+    this.expect('extends');this.expect('Map');this.expect('<');
+    if(!this.match('String')&&!this.match('string'))throw new CompileError('E_MAP_SUBTYPE_GENERIC: expected String key',at);
+    if(!this.match(',')||!this.match('int')||!this.match('>'))throw new CompileError('E_MAP_SUBTYPE_GENERIC: expected Map<String,int>',at);
+    this.expect('as');
+    const methods=new Map();
+    const reserved=new Set(['size','get','put','set','remove','delete','clear','keys','values','entries','has','contains','contains_key','is_empty','copy','filter','map_values','hash','drop','iterator','insert','replace','update','reserve','capacity','merge','with','equals','to_string','of','new','make']);
+    while(this.match('pub')){
+      const method=this.aggregateIdentifier();
+      if(reserved.has(method)||methods.has(method)||this.recordMethods.length>=64)
+        throw new CompileError('E_MAP_SUBTYPE_METHOD: reserved or duplicate method',at);
+      this.expect('(');const userParams=[];
+      if(!this.match(')')){
+        do{
+          this.expect('int');const parameter=this.aggregateIdentifier();
+          if(userParams.length>=16||userParams.includes(parameter)||parameter===name||this.nominalRecords.has(parameter))
+            throw new CompileError('E_MAP_SUBTYPE_PARAMETER',at);
+          userParams.push(parameter);
+        }while(this.match(','));
+        this.expect(')');
+      }
+      this.expect(':');this.expect('int');this.expect('{');this.expect('return');
+      const saved=this.aggregateLocals;
+      this.aggregateLocals=new Map([['self',{kind:'ScalarMap',mapSize:{kind:'var',name:'_atto_record_slot_0'},nominal:{methods:new Map()}}]]);
+      this.recordMethodBody=new Set(userParams);
+      let body;
+      try{body=this.expr();}finally{this.recordMethodBody=null;this.aggregateLocals=saved;}
+      this.expect(';');this.expect('}');
+      const target='_atto_record_method_'+this.recordMethods.length;
+      methods.set(method,{target,arity:userParams.length});
+      this.recordMethods.push({name:target,params:['_atto_record_slot_0',...userParams],body,pub:false,writtenPrivate:true});
+    }
+    if(!this.match('end'))throw new CompileError('E_MAP_SUBTYPE_STORAGE: methods only in bounded Map subtype',this.peek());
+    this.nominalRecords.set(name,{name,kind:'map',methods});
+  }
+  localMap(params,nominal){
+    const at=this.peek();this.expect('const');
+    if(nominal)this.expect(nominal.name);
+    else{
+      this.expect('Map');this.expect('<');
+      if(!this.match('String')&&!this.match('string'))throw new CompileError('E_MAP_SUBTYPE_GENERIC',at);
+      this.expect(',');this.expect('int');this.expect('>');
+    }
+    const name=this.aggregateIdentifier();
+    if(params.includes(name)||this.aggregateLocals.has(name)||this.scalarConsts.has(name)||this.aggregateTypes.has(name)||this.nominalRecords.has(name))
+      throw new CompileError('E_MAP_SUBTYPE_BINDING: duplicate binding',at);
+    if(this.aggregateLocals.size+this.scalarConsts.size>=64)throw new CompileError('aggregate binding limit',at);
+    this.expect('=');
+    if(!this.match('{'))throw new CompileError('E_MAP_SUBTYPE_CONVERSION: contextual literal required; implicit nominal conversions unsupported',at);
+    const keys=new Set();
+    while(this.peek().value!=='}'){
+      if(keys.size>=64)throw new CompileError('E_MAP_SUBTYPE_LIMIT: entries',at);
+      const token=this.peek();
+      if(token.kind!=='string'||!token.value.raw.startsWith('"'))throw new CompileError('E_MAP_SUBTYPE_KEY: plain double-quoted string required',token);
+      const key=this.readStaticPairKey();
+      if(keys.has(key))throw new CompileError('E_MAP_SUBTYPE_KEY: duplicate key',token);
+      keys.add(key);this.expect(':');
+      const field=this.readAggregateScalar(params,false);
+      if(field.type!=='int')throw new CompileError('E_MAP_SUBTYPE_VALUE: integer literal required',at);
+      if(!this.match(','))break;
+    }
+    this.expect('}');this.expect(';');
+    this.aggregateLocals.set(name,{kind:'ScalarMap',mapSize:{kind:'int',n:BigInt(keys.size)},nominal});
+  }
   nominalRecordDeclaration(){
     const at=this.peek();
     this.expect('define');this.expect('record');
@@ -309,7 +385,7 @@ class Parser {
     this.expect('extends');
     const parent=this.aggregateIdentifier();
     const inherited=this.nominalRecords.get(parent);
-    if(parent!=='Record'&&!inherited)throw new CompileError('E_RECORD_SUBTYPE_PARENT: expected prior nominal Record or Record',at);
+    if(parent!=='Record'&&(!inherited||inherited.kind==='map'))throw new CompileError('E_RECORD_SUBTYPE_PARENT: expected prior nominal Record or Record',at);
     this.expect('as');
     const fields=new Map(inherited?.fields), methods=new Map(inherited?.methods);
     while(this.match('int')){
@@ -415,6 +491,7 @@ class Parser {
       this.aggregateConst(params);return;
     }
     const nominal=this.nominalRecords.get(next);
+    if(nominal?.kind==='map'||(next==='Map'&&[...this.nominalRecords.values()].some(d=>d.kind==='map'))){this.localMap(params,nominal);return;}
     if(nominal){
       this.expect('const');this.expect(next);
       const name=this.aggregateIdentifier();
@@ -677,6 +754,21 @@ class Parser {
     }else{
       this.expect('.');key=this.aggregateIdentifier();
     }
+    if(aggregate.kind==='ScalarMap'){
+      if(key==='size'){this.expect('(');this.expect(')');return {...aggregate.mapSize};}
+      const method=aggregate.nominal?.methods.get(key);
+      if(!method)throw new CompileError('E_MAP_SUBTYPE_METHOD: absent on static receiver',at);
+      this.expect('(');const args=[{...aggregate.mapSize}];let count=0;
+      if(!this.match(')')){
+        do{
+          if(count>=method.arity)throw new CompileError('E_MAP_SUBTYPE_ARITY',at);
+          args.push(this.expr());count++;
+        }while(this.match(','));
+        this.expect(')');
+      }
+      if(count!==method.arity)throw new CompileError('E_MAP_SUBTYPE_ARITY',at);
+      return {kind:'call',name:method.target,args};
+    }
     if(aggregate.nominal&&this.peek().value==='('){
       const method=aggregate.nominal.methods.get(key);
       if(!method)throw new CompileError('E_RECORD_SUBTYPE_METHOD: unknown method',at);
@@ -717,11 +809,14 @@ class Parser {
     const functions=[],exports=[];
     // Preserve module-local type exemplars without changing export/root rules.
     this.aggregateTypes=new Map();this.aggregateLocals=new Map();this.scalarConsts=null;
-    if(!module&&this.peek().value==='define'&&this.ts[this.pos+1]?.value==='record'){
+    const nominalAhead=()=>this.peek().value==='define'&&(this.ts[this.pos+1]?.value==='record'||isBoundedMapHeader(this.ts,this.pos+1));
+    if(!module&&nominalAhead()){
       // Compiler-generated scalar names are never source-addressable.
       if(this.ts.some(t=>t.kind==='id'&&t.value.startsWith('_atto_record_')))
         throw new CompileError('E_RECORD_SUBTYPE_NAME: reserved internal name',this.peek());
-      while(this.peek().value==='define'&&this.ts[this.pos+1]?.value==='record')this.nominalRecordDeclaration();
+      while(nominalAhead()){
+        if(this.ts[this.pos+1].value==='record')this.nominalRecordDeclaration();else this.nominalMapDeclaration();
+      }
     }
     while(this.peek().value==='const'&&['Record','Tuple','struct'].includes(this.ts[this.pos+1]?.value)){
       if(this.ts[this.pos+1].value==='struct'||this.ts[this.pos+2]?.value!=='<')
