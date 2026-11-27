@@ -39,8 +39,7 @@ test('malformed or unauthorized contextual inputs fail before ESM emission',()=>
     source('return _atto_context_esm_member(2,3);'),
     multi('return Scale::(2,).apply(3);'),
     multi('return Scale::(2).apply(3);'),
-    multi('return 1 + Scale::(factor=2,offset=1).apply(3);'),
-    multi('return Scale::(factor=2,offset=1).apply(3) + 1;'),
+    multi('return Scale::(factor=2,factor=1).apply(3);'),
     source('return Scale::(2).apply(3);','int factor, int factor'),
   ]) assert.throws(()=>compileProgramV2(s),undefined,s);
 });
@@ -64,6 +63,10 @@ test('stored named context slots map by schema while evaluating in source order'
  for(const [src,want] of [
  [multi('const x = Scale::(offset=7,factor=5); return x.apply(7);'),42n],
  [multi('return Scale::(offset=7,factor=5).apply(7);'),42n],
+ [multi('return 1 + Scale::(offset=7,factor=5).apply(7);'),43n],
+ [multi('return Scale::(offset=7,factor=5).apply(7) + 1;'),43n],
+ [multi('return Scale::(offset=7,factor=5).apply(7) - Scale::(factor=2,offset=1).apply(5);'),31n],
+ [multi('const z = Scale::(offset=7,factor=5).apply(7); return z;'),42n],
  [multi('let n = 3; const x = Scale::(offset=n+1,factor=n); set n = 9; return x.apply(5) + Scale::(2,1).apply(7);'),34n],
  [source('let n = 6; const x = Scale::(factor=n); set n = 1; return x.apply(7);'),42n]
  ]){
