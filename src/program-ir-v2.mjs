@@ -477,7 +477,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
             case 'int':case 'bool':return e;
             case 'capture':if(scope.includes(e.slot))return e;break;
             case 'neg':case 'not':closed(e.inner);return e;
-            case 'binary':case 'compare':closed(e.left);closed(e.right);return e;
+            case 'binary':case 'compare':case 'boolCompare':closed(e.left);closed(e.right);return e;
             case 'if':closed(e.condition);closed(e.yes);closed(e.no);return e;
           }
           fail('nonclosed state loop operand');
