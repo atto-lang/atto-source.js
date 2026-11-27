@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {Worker} from 'node:worker_threads';
 import {compileScheduledUnwindV1} from '../src/scheduled-unwind-compiler.mjs';
 import * as runtime from '../src/scheduled-unwind-runtime.mjs';
 import {SelectableI64Future} from '../src/selectable-i64-future.mjs';
@@ -62,4 +63,24 @@ test('prototype-forged Futures and own method overrides rejected before admissio
   overridden.subscribeReady=()=>assert.fail('overridden method');
   for(const bad of [forged,overridden])assert.throws(()=>guest.start(runtime,loop,'a',identity,[bad,a,b],()=>{}),/E_SCHEDULED_FUTURE_IDENTITY/);
   assert.equal(loop.stats.retainedOwners,0);assert.equal(loop.stats.ready,0);
+});
+
+test('real Node Worker executes source-compiled recovery with three pending Futures',async()=>{
+  const worker=new Worker(new URL('./fixtures/scheduled-recover-node-worker.mjs',import.meta.url),{workerData:compileScheduledUnwindV1(source)});
+  const frames=[];let wake;worker.on('message',f=>{frames.push(f);wake?.();});
+  const next=async kind=>{
+    for(let i=0;i<20;i++){
+      const err=frames.find(f=>f.kind==='recover-error');if(err)throw Error(err.message);
+      const f=frames.find(f=>f.kind===kind);if(f)return f;
+      await new Promise((ok,fail)=>{const timer=setTimeout(()=>{wake=null;fail(Error('timeout '+kind));},1000);wake=()=>{clearTimeout(timer);wake=null;ok();};});
+    }throw Error('unbounded wait');
+  };
+  try{
+    worker.postMessage({kind:'recover-start'});await next('recover-input-parked');
+    worker.postMessage({kind:'recover-fail-input'});await next('recover-cleanup-parked');
+    worker.postMessage({kind:'recover-complete-cleanup'});await next('recover-fallback-parked');
+    worker.postMessage({kind:'recover-complete-fallback'});assert.deepEqual(await next('recover-done'),{kind:'recover-done',value:'42',sameError:true});
+    worker.postMessage({kind:'recover-retire'});await next('recover-retired');
+    assert.deepEqual(frames.map(f=>f.kind),['recover-input-parked','recover-after-input','recover-cleanup-parked','recover-after-cleanup','recover-fallback-parked','recover-after-fallback','recover-done','recover-retired']);
+  }finally{await worker.terminate();}
 });

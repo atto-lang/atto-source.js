@@ -9,6 +9,7 @@ let wake;
 worker.addEventListener('message',event=>{frames.push(event.data);wake?.();});
 const next=async kind=>{
   for(let i=0;i<30;i++){
+    const err=frames.find(frame=>frame.kind==='recover-error'||frame.kind==='guest-error');if(err)throw Error(err.message);
     const match=frames.find(frame=>frame.kind===kind);
     if(match)return match;
     await new Promise((resolve,reject)=>{
@@ -51,6 +52,14 @@ try{
   worker.postMessage({kind:'guest-retire'});await next('guest-retired');
   if(frames.filter(f=>f.kind.startsWith('guest-')).map(f=>f.kind).join(',')!=='guest-parked,guest-before-second,guest-after-second,guest-first-parked,guest-after-first,guest-done,guest-retired')
     throw Error('compiled guest ordering');
+  worker.postMessage({kind:'recover-start'});await next('recover-input-parked');
+  worker.postMessage({kind:'recover-fail-input'});await next('recover-cleanup-parked');
+  worker.postMessage({kind:'recover-complete-cleanup'});await next('recover-fallback-parked');
+  worker.postMessage({kind:'recover-complete-fallback'});
+  const recovery=await next('recover-done');
+  if(recovery.value!=='42'||!recovery.sameError)throw Error('compiled recovery result');
+  worker.postMessage({kind:'recover-retire'});await next('recover-retired');
+  if(frames.filter(f=>f.kind.startsWith('recover-')).map(f=>f.kind).join(',')!=='recover-input-parked,recover-after-input,recover-cleanup-parked,recover-after-cleanup,recover-fallback-parked,recover-after-fallback,recover-done,recover-retired')throw Error('compiled recovery ordering');
   worker.postMessage({kind:'close'});
   if(!(await next('closed')).closed)throw Error('close did not revoke');
   output.textContent='PASS_BROWSER_CONTROL_LOOP';

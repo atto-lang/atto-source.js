@@ -7,9 +7,21 @@ let ticket=loop.beginSuspension('browser-task',1,value=>{
   self.postMessage({kind:'resumed',value});
 });
 import {createCompiledUnwindProbe} from './scheduled-unwind-worker-probe.mjs';
-let compiledProbe;
+import {createCompiledRecoveryProbe} from './scheduled-recover-worker-probe.mjs';
+let compiledProbe,recoveryProbe;
 self.addEventListener('message',async event=>{
   const msg=event.data;
+  if(msg?.kind?.startsWith('recover-')){
+    try{
+      if(msg.kind==='recover-start'&&!recoveryProbe){
+        const guest=await import('./scheduled-recover-generated.mjs');
+        recoveryProbe=createCompiledRecoveryProbe(guest,frame=>self.postMessage(frame));
+      }
+      if(!recoveryProbe)throw Error('recovery guest not loaded');
+      recoveryProbe(msg);
+    }catch(e){self.postMessage({kind:'recover-error',message:String(e)});}
+    return;
+  }
   if(msg?.kind?.startsWith('guest-')){
     try{
       if(msg.kind==='guest-start'&&!compiledProbe){
