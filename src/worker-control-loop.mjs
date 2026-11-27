@@ -21,6 +21,8 @@ export function createWorkerControlLoop({
   // Physical credits survive every park/resume until logical unwind quiesces.
   const ownerFences = new Map();
   let retainedOwners = 0;
+  // A synchronous quantum is itself physical ownership, even without a parked lease.
+  let runningOwner = null;
   // One coalesced scheduling hint per active owner. This is trusted host-only
   // authority, not a guest-exposed TaskId or forced native-thread preemption.
   const cooperatePending = new Map();
@@ -122,6 +124,7 @@ export function createWorkerControlLoop({
       }
       // The queued completion remains cancellable until this exact dispatch.
       if (item.entry) waiting.delete(item.entry.id);
+      runningOwner = item.owner;
       try {
         const result = item.run(item.value);
         // Quanta must not await a JS Promise while claiming an actor turn.
@@ -138,6 +141,7 @@ export function createWorkerControlLoop({
         completed++;
       } catch (error) {report(error);}
     } finally {
+      runningOwner = null;
       executing = false;
       promoteSettled();
       schedule();
@@ -251,7 +255,7 @@ export function createWorkerControlLoop({
       return true;
     },
     retireOwner(owner, epoch) {
-      if (!active(owner, epoch) || ownerFences.has(owner)) return false;
+      if (!active(owner, epoch) || runningOwner === owner || ownerFences.has(owner)) return false;
       owners.delete(owner);
       cooperatePending.delete(owner);
       for (const [id, entry] of waiting) {
@@ -275,7 +279,7 @@ export function createWorkerControlLoop({
       return true;
     },
     close() {
-      if (retainedOwners!==0) return false;
+      if (executing || retainedOwners!==0) return false;
       if (closed) return;
       closed = true;
       owners.clear(); epochs.clear(); waiting.clear(); cooperatePending.clear(); ready.length = 0; control.length = 0; settled.length = 0;
