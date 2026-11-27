@@ -87,3 +87,23 @@ test('rejected cycles do not consume root quota or change holder counts',()=>{
   d.drop(b);d.setScalar(a,ar,'n',42);
   assert.equal(d.read(a,ar,'n'),42);
 });
+test('unpublished roots cannot acquire read loans or consume loan capacity',()=>{
+  const d=new ReadonlyCopyDomain({maxLoans:1}),a=d.create(),ar=d.identity(a);
+  d.initialize(a,'n',1);
+  for(let i=0;i<1000;i++)deny('E_COPY_LAYOUT',()=>d.readLoan(a,ar));
+  assert.equal(d.canWrite(a,ar),true);
+  d.finish(a);
+  const l=d.readLoan(a,ar);
+  deny('E_COPY_LOAN',()=>d.setScalar(a,ar,'n',2));
+  d.release(l);d.setScalar(a,ar,'n',42);
+  assert.equal(d.read(a,ar,'n'),42);
+});
+test('read loan survives detachment of both outer roots and owner retirement',()=>{
+  const d=new ReadonlyCopyDomain(),{a,ar,child}=pair(d),b=d.copy(a),br=d.identity(b);
+  const l=d.readLoan(b,child);
+  d.remove(a,ar,'child');
+  assert.equal(d.canWrite(b,child),false);
+  deny('E_COPY_LOAN',()=>d.setScalar(b,child,'n',99));
+  d.remove(b,br,'child');d.drop(a);d.drop(b);
+  d.release(l);deny('E_COPY_STALE',()=>d.release(l));
+});
