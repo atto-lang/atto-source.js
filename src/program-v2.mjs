@@ -1222,6 +1222,18 @@ class Parser {
       }
     };
     if(pure(tail))return {kind:'inlineScalarTask',inner:tail};
+    // Preserve the existing scalar-only admission boundary: a non-scalar AST
+    // is not by itself proof of the checked-effect profile.
+    let checkedEffect=false;
+    const inspect=(e,d=0)=>{
+      if(!e||typeof e!=='object')return;
+      if(d>MAX_DEPTH)fail('E_TASK_UNSUPPORTED: task expression depth');
+      if(e.kind==='immediateAwait')fail('E_TASK_UNSUPPORTED: await in synchronous inline task',this.peek());
+      if(e.kind==='taskSet'||e.kind==='taskDefer'||(e.kind==='methodCall'&&['unwrap','expect'].includes(e.name)))checkedEffect=true;
+      for(const value of Object.values(e))inspect(value,d+1);
+    };
+    inspect(tail);
+    if(!checkedEffect)fail('E_TASK_UNSUPPORTED: task expression requires a checked-effect operation',this.peek());
     if(!explicit||scalarOnly)fail('E_SYNC_TASK_PROFILE: inferred or mutable task-local profile requires scalar expressions',this.peek());
     // The checked-effect profile remains explicit and does not admit nested tasks.
     const nested=e=>!!e&&typeof e==='object'&&(['inlineScalarTask','taskScope'].includes(e.kind)||Object.values(e).some(nested));

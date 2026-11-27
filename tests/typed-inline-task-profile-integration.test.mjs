@@ -38,3 +38,11 @@ test('scalar inline task overflow remains a runtime error',async()=>{
   const guest=await load('return sync task<int>{return 9223372036854775807+1;};');
   assert.throws(()=>guest.main(),/ORES_I64_OVERFLOW/);
 });
+
+test('checked-effect admission does not erase await or admit a bare helper call',()=>{
+  for(const body of [
+    'return sync task<int>{return await 42;};',
+    'return sync task<int>{return helper();};',
+    'let int n=0;return sync task<int>{n=2;return await 40;};'
+  ])assert.throws(()=>compileProgramV2(main(body)+' fnc helper():int{return 42;}',{stdout:true}),/E_TASK_UNSUPPORTED/,body);
+});
