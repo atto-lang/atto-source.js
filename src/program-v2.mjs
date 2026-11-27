@@ -1523,7 +1523,14 @@ function resolveProgram(parsed) {
       paramOrder,hasNamed
     };
   }
-  function taskWrites(n,name){return !!n&&typeof n==='object'&&((n.kind==='taskSet'&&n.name===name)||Object.values(n).some(v=>taskWrites(v,name)));}
+  const taskWriteCache=new WeakMap();
+  function taskWrites(n,name){
+    if(!n||typeof n!=='object')return false;
+    let byName=taskWriteCache.get(n);if(!byName){byName=new Map();taskWriteCache.set(n,byName);}
+    if(byName.has(name))return byName.get(name);
+    const result=(n.kind==='taskSet'&&n.name===name)||Object.values(n).some(v=>taskWrites(v,name));
+    byName.set(name,result);return result;
+  }
   function resolve(expr,owner,depth=0,bindings=[]) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
