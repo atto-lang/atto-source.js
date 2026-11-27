@@ -387,7 +387,7 @@ function rejectUnsupportedStaticSelect(tokens) {
   }
 }
 class Parser {
-  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;this.scalarDenotations=new Map();this.literalDenotations=new Map();}
+  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;this.scalarDenotations=new Map();this.literalDenotations=new Map();this.denotationTargets=new Map();}
   peek() {return this.tokens[this.i];}
   eat(s) {if(this.peek().value === s) {this.i++; return true;} return false;}
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
@@ -468,9 +468,9 @@ class Parser {
         'Boolean','Float','Array','List','Vector','Tuple','Record','Map','Set','Pair','Entry',
         'Pointer','Channel','Future','Task','Duration','UUID','Any','Never','Sendable',
         'Serializable','Copyable','DeepCopyable','Newable','Atomic','Mutex','RwLock'].includes(name)||
-       this.scalarDenotations.has(name)||this.literalDenotations.has(name))
+       this.denotationTargets.has(name)||this.literalDenotations.has(name))
       fail('duplicate, reserved or unsupported denotation name '+name,start,'E_DUPLICATE');
-    if(this.scalarDenotations.size+this.literalDenotations.size>=512)fail('denotation count limit',start,'E_SOURCE_LIMIT');
+    if(this.denotationTargets.size+this.literalDenotations.size>=512)fail('denotation count limit',start,'E_SOURCE_LIMIT');
     this.expect('=');
     if(this.peek().kind==='int'||this.peek().value==='-'){
       const members=new Set();
@@ -484,17 +484,37 @@ class Parser {
       this.literalDenotations.set(name,members);
       return;
     }
-    const rhs=this.peek(),type=['int','bool'].includes(rhs.value)?rhs.value:this.scalarDenotations.get(rhs.value);
-    if(this.literalDenotations.has(rhs.value)){
-      this.i++;this.expect(';');
-      this.literalDenotations.set(name,this.literalDenotations.get(rhs.value));
-      return;
-    }
-    if(rhs.kind!=='id'||type===undefined)
-      fail('unresolved or unsupported scalar denotation RHS',rhs,'E_UNSUPPORTED_TYPE');
+    const rhs=this.peek();
+    if(rhs.kind!=='id')
+      fail('unsupported scalar denotation RHS',rhs,'E_UNSUPPORTED_TYPE');
     this.i++;
     this.expect(';');
-    this.scalarDenotations.set(name,type);
+    this.denotationTargets.set(name,rhs);
+  }
+  resolveDenotations() {
+    // Resolve the whole bounded prefix, including unused names. Iterative
+    // traversal avoids recursive stack growth; each successful path is
+    // memoized. A union target stays a union, never an unchecked int alias.
+    for(const name of this.denotationTargets.keys()){
+      if(this.scalarDenotations.has(name)||this.literalDenotations.has(name))continue;
+      const path=[],seen=new Set();
+      let current=name,type,members;
+      for(;;){
+        if(current==='int'||current==='bool'){type=current;break;}
+        if(this.scalarDenotations.has(current)){type=this.scalarDenotations.get(current);break;}
+        if(this.literalDenotations.has(current)){members=this.literalDenotations.get(current);break;}
+        if(seen.has(current))
+          fail('cyclic type denotation '+current,this.denotationTargets.get(current),'E_DENOTE_CYCLE');
+        const target=this.denotationTargets.get(current);
+        if(!target)
+          fail('unresolved denotation target '+current,this.denotationTargets.get(path.at(-1)),'E_UNSUPPORTED_TYPE');
+        seen.add(current);path.push(current);current=target.value;
+      }
+      for(const alias of path){
+        if(members)this.literalDenotations.set(alias,members);
+        else this.scalarDenotations.set(alias,type);
+      }
+    }
   }
   valueType() {
     if(this.literalDenotations.has(this.peek().value))
@@ -1037,6 +1057,7 @@ class Parser {
       if(namespace!==null)fail('namespace denotations require verified type linking',this.peek(),'E_UNSUPPORTED');
       this.scalarDenotation();
     }
+    this.resolveDenotations();
     while(this.peek().kind!=='eof'){
       if(this.peek().value==='export') {
         if(exportDeclarations.length>=1024)fail('file export budget exceeded',this.peek());
