@@ -25,6 +25,8 @@ test('serialized IR cannot assign immutable or out-of-scope slots',()=>{
   const src=main('let int n=0;val int r=sync task<int>{n=2;return 40;};return n+r;');
   const ir=JSON.parse(JSON.stringify(compileToProgramIRV2(src)));
   const find=(x,k)=>x&&typeof x==='object'?(x.kind===k?x:Object.values(x).map(y=>find(y,k)).find(Boolean)):undefined;
-  const bad=JSON.parse(JSON.stringify(ir));find(bad,'mutableIntLocal').kind='local';assert.throws(()=>compileProgramIRV2(bad),/active mutable int/);
-  find(ir,'setIntLocal').slot=99999;assert.throws(()=>compileProgramIRV2(ir),/active mutable int/);
+  const bad=JSON.parse(JSON.stringify(ir));find(bad,'taskMutableLocal').kind='local';assert.throws(()=>compileProgramIRV2(bad),/invalid mutable capture/);
+  const escaped=JSON.parse(JSON.stringify(ir));const scope=find(escaped,'taskScope');const escapedBody=scope.body;delete scope.body;Object.assign(scope,escapedBody);assert.throws(()=>compileProgramIRV2(escaped),/invalid mutable capture/);
+  const wrong=JSON.parse(JSON.stringify(ir));find(wrong,'taskSet').value={kind:'bool',value:true};assert.throws(()=>compileProgramIRV2(wrong),/boolean value cannot be used as non-bool|integer/);
+  find(ir,'taskSet').slot=99999;assert.throws(()=>compileProgramIRV2(ir),/invalid mutable capture/);
 });
