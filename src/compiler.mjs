@@ -84,12 +84,10 @@ function lex(src) {
     }
     const loc={line,col};
     if(src[i]==='⧖'||src[i]==='∂'){
-      throw new CompileError('E_SUSPENDS_UNSUPPORTED: scalar-v1 has no callable continuation lowering',loc);
+      add('id','suspends',loc);advance();continue;
     }
     if(isIdentifierStart(identifierCharAt(src,i))){
       let s='';while(i<src.length&&isIdentifierPart(identifierCharAt(src,i))){const ch=identifierCharAt(src,i);s+=ch;for(let j=0;j<ch.length;j++)advance();}
-      if(s==='suspends'||s==='susp')
-        throw new CompileError('E_SUSPENDS_UNSUPPORTED: scalar-v1 has no callable continuation lowering',loc);
       // A typed Topic receiver may be a local, parameter or import. Until
       // scalar ESM owns actor/group capabilities, share! and Result lowering,
       // reject actual member publication before producing source/IR artifacts.
@@ -106,7 +104,7 @@ function lex(src) {
           src[i+1]!=='=' &&
           !(src.slice(i+1,i+3)==='eq' && !isIdentifierPart(identifierCharAt(src,i+3))))
         ownershipBang ??= loc;
-      add('id',s,loc);
+      add('id',s==='susp'?'suspends':s,loc);
     }else if(/[0-9]/.test(src[i])){
       let s='';while(i<src.length&&/[0-9_]/.test(src[i])){s+=src[i];advance();}
       if(!/^[0-9]+(?:_[0-9]+)*$/.test(s))throw new CompileError('invalid integer literal',loc);
@@ -453,6 +451,10 @@ export function compileToIR(source) {
   rejectUnloweredActorHeap(tokens);
   rejectUnsupportedSelect(tokens);
   rejectAmbiguousProductFactories(tokens);
+  // Keep existing affine Future and ownership diagnostics ahead of the
+  // unsupported-effect admission decision; never emit a synchronous guest.
+  const suspension=tokens.find(t=>t.kind==='id'&&t.value==='suspends');
+  if(suspension)throw new CompileError('E_SUSPENDS_UNSUPPORTED: scalar-v1 has no callable continuation lowering',suspension);
   const parser=new Parser(tokens);
   const parsed=parser.parse();
   try {
