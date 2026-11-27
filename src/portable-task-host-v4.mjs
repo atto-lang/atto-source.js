@@ -43,7 +43,7 @@ export function createPortableTaskArenaHostV4({
   module,loop=createWorkerControlLoop()
 }={}) {
   verifyPortableTaskGuestV4(module);
-  if(!loop||!['attachOwner','admitData','admitControl','retireOwner']
+  if(!loop||!['attachOwner','admitData','admitControl','requestRetireOwner']
       .every(k=>typeof loop[k]==='function'))
     throw new TypeError('E_V4_LOOP');
   const instance=new WebAssembly.Instance(module,{atto:{
@@ -84,7 +84,7 @@ export function createPortableTaskArenaHostV4({
       }
     }finally{
       active.delete(task.owner);
-      loop.retireOwner(task.owner,task.epoch);
+      loop.requestRetireOwner(task.owner,task.epoch);
     }
     if(cause){errors++;task.reject(cause);}else task.resolve(value);
   }
