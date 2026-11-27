@@ -5,11 +5,11 @@ export function lowerContextualScalar(tokens,fail,reserved,protectedName,maxToke
   const v=(i)=>tokens[i]?.value;
   if(!tokens.some((t,i)=>t.kind==='id'&&t.value==='fnc'&&tokens[i+1]?.kind==='id'&&v(i+2)==='::'&&v(i+3)==='('))return tokens;
   const deny=(m,t=tokens[0])=>fail(m,t,'E_CONTEXT_PROFILE');
+  if(tokens.some(t=>!['id','sym','int','eof'].includes(t.kind)))deny('non-scalar token in contextual profile');
   const id=(t)=>t?.kind==='id';
   const safe=(t)=>id(t)&&!reserved.has(t.value)&&!protectedName(t.value)&&!t.value.startsWith(PREFIX);
   const sym=(value,t)=>({kind:'sym',value,line:t.line,col:t.col});
   const ident=(value,t)=>({...sym(value,t),kind:'id'});
-  const synth=(value,t)=>/^[a-z_]/i.test(value)?ident(value,t):sym(value,t);
   if(tokens.some(t=>id(t)&&t.value.startsWith(PREFIX)))deny('reserved contextual name');
   const exact=(i,words)=>words.every((w,j)=>v(i+j)===w);
   const pair=(i)=>{
@@ -113,7 +113,7 @@ export function lowerContextualScalar(tokens,fail,reserved,protectedName,maxToke
         if(c.close+1===e){
           if(v(i)!=='const'||aliases.size>=64)deny('immutable context or binding limit',t);
           const slots=c.args.map((arg,j)=>{const s=PREFIX+'cap_'+slot++;local(s,context[j].type.value,arg,t);return s;});
-          aliases.set(name,slots);i=e+1;continue;
+          aliases.set(name,slots);if(out.length>maxTokens)deny('contextual token budget',t);i=e+1;continue;
         }
       }
       const rhs=expression(i+3,e),s=PREFIX+'local_'+slot++;
@@ -128,5 +128,6 @@ export function lowerContextualScalar(tokens,fail,reserved,protectedName,maxToke
   }
   if(!returned)deny('missing explicit return');
   out.push(...tokens.slice(mainEnd));
+  if(out.length>maxTokens)deny('contextual token budget');
   return out;
 }
