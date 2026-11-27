@@ -68,6 +68,8 @@ export function lowerContextualScalar(tokens,fail,reserved,protectedName,maxToke
   const generatedParams=all.flatMap((p,i)=>[...(i?[sym(',',anchor)]:[]),p.type,p.name]);
   const out=[ident('fnc',anchor),ident(fn,anchor),sym('(',anchor),...generatedParams,sym(')',anchor),...tokens.slice(pe+1,pe+5),...body,...tokens.slice(end,end+2),
     ident('pub',anchor),...tokens.slice(end+3,mainStart)];
+  const mainHeaderAt=out.length-(mainStart-(end+3))-1;
+  const wrappers=new Map(),wrapperTokens=[];
   const aliases=new Map(),locals=new Map(),writable=new Set();
   let slot=0;
   const local=(name,type,expr,t)=>out.push(ident('val',t),ident(type,t),ident(name,t),sym('=',t),...expr,sym(';',t));
@@ -86,19 +88,34 @@ export function lowerContextualScalar(tokens,fail,reserved,protectedName,maxToke
     }
     return {close,args,order,named:true};
   };
+  // A static adapter receives actuals in source order; only already-evaluated
+  // parameters are permuted inside it. No capture expression is hoisted.
+  const adapter=(order,t)=>{
+    const key=order.join(',');
+    if(wrappers.has(key))return wrappers.get(key);
+    if(wrappers.size>=64)deny('named invocation permutation budget',t);
+    const name=PREFIX+'order_'+wrappers.size;
+    const params=[...order.map(j=>context[j]),...ordinary];
+    const pnames=params.map((_,j)=>PREFIX+'arg_'+j);
+    const decl=params.flatMap((p,j)=>[...(j?[sym(',',t)]:[]),p.type,ident(pnames[j],t)]);
+    const actual=[...context.map((_,j)=>[ident(pnames[order.indexOf(j)],t)]),...ordinary.map((_,j)=>[ident(pnames[context.length+j],t)])];
+    wrapperTokens.push(ident('fnc',t),ident(name,t),sym('(',t),...decl,sym(')',t),
+      ...tokens.slice(pe+1,pe+5),ident(fn,t),sym('(',t),...emitArgs(actual,t),sym(')',t),sym(';',t),sym('}',t));
+    wrappers.set(key,name);return name;
+  };
   const expression=(a,b)=>{
     const result=[];
     for(let i=a;i<b;){
       const t=tokens[i];const alias=aliases.get(v(i));
       if(v(i)===owner||alias){
-        let dot=i+1,args;
+        let dot=i+1,args,target=fn;
         if(alias)args=alias.map(s=>[ident(s,t)]);
-        else {if(v(i+1)!=='::')deny('explicit context binding required',t);const c=contextsAt(i);if(c.named)deny('direct named context requires stored binding in this profile',t);dot=c.close+1;args=c.args;}
+        else {if(v(i+1)!=='::')deny('explicit context binding required',t);const c=contextsAt(i);if(c.named)target=adapter(c.order,t);dot=c.close+1;args=c.args;}
         if(!exact(dot,['.',member,'(']))deny('only declared contextual member may be called',t);
         const close=pair(dot+2);if(close>=b)deny('contextual call crosses statement',t);
         const ordinaryArgs=split(tokens.slice(dot+3,close),true);
         if(ordinaryArgs.length!==ordinary.length)deny('ordinary argument arity mismatch',t);
-        result.push(ident(fn,t),sym('(',t),...emitArgs([...args,...ordinaryArgs.map(p=>plain(p,locals))],t),sym(')',t));
+        result.push(ident(target,t),sym('(',t),...emitArgs([...args,...ordinaryArgs.map(p=>plain(p,locals))],t),sym(')',t));
         i=close+1;
       }else{
         if(id(t)&&locals.has(t.value))result.push(ident(locals.get(t.value),t));
@@ -135,18 +152,7 @@ export function lowerContextualScalar(tokens,fail,reserved,protectedName,maxToke
     }else if(id(t)&&v(i+1)==='='&&writable.has(t.value)){
       const rhs=expression(i+2,e),s=PREFIX+'local_'+slot++;local(s,'int',rhs,t);locals.set(t.value,s);
     }else if(v(i)==='return'){
-      if(v(i+1)===owner&&v(i+2)==='::'){
-        const c=contextsAt(i+1);
-        if(c.named){
-          const dot=c.close+1;
-          if(!exact(dot,['.',member,'('])||pair(dot+2)!==e-1||e!==mainEnd-1)
-            deny('direct named invocation requires entire terminal return',t);
-          const slots=[];c.args.forEach((arg,k)=>{const j=c.order[k],s=PREFIX+'cap_'+slot++;local(s,context[j].type.value,arg,t);slots[j]=[ident(s,t)];});
-          const ordinaryArgs=split(tokens.slice(dot+3,e-1),true);
-          if(ordinaryArgs.length!==ordinary.length)deny('ordinary argument arity mismatch',t);
-          out.push(t,ident(fn,t),sym('(',t),...emitArgs([...slots,...ordinaryArgs.map(p=>plain(p,locals))],t),sym(')',t),tokens[e]);
-        }else out.push(t,...expression(i+1,e),tokens[e]);
-      }else out.push(t,...expression(i+1,e),tokens[e]);
+      out.push(t,...expression(i+1,e),tokens[e]);
       returned=true;
     }else deny('unsupported contextual statement or mutation',t);
     if(out.length>maxTokens)deny('contextual token budget',t);
@@ -154,6 +160,6 @@ export function lowerContextualScalar(tokens,fail,reserved,protectedName,maxToke
   }
   if(!returned)deny('missing explicit return');
   out.push(...tokens.slice(mainEnd));
-  if(out.length>maxTokens)deny('contextual token budget');
-  return out;
+  if(out.length+wrapperTokens.length>maxTokens)deny('contextual token budget');
+  return [...out.slice(0,mainHeaderAt),...wrapperTokens,...out.slice(mainHeaderAt)];
 }
