@@ -46,7 +46,9 @@
     "./portable-task-host-v5": "./src/portable-task-host-v5.mjs",
     "./actor-future-host-v1": "./src/actor-future-host-v1.mjs",
     "./worker-completion-capability-v1": "./src/worker-completion-capability-v1.mjs",
-    "./task-future-host-v1": "./src/task-future-host-v1.mjs"
+    "./task-future-host-v1": "./src/task-future-host-v1.mjs",
+    "./scheduled-unwind-compiler": "./src/scheduled-unwind-compiler.mjs",
+    "./scheduled-unwind-runtime": "./src/scheduled-unwind-runtime.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
