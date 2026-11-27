@@ -831,7 +831,7 @@ class Parser {
         statements.push({kind:'branch',condition:{kind:'not',inner:condition},
           yes:failure,no:[]});
       } else if(this.peek().value==='val'||this.peek().value==='const'||
-                 (this.peek().value==='let'&&['int','bool','string'].includes(this.tokens[this.i+1]?.value))) {
+                 (this.peek().value==='let'&&(['int','bool','string'].includes(this.tokens[this.i+1]?.value)||this.literalDenotations.has(this.tokens[this.i+1]?.value)))) {
         const isConst=this.eat('const');
         const readOnlyLet=!isConst&&this.eat('let');
         if(!isConst&&!readOnlyLet)this.expect('val');
