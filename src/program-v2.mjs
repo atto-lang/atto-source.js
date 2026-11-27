@@ -750,7 +750,7 @@ class Parser {
         if(!this.returnsOnAllPaths(body)||!this.returnsOnAllPaths(handler))
           fail('E_TRY_FALLTHROUGH_UNSUPPORTED: both protected and handler paths must terminate',this.peek());
         statements.push({kind:'tryCatch',name,body,handler});
-      } else if(this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')==='stdio . stdout . write (') {
+      } else if(['stdio . out . write (','process . stdout . write (','stdio . stdout . write ('].includes(this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' '))) {
         this.i+=6;const message=this.peek();
         if(message.kind!=='localString')fail('E_STDOUT_LITERAL: bounded string literal required',message);
         this.i++;this.expect(')');this.expect(';');
@@ -1178,7 +1178,7 @@ class Parser {
         if(tail!==null)fail('E_SYNC_TASK_PROFILE: unreachable task statement',this.peek());
         if(this.eat('return')){tail=this.expression();this.expect(';');continue;}
         if(this.eat('val')){this.expect('int');const name=this.name();this.expect('=');const init=this.expression();this.expect(';');steps.push({kind:'bind',name,init});continue;}
-        if(this.eat('defer')){this.expect('stdio');this.expect('.');this.expect('stdout');this.expect('.');this.expect('write');this.expect('(');const t=this.peek();if(t.kind!=='localString')fail('E_SYNC_TASK_PROFILE: literal defer required',t);this.i++;this.expect(')');this.expect(';');steps.push({kind:'defer',message:t.literal});continue;}
+        if(this.eat('defer')){if(!['stdio . out . write (','process . stdout . write (','stdio . stdout . write ('].includes(this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')))fail('E_SYNC_TASK_PROFILE: stdout defer required',this.peek());this.i+=6;const t=this.peek();if(t.kind!=='localString')fail('E_SYNC_TASK_PROFILE: literal defer required',t);this.i++;this.expect(')');this.expect(';');steps.push({kind:'defer',message:t.literal});continue;}
         if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){const name=this.name();this.expect('=');const value=this.expression();this.expect(';');steps.push({kind:'set',name,value});continue;}
         fail('E_SYNC_TASK_PROFILE: unsupported task statement',this.peek());
       }
@@ -1624,11 +1624,11 @@ function resolveProgram(parsed) {
         return {kind:'taskSet',slot:target.slot,value:resolve(expr.value,owner,depth+1,bindings),body:resolve(expr.body,owner,depth+1,bindings)};
       }
       case 'taskDefer':{
-        if(!owner.inlineTask||owner.params.includes('stdio')||bindings.some(b=>b.name==='stdio')||functions.some(f=>f.name==='stdio')||modules.length||classes.length||generators.length)fail('E_SYNC_TASK_PROFILE: unshadowed literal stdout defer required');
+        if(!owner.inlineTask||owner.params.some(n=>n==='stdio'||n==='process')||bindings.some(b=>b.name==='stdio'||b.name==='process')||functions.some(f=>f.name==='stdio'||f.name==='process')||modules.length||classes.length||generators.length)fail('E_SYNC_TASK_PROFILE: unshadowed literal stdout defer required');
         return {kind:'taskDefer',message:expr.message,body:resolve(expr.body,owner,depth+1,bindings)};
       }
       case 'stdoutSeq': {
-        if(owner.ownerKind==='method'||owner.params.includes('stdio')||bindings.some(b=>b.name==='stdio')||functions.some(f=>f.name==='stdio')||modules.length||classes.length||generators.length)fail('E_STDOUT_PROFILE: unshadowed root callable required');
+        if(owner.ownerKind==='method'||owner.params.some(n=>n==='stdio'||n==='process')||bindings.some(b=>b.name==='stdio'||b.name==='process')||functions.some(f=>f.name==='stdio'||f.name==='process')||modules.length||classes.length||generators.length)fail('E_STDOUT_PROFILE: unshadowed root callable required');
         return {kind:'stdoutSeq',message:expr.message,body:resolve(expr.body,owner,depth+1,bindings)};
       }
       case 'seqVoidCall': {
