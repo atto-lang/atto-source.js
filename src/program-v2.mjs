@@ -1911,9 +1911,10 @@ function resolveProgram(parsed) {
     ...(resolvedClasses.length?{classes:resolvedClasses}:{})
   };
 }
-function emitProgram(program) {
+function emitProgram(program,workerDeferredStdout=false) {
   const hasDeferredStdout=n=>!!n&&typeof n==='object'&&(n.kind==='deferStdout'||Object.values(n).some(hasDeferredStdout));
   const stdout=hasDeferredStdout(program);
+  if(workerDeferredStdout&&!stdout)fail('E_PERMISSION: worker profile requires deferred stdout');
   const out=[
     '// experimental Oreslang program-v2, provisional signed-64 integer model',
     'const _arithmeticBrand=new WeakSet();',
@@ -2275,8 +2276,16 @@ function emitProgram(program) {
   if(stdout){
     // Only the validated single root main profile may reach this branch.
     // No ambient process, console, global buffer or host callback is exposed.
-    out.push('export function main(){throw new Error("E_PERMISSION: deferred stdout requires runtime grant");}');
-    out.push('export function runWithDeferredStdout(grant){if(grant!==true)throw new Error("E_PERMISSION: deferred stdout requires runtime grant");let stdout="";const value=_f0(s=>{if(stdout.length+s.length>4096)throw new Error("E_PERMISSION: deferred stdout quota exceeded");stdout+=s;});return Object.freeze({value,stdout});}');
+    const run='function _runDeferredStdout(grant){if(grant!==true)throw new Error("E_PERMISSION: deferred stdout requires runtime grant");let stdout="";const value=_f0(s=>{if(stdout.length+s.length>4096)throw new Error("E_PERMISSION: deferred stdout quota exceeded");stdout+=s;});return Object.freeze({value,stdout});}';
+    out.push(run);
+    if(workerDeferredStdout){
+      // A host-owned grant is captured once from an own data slot, never
+      // from a message or a getter. The guest runner stays module-private.
+      out.push('export async function create_tenant(options){if(!options||typeof options!=="object"||Array.isArray(options)||(Object.getPrototypeOf(options)!==Object.prototype&&Object.getPrototypeOf(options)!==null))throw new Error("E_PERMISSION: invalid tenant options");const grant=Object.getOwnPropertyDescriptor(options,"allowDeferredStdout");if(!grant||!Object.hasOwn(grant,"value")||grant.value!==true)throw new Error("E_PERMISSION: deferred stdout requires runtime grant");let executed=false;return Object.freeze({async on_message(){if(executed)throw new Error("E_MAIN_ALREADY_CALLED");executed=true;const result=_runDeferredStdout(true);return Object.freeze({value:String(result.value),stdout:result.stdout,actors:0});}});}');
+    }else{
+      out.push('export function main(){throw new Error("E_PERMISSION: deferred stdout requires runtime grant");}');
+      out.push('export { _runDeferredStdout as runWithDeferredStdout };');
+    }
     return out.join('\n')+'\n';
   }
   let dispatcherNumber=0;
@@ -2512,8 +2521,11 @@ export function compileProgramIRV2(ir,{allowDeferredStdout=false}={}) {
 export function compileProgramV2(source,options) {
   return emitProgram(compileToProgramIRV2(source,options));
 }
-export function checkProgramV2(source) {
-  compileProgramV2(source);
+export function compileDeferredStdoutWorker(source,options) {
+  return emitProgram(compileToProgramIRV2(source,options),true);
+}
+export function checkProgramV2(source,options) {
+  compileProgramV2(source,options);
   return true;
 }
 
