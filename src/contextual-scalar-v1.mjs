@@ -135,7 +135,19 @@ export function lowerContextualScalar(tokens,fail,reserved,protectedName,maxToke
     }else if(id(t)&&v(i+1)==='='&&writable.has(t.value)){
       const rhs=expression(i+2,e),s=PREFIX+'local_'+slot++;local(s,'int',rhs,t);locals.set(t.value,s);
     }else if(v(i)==='return'){
-      out.push(t,...expression(i+1,e),tokens[e]);returned=true;
+      if(v(i+1)===owner&&v(i+2)==='::'){
+        const c=contextsAt(i+1);
+        if(c.named){
+          const dot=c.close+1;
+          if(!exact(dot,['.',member,'('])||pair(dot+2)!==e-1||e!==mainEnd-1)
+            deny('direct named invocation requires entire terminal return',t);
+          const slots=[];c.args.forEach((arg,k)=>{const j=c.order[k],s=PREFIX+'cap_'+slot++;local(s,context[j].type.value,arg,t);slots[j]=[ident(s,t)];});
+          const ordinaryArgs=split(tokens.slice(dot+3,e-1),true);
+          if(ordinaryArgs.length!==ordinary.length)deny('ordinary argument arity mismatch',t);
+          out.push(t,ident(fn,t),sym('(',t),...emitArgs([...slots,...ordinaryArgs.map(p=>plain(p,locals))],t),sym(')',t),tokens[e]);
+        }else out.push(t,...expression(i+1,e),tokens[e]);
+      }else out.push(t,...expression(i+1,e),tokens[e]);
+      returned=true;
     }else deny('unsupported contextual statement or mutation',t);
     if(out.length>maxTokens)deny('contextual token budget',t);
     i=e+1;
