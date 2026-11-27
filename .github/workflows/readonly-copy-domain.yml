@@ -4,6 +4,7 @@ on:
     paths:
       - 'src/readonly-copy-domain.mjs'
       - 'tests/readonly-copy-domain.test.mjs'
+      - 'tests/readonly-copy-domain-differential.test.mjs'
       - '.github/workflows/readonly-copy-domain.yml'
 permissions:
   contents: read
@@ -22,5 +23,5 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED"
           echo "SOURCE_TREE=$(git rev-parse 'HEAD^{tree}')"
-          node --test tests/readonly-copy-domain.test.mjs
+          node --test tests/readonly-copy-domain.test.mjs tests/readonly-copy-domain-differential.test.mjs
           echo "HOST_COMPONENT_ONLY"
