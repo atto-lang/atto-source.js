@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {compileProgramV2,compileToProgramIRV2,compileProgramIRV2} from '../src/program-v2.mjs';
 const main=b=>'pub fnc main():int{'+b+'}';
 async function execute(source,want='D'){
@@ -28,4 +29,26 @@ test('forged serialized IR must not create authority',()=>{
  for(const payload of [String.fromCharCode(10),String.fromCharCode(13),String.fromCharCode(127),'a'.repeat(257),42]){const bad=JSON.parse(JSON.stringify(ir));find(bad,'deferStdout').text=payload;assert.throws(()=>compileProgramIRV2(bad,true),/literal or output quota/);}
  assert.throws(()=>compileProgramIRV2(ir,{}),/E_PERMISSION/);
 });
-if(process.env.ATTO_SHARED_GUARD_DIR)test('execute byte-pinned shared fixtures unchanged',async()=>{for(const file of ['trap-sync-task-defer.atto','trap-sync-task-defer-process.atto'])await execute(readFileSync(process.env.ATTO_SHARED_GUARD_DIR+'/'+file,'utf8'));});
+const gitBlob=bytes=>createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex');
+const exactMixed="pub fnc main(): int {\n  let int count = 0;\n  val Option<int> missing = None;\n  val Result<int, Error> failure = trap! sync task<int> {\n    count = count + 2;\n    defer stdio.out.write(\"D\");\n    defer process.stdout.write(\"E\");\n    val int value = missing.unwrap();\n    count = count + 100;\n    return value;\n  };\n  guard failure.is_err(), count eq 2 { return 1; }\n  return count + 40;\n}\n";
+test('execute exact canonical stdout v1 trapped task from #703',async()=>{
+ assert.equal(gitBlob(Buffer.from(exactMixed)), '5b122c0396240cee7d0be125f952655560b1e78d');
+ await execute(exactMixed,'ED');
+});
+test('both receiver names reject lexical shadowing and extra grant arguments',async()=>{
+ for(const [receiver,alias] of [['stdio','stdio.out.write'],['process','process.stdout.write']]){
+  for(const src of [main('let int '+receiver+'=0;return sync task<int>{defer '+alias+'("D");return 42;};'),main('return sync task<int>{let int '+receiver+'=0;defer '+alias+'("D");return 42;};')])
+   assert.throws(()=>compileProgramV2(src,true),/unshadowed/);
+ }
+ const js=compileProgramV2(exactMixed,true);
+ const m=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(js));
+ assert.throws(()=>m.runWithDeferredStdout(true,true),/E_PERMISSION/);
+ assert.deepEqual(m.runWithDeferredStdout(true),{value:42n,stdout:'ED'});
+});
+if(process.env.ATTO_SHARED_GUARD_DIR)test('execute byte-pinned shared fixtures unchanged',async()=>{
+ for(const [file,sha] of [['trap-sync-task-defer.atto','bcd5e2692aaaaf4c4c070a5746cd6c3ab9e5082a'],['trap-sync-task-defer-process.atto','c511c17818f725c9fc5d52a129ca257790276477']]){
+  const bytes=readFileSync(process.env.ATTO_SHARED_GUARD_DIR+'/'+file);
+  assert.equal(gitBlob(bytes),sha,'shared fixture identity');
+  await execute(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+ }
+});
