@@ -37,7 +37,7 @@ test('checked full-width value, lazy arms, overflow and division',async()=>{
 test('reject escaped names, arbitrary calls, bad literals and forged metadata',()=>{
   for(const body of [{kind:'param',index:0},{kind:'call',target:0,args:[]},{kind:'stageSelf',inner:arg,target:1},
     {kind:'int',value:'9223372036854775808'},{kind:'int',value:'1n;throw 1'},{kind:'binary',op:'=',left:arg,right:arg},
-    match([[0,integer(1)]]),match([[null,integer(0)],[1,integer(2)]]),match([[0,arg],[0,arg],[null,arg]])])
+    match([[0,integer(1)]]),match([[null,integer(0)],[1,integer(2)]]),match([[0,arg],[0,arg],[null,arg]]),bin('+',arg,match([[null,arg]]))])
     assert.throws(()=>validateNamedStageBody(body),/E_NAMED_STAGE_PROFILE/);
   const getter={kind:'int',get value(){throw Error('getter invoked');}};
   assert.throws(()=>validateNamedStageBody(getter),/non-data body field/);
