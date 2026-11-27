@@ -262,7 +262,7 @@ const AGGREGATE_RESERVED_WORDS = new Set([
   'eq','neq','is','new','true','false','null','void','obj','arr','cpu','gpu','quantum'
 ]);
 class Parser {
-  constructor(tokens){this.ts=tokens;this.pos=0;this.depth=0;this.guarantees=[];this.nominalRecords=new Map();this.recordMethods=[];this.recordMethodBody=false;}
+  constructor(tokens){this.ts=tokens;this.pos=0;this.depth=0;this.guarantees=[];this.nominalRecords=new Map();this.recordMethods=[];this.recordMethodBody=null;}
   peek(){return this.ts[this.pos];}
   match(v){if(this.peek().value===v){this.pos++;return true;}return false;}
   expect(v){if(!this.match(v))throw new CompileError('expected '+v+', found '+this.peek().value,this.peek());}
@@ -320,20 +320,32 @@ class Parser {
     while(this.match('pub')){
       const method=this.aggregateIdentifier();
       if(fields.has(method)||methods.has(method)||this.recordMethods.length>=64)throw new CompileError('E_RECORD_SUBTYPE_METHOD: collision or method budget',at);
-      this.expect('(');this.expect(')');this.expect(':');this.expect('int');this.expect('{');this.expect('return');
+      this.expect('(');
+      const userParams=[];
+      if(!this.match(')')){
+        do{
+          this.expect('int');
+          const parameter=this.aggregateIdentifier();
+          if(userParams.length>=16||userParams.includes(parameter)||parameter===name||this.nominalRecords.has(parameter))
+            throw new CompileError('E_RECORD_SUBTYPE_PARAMETER: duplicate, reserved or oversized parameter list',at);
+          userParams.push(parameter);
+        }while(this.match(','));
+        this.expect(')');
+      }
+      this.expect(':');this.expect('int');this.expect('{');this.expect('return');
       const keys=[...fields.keys()];
       const params=keys.map((_,i)=>'_atto_record_slot_'+i);
       const slots=new Map(keys.map((key,i)=>[key,{type:'int',value:{kind:'var',name:params[i]}}]));
       const saved=this.aggregateLocals;
       this.aggregateLocals=new Map([['self',{kind:'Record',fields:slots}]]);
-      this.recordMethodBody=true;
+      this.recordMethodBody=new Set(userParams);
       let body;
       try{body=this.expr();}
-      finally{this.recordMethodBody=false;this.aggregateLocals=saved;}
+      finally{this.recordMethodBody=null;this.aggregateLocals=saved;}
       this.expect(';');this.expect('}');
       const target='_atto_record_method_'+this.recordMethods.length;
-      methods.set(method,{target,keys});
-      this.recordMethods.push({name:target,params,body,pub:false,writtenPrivate:true});
+      methods.set(method,{target,keys,arity:userParams.length});
+      this.recordMethods.push({name:target,params:[...params,...userParams],body,pub:false,writtenPrivate:true});
     }
     this.expect('end');
     this.nominalRecords.set(name,{name,fields,methods});
@@ -609,11 +621,21 @@ class Parser {
     if(aggregate.nominal&&this.peek().value==='('){
       const method=aggregate.nominal.methods.get(key);
       if(!method)throw new CompileError('E_RECORD_SUBTYPE_METHOD: unknown method',at);
-      this.expect('(');this.expect(')');
-      return {kind:'call',name:method.target,args:method.keys.map(k=>{
+      this.expect('(');
+      const args=method.keys.map(k=>{
         const f=aggregate.fields.get(k);
         return typeof f.value==='bigint'?{kind:'int',n:f.value}:{...f.value};
-      })};
+      });
+      let count=0;
+      if(!this.match(')')){
+        do{
+          if(count>=method.arity)throw new CompileError('E_RECORD_SUBTYPE_ARITY: too many arguments',at);
+          args.push(this.expr());count++;
+        }while(this.match(','));
+        this.expect(')');
+      }
+      if(count!==method.arity)throw new CompileError('E_RECORD_SUBTYPE_ARITY: missing arguments',at);
+      return {kind:'call',name:method.target,args};
     }
     const field=aggregate.fields.get(key);
     if(!field)throw new CompileError('E_NO_FIELD: '+key,at);
@@ -781,8 +803,15 @@ class Parser {
   }
   primary(){
     const t=this.peek();
-    if(this.recordMethodBody&&!(t.kind==='int'||(t.kind==='sym'&&['+','-','('].includes(t.value))||(t.kind==='id'&&t.value==='self')))
-      throw new CompileError('E_RECORD_SUBTYPE_BODY: only self field and integer arithmetic admitted',t);
+    if(this.recordMethodBody){
+      if(t.kind==='id'&&this.recordMethodBody.has(t.value)){
+        this.pos++;
+        if(this.peek().value==='('||this.peek().value==='.')throw new CompileError('E_RECORD_SUBTYPE_BODY: scalar parameter is not callable or a receiver',t);
+        return {kind:'var',name:t.value};
+      }
+      if(!(t.kind==='int'||(t.kind==='sym'&&['+','-','('].includes(t.value))||(t.kind==='id'&&t.value==='self')))
+        throw new CompileError('E_RECORD_SUBTYPE_BODY: only self fields, integer parameters and arithmetic admitted',t);
+    }
     if(t.kind==='id' && t.value==='spawn' && this.ts[this.pos+1]?.kind==='id')
       throw new CompileError('E_SPAWN_OPTIONS_UNSUPPORTED: actor spawn requires typed initialization, resource admission and runtime lowering',t);
     if(productFactoryAt(this.ts,this.pos))return this.productProjection();
