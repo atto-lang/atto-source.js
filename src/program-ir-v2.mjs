@@ -670,6 +670,13 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
         if(taskDepth||allowScalarWhile||owner>=headers.length||expected!=='int')fail('E_SYNC_TASK_PROFILE: invalid task boundary');
         taskDepth++;try{return {kind:'taskScope',body:node(expr.body,owner,depth+1,'int',active)};}finally{taskDepth--;}
       }
+      case 'taskDeferInt':{
+        record(expr,['kind','slot','value','body'],'inline task lexical cleanup');
+        if(!taskDepth||expected!=='int'||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||!active.includes(expr.slot)||!mutableTaskSlots[owner].has(expr.slot))fail('E_SYNC_TASK_PROFILE: invalid mutable cleanup capture');
+        const value=node(expr.value,owner,depth+1,'int',active);
+        if(!['int','capture','param'].includes(value.kind))fail('E_SYNC_TASK_PROFILE: cleanup requires pure int read');
+        return {kind:'taskDeferInt',slot:expr.slot,value,body:node(expr.body,owner,depth+1,'int',active)};
+      }
       case 'taskSet':{
         record(expr,['kind','slot','value','body'],'inline task assignment');
         if(!taskDepth||expected!=='int'||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||!active.includes(expr.slot)||!mutableTaskSlots[owner].has(expr.slot))fail('E_SYNC_TASK_PROFILE: invalid mutable capture');
