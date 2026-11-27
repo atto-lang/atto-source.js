@@ -145,3 +145,25 @@ test('shallow copy retains fixed slot mutability and isolates writable slots',()
   d.setScalar(a,ar,'n',20);d.setScalar(b,br,'n',22);
   assert.equal(d.read(a,ar,'n')+d.read(b,br,'n'),42);
 });
+
+test('borrowed reads survive detachment and root retirement until the last loan releases',()=>{
+  const d=new ReadonlyCopyDomain(),{a,ar,child}=pair(d),b=d.copy(a),br=d.identity(b);
+  const first=d.readLoan(a,child),second=d.readLoan(b,child);
+  d.remove(a,ar,'child');d.remove(b,br,'child');d.drop(a);d.drop(b);
+  assert.equal(d.readBorrowed(first,child,'n'),10);
+  assert.equal(d.readBorrowed(second,child,'n'),10);
+  d.release(first);deny('E_COPY_STALE',()=>d.readBorrowed(first,child,'n'));
+  assert.equal(d.readBorrowed(second,child,'n'),10);
+  d.release(second);deny('E_COPY_STALE',()=>d.readBorrowed(second,child,'n'));
+});
+test('borrowed reads cannot exceed the selected subtree or cross copy domains',()=>{
+  const d=new ReadonlyCopyDomain(),{a,ar,child}=pair(d),l=d.readLoan(a,child);
+  const other=new ReadonlyCopyDomain(),o=make(other),oid=other.identity(o),ol=other.readLoan(o,oid);
+  deny('E_COPY_DOMAIN',()=>d.readBorrowed(l,ar,'n'));
+  deny('E_COPY_DOMAIN',()=>d.readBorrowed(l,oid,'n'));
+  deny('E_COPY_STALE',()=>d.readBorrowed(ol,child,'n'));
+  deny('E_COPY_LAYOUT',()=>d.readBorrowed(l,child,1));
+  assert.equal(d.readBorrowed(l,child,'n'),10);
+  d.release(l);other.release(ol);d.setScalar(a,child,'n',42);
+  assert.equal(d.read(a,child,'n'),42);
+});
