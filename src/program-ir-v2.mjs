@@ -640,6 +640,11 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
         if(!taskDepth||expected!=='int'||allowStdout!==true||moduleNames.length||classHeaders.length||generatorHeaders.length||headers.some(f=>f.name==='stdio'||f.name==='process'||f.params.includes('stdio')||f.params.includes('process'))||!validLocalString(expr.message))fail('E_SYNC_TASK_PROFILE: invalid cleanup capability');
         return {kind:'taskDefer',message:expr.message,body:node(expr.body,owner,depth+1,'int',active)};
       }
+      case 'rootStdoutDefer': {
+        record(expr,['kind','message','body'],'root stdout cleanup');
+        if(taskDepth||expected!=='int'||allowStdout!==true||allowScalarWhile===true||owner>=headers.length||moduleNames.length||classHeaders.length||generatorHeaders.length||headers.some(f=>f.name==='stdio'||f.name==='process'||f.params.includes('stdio')||f.params.includes('process'))||!validLocalString(expr.message))fail('E_STDOUT_PROFILE: invalid root cleanup capability');
+        return {kind:'rootStdoutDefer',message:expr.message,body:node(expr.body,owner,depth+1,'int',active)};
+      }
       case 'stdoutSeq': {
         record(expr,['kind','message','body'],'stdout sequence');
         if(allowStdout!==true||allowScalarWhile===true||owner>=headers.length||moduleNames.length||classHeaders.length||generatorHeaders.length||headers.some(f=>f.name==='stdio'||f.name==='process'||f.params.includes('stdio')||f.params.includes('process'))||!validLocalString(expr.message))fail('E_STDOUT_PROFILE: explicit bounded stdout capability required');
