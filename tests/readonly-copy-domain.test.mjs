@@ -107,3 +107,41 @@ test('read loan survives detachment of both outer roots and owner retirement',()
   d.remove(b,br,'child');d.drop(a);d.drop(b);
   d.release(l);deny('E_COPY_STALE',()=>d.release(l));
 });
+
+test('copy during a source-root read loan creates writable outer slots only',()=>{
+  const d=new ReadonlyCopyDomain(),{a,ar,child}=pair(d),l=d.readLoan(a,ar);
+  const b=d.copy(a),br=d.identity(b);
+  assert.notEqual(ar,br);
+  deny('E_COPY_LOAN',()=>d.setScalar(a,ar,'n',20));
+  d.setScalar(b,br,'n',22);
+  deny('E_COPY_READONLY',()=>d.setScalar(b,child,'n',99));
+  d.remove(b,br,'child');
+  deny('E_COPY_LOAN',()=>d.setScalar(a,child,'n',99));
+  d.release(l);
+  d.setScalar(a,ar,'n',20);d.setScalar(a,child,'n',42);
+  assert.equal(d.read(a,ar,'n')+d.read(b,br,'n'),42);
+  assert.equal(d.read(a,child,'n'),42);
+});
+test('overlapping loans release independently across successive copies',()=>{
+  const d=new ReadonlyCopyDomain(),{a,ar,child}=pair(d),b=d.copy(a),c=d.copy(b);
+  const l1=d.readLoan(b,child),l2=d.readLoan(c,child);
+  d.drop(b);d.drop(c);
+  d.release(l1);deny('E_COPY_LOAN',()=>d.setScalar(a,child,'n',99));
+  deny('E_COPY_STALE',()=>d.release(l1));
+  d.release(l2);d.setScalar(a,child,'n',42);
+  assert.equal(d.read(a,ar,'child'),child);
+  assert.equal(d.read(a,child,'n'),42);
+});
+test('shallow copy retains fixed slot mutability and isolates writable slots',()=>{
+  const d=new ReadonlyCopyDomain(),a=d.create();
+  d.initialize(a,'fixed',7,false);d.initialize(a,'n',1);d.finish(a);
+  const ar=d.identity(a),b=d.copy(a),br=d.identity(b);
+  for(const [owner,id] of [[a,ar],[b,br]]){
+    deny('E_COPY_READONLY_SLOT',()=>d.setScalar(owner,id,'fixed',99));
+    deny('E_COPY_READONLY_SLOT',()=>d.remove(owner,id,'fixed'));
+    deny('E_COPY_LAYOUT',()=>d.setScalar(owner,id,'extra',99));
+    assert.equal(d.read(owner,id,'fixed'),7);
+  }
+  d.setScalar(a,ar,'n',20);d.setScalar(b,br,'n',22);
+  assert.equal(d.read(a,ar,'n')+d.read(b,br,'n'),42);
+});
