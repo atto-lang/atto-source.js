@@ -30,8 +30,8 @@ export function validateNamedStageBody(body,charge=()=>{}){
         if(!['+','-','*','/'].includes(e.op))fail('invalid arithmetic operator');
         return {kind:'binary',op:e.op,left:visit(e.left,depth+1),right:visit(e.right,depth+1)};
       case 'match':{
-        // At most one match frame per recursive activation; nested match
-        // expressions require a verified execution-stack lowering.
+        // Only the root match is currently admitted by the scalar profile.
+        // Nested matches require a separate typing and lowering milestone.
         if(depth!==0)fail('nested match requires stack lowering');
         record(e,['kind','subject','arms']);
         const arms=e.arms;
@@ -65,20 +65,29 @@ export function emitNamedStage(body,input){
     switch(e.kind){
       case 'int':return e.value+'n';
       case 'stageArg':return '_arg';
-      case 'stageSelf':return '_self('+emit(e.inner)+',_depth+1)';
+      case 'stageSelf':return '(yield '+emit(e.inner)+')';
       case 'neg':return '_check(-('+emit(e.inner)+'))';
       case 'binary':{
         const a=emit(e.left),b=emit(e.right);
         if(e.op==='/')return '((a,b)=>{if(b===0n)throw _arith("division_by_zero","ORES_I64_DIVISION_BY_ZERO");return _check(a/b);})('+a+','+b+')';
         return '_check(('+a+')'+e.op+'('+b+'))';
       }
-      case 'match':return '(()=>{switch('+emit(e.subject)+'){'+e.arms.map(a=>
-        (a.value===null?'default:':'case '+a.value+'n:')+'return '+emit(a.body)+';').join('')+'}})()';
+      default:fail('unexpected nested match in emitter');
     }
   };
-  // Per-invocation depth, not a mutable module-global counter. Stack
-  // exhaustion is not branded as a catchable ordinary arithmetic error.
-  return '((input)=>{function _self(_arg,_depth){if(_depth>'+NAMED_STAGE_DEPTH+
-    ')throw new RangeError("E_STACK: named stage logical depth exhausted");_check(_arg);return '+emit(checked)+
-    ';}return _self(input,0);})('+input+')';
+  const functionBody=checked.kind==='match'
+    ?'switch('+emit(checked.subject)+'){'+checked.arms.map(a=>
+      (a.value===null?'default:':'case '+a.value+'n:')+'return '+emit(a.body)+';').join('')+'}'
+    :'return '+emit(checked)+';';
+  // Each generated generator is a private suspended activation. A recursive
+  // edge yields its checked argument; the iterative driver resumes its parent
+  // with the checked result. No recursion on the host JavaScript call stack.
+  // Root plus NAMED_STAGE_DEPTH recursive edges are allowed, as before.
+  return '((input)=>{function* _self(_arg){_check(_arg);'+functionBody+
+    '}const _frames=[_self(input)];let _value;while(_frames.length){'+
+    'const _step=_frames[_frames.length-1].next(_value);'+
+    'if(_step.done){_value=_check(_step.value);_frames.pop();}else{'+
+    'if(_frames.length>'+NAMED_STAGE_DEPTH+
+    ')throw new RangeError("E_STACK: named stage logical depth exhausted");'+
+    '_frames.push(_self(_check(_step.value)));_value=undefined;}}return _value;})('+input+')';
 }
