@@ -134,7 +134,7 @@ function symbolName(s){
  * Copy after validation, never return caller-owned IR references.
  * Direct object inputs are trusted data only, not a JavaScript sandbox.
  */
-export function validateProgramIRV2(input, allowScalarWhile = false) {
+export function validateProgramIRV2(input, allowScalarWhile = false, allowDeferredStdout = false) {
   if(input===null||typeof input!=='object'||Array.isArray(input))
     fail('program: expected object');
   const rawKeys=Reflect.ownKeys(input);
@@ -525,6 +525,13 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           condition:node(expr.condition,owner,depth+1,'bool',scoped),
           update:node(expr.update,owner,depth+1,'int',scoped),
           body:node(expr.body,owner,depth+1,expected,scoped)};
+      }
+      case 'deferStdout':{
+        record(expr,['kind','message','body'],'deferred stdout');
+        if(allowDeferredStdout!==true||allowScalarWhile===true)fail('E_PERMISSION: deferred stdout requires compile grant');
+        if(headers.length!==1||owner!==0||headers[0].name!=='main'||headers[0].module!==null||!headers[0].pub||headers[0].params.length!==0||(headers[0].returnType??'int')!=='int'||generatorHeaders.length||classHeaders.length||moduleNames.length||namespace!==null||hasFileExports)fail('E_PERMISSION: deferred stdout requires single root main');
+        if(typeof expr.message!=='string'||expr.message.length>256||/[^ -~]/.test(expr.message))fail('E_PERMISSION: invalid deferred stdout literal');
+        return {kind:'deferStdout',message:expr.message,body:node(expr.body,owner,depth+1,expected,active)};
       }
       case 'deferIntLocal':case 'setIntLocal':{
         record(expr,['kind','slot','init','body'],'mutable integer assignment');
