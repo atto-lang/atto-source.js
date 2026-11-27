@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {compileProgramV2,compileToProgramIRV2,compileProgramIRV2} from '../src/program-v2.mjs';
 const opt={stdout:true};
-const input='pub fnc main(bool present):int { let int count=0; val Option<int> x=present?Some(3):None; val Result<int, Error> r=trap! sync task<int>{count=count+2; defer stdio.stdout.write("A"); defer stdio.stdout.write("B"); val int n=x.unwrap(); count=count+100; return n;}; return r.is_err()?count+40:count+r.unwrap(); }';
+const input='pub fnc main(bool present):int { let int count=0; val Option<int> x=present?Some(3):None; val Result<int, Error> r=trap! sync task<int>{count=count+2; defer stdio.out.write("A"); defer process.stdout.write("B"); val int n=x.unwrap(); count=count+100; return n;}; return r.is_err()?count+40:count+r.unwrap(); }';
 test('inline task executes ordered writes and LIFO cleanup on success and error',async()=>{
  const ir=compileToProgramIRV2(input,opt),esm=compileProgramV2(input,opt);
  assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir)),opt),esm);
