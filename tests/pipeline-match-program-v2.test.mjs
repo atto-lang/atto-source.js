@@ -93,8 +93,8 @@ test('membership syntax rejects unsupported and invalid inputs before emission',
 });
 
 test('compile-time Pattern declarations erase into ordinary checked match IR',async()=>{
-  const prefix='const Pattern p1 = on 5; const Pattern p2 = is Int; const Pattern p3 = in [6,7]; const Pattern[] z = [p1,p3]; const Pattern[] types = [is int,is bool]; ';
-  const src=prefix+'pub fnc main(int x):int { return match x over on p1 -> 5, in z -> 42, is in types -> 0 end; }';
+  const prefix='const Pattern p1 = on 5; const Pattern p2 = is Int; const Pattern p3 = in [6,7]; const Pattern[] z = [p1,p3]; const Pattern[] type_patterns = [is int,is bool]; ';
+  const src=prefix+'pub fnc main(int x):int { return match x over on p1 -> 5, in z -> 42, is in type_patterns -> 0 end; }';
   const direct='pub fnc main(int x):int { return match x over on 5 -> 5, in [6,7] -> 42, is in [int,bool] -> 0 end; }';
   assert.deepEqual(compileToProgramIRV2(src),compileToProgramIRV2(direct));
   const g=await load(src);
@@ -104,7 +104,7 @@ test('compile-time Pattern declarations erase into ordinary checked match IR',as
   assert.equal(g.main(8n),0n);
   assert.equal((await load(prefix+'pub fnc main():int { return 7 |> match over on p2 -> 42 end; }')).main(),42n);
   assert.equal((await load('pub fnc main():int { return match 3 over in [on 1,in [2,3]] -> 42,on _ -> 0 end; }')).main(),42n);
-  assert.equal((await load('const Pattern[] types = [is int,is bool]; pub fnc main():int { return match 3 over in types -> 42 end; }')).main(),42n);
+  assert.equal((await load('const Pattern[] type_patterns = [is int,is bool]; pub fnc main():int { return match 3 over in type_patterns -> 42 end; }')).main(),42n);
 });
 test('compile-time Pattern constants cannot escape or be silently widened',()=>{
   const invalid=[

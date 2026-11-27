@@ -387,7 +387,7 @@ function rejectUnsupportedStaticSelect(tokens) {
   }
 }
 class Parser {
-  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;this.patternConstants=new Map();this.patternUses=new Set();}
+  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;this.patternConstants=new Map();this.patternUses=new Set();this.patternTypeNames=new Set();}
   peek() {return this.tokens[this.i];}
   eat(s) {if(this.peek().value === s) {this.i++; return true;} return false;}
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
@@ -1044,6 +1044,9 @@ class Parser {
       if(t.kind==='id'&&this.patternConstants.has(t.value)&&!this.patternUses.has(i))
         fail('compile-time Pattern name cannot escape or be shadowed',t);
     }
+    for(const name of this.patternTypeNames){
+      if(usedClasses.has(name)||usedModules.has(name))fail('scalar pattern type name shadowed by declaration '+name,this.peek());
+    }
     if(this.booleanAliasToken&&(usedClasses.has('boolean')||usedModules.has('boolean')))
       fail('E_TYPE_ALIAS_SHADOWED: boolean requires nominal type resolution',this.booleanAliasToken);
     if(!functions.length&&!generators.length&&!modules.length&&!classes.length)fail('empty program');
@@ -1469,7 +1472,7 @@ class Parser {
     do {
       const at=this.peek(),type=aliases.get(at.value);
       if(at.kind!=='id'||type===undefined)fail('expected supported scalar type in type list',at);
-      this.i++;parts.push({values:[],types:[type]});
+      this.patternTypeNames.add(at.value);this.i++;parts.push({values:[],types:[type]});
     } while(list&&this.eat(','));
     if(list)this.expect(']');
     return this.combinePatterns(parts);
@@ -1528,6 +1531,7 @@ class Parser {
   }
   scalarPatternArm(pattern) {
     if(pattern.types.includes('int'))return {tag:'wildcard',value:null};
+    if(pattern.values.length===1)return {tag:'integer',value:pattern.values[0]};
     if(pattern.values.length)return {tag:'membership',value:pattern.values};
     fail('pattern set does not cover admitted int subject',this.peek());
   }
