@@ -229,6 +229,52 @@ class Parser {
       throw new CompileError('E_TYPE_NAME: reserved or oversized aggregate identifier',at);
     return name;
   }
+  // Only compile-time scalar literals in local const bindings. No dynamic
+  // evaluation, aggregate values or runtime reflection in this bootstrap path.
+  readAggregateScalar(params, allowRuntime) {
+    const token=this.peek();let type,value;
+    if(token.kind==='int'||token.value==='-'){
+      const negative=this.match('-'), number=this.peek();
+      if(number.kind!=='int')throw new CompileError('E_TYPE_INFER_AMBIGUOUS: scalar integer required',number);
+      this.pos++;
+      value=BigInt(number.value.replaceAll('_',''))*(negative?-1n:1n);
+      if(value<-(1n<<63n)||value>I64_MAX)throw new CompileError('aggregate int outside signed i64',number);
+      type='int';
+    }else if(token.kind==='id'&&['true','false'].includes(token.value)){
+      this.pos++;type='bool';value=token.value==='true';
+    }else if(token.kind==='string'){
+      this.pos++;type='string';value=token.value;
+    }else if(token.kind==='id'&&this.scalarConsts?.has(token.value)){
+      this.pos++;return this.scalarConsts.get(token.value);
+    }else if(allowRuntime&&token.kind==='id'&&params.includes(token.value)){
+      this.pos++;type='int';value={kind:'var',name:token.value};
+    }else throw new CompileError('E_TYPE_INFER_AMBIGUOUS: literal or immutable int parameter required',token);
+    return {type,value};
+  }
+  localConst(params){
+    const at=this.peek(), next=this.ts[this.pos+1]?.value;
+    if(['Record','Tuple','struct'].includes(next)){
+      this.aggregateConst(params);return;
+    }
+    this.expect('const');
+    const name=this.aggregateIdentifier();
+    if(params.includes(name)||this.aggregateLocals.has(name)||this.scalarConsts.has(name))
+      throw new CompileError('duplicate local binding '+name,at);
+    if(this.aggregateLocals.size+this.scalarConsts.size>=64)
+      throw new CompileError('aggregate binding limit',at);
+    this.expect('=');
+    const open=this.peek().value;
+    if(open==='{'||open==='('||open==='struct'){
+      const kind=open==='struct'?'struct':'Record';
+      if(kind==='struct')this.pos++;
+      // No inferred positional Tuple admission. Parentheses with named
+      // fields/captures only; empty and positional forms fail closed.
+      this.readAggregateFields(kind,name,null,false,params,at,false);
+    }else{
+      const value=this.readAggregateScalar([],false);
+      this.expect(';');this.scalarConsts.set(name,value);
+    }
+  }
   // Restricted scalar aggregate profile: immutable literals and direct int
   // parameter reads only. No aggregate ABI, escaping values or effectful inference.
   aggregateConst(params){
@@ -262,34 +308,36 @@ class Parser {
       throw new CompileError('duplicate aggregate binding '+name,at);
     if(this.aggregateLocals.size>=64)
       throw new CompileError('aggregate binding limit',at);
+    if(this.scalarConsts?.has(name))
+      throw new CompileError('duplicate local binding '+name,at);
     this.expect('=');
-    this.expect(kind==='struct'?'{':'(');
-    const close=kind==='struct'?'}':')', fields=new Map();
+    this.readAggregateFields(kind,name,alias,binder,params,at,true);
+  }
+  readAggregateFields(kind,name,alias,binder,params,at,allowRuntime){
+    const open=this.peek().value;
+    if(kind==='struct')this.expect('{');
+    else if(kind==='Record'&&(open==='{'||open==='('))this.pos++;
+    else this.expect('(');
+    const close=open==='{'?'}':')', fields=new Map();
     do {
       if(fields.size>=64)throw new CompileError('aggregate field limit',this.peek());
+      const capture=kind!=='Tuple'&&this.match(':');
       const key=kind==='Tuple'?String(fields.size):this.aggregateIdentifier();
       if(fields.has(key))throw new CompileError('E_DUPLICATE_FIELD: '+key,this.peek());
-      if(kind!=='Tuple')this.expect(kind==='struct'?':':'=');
-      const token=this.peek();let type, value;
-      if(token.kind==='int'||token.value==='-'){
-        const negative=this.match('-'), number=this.peek();
-        if(number.kind!=='int')throw new CompileError('E_TYPE_INFER_AMBIGUOUS: scalar integer required',number);
-        this.pos++;
-        value=BigInt(number.value.replaceAll('_',''))*(negative?-1n:1n);
-        if(value<-(1n<<63n)||value>I64_MAX)throw new CompileError('aggregate int outside signed i64',number);
-        type='int';
-      }else if(token.kind==='id'&&['true','false'].includes(token.value)){
-        this.pos++;type='bool';
-      }else if(token.kind==='string'){
-        // A lexed, non-interpolated string has no evaluation effects.
-        this.pos++;type='string';
-      }else if(token.kind==='id'&&params.includes(token.value)){
-        // Scalar parameters are immutable and pure to read. Reuse the
-        // actual argument through the normal IR parameter node.
-        this.pos++;type='int';value={kind:'var',name:token.value};
-      }else throw new CompileError('E_TYPE_INFER_AMBIGUOUS: literal or immutable int parameter required',token);
-      fields.set(key,{type,value});
-    } while(this.match(','));
+      let field;
+      if(capture){
+        // Capture only already resolved compile-time scalar bindings. A
+        // parameter is not a compile-time constant; do not invent its value.
+        field=this.scalarConsts?.get(key);
+        if(!field)throw new CompileError('E_TYPE_INFER_AMBIGUOUS: capture needs a local const scalar',this.peek());
+      }else{
+        if(kind!=='Tuple')this.expect(open==='{'?':':'=');
+        field=this.readAggregateScalar(params,allowRuntime);
+      }
+      fields.set(key,field);
+      if(!this.match(','))break;
+      if(this.peek().value===close)break;
+    } while(true);
     this.expect(close);this.expect(';');
     const shape={kind,fields:new Map([...fields].map(([k,v])=>[k,v.type]))};
     if(alias!==null&&!binder){
@@ -374,8 +422,8 @@ class Parser {
       if(!braced){if(!this.match('as'))this.match('::');}
       this.aggregateTypes=new Map(moduleTypes);this.aggregateLocals=new Map(moduleLocals);
       for(const param of params)this.aggregateLocals.delete(param);
-      while(this.peek().value==='const'&&['Record','Tuple','struct'].includes(this.ts[this.pos+1]?.value))
-        this.aggregateConst(params);
+      this.scalarConsts=new Map();
+      while(this.peek().value==='const')this.localConst(params);
       this.expect('return');
       const body=startsBareSequence(this)
         ? (this.pos++,this.sequence(false)) : this.expr();
@@ -461,6 +509,11 @@ class Parser {
       this.pos++;this.expect('(');const args=this.callArguments();
       if(args.length!==2)throw new CompileError('Integer.'+name.value+' requires two arguments',name);
       return {kind:'binary',op:ops[name.value],left:args[0],right:args[1]};
+    }
+    if(t.kind==='id'&&this.scalarConsts?.has(t.value)){
+      const scalar=this.scalarConsts.get(t.value);this.pos++;
+      if(scalar.type!=='int')throw new CompileError('JS scalar profile supports only int reads',t);
+      return {kind:'int',n:scalar.value};
     }
     if(t.kind==='id'&&this.aggregateLocals?.has(t.value))
       return this.aggregateProjection();
