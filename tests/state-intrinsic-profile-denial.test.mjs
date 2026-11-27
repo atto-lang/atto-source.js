@@ -29,7 +29,7 @@ test('attached actor and class state declarations fail closed in every compiler 
     for(const c of compilers)assert.throws(()=>c(source),/STATE_CONTAINER_BACKEND_UNSUPPORTED/,c.name+': '+prefix);
   }
 });
-test('quoted attachment spelling and comments are inert in executable scalar source',async()=>{
+test('commented attachment spelling is inert in executable scalar source',async()=>{
   const source='pub fnc main(): int { /* define state on actor C */ return 42; }';
   for(const c of [compile,compileProgramV2,compileAttoScalarV1]){
     const ns=await import('data:text/javascript,'+encodeURIComponent(c(source)));
