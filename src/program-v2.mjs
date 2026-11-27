@@ -1550,6 +1550,15 @@ function resolveProgram(parsed) {
             case 'inlineScalarTask':case 'neg':admit(e.inner,d+1);return;
             case 'binary':admit(e.left,d+1);admit(e.right,d+1);return;
             case 'local':admit(e.init,d+1);admit(e.body,d+1);return;
+            case 'call': {
+              // Only the existing checked core unwrap on an enclosing typed
+              // ADT is admitted here, never arbitrary functions or methods.
+              const receiver=bindings.findLast(b=>b.name===e.qualifier);
+              if(e.name!=='unwrap'||e.args.length!==0||
+                 !receiver||!['option<int>','result<int,int>'].includes(receiver.type))
+                fail('E_TASK_UNSUPPORTED: checked unwrap requires enclosing typed Option or Result');
+              return;
+            }
             default:fail('E_TASK_UNSUPPORTED: inline scalar task cannot admit '+e.kind);
           }
         };
