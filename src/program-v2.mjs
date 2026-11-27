@@ -1,5 +1,6 @@
 import {lowerContextualScalar} from './contextual-scalar-v1.mjs';
 import {identifierCharAt,isIdentifierStart,isIdentifierPart,isIdentifier} from './portable-unicode-identifier-v1.mjs';
+import {validateNamedStageBody,emitNamedStage} from './closed-named-stage.mjs';
 import {lowerVerifiedQuantitySource} from './verified-quantity-source.mjs';
 import {MEASURE_SOURCE,requestsMeasurePrelude} from './measure-prelude.mjs';
 import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
@@ -939,7 +940,9 @@ class Parser {
         if(total>MAX_TOKENS)fail('expanded conditional IR node budget exceeded');
       }
       switch(expr.kind){
-        case 'int':case 'float':case 'bool':case 'string':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':break;
+        case 'int':case 'float':case 'bool':case 'string':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':case 'stageArg':break;
+        case 'stageSelf':add(expr.inner);break;
+        case 'closedNamedStage':add(expr.input);add(expr.body);break;
         case 'tryCatch':add(expr.body);add(expr.handler);break;
         case 'neg':case 'not':case 'trap':case 'immediateAwait':case 'intTypeTest':case 'inlineScalarTask':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
@@ -1118,7 +1121,9 @@ class Parser {
         if(op==='|>' && min===0){
           this.i++;
           if(++stages>128)fail('pipeline exceeds 128 stages',token);
-          if(this.eat('match')){
+          if(this.eat('fnc')){
+            left=this.namedStage(left,token);
+          }else if(this.eat('match')){
             // Subject injection uses the normal checked match IR, not a lambda.
             if(++this.depth>MAX_DEPTH)fail('expression budget exceeded',token);
             try{left=this.matchExpression(left);}finally{this.depth--;}
@@ -1308,6 +1313,41 @@ class Parser {
     const nested=e=>!!e&&typeof e==='object'&&(['inlineScalarTask','taskScope'].includes(e.kind)||Object.values(e).some(nested));
     if(nested(tail))fail('E_SYNC_TASK_PROFILE: nested effectful task unsupported',this.peek());
     return {kind:'taskScope',body:tail};
+  }
+  namedStage(input,at){
+    if(this.namedStageActive)fail('nested named stage unsupported',at,'E_NAMED_STAGE_PROFILE');
+    const name=this.generatorIdentifier();
+    if(coreBooleanIntrinsic(name)||isCoreConstructor(name))fail('reserved named stage self-name',at);
+    this.expect('(');
+    const parameter=this.typedParameter(()=>this.generatorIdentifier());
+    if(parameter.type!=='int'||parameter.name===name)fail('named stage requires distinct immutable int parameter',at);
+    this.expect(')');
+    if(!this.eat(':')&&!this.eat('->'))fail('named stage requires explicit result annotation',at,'E_RETURN_ANNOTATION');
+    this.expect('int');this.expect('{');
+    if(!this.eat('return')&&!this.eat('^'))fail('named stage requires return or caret',at);
+    let body;
+    this.namedStageActive=true;
+    try{body=this.expression();}finally{this.namedStageActive=false;}
+    this.eat(';');this.expect('}');
+    const close=(e,depth=0)=>{
+      if(depth>64)fail('named stage body nesting',at);
+      const child=v=>close(v,depth+1);
+      switch(e.kind){
+        case 'int':return e;
+        case 'variable':if(e.name===parameter.name)return {kind:'stageArg'};break;
+        case 'call':
+          if(e.qualifier===null&&e.name===name&&e.args.length===1&&e.args[0].name===null)
+            return {kind:'stageSelf',inner:child(e.args[0].expr)};
+          break;
+        case 'neg':return {kind:'neg',inner:child(e.inner)};
+        case 'binary':
+          if(['+','-','*','/'].includes(e.op))return {kind:'binary',op:e.op,left:child(e.left),right:child(e.right)};
+          break;
+        case 'match':return {kind:'match',subject:child(e.subject),arms:e.arms.map(a=>({value:a.value,body:child(a.body)}))};
+      }
+      fail('unsupported capture, call or expression in named stage',at,'E_NAMED_STAGE_PROFILE');
+    };
+    return {kind:'closedNamedStage',input,body:validateNamedStageBody(close(body))};
   }
   primary() {
     if(this.peek().kind==='id' && this.peek().value==='spawn' && this.tokens[this.i+1]?.kind==='id')
@@ -1776,7 +1816,7 @@ function resolveProgram(parsed) {
   let nodeCount=0,nextCaptureSlot=0;
   function resolvedType(expr,owner) {
     switch(expr.kind){
-      case 'closedRecur':case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
+      case 'closedNamedStage':case 'closedRecur':case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
       case 'float':case 'floatNeg':case 'floatBin':case 'floatCapture':return 'float';
       case 'trap':return expr.operandType==='bool'||expr.operandType==='trapBoolResult'?'trapBoolResult':['option<int>','trapOptionResult'].includes(expr.operandType)?'trapOptionResult':'trapResult';
       case 'errorCapture':return 'error';
@@ -1849,6 +1889,15 @@ function resolveProgram(parsed) {
   function resolve(expr,owner,depth=0,bindings=[]) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
+      case 'closedNamedStage':{
+        if(owner.kind!=='fnc'||owner.module!==null||owner.ownerKind==='method'||owner.inlineTask||
+           modules.length||classes.length||generators.length||functions.some(f=>f.kind==='routine'))
+          fail('named stage requires flat ordinary functions',null,'E_NAMED_STAGE_PROFILE');
+        const input=resolve(expr.input,owner,depth+1,bindings);
+        if(resolvedType(input,owner)!=='int')fail('named stage input must be int');
+        const body=validateNamedStageBody(expr.body,()=>{if(++nodeCount>MAX_TOKENS)fail('IR node budget exceeded');});
+        return {kind:'closedNamedStage',input,body};
+      }
       case 'closedRecur':{
         if(owner.ownerKind==='method')fail('state loop in method requires ownership lowering');
         // Resolve closed operands only. No external binding, callable or
@@ -2236,7 +2285,8 @@ function resolveProgram(parsed) {
   const graph=resolved.map(()=>new Set());
   function inspect(expr,owner) {
     if(expr===null)return; // Pure void bodies contain no calls or effects.
-    if(expr.kind==='call'||expr.kind==='namedCall') {
+    if(expr.kind==='closedNamedStage')inspect(expr.input,owner);
+    else if(expr.kind==='call'||expr.kind==='namedCall') {
       graph[owner].add(expr.target);expr.args.forEach(a=>inspect(a,owner));
     } else if(expr.kind==='methodCall'||expr.kind==='namedMethodCall') {
       inspect(expr.receiver,owner);expr.args.forEach(a=>inspect(a,owner));
@@ -2305,6 +2355,7 @@ function emitProgram(program) {
       case 'bool': return expr.value?'true':'false';
       case 'string': return JSON.stringify(expr.value);
       case 'param':return '_p'+expr.index;
+      case 'closedNamedStage':return emitNamedStage(expr.body,emitExpr(expr.input,depth+1));
       case 'closedRecur': {
         const e=x=>emitExpr(x,depth+1);
         // All scratch values computed left-to-right before committing
@@ -2463,6 +2514,7 @@ function emitProgram(program) {
     if(expr===null)return false;
     switch(expr.kind) {
       case 'symbol':return true;
+      case 'closedNamedStage':return usesSymbol(expr.input);
       case 'newClass':return false;
       case 'methodCall':case 'namedMethodCall':
         return usesSymbol(expr.receiver)||expr.args.some(usesSymbol);
@@ -2512,6 +2564,7 @@ function emitProgram(program) {
     if(expr===null)return false;
     switch(expr.kind) {
       case 'intrinsic':case 'trap':case 'trapMethod':case 'trapOptionMethod':case 'trapBoolMethod':return true;
+      case 'closedNamedStage':return usesPortableRuntime(expr.input);
       case 'newClass':return false;
       case 'methodCall':case 'namedMethodCall':
         return usesPortableRuntime(expr.receiver)||expr.args.some(usesPortableRuntime);

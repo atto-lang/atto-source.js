@@ -1,4 +1,5 @@
 import {isIdentifier} from './portable-unicode-identifier-v1.mjs';
+import {validateNamedStageBody} from './closed-named-stage.mjs';
 /**
  * Strict JSON-safe resolved IR contract for the experimental program-v2 backend.
  * This is a backend-local migration seam, NOT yet the shared canonical Oreslang IR.
@@ -332,6 +333,17 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
     if(expected!=='symbol'&&desc.value==='symbol')
       fail('Symbol value cannot be used as non-Symbol');
     switch(desc.value) {
+      case 'closedNamedStage':{
+        record(expr,['kind','input','body'],'closed named stage');
+        if(expected!=='int'||allowScalarWhile||taskDepth||owner>=headers.length||
+           headers[owner].kind!=='fnc'||headers[owner].module!==null||
+           moduleNames.length||classHeaders.length||generatorHeaders.length||
+           headers.some(h=>h.kind==='routine'))
+          fail('E_NAMED_STAGE_PROFILE: invalid named stage context');
+        const upstream=node(expr.input,owner,depth+1,'int',active);
+        const body=validateNamedStageBody(expr.body,()=>{if(++nodes>LIMIT_NODES)fail('expression complexity exceeded');});
+        return {kind:'closedNamedStage',input:upstream,body};
+      }
       case 'tryCatch':{
         record(expr,['kind','slot','body','handler'],'ordinary catch');
         if(owner>=headers.length||expected!==(headers[owner].returnType??'int')||
