@@ -465,6 +465,37 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
           ...(named?{paramOrder:order}:{})
         };
       }
+      case 'closedRecur':{
+        // Separate ordinary checked profile. Never inherit strict-loop
+        // source admission or accept external calls/captures in operands.
+        if(allowScalarWhile===true||taskDepth||owner>=headers.length||expected!=='int')
+          fail('invalid closed state loop context');
+        record(expr,['kind','states','condition','result','updates'],'closed state loop');
+        const scope=[];
+        const closed=e=>{
+          switch(e.kind){
+            case 'int':case 'bool':return e;
+            case 'capture':if(scope.includes(e.slot))return e;break;
+            case 'neg':case 'not':closed(e.inner);return e;
+            case 'binary':case 'compare':closed(e.left);closed(e.right);return e;
+            case 'if':closed(e.condition);closed(e.yes);closed(e.no);return e;
+          }
+          fail('nonclosed state loop operand');
+        };
+        const operand=(e,t)=>closed(node(e,owner,depth+1,t,scope));
+        const states=sequence(expr.states,32,'closed loop states').map(s=>{
+          record(s,['slot','init'],'closed state');
+          const init=operand(s.init,'int'),id=s.slot;
+          if(!Number.isSafeInteger(id)||Object.is(id,-0)||id<0||id>=LIMIT_NODES||captureSlots[owner].has(id))
+            fail('invalid or repeated state slot');
+          captureSlots[owner].add(id);scope.push(id);return {slot:id,init};
+        });
+        if(!states.length)fail('empty state loop');
+        const updates=sequence(expr.updates,32,'recur operands');
+        if(updates.length!==states.length)fail('recur arity mismatch');
+        return {kind:'closedRecur',states,condition:operand(expr.condition,'bool'),
+          result:operand(expr.result,'int'),updates:updates.map(e=>operand(e,'int'))};
+      }
       case 'scalarWhileMany': {
         if(allowScalarWhile!==true||owner>=headers.length)fail('scalar loop requires strict source admission');
         record(expr,['kind','states','condition','steps','body'],'scalar loop');

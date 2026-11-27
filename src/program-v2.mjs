@@ -918,6 +918,9 @@ class Parser {
         case 'tryCatch':add(expr.body);add(expr.handler);break;
         case 'neg':case 'not':case 'trap':case 'immediateAwait':case 'intTypeTest':case 'inlineScalarTask':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
+        case 'closedRecur':
+          for(const state of expr.states)add(state.init);
+          add(expr.condition);add(expr.result);for(const update of expr.updates)add(update);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
         case 'rootStdoutDefer':case 'stdoutSeq':case 'taskScope':case 'taskDefer':add(expr.body);break;
@@ -1243,6 +1246,29 @@ class Parser {
   primary() {
     if(this.peek().kind==='id' && this.peek().value==='spawn' && this.tokens[this.i+1]?.kind==='id')
       fail('actor spawn requires typed initialization, resource admission and runtime lowering',this.peek(),'E_SPAWN_OPTIONS_UNSUPPORTED');
+    if(this.peek().value==='loop'&&this.tokens[this.i+1]?.value==='('){
+      const at=this.peek();this.i+=2;
+      const states=[],names=new Set();
+      do{
+        if(states.length>=32)fail('state loop arity limit',at);
+        this.expect('val');
+        const name=this.generatorIdentifier();
+        if(name==='recur'||names.has(name))fail('duplicate or reserved loop state',at);
+        this.expect(':');this.expect('int');this.expect('=');
+        const init=this.expression();
+        states.push({name,init});names.add(name);
+      }while(this.eat(','));
+      this.expect(')');this.expect('{');this.expect('if');
+      const condition=this.expression();this.expect('{');this.expect('break');
+      const result=this.expression();this.expect(';');this.expect('}');
+      this.expect('recur');this.expect('(');
+      const updates=[];
+      do{if(updates.length>=32)fail('recur arity limit',at);updates.push(this.expression());}while(this.eat(','));
+      this.expect(')');this.expect(';');this.expect('}');
+      if(updates.length!==states.length)fail('recur state arity mismatch',at);
+      if(this.peek().value==='(')fail('calling a computed value loop',at);
+      return {kind:'closedRecur',states,condition,result,updates};
+    }
     // Identical narrow single-break scalar profile to Rust #727.
     // Keep the computed expression boundary; do not admit bare named
     // callable references or a general state-loop result join.
@@ -1528,7 +1554,7 @@ function resolveProgram(parsed) {
   let nodeCount=0,nextCaptureSlot=0;
   function resolvedType(expr,owner) {
     switch(expr.kind){
-      case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
+      case 'closedRecur':case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
       case 'float':case 'floatNeg':case 'floatBin':case 'floatCapture':return 'float';
       case 'trap':return expr.operandType==='bool'||expr.operandType==='trapBoolResult'?'trapBoolResult':['option<int>','trapOptionResult'].includes(expr.operandType)?'trapOptionResult':'trapResult';
       case 'errorCapture':return 'error';
@@ -1601,6 +1627,33 @@ function resolveProgram(parsed) {
   function resolve(expr,owner,depth=0,bindings=[]) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
+      case 'closedRecur':{
+        if(owner.ownerKind==='method')fail('state loop in method requires ownership lowering');
+        // Resolve closed operands only. No external binding, callable or
+        // effect can be erased into this bounded scalar profile.
+        const scope=[];
+        const closed=(e,d=0)=>{
+          if(d>MAX_DEPTH)fail('state loop expression depth');
+          switch(e.kind){
+            case 'int':case 'bool':return;
+            case 'variable':if(scope.some(s=>s.name===e.name))return;break;
+            case 'neg':case 'not':closed(e.inner,d+1);return;
+            case 'binary':case 'compare':closed(e.left,d+1);closed(e.right,d+1);return;
+            case 'if':closed(e.condition,d+1);closed(e.yes,d+1);closed(e.no,d+1);return;
+          }
+          fail('state loop operand outside closed scalar profile');
+        };
+        const operand=e=>{closed(e);return resolve(e,owner,depth+1,scope);};
+        const states=expr.states.map(s=>{
+          const init=operand(s.init);
+          const slot=nextCaptureSlot++;
+          if(slot>=MAX_TOKENS)fail('state loop slot budget');
+          scope.push({name:s.name,slot,type:'int'});
+          return {slot,init};
+        });
+        return {kind:'closedRecur',states,condition:operand(expr.condition),
+          result:operand(expr.result),updates:expr.updates.map(operand)};
+      }
       case 'tryCatch':{
         if(owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer'||owner.params.includes(expr.name)||bindings.some(b=>b.name===expr.name))fail('E_CATCH_BINDING: explicit return type and nonshadowing binding required');
         if(nextCaptureSlot>=MAX_TOKENS)fail('catch slot budget exceeded');
@@ -2027,6 +2080,16 @@ function emitProgram(program) {
       case 'bool': return expr.value?'true':'false';
       case 'string': return JSON.stringify(expr.value);
       case 'param':return '_p'+expr.index;
+      case 'closedRecur': {
+        const e=x=>emitExpr(x,depth+1);
+        // All scratch values computed left-to-right before committing
+        // any state. One iterative activation, no per-recur call.
+        return '(()=>{'+expr.states.map(s=>'let _v'+s.slot+'='+e(s.init)+';').join('')+
+          'while(!('+e(expr.condition)+')){'+
+          expr.updates.map((u,i)=>'const _next'+i+'='+e(u)+';').join('')+
+          expr.states.map((s,i)=>'_v'+s.slot+'=_next'+i+';').join('')+
+          '}return '+e(expr.result)+';})()';
+      }
       case 'scalarWhileMany': {
         const emitSteps=(steps,d)=>steps.map(step=>{
           if(d>MAX_DEPTH)fail('loop codegen depth exceeded');
