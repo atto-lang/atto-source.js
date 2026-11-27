@@ -812,10 +812,17 @@ class Parser {
         statements.push({kind:'branch',condition:{kind:'not',inner:condition},
           yes:failure,no:[]});
       } else if(this.peek().value==='val'||this.peek().value==='const'||
-                 (this.peek().value==='let'&&['int','bool','string'].includes(this.tokens[this.i+1]?.value))) {
-        const isConst=this.eat('const');
-        const readOnlyLet=!isConst&&this.eat('let');
-        if(!isConst&&!readOnlyLet)this.expect('val');
+                 (this.peek().value==='int'&&this.tokens[this.i+1]?.kind==='id'&&this.tokens[this.i+2]?.value==='=')||
+                 (this.peek().value==='let'&&(['int','bool','string'].includes(this.tokens[this.i+1]?.value)||
+                   (this.tokens[this.i+1]?.kind==='id'&&[':', 'as'].includes(this.tokens[this.i+2]?.value)&&this.tokens[this.i+3]?.value==='int')))) {
+        // Only the bounded root scalar profile. Never reinterpret a failed
+        // declaration as an expression or widen task/actor ownership.
+        const implicitConst=this.peek().value==='int';
+        const explicitConst=!implicitConst&&this.eat('const');
+        const constMut=explicitConst&&this.eat('mut');
+        const isConst=implicitConst||(explicitConst&&!constMut);
+        const readOnlyLet=!implicitConst&&!explicitConst&&this.eat('let');
+        if(!implicitConst&&!explicitConst&&!readOnlyLet)this.expect('val');
         // Function-scope scalar locals; only typed string let may rebind.
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
         // Keep existing Option, Result, string, bool, and directional bindings.
@@ -826,7 +833,7 @@ class Parser {
         else if(typedTrapOption)this.i+=9;
         let localType=typedTrapBool?'trapBoolResult':typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
         const name=this.name();
-        if(!isConst&&!readOnlyLet&&localType==='inferredTrap'&&this.eat(':')){
+        if(localType==='inferredTrap'&&(this.eat(':')||this.eat('as'))){
           localType=this.valueType();
           if(!['int','float','bool','string'].includes(localType))fail('name-first binding requires primitive type in this profile',this.peek());
         }
@@ -839,8 +846,15 @@ class Parser {
           else {localType='inferredInt';init=this.expression();}
         }else init=this.expression();
         this.expect(';');
-        if(isConst&&(!directional||localType!=='int'))fail('only directional const int is admitted here',this.peek());
-        statements.push({kind:'local',name,init,localType:isConst?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string',taskWritable:readOnlyLet&&localType==='int'});
+        if(isConst&&directional&&localType!=='int')fail('only directional const int is admitted here',this.peek());
+        // Keep the historic directional constexpr profile separate. Ordinary
+        // locals are fixed, eagerly initialized runtime values; the validated
+        // typed IR owns checking and lowering. This slice admits int only.
+        if(isConst&&!directional){
+          if(localType==='inferredTrap')localType='inferredInt';
+          else if(localType!=='int')fail('ordinary const requires int in this bounded profile',this.peek());
+        }
+        statements.push({kind:'local',name,init,localType:isConst&&directional?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string',taskWritable:readOnlyLet&&localType==='int',lexicalLet:readOnlyLet&&!directional&&localType==='int'});
       } else if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
         if(depth!==0)fail('E_STRING_VIEW_SCOPE: rebinding requires root function scope',this.peek());
         const name=this.name();this.expect('=');
@@ -906,7 +920,7 @@ class Parser {
       else if(stmt.kind==='tryCatch')result={kind:'tryCatch',name:stmt.name,body:this.lowerStatements(stmt.body,null),handler:this.lowerStatements(stmt.handler,null)};
       else if(stmt.kind==='local'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
-        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,taskWritable:stmt.taskWritable===true,rebind:stmt.rebind===true,body:result};
+        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,taskWritable:stmt.taskWritable===true,lexicalLet:stmt.lexicalLet===true,rebind:stmt.rebind===true,body:result};
       }
       else if(stmt.kind==='stdoutWrite'||stmt.kind==='stdoutDefer'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: stdout must precede a value return');
@@ -1994,7 +2008,14 @@ function resolveProgram(parsed) {
         }else if(expr.rebind){
           if(!previous||previous.type!=='string'||!previous.writable)
             fail('E_STRING_REBIND: requires writable typed string local');
-        }else if(previous)fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
+        }else if(previous){
+          // Root integer let shadowing only; preserve existing task-write,
+          // parameter, capability and fixed-binding restrictions.
+          const canShadow=expr.lexicalLet===true&&previous.lexicalLet===true&&
+            previous.type==='int'&&!previous.taskMutable&&!owner.inlineTask&&
+            !taskWrites(expr,expr.name);
+          if(!canShadow)fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
+        }
         if(nextCaptureSlot>=MAX_TOKENS)fail('local slot budget exceeded');
         const slot=nextCaptureSlot++;
         const optionBoolInit=expr.localType==='option<bool>'&&expr.init.kind==='call'&&expr.init.qualifier==='Option'&&['some','none'].includes(expr.init.name);
@@ -2032,7 +2053,7 @@ function resolveProgram(parsed) {
         if(expr.taskRebind&&resolvedType(init,owner)!=='int')fail('E_TASK_LOCAL_WRITE: int assignment required');
         const taskMutable=expr.taskWritable===true&&taskWrites(expr.body,expr.name);
         return {kind:taskMutable?'taskMutableLocal':type==='option<bool>'?'optionBoolLocal':type==='trapBoolResult'?'trapBoolLocal':type==='option<int>'?'optionLocal':type==='result<int,int>'?'resultLocal':type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':type==='bool'?'boolLocal':type==='string'?'stringLocal':'local',slot,init,
-          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string',taskMutable}])};
+          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string',taskMutable,lexicalLet:expr.lexicalLet===true&&type==='int'}])};
       }
       case 'taskScope':{
         if(owner.inlineTask||owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer')fail('E_SYNC_TASK_PROFILE: unsupported task boundary');
