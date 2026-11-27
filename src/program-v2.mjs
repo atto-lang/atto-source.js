@@ -1,3 +1,4 @@
+import {identifierCharAt,isIdentifierStart,isIdentifierPart,isIdentifier} from './portable-unicode-identifier-v1.mjs';
 import {lowerVerifiedQuantitySource} from './verified-quantity-source.mjs';
 import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
 import {validLocalString,validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
@@ -14,7 +15,7 @@ import {coreBooleanIntrinsic,isCoreBooleanUnit} from './core-boolean-intrinsics.
  */
 const MAX_BYTES = 262144, MAX_TOKENS = 30000, MAX_DEPTH = 192;
 const MIN = -(1n << 63n), MAX = (1n << 63n) - 1n;
-const TOKEN_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 const CLASS_METHOD_RESERVED=new Set([
   'default','new','class','export','import','null','this','super','extends','static',
   'constructor','prototype','__proto__','define','pub','as','end','self','int',
@@ -278,10 +279,12 @@ function tokenize(source) {
       // Never let quoted payload text masquerade as a keyword or delimiter.
       emit('localString','<local-string>',start);
       result.at(-1).literal=value;
-    } else if (/[A-Za-z_]/.test(c)) {
+    } else if (c==='⧖'||c==='∂') {
+      emit('id','suspends',start); result.at(-1).lexeme=c; advance();
+    } else if (isIdentifierStart(identifierCharAt(source,pos))) {
       let word = '';
-      while (pos < source.length && /[A-Za-z0-9_]/.test(source[pos])) {
-        word += source[pos]; advance();
+      while (pos < source.length && isIdentifierPart(identifierCharAt(source,pos))) {
+        const ch=identifierCharAt(source,pos);word+=ch;for(let j=0;j<ch.length;j++)advance();
       }
       if (word.length > 128) fail('identifier limit',start);
       // Never parse a contextual ownership bang as a macro or ordinary call;
@@ -290,12 +293,12 @@ function tokenize(source) {
         fail('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+word+'!',start);
       if (['copy','take','move','borrow','share'].includes(word) && source[pos]==='!' &&
           source[pos+1]!=='=' &&
-          !(source.slice(pos+1,pos+3)==='eq' && !/[A-Za-z0-9_]/.test(source[pos+3]??'')))
+          !(source.slice(pos+1,pos+3)==='eq' && !isIdentifierPart(identifierCharAt(source,pos+3))))
         fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
       // Canonical bang exceptional control requires typed Error/Result and
       // checked guest unwind; no fallback to an ordinary JS exception.
       if(['trap','throw','raise','panic'].includes(word) && source[pos]==='!' &&
-         source[pos+1]!=='=' && !/^!eq(?![A-Za-z0-9_])/.test(source.slice(pos)))
+         source[pos+1]!=='=' && !(source.startsWith('!eq',pos)&&!isIdentifierPart(identifierCharAt(source,pos+3))))
         {
           if(!/[ \t\r\n\v\f]/.test(source[pos+1]??''))
             fail('E_BANG_KEYWORD_WHITESPACE: ASCII whitespace required after '+word+'!',start);
@@ -305,7 +308,8 @@ function tokenize(source) {
             fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: exceptional control must be a statement',start);
           advance();word+='!';
         }
-      emit('id',word,start);
+      emit('id',word==='susp'?'suspends':word,start);
+      if(word==='susp')result.at(-1).lexeme=word;
     } else if (/[0-9]/.test(c)) {
       let number = '';
       while (pos < source.length && /[0-9_]/.test(source[pos])) {
@@ -333,7 +337,7 @@ function tokenize(source) {
       fail("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",start);
     } else if (source.startsWith('^^',pos)) {
       emit('sym','^^',start); advance(); advance();
-    } else if ('(){}[]:,;+-*/=.<>!?^&|'.includes(c)) {
+    } else if ('(){}[]:,;+-*/=.<>!¬?^&|'.includes(c)) {
       emit('sym',c,start); advance();
     } else fail('unsupported character',start);
   }
@@ -389,25 +393,25 @@ class Parser {
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
   name() {
     const t = this.peek();
-    if (t.kind !== 'id' || !TOKEN_NAME.test(t.value) || t.value==='ifnot'||t.value==='unless') fail('identifier expected',t);
+    if (t.kind !== 'id' || !isIdentifier(t.value) || t.value==='ifnot'||t.value==='unless'||t.value==='suspends') fail('identifier expected',t);
     this.i++; return t.value;
   }
   generatorIdentifier() {
     const t=this.peek(),value=t.value;
-    if(t.kind!=='id'||!TOKEN_NAME.test(value)||GENERATOR_RESERVED.has(value))
+    if(t.kind!=='id'||!isIdentifier(value)||GENERATOR_RESERVED.has(value))
       fail('invalid or reserved generator identifier '+value,t);
     this.i++;return value;
   }
   classIdentifier() {
     const t=this.peek(),value=t.value;
-    if(t.kind!=='id'||!TOKEN_NAME.test(value)||CLASS_METHOD_RESERVED.has(value)||
+    if(t.kind!=='id'||!isIdentifier(value)||CLASS_METHOD_RESERVED.has(value)||
        value==='Option'||value==='Result'||value==='Integer')
       fail('invalid or reserved class/member identifier '+value,t);
     this.i++;return value;
   }
   callableName() {
     const t=this.peek(),value=t.value;
-    if(t.kind!=='id'||!TOKEN_NAME.test(value)||
+    if(t.kind!=='id'||!isIdentifier(value)||
        (CLASS_METHOD_RESERVED.has(value)&&!CLASS_METHOD_CALLABLE_KEYWORDS.has(value)))
       fail('invalid or reserved callable name '+value,t);
     this.i++;return value;
@@ -420,6 +424,7 @@ class Parser {
     const value=next.value;
     if(CLASS_METHOD_RESERVED.has(value)&&!CLASS_METHOD_CALLABLE_KEYWORDS.has(value))
       return false;
+    if(marker==='method')fail('obsolete method introducer; use mtd',this.peek());
     this.i++;return true;
   }
   argumentsAfterOpen() {
@@ -469,7 +474,7 @@ class Parser {
     }
     fail('unsupported scalar type (int, bool, Symbol, Option<int>, Result<int,int>)',this.peek());
   }
-  classDeclaration(pub) {
+  classDeclaration(pub, writtenPrivate=false) {
     const name=this.classIdentifier();
     if(isProtectedPreludeIdentity(name))
       fail('E_PRELUDE_SPOOF: cannot define compiler-owned core class '+name,this.peek());
@@ -526,7 +531,7 @@ class Parser {
       slots.add(slot);
       methods.push({name:methodName,pub:methodPub,params,paramTypes,returnType,body});
     }
-    return {name,pub,methods};
+    return {name,pub,methods,...(writtenPrivate?{writtenPrivate:true}:{})};
   }
   generatorStart() {
     let j=this.i;
@@ -588,8 +593,14 @@ class Parser {
     return {module:moduleName,name,pub,params,paramTypes,elementType,yields};
   }
 
-  functions(moduleName, declaredPub=false) {
-    const pub = declaredPub || this.eat('pub'), start=this.peek();
+  functions(moduleName, declaredPub=false, declaredPrivate=false) {
+    let pub=declaredPub, writtenPrivate=declaredPrivate;
+    while(['pub','private'].includes(this.peek().value)) {
+      if(pub||writtenPrivate)fail('conflicting visibility modifier',this.peek());
+      pub=this.eat('pub');writtenPrivate=!pub;if(writtenPrivate)this.expect('private');
+    }
+    const start=this.peek();
+    if(start.value==='suspends')fail('E_SUSPENDS_UNSUPPORTED: JS callable continuation lowering is unavailable',start);
     const fnc=this.eat('fnc'),routine=!fnc&&this.eat('routine');
     const requestedReturnType=this.peek().value;
     const returnFirst=['int','void','infer'].includes(requestedReturnType) &&
@@ -686,7 +697,7 @@ class Parser {
     // Exporting a routine as a module object property would make a
     // direct-call-only routine first class. Leave this for runtime/ABI design.
     if (pub && kind === 'routine') fail('public routine cannot be exported');
-    const fn={module:moduleName, name, kind, pub, params, body,...(throws===undefined?{}:{throws})};
+    const fn={module:moduleName, name, kind, pub, params, body,...(writtenPrivate?{writtenPrivate:true}:{}),...(throws===undefined?{}:{throws})};
     // Keep the historical integer-only IR exactly stable for old consumers.
     // New typed fields are an all-or-nothing additive extension for bool.
     if(returnType!=='int'||paramTypes.some(type=>type!=='int')){
@@ -781,15 +792,15 @@ class Parser {
         const typedTrapBool=this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')==='Result < bool , Error >';
         if(typedTrapResult||typedTrapBool)this.i+=6;
         else if(typedTrapOption)this.i+=9;
-        const localType=typedTrapBool?'trapBoolResult':typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
+        let localType=typedTrapBool?'trapBoolResult':typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
         const name=this.name();
         if(this.peek().value===';')fail('E_MISSING_INITIALIZER: explicit initializer required',this.peek());
         const directional=this.takeDirection('<');
         if(!directional)this.expect('=');
         let init;
         if(localType==='inferredTrap'&&!directional&&!isConst){
-          if(!this.eat('trap!')&&!this.eat('trap'))fail('only trap Result inference is supported',this.peek());
-          init={kind:'trap',inner:this.expression()};
+          if(this.eat('trap!')||this.eat('trap'))init={kind:'trap',inner:this.expression()};
+          else {localType='inferredInt';init=this.expression();}
         }else init=this.expression();
         this.expect(';');
         if(isConst&&(!directional||localType!=='int'))fail('only directional const int is admitted here',this.peek());
@@ -958,19 +969,20 @@ class Parser {
           ? 'import namespace requires verified manifest package index and per-provider linker'
           : 'cross-file import requires verified source graph lowering',this.peek());
       }
-      let prefixPub=false;
-      if(this.peek().value==='pub'&&this.tokens[this.i+1]?.value==='define'){
-        this.i++;prefixPub=true;
+      let prefixVisibility=null;
+      if(['pub','private'].includes(this.peek().value)&&this.tokens[this.i+1]?.value==='define'){
+        prefixVisibility=this.peek().value;this.i++;
       }
       if(this.eat('define')){
-        const afterPub=this.eat('pub');
-        if(prefixPub&&afterPub)fail('duplicate pub modifier',this.peek());
-        const declarationPub=prefixPub||afterPub;
+        const afterVisibility=['pub','private'].includes(this.peek().value)?this.tokens[this.i++].value:null;
+        if(prefixVisibility&&afterVisibility)fail(prefixVisibility==='pub'&&afterVisibility==='pub'?'duplicate pub modifier':'duplicate/conflicting visibility modifier',this.peek());
+        const declarationPub=(prefixVisibility||afterVisibility)==='pub';
+        const declarationPrivate=(prefixVisibility||afterVisibility)==='private';
         if(this.peek().value==='symbol')
           fail('Symbol declaration/export manifest not implemented',this.peek());
         if(this.eat('class')){
           if(classes.length>=512)fail('class declaration budget exceeded',this.peek());
-          const cls=this.classDeclaration(declarationPub);
+          const cls=this.classDeclaration(declarationPub,declarationPrivate);
           if(usedClasses.has(cls.name)||usedModules.has(cls.name))
             fail('duplicate class/module name '+cls.name,this.peek());
           usedClasses.add(cls.name);classes.push(cls);
@@ -979,10 +991,10 @@ class Parser {
         if(this.peek().value==='fnc'||this.peek().value==='routine'||
            (['int','void','infer'].includes(this.peek().value)&&['<-','•'].includes(this.tokens[this.i+1]?.value))){
           if(functions.length+generators.length>=512)fail('declaration budget exceeded',this.peek());
-          functions.push(this.functions(null,declarationPub));
+          functions.push(this.functions(null,declarationPub,declarationPrivate));
           continue;
         }
-        if(declarationPub)fail('public define is only supported for classes/functions in program-v2',this.peek());
+        if(declarationPub||declarationPrivate)fail('explicit visibility define is only supported for classes/functions in program-v2',this.peek());
         this.expect('module');const name=this.name();
         if(isProtectedPreludeIdentity(name)||name==='Symbol'||name==='Integer')
           fail('E_PRELUDE_SPOOF: reserved portable intrinsic module name '+name);
@@ -1157,7 +1169,7 @@ class Parser {
   primary() {
     if(this.eat('trap!')||this.eat('trap'))return {kind:'trap',inner:this.expression(30)};
     if(this.eat('await'))return {kind:'immediateAwait',inner:this.expression(30)};
-    if(this.eat('!')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
+    if(this.eat('!')||this.eat('¬')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
     if(this.eat('new')){
       const className=this.name();
       this.expect('(');
@@ -1357,10 +1369,9 @@ class Parser {
 }
 function resolveProgram(parsed) {
   const {modules,functions,generators=[],classes=[],exportDeclarations=[]}=parsed;
-  const seenExportNames=new Set();
+  const resolvedExports=new Map();
   for(const entry of exportDeclarations) {
-    if(seenExportNames.has(entry.name))fail('duplicate export '+entry.name);
-    seenExportNames.add(entry.name);
+
     const targetClasses=classes.filter(c=>c.name===entry.name);
     const targetFns=functions.filter(f=>f.module===null&&f.name===entry.name);
     if(!targetClasses.length&&!targetFns.length)fail('unknown export '+entry.name);
@@ -1368,12 +1379,19 @@ function resolveProgram(parsed) {
     const kind=targetClasses.length?'class':'fnc';
     if(entry.kind!==null&&entry.kind!==kind)fail('export kind mismatch '+entry.name);
     const targets=targetClasses.length?targetClasses:targetFns;
+    if(targets.some(t=>t.writtenPrivate))fail('explicit private declaration cannot be exported: '+entry.name);
     if(entry.visibility==='package'&&targets.some(t=>t.pub))
       fail('package export conflicts with public declaration '+entry.name);
     if(kind==='fnc'&&targets.some(t=>t.kind==='routine')&&entry.visibility==='public')
       fail('routine is not a public exported fnc '+entry.name);
-    if(entry.visibility==='public')targets.forEach(t=>{t.pub=true;});
+    const prior=resolvedExports.get(entry.name);
+    if(prior&&prior.visibility!==entry.visibility)fail('conflicting export visibility '+entry.name);
+    if(!prior)resolvedExports.set(entry.name,{name:entry.name,kind,visibility:entry.visibility,targets});
   }
+  for(const entry of resolvedExports.values())if(entry.visibility==='public')entry.targets.forEach(t=>{t.pub=true;});
+  // Written visibility is compiler-only provenance; the checked IR schema
+  // must not acquire a new field or a serialized authority marker.
+  for(const target of [...functions,...classes])delete target.writtenPrivate;
   const slots=new Map(),exports=new Set(),symbolKinds=new Map(),classByName=new Map();
   const classTables=classes.map((cls,classIndex)=>{
     if(classByName.has(cls.name))fail('duplicate class '+cls.name);
@@ -1531,9 +1549,10 @@ function resolveProgram(parsed) {
         const slot=nextCaptureSlot++;
         const optionBoolInit=expr.localType==='option<bool>'&&expr.init.kind==='call'&&expr.init.qualifier==='Option'&&['some','none'].includes(expr.init.name);
         const init=optionBoolInit?{kind:'intrinsic',name:expr.init.name==='some'?'Option.boolSome':'Option.boolNone',args:expr.init.args.map(a=>{if(a.name!==null)fail('named Option constructor argument');return resolve(a.expr,owner,depth+1,bindings);})}:resolve(expr.init,owner,depth+1,bindings);
-        const type=['inferredTrap','directionalInferred'].includes(expr.localType)?resolvedType(init,owner):expr.localType==='constInt'?'int':expr.localType;
+        const type=['inferredTrap','directionalInferred','inferredInt'].includes(expr.localType)?resolvedType(init,owner):expr.localType==='constInt'?'int':expr.localType;
         if(['trapResult','trapOptionResult','trapBoolResult'].includes(expr.localType)&&(init.kind!=='trap'||resolvedType(init,owner)!==expr.localType))fail('E_TRAP_TYPE: typed Result local requires matching checked trap initializer');
         if(expr.localType==='inferredTrap'&&!['trapResult','trapOptionResult'].includes(type))fail('inferred trap local requires Result');
+        if(expr.localType==='inferredInt'&&type!=='int')fail('inferred val requires int in program-v2; use an explicit supported type');
         if(expr.localType==='directionalInferred'&&!['int','float','trapResult','trapOptionResult'].includes(type))fail('directional binding requires supported scalar or trapped Result');
         if(expr.localType==='constInt'){
           // Narrow, fail-closed constant-expression subset: evaluate only
@@ -1830,8 +1849,8 @@ function resolveProgram(parsed) {
   resolved.forEach((_,i)=>visit(i));
   return {
     sourceNamespace:parsed.namespace,modules,functions:resolved,
-    ...(exportDeclarations.length?{fileExports:exportDeclarations.map(e=>({
-      name:e.name,kind:e.kind??(classes.some(c=>c.name===e.name)?'class':'fnc'),
+    ...(resolvedExports.size?{fileExports:[...resolvedExports.values()].map(e=>({
+      name:e.name,kind:e.kind,
       visibility:e.visibility
     }))}:{}),
     ...(resolvedGenerators.length?{generators:resolvedGenerators}:{}),
@@ -2269,7 +2288,7 @@ function lowerCompilerOwnedBooleanImports(tokens){
         tokens[i+3]?.value==='from'&&tokens[i+4]?.kind==='str'&&
         isCoreBooleanUnit(tokens[i+4].value)){
     const alias=tokens[i+2],end=tokens[i+5];
-    if(alias?.kind!=='id'||!TOKEN_NAME.test(alias.value)||end?.value!==';'||
+    if(alias?.kind!=='id'||!isIdentifier(alias.value)||end?.value!==';'||
        aliases.has(alias.value)||aliases.size>=8||
        CLASS_METHOD_RESERVED.has(alias.value)||GENERATOR_RESERVED.has(alias.value)||
        isProtectedPreludeIdentity(alias.value)||coreBooleanIntrinsic(alias.value)||
@@ -2301,7 +2320,7 @@ function lowerCompilerOwnedTestingImports(tokens) {
   };
   const identifier=()=>{
     const t=next();
-    if(t?.kind!=='id'||!TOKEN_NAME.test(t.value))
+    if(t?.kind!=='id'||!isIdentifier(t.value))
       fail('E_STD_IMPORT: expected import function identifier',t);
     i++;
     return t.value;
