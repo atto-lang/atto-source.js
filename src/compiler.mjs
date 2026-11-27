@@ -55,7 +55,7 @@ function lex(src) {
     else col++;
     i++;
   }
-  function add(kind, value, loc) { if(out.length>=30000) throw new CompileError('token limit exceeded'); out.push({kind,value,...loc}); }
+  function add(kind, value, loc) { if(out.length>=30000) throw new CompileError('token limit exceeded'); out.push({kind,value,...loc,endLine:line}); }
   while(i<src.length){
     if(/\s/.test(src[i])||src[i]==='\u0085') {advance();continue;}
     if(src.startsWith('//',i)){
@@ -121,7 +121,8 @@ function lex(src) {
       }
       while(i<literal.end)advance();
       add(literal.kind,literal,loc);
-    }else if(src.startsWith('->',i)||src.startsWith('<-',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
+    }else if(src.startsWith('...',i)){add('sym','...',loc);advance();advance();advance();}
+    else if(src.startsWith('->',i)||src.startsWith('<-',i)||src.startsWith('::',i)||src.startsWith(':=',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
     else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
     else if(src[i]==='^')throw new CompileError(src.startsWith('^^',i)?"'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)":"'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",loc);
     else if('(){}[]:,;+-*/=.!<>@•'.includes(src[i])){add('sym',src[i],loc);advance();}
@@ -229,25 +230,324 @@ function productFactoryAt(tokens, i) {
   return tokens[i]?.kind==='id' && ['Pair','Entry'].includes(tokens[i].value)
     && tokens[i+1]?.value==='.' && tokens[i+2]?.value==='of';
 }
+function localPairTypeAt(tokens,i) {
+  return tokens[i-1]?.value==='const' && tokens[i]?.kind==='id' && tokens[i].value==='Pair'
+    && tokens[i+1]?.value==='<' && tokens[i+2]?.value==='int' && tokens[i+3]?.value==='>'
+    && tokens[i+4]?.kind==='id' && tokens[i+5]?.value==='=';
+}
 function rejectAmbiguousProductFactories(tokens) {
-  const active=new Set(tokens.filter((_,i)=>productFactoryAt(tokens,i)).map(t=>t.value));
+  const active=new Set(tokens.filter((_,i)=>productFactoryAt(tokens,i)||localPairTypeAt(tokens,i)).map(t=>t.value));
   if(!active.size)return;
   for(let i=0;i<tokens.length;i++){
     const t=tokens[i];
     if(t.kind!=='id')continue;
-    if(active.has(t.value) && (!productFactoryAt(tokens,i)
+    if(active.has(t.value) && ((!productFactoryAt(tokens,i)&&!localPairTypeAt(tokens,i))
        || ['.','::'].includes(tokens[i-1]?.value)))
       throw new CompileError('E_PRODUCT_SCOPE_UNSUPPORTED: competing '+t.value+' reference',t);
     if(['import','use','macro'].includes(t.value))
       throw new CompileError('E_PRODUCT_SCOPE_UNSUPPORTED: scalar factory requires a source-local identity',t);
   }
 }
+const AGGREGATE_RESERVED_WORDS = new Set([
+  'unsafe','sync','task','pipe','rpipe','define','def','module','namespace',
+  'contract','conforms','class','struct','interface','trait','type','types',
+  'typeof','abstract','extends','implements','impl','import','from','as',
+  'using','fnc','routine','pure','async','suspends','generator','yield','nlex',
+  'return','begin','self','super','static','pub','private','const','val','let',
+  'mut','if','guard','then','else','elif','elseif','fi','do','done','end',
+  'while','for','of','loop','block','break','continue','switch','match','maybe',
+  'matches','over','default','try','catch','finally','throw','raise','panic',
+  'recover','trap','defer','actor','persistent','durable','isoactor','shared',
+  'untrusted','spawn','stop','rt','await','nb','cb','select','readch','writech',
+  'eq','neq','is','new','true','false','null','void','obj','arr','cpu','gpu','quantum'
+]);
 class Parser {
   constructor(tokens){this.ts=tokens;this.pos=0;this.depth=0;this.guarantees=[];}
   peek(){return this.ts[this.pos];}
   match(v){if(this.peek().value===v){this.pos++;return true;}return false;}
   expect(v){if(!this.match(v))throw new CompileError('expected '+v+', found '+this.peek().value,this.peek());}
   id(){const t=this.peek();if(t.kind!=='id')throw new CompileError('expected identifier',t);this.pos++;return t.value;}
+  aggregateIdentifier(){
+    const at=this.peek(), name=this.id();
+    if(name.length>128 || AGGREGATE_RESERVED_WORDS.has(name) || name==='infer')
+      throw new CompileError('E_TYPE_NAME: reserved or oversized aggregate identifier',at);
+    return name;
+  }
+  // Only compile-time scalar literals in local const bindings. No dynamic
+  // evaluation, aggregate values or runtime reflection in this bootstrap path.
+  readAggregateScalar(params, allowRuntime) {
+    const token=this.peek();let type,value;
+    if(token.kind==='int'||token.value==='-'){
+      const negative=this.match('-'), number=this.peek();
+      if(number.kind!=='int')throw new CompileError('E_TYPE_INFER_AMBIGUOUS: scalar integer required',number);
+      this.pos++;
+      value=BigInt(number.value.replaceAll('_',''))*(negative?-1n:1n);
+      if(value<-(1n<<63n)||value>I64_MAX)throw new CompileError('aggregate int outside signed i64',number);
+      type='int';
+    }else if(token.kind==='id'&&['true','false'].includes(token.value)){
+      this.pos++;type='bool';value=token.value==='true';
+    }else if(token.kind==='string'){
+      this.pos++;type='string';value=token.value;
+    }else if(token.kind==='id'&&this.scalarConsts?.has(token.value)){
+      this.pos++;return this.scalarConsts.get(token.value);
+    }else if(allowRuntime&&token.kind==='id'&&params.includes(token.value)){
+      this.pos++;type='int';value={kind:'var',name:token.value};
+    }else throw new CompileError('E_TYPE_INFER_AMBIGUOUS: literal or immutable int parameter required',token);
+    return {type,value};
+  }
+  localConst(params){
+    const at=this.peek(), next=this.ts[this.pos+1]?.value;
+    if(['Record','Tuple','struct'].includes(next)){
+      this.aggregateConst(params);return;
+    }
+    const typedPair=localPairTypeAt(this.ts,this.pos+1);
+    this.expect('const');
+    if(typedPair){this.expect('Pair');this.expect('<');this.expect('int');this.expect('>');}
+    const name=this.aggregateIdentifier();
+    if(params.includes(name)||this.aggregateLocals.has(name)||this.scalarConsts.has(name)||this.aggregateTypes.has(name))
+      throw new CompileError('duplicate local binding '+name,at);
+    if(this.aggregateLocals.size+this.scalarConsts.size>=64)
+      throw new CompileError('aggregate binding limit',at);
+    if(typedPair){
+      this.expect('=');
+      const origin=this.peek(),source=this.aggregateLocals.get(this.aggregateIdentifier());
+      if(source?.kind!=='Pair'||source.fields.get('value')?.type!=='int')
+        throw new CompileError('E_PAIR_TYPE: expected initialized Pair<int> alias',origin);
+      this.expect(';');
+      this.aggregateLocals.set(name,{kind:'Pair',key:source.key,fields:new Map(source.fields)});
+      return;
+    }
+    // Name-derived Pair binding is distinct from a Record field.
+    if(this.match(':=')){
+      this.readLocalPair(name,name,at);return;
+    }
+    this.expect('=');
+    if(['id','string'].includes(this.peek().kind)&&this.ts[this.pos+1]?.value===':='){
+      const key=this.peek().kind==='string'?this.readStaticPairKey():this.aggregateIdentifier();
+      this.expect(':=');this.readLocalPair(name,key,at);return;
+    }
+    if(productFactoryAt(this.ts,this.pos)&&this.peek().value==='Pair'){
+      this.pos+=3;
+      if(this.match('<')){if(this.match('string'))this.expect(',');this.expect('int');this.expect('>');}
+      this.expect('(');const key=this.readStaticPairKey();this.expect(',');
+      const field=this.readAggregateScalar([],false);
+      this.expect(')');this.expect(';');
+      this.aggregateLocals.set(name,{kind:'Pair',key,fields:new Map([['value',field]])});return;
+    }
+    if(this.peek().kind==='id'&&this.ts[this.pos+1]?.value==='with'){
+      const base=this.readConstRecordOperand();
+      this.expect('with');this.readAggregateFields('Record',name,null,false,params,at,false,base);return;
+    }
+    const open=this.peek().value;
+    if(open==='('){
+      const first=this.ts[this.pos+1], sep=this.ts[this.pos+2];
+      if(first?.value===')'){
+        this.readAggregateFields('Tuple',name,null,false,params,at,false);return;
+      }
+      if(['id','string'].includes(first?.kind)&&sep?.value===':='){
+        // A single grouped Pair retains nominal identity. The scalar profile
+        // cannot represent a Tuple of Pair values: fail closed, never Record.
+        this.expect('(');
+        const key=this.peek().kind==='string'?this.readStaticPairKey():this.aggregateIdentifier();
+        this.expect(':=');const field=this.readAggregateScalar([],false);
+        if(this.peek().value===',')throw new CompileError('E_PAIR_TUPLE_UNSUPPORTED: recursive tuple product requires typed lowering',this.peek());
+        this.expect(')');this.expect(';');
+        this.aggregateLocals.set(name,{kind:'Pair',key,fields:new Map([['value',field]])});return;
+      }
+      if(first?.value!==':' && sep?.value!==':'){
+        if(sep?.value==='=')throw new CompileError('E_RECORD_CONTEXT: inferred parenthesized Record fields require colon',sep);
+        // Only the existing bounded scalar tuple profile is extended here.
+        this.readAggregateFields('Tuple',name,null,false,params,at,false);return;
+      }
+    }
+    if(open==='{'||open==='('||open==='struct'){
+      const kind=open==='struct'?'struct':'Record';
+      if(kind==='struct')this.pos++;
+      // No inferred positional Tuple admission. Parentheses with named
+      // fields/captures only; empty and positional forms fail closed.
+      this.readAggregateFields(kind,name,null,false,params,at,false);
+    }else{
+      const value=this.readAggregateScalar([],false);
+      this.expect(';');this.scalarConsts.set(name,value);
+    }
+  }
+  readStaticPairKey(){
+    const token=this.peek();
+    if(token.kind!=='string')throw new CompileError('E_PAIR_KEY_TYPE: static string required',token);
+    const raw=token.value.raw.slice(1,-1);
+    if(!/^[\x20-\x7e]*$/.test(raw)||/[\\$]/.test(raw))
+      throw new CompileError('E_PAIR_KEY_UNSUPPORTED: scalar profile requires a plain static string',token);
+    this.pos++;return raw;
+  }
+  readLocalPair(name,key,at){
+    // The scalar subset exposes only integer .value projection. Preserve
+    // the literal key and nominal kind; do not resolve it as a variable.
+    const field=this.readAggregateScalar([],false);
+    this.expect(';');
+    this.aggregateLocals.set(name,{kind:'Pair',key,fields:new Map([['value',field]])});
+  }
+  readConstRecordOperand(){
+    const at=this.peek(),name=this.aggregateIdentifier();
+    const record=this.aggregateLocals.get(name);
+    if(record?.kind!=='Record'||[...record.fields.values()].some(f=>f.type==='int'&&typeof f.value!=='bigint'))
+      throw new CompileError('E_RECORD_SPREAD: requires an initialized compile-time scalar Record',at);
+    return record;
+  }
+  // Restricted scalar aggregate profile: immutable literals and direct int
+  // parameter reads only. No aggregate ABI, escaping values or effectful inference.
+  aggregateConst(params){
+    const at=this.peek();this.expect('const');
+    const kind=this.id();
+    let alias=null, binder=false;
+    if(this.match('<')){
+      binder=this.match('infer');
+      alias=this.aggregateIdentifier(); // bare infer cannot consume the closing angle
+      if(['infer','Record','Tuple','struct','int','bool','string','const','let','val',
+          'fnc','return','true','false','void','null','self','float','decimal','bigint','uint',
+          'i8','i16','i32','i64','u8','u16','u32','u64','f32','f64','String','Bool','Integer',
+          'boolean','Any','Unknown','Object','Error','Symbol','Array','List','Vector','Slice',
+          'FixedArray','FixedList','Map','OrderedMap','Set','Pair','Entry','Option','Result',
+          'Future','Channel','ActorId','ActorKind','ActorRef','Mutex','MutexGuard','SharedMutex',
+          'Generator','AsyncGenerator','Iterator','AsyncIterator','Fnc','Function','define',
+          'Pointer','ActorMail','ReadLoan','WriteLoan','Atomic','AtomicRef','AtomicBool','AtomicInt',
+          'AtomicLong','AtomicI8','AtomicI16','AtomicI32','AtomicI64','AtomicU8','AtomicU16',
+          'AtomicU32','AtomicU64','Arc','Weak','Box','Rc','RwLock','RwLockReadGuard',
+          'RwLockWriteGuard','UnsafeCell',
+          'type','module','class','actor','pub','new','if','else','end','routine'].includes(alias))
+        throw new CompileError('E_TYPE_NAME: reserved type name',at);
+      this.expect('>');
+      if(binder&&(this.aggregateTypes.has(alias)||params.includes(alias)||this.aggregateLocals.has(alias)||this.scalarConsts?.has(alias)))
+        throw new CompileError('E_DUPLICATE_TYPE: '+alias,at);
+      // Unknown aliases are resolved only after inspecting explicit infer.
+    }
+    const name=this.aggregateIdentifier();
+    if(params.includes(name)||this.aggregateLocals.has(name)||this.aggregateTypes.has(name))
+      throw new CompileError('duplicate aggregate binding '+name,at);
+    if(this.aggregateLocals.size+(this.scalarConsts?.size??0)>=64)
+      throw new CompileError('aggregate binding limit',at);
+    if(this.scalarConsts?.has(name))
+      throw new CompileError('duplicate local binding '+name,at);
+    this.expect('=');
+    const infer=this.match('infer');
+    if(infer){
+      if(kind!=='Record'||alias===null||binder||!this.scalarConsts)
+        throw new CompileError('E_TYPE_INFER_AMBIGUOUS: infer requires local Record<T>',at);
+      if(!this.aggregateTypes.has(alias)){
+        if(params.includes(alias)||this.aggregateLocals.has(alias)||this.scalarConsts.has(alias)||alias===name)
+          throw new CompileError('E_DUPLICATE_TYPE: '+alias,at);
+        binder=true;
+      }
+    }
+    if(alias!==null&&!binder&&!this.aggregateTypes.has(alias))
+      throw new CompileError('E_UNKNOWN_TYPE: '+alias,at);
+    let base=null;
+    if(kind==='Record'&&this.peek().kind==='id'&&this.ts[this.pos+1]?.value==='with'){
+      base=this.readConstRecordOperand();this.expect('with');
+    }
+    this.readAggregateFields(kind,name,alias,binder,params,at,true,base);
+  }
+  readAggregateFields(kind,name,alias,binder,params,at,allowRuntime,base=null){
+    const open=this.peek().value;
+    if(kind==='struct')this.expect('{');
+    else if(kind==='Record'&&(open==='{'||open==='('))this.pos++;
+    else this.expect('(');
+    const close=open==='{'?'}':')', fields=new Map(base?.fields), explicit=new Set(), spreadConflicts=new Set();
+    let entryCount=0;
+    if(base&&open!=='{')throw new CompileError('E_RECORD_SPREAD: with requires braces',at);
+    if(this.peek().value===close && kind==='Record'&&!allowRuntime&&!base)
+      throw new CompileError('E_EMPTY_AGGREGATE: untyped empty braces are ambiguous',at);
+    if(this.peek().value===close && kind==='struct')
+      throw new CompileError('E_EMPTY_AGGREGATE: empty Struct not admitted in scalar profile',at);
+    while(this.peek().value!==close){
+      if(++entryCount>64)throw new CompileError('aggregate entry limit',this.peek());
+      if(kind==='Record'&&open==='{'&&this.match('...')){
+        const source=this.readConstRecordOperand();
+        for(const [key,field] of source.fields){
+          if(explicit.has(key))throw new CompileError('E_RECORD_SPREAD: spread overrides explicit field '+key,this.peek());
+          if(fields.has(key))spreadConflicts.add(key);
+          fields.set(key,field);
+          if(fields.size>64)throw new CompileError('aggregate field limit',this.peek());
+        }
+        if(!this.match(','))break;
+        if(this.peek().value===close)break;
+        continue;
+      }
+      if(explicit.size>=64)throw new CompileError('aggregate field limit',this.peek());
+      const capture=kind!=='Tuple'&&this.match(':');
+      let key;
+      if(kind==='Tuple')key=String(fields.size);
+      else if(kind==='Record'&&this.peek().kind==='string'){
+        const label=this.peek();
+        if(!label.value.raw.startsWith('"'))throw new CompileError('E_RECORD_LABEL: ordinary double-quoted identifier required',label);
+        key=this.readStaticPairKey();
+        if(!isIdentifier(key)||key.length>128||AGGREGATE_RESERVED_WORDS.has(key)||key==='infer')
+          throw new CompileError('E_RECORD_LABEL: invalid static identifier',label);
+      }else key=this.aggregateIdentifier();
+      if(explicit.has(key))throw new CompileError('E_DUPLICATE_FIELD: '+key,this.peek());
+      explicit.add(key);spreadConflicts.delete(key);
+      let field,pairEntry=false;
+      if(capture){
+        // Capture only already resolved compile-time scalar bindings. A
+        // parameter is not a compile-time constant; do not invent its value.
+        field=this.scalarConsts?.get(key);
+        if(!field)throw new CompileError('E_TYPE_INFER_AMBIGUOUS: capture needs a local const scalar',this.peek());
+      }else{
+        // Record punctuation is independent of its delimiter. Keep nominal
+        // Struct field grammar and positional Tuple grammar unchanged.
+        if(kind==='Record'){
+          if(open==='('&&!allowRuntime){
+            if(!this.match(':'))throw new CompileError('E_LITERAL_KIND: inferred parenthesized Record requires colon fields',this.peek());
+          }else if(this.match(':='))pairEntry=true;
+          else if(!this.match(':'))this.expect('=');
+        }else if(kind==='struct')this.expect(':');
+        field=this.readAggregateScalar(params,allowRuntime);
+      }
+      fields.set(key,field);
+      if(fields.size>64)throw new CompileError('aggregate field limit',this.peek());
+      if(!this.match(',')){
+        // Only a complete inline Pair entry may use a newline separator.
+        if(open==='{'&&pairEntry&&this.peek().kind==='id'&&this.peek().line>this.ts[this.pos-1].endLine)continue;
+        break;
+      }
+      if(this.peek().value===close)break;
+    }
+    // A single scalar with no comma is grouping, not a singleton Tuple.
+    // The bounded aggregate parser handles only actual Tuples; reject
+    // that unsupported scalar grouping instead of silently changing shape.
+    if(kind==='Tuple'&&fields.size===1&&this.ts[this.pos-1]?.value!==',')
+      throw new CompileError('E_TUPLE_ARITY: singleton tuple requires trailing comma',at);
+    this.expect(close);this.expect(';');
+    if(spreadConflicts.size)throw new CompileError('E_RECORD_SPREAD: unresolved spread overlap',at);
+    const shape={kind,fields:new Map([...fields].map(([k,v])=>[k,v.type]))};
+    if(alias!==null&&!binder){
+      const expected=this.aggregateTypes.get(alias);
+      if(expected.kind!==kind)throw new CompileError('E_AGGREGATE_KIND: '+alias,at);
+      if(expected.fields.size!==shape.fields.size||
+          [...expected.fields].some(([k,v])=>shape.fields.get(k)!==v))
+        throw new CompileError('E_TYPE_MISMATCH: '+alias,at);
+    }
+    if(binder&&alias===name)throw new CompileError('E_DUPLICATE_TYPE: '+alias,at);
+    if(binder)this.aggregateTypes.set(alias,shape);
+    this.aggregateLocals.set(name,{kind,fields});
+  }
+  aggregateProjection(){
+    const at=this.peek(), aggregate=this.aggregateLocals.get(at.value);
+    this.pos++;
+    let key;
+    if(aggregate.kind==='Tuple'){
+      this.expect('[');
+      const index=this.peek();
+      if(index.kind!=='int'||!/^(0|[1-9][0-9]*)$/.test(index.value))
+        throw new CompileError('tuple projection requires a static index',index);
+      key=index.value;this.pos++;this.expect(']');
+    }else{
+      this.expect('.');key=this.aggregateIdentifier();
+    }
+    const field=aggregate.fields.get(key);
+    if(!field)throw new CompileError('E_NO_FIELD: '+key,at);
+    if(field.type!=='int')throw new CompileError('JS scalar aggregate profile supports only int projections',at);
+    return typeof field.value==='bigint' ? {kind:'int',n:field.value} : {...field.value};
+  }
   exportDeclaration(){
     this.expect('export');this.expect('pub');
     let visibility='public';
@@ -262,6 +562,14 @@ class Parser {
     const module=this.peek().value==='define' && this.ts[this.pos+1]?.value==='module';
     if(module){this.pos++;this.expect('module');this.id();this.match('as');}
     const functions=[],exports=[];
+    // Preserve module-local type exemplars without changing export/root rules.
+    this.aggregateTypes=new Map();this.aggregateLocals=new Map();this.scalarConsts=null;
+    while(this.peek().value==='const'&&['Record','Tuple','struct'].includes(this.ts[this.pos+1]?.value)){
+      if(this.ts[this.pos+1].value==='struct'||this.ts[this.pos+2]?.value!=='<')
+        throw new CompileError('E_MODULE_AGGREGATE_INFER_UNSUPPORTED: expected named Record or Tuple',this.peek());
+      this.aggregateConst([]);
+    }
+    const moduleTypes=this.aggregateTypes,moduleLocals=this.aggregateLocals;
     while(this.peek().kind!=='eof'&&!(module&&this.peek().value==='end')){
       if(this.peek().value==='export'){
         if(module)throw new CompileError('file export requires file-root scope',this.peek());
@@ -291,7 +599,8 @@ class Parser {
       if(!abbreviated&&!this.match('fnc')&&!this.match('routine'))throw new CompileError('unsupported declaration',at);
       const returnFirst=this.peek().value==='int' && ['•','<-'].includes(this.ts[this.pos+1]?.value);
       if(returnFirst){this.expect('int');this.pos++;}
-      const name=this.id();this.expect('(');const params=[];
+      const name=this.id();if(moduleLocals.has(name))throw new CompileError('duplicate module binding '+name,at);
+      this.expect('(');const params=[];
       if(!this.match(')')){
         do{if(params.length>=128)throw new CompileError('parameter limit');this.expect('int');const v=this.id();if(params.includes(v))throw new CompileError('duplicate parameter '+v);params.push(v);}while(this.match(','));
         this.expect(')');
@@ -309,6 +618,10 @@ class Parser {
       const braced=this.match('{');
       if(!braced&&!arrow)throw new CompileError('expected { for colon function body',this.peek());
       if(!braced){if(!this.match('as'))this.match('::');}
+      this.aggregateTypes=new Map(moduleTypes);this.aggregateLocals=new Map(moduleLocals);
+      for(const param of params)this.aggregateLocals.delete(param);
+      this.scalarConsts=new Map();
+      while(this.peek().value==='const')this.localConst(params);
       this.expect('return');
       const body=this.expr();this.expect(';');this.expect(braced?'}':'end');
       functions.push({name,params,body,pub,...(writtenPrivate?{writtenPrivate:true}:{})});
@@ -425,6 +738,12 @@ class Parser {
       this.pos++;this.expect('(');const left=this.expr();this.expect(',');const right=this.expr();this.expect(')');
       return {kind:'binary',op:ops[name.value],left,right};
     }
+    if(t.kind==='id'&&this.scalarConsts?.has(t.value)){
+      const scalar=this.scalarConsts.get(t.value);this.pos++;
+      if(scalar.type!=='int')throw new CompileError('JS scalar profile supports only int reads',t);
+      return {kind:'int',n:scalar.value};
+    }
+    if(t.kind==='id'&&this.aggregateLocals?.has(t.value))return this.aggregateProjection();
     if(t.kind==='id'){
       this.pos++;
       if(this.match('(')){
