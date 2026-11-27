@@ -1,0 +1,3 @@
+# Buffered stdio host substrate (draft)
+
+Tracks #257, spec atto-lang/atto-spec#292. Per-descriptor host primitive only; no public package export or guest compiler wiring. Defaults: 1024 records including active, 4 MiB accepted bytes, 64 pending records / 1 MiB pending bytes. These are provisional implementation limits, not language constants. Sink is trusted and async; actual generation fencing, tenant quotas, critical-borrow checks, descriptor grants, compiler-internal continuation lowering, source aliases, flush barriers and shutdown deadline timer are owner integration work. Owner must abort on timeout; physical delivery after abort cannot be undone. No parity promotion from host tests.
