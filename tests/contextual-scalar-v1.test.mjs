@@ -7,6 +7,7 @@ const multi=(body)=>source(body,'int factor, int offset','factor * value + offse
 test('execute actual compiled contextual ESM guests',async()=>{
   const cases=[
     [source('return Scale::(6).apply(7);'),42n],
+    [source('const x = Scale::(6); const y = x; const z = y; return z.apply(7);'),42n],
     [source('const x = Scale::(2); const y = Scale::(3); return x.apply(4) + y.apply(4);'),20n],
     [source('let n = 3; const x = Scale::(n); n = 9; const a = x.apply(4); const b = x.apply(5); return a + b + Scale::(2).apply(7);'),41n],
     [source('let n = 3; const x = Scale::(n + 1); n = 9; return x.apply(n) + Scale::(n - 7).apply(3);'),42n],
@@ -32,6 +33,9 @@ test('malformed or unauthorized contextual inputs fail before ESM emission',()=>
     source('const x = Scale::(2); x = 9; return x.apply(3);'),
     source('const x = Scale::(2); const x = Scale::(3); return x.apply(3);'),
     source('const x = Scale::(2); return x;'),
+    source('const x = Scale::(2); const y = x; y = 3; return x.apply(7);'),
+    source('const x = Scale::(2); const y = x; return y;'),
+    source('const x = Scale::(2); let y = x; return y.apply(7);'),
     source('return _atto_context_esm_member(2,3);'),
     multi('return Scale::(2,).apply(3);'),
     multi('return Scale::(2).apply(3);'),
