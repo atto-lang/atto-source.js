@@ -304,6 +304,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
   const graph=owners.map(()=>new Set());
   let nodes=0;
   const captureSlots=owners.map(()=>new Set());
+  const mutableIntSlots=owners.map(()=>new Set());
   const floatSlots=owners.map(()=>new Set());
   const boolSlots=owners.map(()=>new Set());
   const stringSlots=owners.map(()=>new Set());
@@ -525,7 +526,13 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           update:node(expr.update,owner,depth+1,'int',scoped),
           body:node(expr.body,owner,depth+1,expected,scoped)};
       }
-      case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':{
+      case 'setIntLocal':{
+        record(expr,['kind','slot','init','body'],'mutable integer assignment');
+        if(allowScalarWhile===true||owner>=headers.length||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||!active.includes(expr.slot)||!mutableIntSlots[owner].has(expr.slot))
+          fail('assignment requires active mutable int local');
+        return {kind:'setIntLocal',slot:expr.slot,init:node(expr.init,owner,depth+1,'int',active),body:node(expr.body,owner,depth+1,expected,active)};
+      }
+      case 'mutableIntLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':{
         record(expr,['kind','slot','init','body'],'immutable local');
         if(owner>=headers.length||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||
            expr.slot>=LIMIT_NODES||captureSlots[owner].has(expr.slot)||active.includes(expr.slot))
@@ -533,7 +540,9 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
         captureSlots[owner].add(expr.slot);
         const t=desc.value==='optionLocal'?'option<int>':desc.value==='resultLocal'?'result<int,int>':desc.value==='trapOptionLocal'?'trapOptionResult':desc.value==='trapLocal'?'trapResult':desc.value==='floatLocal'?'float':desc.value==='boolLocal'?'bool':desc.value==='stringLocal'?'string':'int';
         if(allowScalarWhile===true&&(t==='bool'||t==='string'))fail('ordinary-only local type');
+        if(desc.value==='mutableIntLocal'&&allowScalarWhile===true)fail('ordinary-only mutable int local');
         const init=node(expr.init,owner,depth+1,t,active);
+        if(desc.value==='mutableIntLocal')mutableIntSlots[owner].add(expr.slot);
         if(t==='trapResult')trapSlots[owner].add(expr.slot);
         if(t==='trapOptionResult')trapOptionSlots[owner].add(expr.slot);
         if(t==='float')floatSlots[owner].add(expr.slot);
