@@ -1,0 +1,50 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {bindBundle, refineInferred} from '../src/parametric-bundle.mjs';
+const schema = [{name:'type',accepts:v=>typeof v==='string'},{name:'size',accepts:v=>Number.isSafeInteger(v)&&v>=0}];
+const seed = [['size',5],['type','int']];
+const expected = [['type','int'],['size',6]];
+const deny = fn => assert.throws(fn,/E_PARAMETRIC_BUNDLE/);
+test('refinement preserves seed and canonical formal order',()=>{
+  const result=bindBundle(schema,seed,[['size',6]],'refinement');
+  assert.deepEqual(result,expected);
+  assert.equal(seed[0][1],5);
+  assert.deepEqual(result.map(([k])=>k),['type','size']);
+  assert.deepEqual(bindBundle(schema,[...seed].reverse(),[['size',6]],'refinement'),result);
+  assert.throws(()=>result.push(['size',7]),TypeError);
+  assert.throws(()=>{result[1][1]=7;},TypeError);
+  assert.deepEqual(bindBundle(schema,seed.slice(1),[['size',6]],'refinement'),result);
+  assert.equal(bindBundle(schema,seed,[],'refinement')[1][1],5);
+});
+test('ordinary application never replaces a bound formal',()=>{
+  assert.deepEqual(bindBundle(schema,seed.slice(1),[['size',6]],'application'),expected);
+  deny(()=>bindBundle(schema,seed,[['size',5]],'application'));
+  deny(()=>bindBundle(schema,seed,[['size',6]],'application'));
+  deny(()=>bindBundle(schema,seed,[['unknown',1]],'application'));
+  assert.equal(bindBundle(schema,seed,[],'application')[1][1],5);
+});
+test('inherited inference requires exact requested checked evidence',()=>{
+  const run=(replace,holes,evidence)=>refineInferred(schema,seed,replace,holes,evidence);
+  assert.deepEqual(run([],['size'],[['size',3]]),[['type','int'],['size',3]]);
+  assert.equal(seed[0][1],5);
+  assert.equal(run([],['size'],[['size',0]])[1][1],0);
+  deny(()=>run([],['size'],[]));
+  deny(()=>run([],['size'],[['size',3],['size',3]]));
+  deny(()=>run([['size',6]],['size'],[['size',3]]));
+  deny(()=>run([],['size'],[['size',3],['type','int']]));
+  deny(()=>run([],['size','size'],[['size',3]]));
+  deny(()=>refineInferred(schema,seed.slice(1),[],['size'],[['size',3]]));
+  deny(()=>run([],['size'],[['size',-1]]));
+  deny(()=>run([],['size'],[['size','3']]));
+});
+test('invalid schemas, duplicates, kinds, bounds and modes fail closed',()=>{
+  deny(()=>bindBundle(schema,seed,[['size',6],['size',6]],'refinement'));
+  deny(()=>bindBundle(schema,[['size',5],['size',5]],[],'refinement'));
+  deny(()=>bindBundle(schema,seed,[['unknown',1]],'refinement'));
+  deny(()=>bindBundle(schema,seed,[['size','6']],'refinement'));
+  deny(()=>bindBundle(schema,seed,[['size',-1]],'refinement'));
+  deny(()=>bindBundle([schema[0],schema[0]],seed,[],'refinement'));
+  deny(()=>bindBundle(schema,seed,[['size',Number.MAX_SAFE_INTEGER+1]],'refinement'));
+  deny(()=>bindBundle(schema,seed,[['type',null]],'refinement'));
+  deny(()=>bindBundle(schema,seed,[],'unknown'));
+});

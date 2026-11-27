@@ -28,3 +28,57 @@ test('exact common attached struct corpus through independent JS source emitter'
     if(expected==='overflow'){await assert.rejects(run(code),/E_OVERFLOW/,name);receipt.overflow++}else{assert.equal(await run(code),BigInt(expected),name);receipt.positive++}
   }assert.deepEqual(receipt,{positive:4,reject:9,overflow:2});console.log('INDEPENDENT_JS_ATTACHED_STRUCT_RECEIPT',JSON.stringify(receipt));
 });
+
+test('contextual make invokes the declared constructor and preserves nominal category',async()=>{
+  for(const spelling of ['let Point p = make {x:40,y:2};','let Point p = make {y:2,x:40};','let p = make Point {x:40,y:2};']){
+    const source=example.replace('let p = Point(40,2);',spelling);
+    assert.equal(await run(compileAttachedStruct(source)),42n);
+  }
+  for(const spelling of ['let p = make {x:40,y:2};','let Point p = new {x:40,y:2};','let Point p = make {x:40};','let Point p = make {x:40,x:2};','let Point p = make {x:true,y:2};','let Point p = make {x:40,z:2};','let Point p = make {x=40,y:2};']){
+    assert.throws(()=>compileAttachedStruct(example.replace('let p = Point(40,2);',spelling)),/E_ATTACHED_STRUCT/);
+  }
+  const reverse=example.replace('constructor(int x, int y)','constructor(int y, int x)').replace('self.x+self.y','self.x-self.y').replace('let p = Point(40,2);','let Point p = make {x:40,y:2};');
+  assert.equal(await run(compileAttachedStruct(reverse)),38n);
+});
+
+test('nested contextual make preserves the declared field owner and value isolation',async()=>{
+  const source='define struct Point { int x; int y; } with { constructor(int x, int y) { self.x=x; self.y=y; } mut mtd change(int n):void {self.x=n;} } define struct Scene { Point origin; int bias; } with { constructor(int bias, Point origin) { self.origin=origin; self.bias=bias; } mtd int • total(){return self.origin.x+self.origin.y+self.bias;} } pub fnc main():int { let Scene s = make {origin:make {y:2,x:39},bias:1}; return s.total(); }';
+  assert.equal(await run(compileAttachedStruct(source)),42n);
+  assert.equal(await run(compileAttachedStruct(source.replace('make {y:2,x:39}','make Point {y:2,x:39}'))),42n);
+  const isolation=source.replace('let Scene s = make {origin:make {y:2,x:39},bias:1};','let mut Point p = make {x:39,y:2}; let Scene s = make {origin:p,bias:1}; p.change(100);');
+  assert.equal(await run(compileAttachedStruct(isolation)),42n);
+  for(const value of ['new {x:39,y:2}','make Scene {x:39,y:2}','make {x:39}','make {x:39,y:true}','make {x:39,x:2}'])
+    assert.throws(()=>compileAttachedStruct(source.replace('make {y:2,x:39}',value)),/E_ATTACHED_STRUCT/);
+  assert.throws(()=>compileAttachedStruct(source.replace('bias:1','bias:make {x:1,y:2}')),/E_ATTACHED_STRUCT/);
+});
+
+test('colon-annotated contextual make agrees with type-first spelling',async()=>{
+  const source=example.replace('let p = Point(40,2);','let p: Point = make {y:2,x:40};');
+  const typed=source.replace('p: Point','Point p');
+  assert.equal(compileAttachedStruct(source),compileAttachedStruct(typed));
+  assert.equal(await run(compileAttachedStruct(source)),42n);
+  for(const bad of ['let p: int = make {x:40,y:2};','let p: Unknown = make {x:40,y:2};','let p: Point = new {x:40,y:2};'])
+    assert.throws(()=>compileAttachedStruct(example.replace('let p = Point(40,2);',bad)),/E_ATTACHED_STRUCT/);
+});
+
+test('contextual make in constructor arguments uses a unique viable nominal formal',async()=>{
+  const point='define struct Point { int x; int y; } with { constructor(int x,int y){self.x=x;self.y=y;} } ';
+  const scene='define struct Scene { Point origin; int bias; } with { constructor(int bias,Point origin){self.origin=origin;self.bias=bias;} mtd int • total(){return self.origin.x+self.origin.y+self.bias;} } ';
+  const body='pub fnc main():int { let s=Scene(1,make {y:2,x:39}); return s.total(); }';
+  assert.equal(await run(compileAttachedStruct(point+scene+body)),42n);
+  assert.equal(await run(compileAttachedStruct(point+scene+body.replace('make {','make Point {'))),42n);
+  const other=point.replaceAll('Point','Other');
+  const overloaded=scene.replace(' mtd int',' constructor(int bias,Other other,Point origin){self.origin=origin;self.bias=bias;} mtd int');
+  assert.equal(await run(compileAttachedStruct(point+other+overloaded+body)),42n);
+  const ambiguous=overloaded.replace(' mtd int',' constructor(int bias,Point origin,Other other){self.origin=origin;self.bias=bias;} mtd int');
+  const three=body.replace('Scene(1,make {y:2,x:39})','Scene(1,make {y:2,x:39},make Other {x:0,y:0})');
+  assert.throws(()=>compileAttachedStruct(point+other+ambiguous+three),/ambiguous or missing contextual constructor argument owner/);
+  assert.equal(await run(compileAttachedStruct(point+other+ambiguous+three.replace('make {','make Point {'))),42n);
+  // Nested delimiters and comments must not change the outer arity.
+  assert.equal(await run(compileAttachedStruct(point+other+overloaded+body.replace('Scene(1,','Scene((1), /* , ) */ '))),42n);
+  for(const bad of ['Scene(1,,make {y:2,x:39})','Scene(1,make {y:2,x:39},)','Scene(1,make {y:2,x:39}) )','Scene(1,make {y:2,x:39)'])
+    assert.throws(()=>compileAttachedStruct(point+scene+body.replace('Scene(1,make {y:2,x:39})',bad)),/E_ATTACHED_STRUCT/);
+  for(const bad of ['new {y:2,x:39}','make {x:39}','make Other {x:39,y:2}','make {x:39,y:true}'])
+    assert.throws(()=>compileAttachedStruct(point+other+scene+body.replace('make {y:2,x:39}',bad)),/E_ATTACHED_STRUCT/);
+  assert.throws(()=>compileAttachedStruct(point+scene+body.replace('Scene(1,','Scene(make {x:1,y:2},')),/E_ATTACHED_STRUCT/);
+});

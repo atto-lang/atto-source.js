@@ -1,5 +1,6 @@
 // Explicit, bounded attached-value source compiler. No host eval, dynamic property
 // names, host-object arguments, native ABI, or zero-GC claim.
+import {planContextualMake} from './contextual-struct-construction.mjs';
 const fail=message=>{throw new Error('E_ATTACHED_STRUCT: '+message)};
 const demand=(v,m)=>{if(!v)fail(m)};
 const MIN=-(1n<<63n),MAX=(1n<<63n)-1n;
@@ -51,7 +52,7 @@ class Reader{
       const id='_c'+o.index+'_'+o.ctors.length;
       const params=f.map((_,i)=>'_a'+i);
       const slots=[];for(const field of o.fields){const j=assign.get(field.name);if(scalar(field.type))slots.push(params[j]);else for(let k=0;k<this.leaves(field.type).length;k++)slots.push(params[j]+'['+k+']')}
-      this.code.push('function '+id+'('+params.join(',')+'){return ['+slots.join(',')+'];}');o.ctors.push({formals:f,id});return;
+      this.code.push('function '+id+'('+params.join(',')+'){return ['+slots.join(',')+'];}');o.ctors.push({formals:f,id,fieldParams:o.fields.map(field=>assign.get(field.name))});return;
     }
     const mut=this.eat('mut');this.need('mtd');let name,f,result;
     if(['int','bool','void'].includes(this.peek())){result=this.peek();this.i++;demand(this.eat('•')||this.eat('<-')||this.eat('*'),'return marker');name=this.name();f=this.formals()}
@@ -87,12 +88,62 @@ class Reader{
     const i=o.leaves.findIndex(l=>l.path===path);demand(i>=0,'unknown field');return val(o.leaves[i].type,v.code+'['+i+']')
   }
   operand(){const v=this.values.get(this.peek());if(v&&this.t[this.i+1]!=='.'){this.i++;return val(v.type,v.code)}return this.expr(null)}
+  makeValue(expected,depth=0){
+    demand(depth<16&&++this.nodes<=1024,'contextual construction depth/node budget');
+    this.need('make');const type=this.peek()==='{'?expected:this.name();
+    const o=this.owners.get(type);demand(o&&(!expected||expected===type),'missing or incompatible expected nominal owner');
+    this.need('{');const entries=[];
+    if(!this.eat('}')){do{
+      demand(entries.length<8,'field budget');const name=this.name(),field=o.fields.find(f=>f.name===name);
+      demand(field&&!entries.some(e=>e.name===name),'unknown or duplicate contextual field');this.need(':');
+      if(this.peek()==='new')fail('reference construction cannot initialize an attached value struct');
+      const nested=this.peek()==='make'&&(this.t[this.i+1]==='{'||this.t[this.i+2]==='{');
+      const value=nested?this.makeValue(field.type,depth+1):this.operand();
+      demand(value.type===field.type,'contextual field type mismatch');entries.push({name,type:value.type,code:value.code});
+    }while(this.eat(','));this.need('}')}
+    const plan=planContextualMake(o,entries),params=entries.map((_,i)=>'_f'+i);
+    return val(type,'(('+params.join(',')+')=>'+plan.id+'('+plan.order.map(i=>params[i]).join(',')+'))('+entries.map(e=>e.code).join(',')+')');
+  }
+  // Count the complete syntactic argument list before contextual inference.
+  // Nested delimiters and comments are already tokenized. This scan never
+  // parses or evaluates an initializer, and consumes no input.
+  constructorArity(){
+    if(this.peek()===')')return 0;
+    const stack=[];let count=1,content=false;
+    for(let i=this.i;i<this.t.length;i++){
+      const token=this.t[i];
+      if(token==='('||token==='{'){stack.push(token==='('?')':'}');content=true;demand(stack.length<=64,'constructor argument depth');continue}
+      if(token===')'||token==='}'){
+        if(stack.length){demand(stack.pop()===token,'constructor argument delimiter');continue}
+        demand(token===')'&&content,'constructor argument delimiter');return count;
+      }
+      if(token===','&&!stack.length){demand(content&&++count<=8,'constructor argument limit');content=false;continue}
+      content=true;
+    }
+    fail('unterminated constructor arguments');
+  }
+  constructorOperand(owner,prior,arity){
+    if(this.peek()==='new')fail('reference construction cannot initialize an attached value argument');
+    if(this.peek()!=='make'||(this.t[this.i+1]!=='{'&&this.t[this.i+2]!=='{'))return this.operand();
+    // Only context shared by all viable prefix signatures may supply an
+    // omitted owner. Later arguments never retroactively guess its identity.
+    const viable=owner.ctors.filter(c=>c.formals.length===arity&&c.formals.length>prior.length&&prior.every((a,i)=>a.type===c.formals[i].type));
+    const expected=new Set(viable.map(c=>c.formals[prior.length].type));
+    if(this.t[this.i+1]==='{')demand(expected.size===1,'ambiguous or missing contextual constructor argument owner');
+    const made=this.makeValue(expected.size===1?[...expected][0]:null);
+    demand(expected.has(made.type),'contextual constructor argument type mismatch');
+    return made;
+  }
   bind(){
-    this.need('let');const mut=this.eat('mut');let name=this.name(),annotation=null;if(this.owners.has(name)){annotation=name;name=this.name()}
+    this.need('let');const mut=this.eat('mut');let name=this.name(),annotation=null;if(this.eat(':')){annotation=this.type();demand(this.owners.has(annotation),'expected nominal value type')}else if(this.owners.has(name)){annotation=name;name=this.name()}
     demand(!this.values.has(name)&&!this.owners.has(name)&&this.values.size<64,'binding identity/limit');this.need('=');const copy=this.eat('copy!');let type,code;
     const prior=this.values.get(this.peek());
-    if(prior&&this.t[this.i+1]!=='.'){this.i++;type=prior.type;code=prior.code+'.slice()'}
-    else{demand(!copy,'copy operand');type=this.name();const o=this.owners.get(type);demand(o,'unknown owner');this.need('(');const args=[];if(!this.eat(')')){do{demand(args.length<8,'argument limit');args.push(this.operand())}while(this.eat(','));this.need(')')}const c=o.ctors.find(c=>c.formals.length===args.length&&c.formals.every((x,i)=>x.type===args[i].type));demand(c,'constructor identity');code=c.id+'('+args.map(a=>a.code).join(',')+')'}
+    if(this.peek()==='new')fail('reference construction cannot initialize an attached value struct');
+    if(this.peek()==='make' && (this.t[this.i+1]==='{' || this.t[this.i+2]==='{')){
+      demand(!copy,'copy operand');const made=this.makeValue(annotation);type=made.type;code=made.code;
+    }
+    else if(prior&&this.t[this.i+1]!=='.'){this.i++;type=prior.type;code=prior.code+'.slice()'}
+    else{demand(!copy,'copy operand');type=this.name();const o=this.owners.get(type);demand(o,'unknown owner');this.need('(');const arity=this.constructorArity(),args=[];if(!this.eat(')')){do{demand(args.length<8,'argument limit');args.push(this.constructorOperand(o,args,arity))}while(this.eat(','));this.need(')')}const c=o.ctors.find(c=>c.formals.length===args.length&&c.formals.every((x,i)=>x.type===args[i].type));demand(c,'constructor identity');code=c.id+'('+args.map(a=>a.code).join(',')+')'}
     demand(!annotation||annotation===type,'binding nominal identity');this.need(';');const id='_v'+this.values.size;this.values.set(name,{type,code:id,mut});return 'const '+id+'='+code+';'
   }
   invoke(){const n=this.name(),v=this.values.get(n);demand(v?.mut,'immutable receiver');this.need('.');const name=this.name(),m=this.owners.get(v.type).methods.get(name);demand(m?.mut,'mutable method');this.need('(');const args=[];if(!this.eat(')')){do{demand(args.length<m.formals.length,'mutation arity');const a=this.expr(null);demand(a.type===m.formals[args.length].type,'mutation type');args.push(a.code)}while(this.eat(','));this.need(')')}demand(args.length===m.formals.length,'mutation arity');this.need(';');return m.id+'('+[v.code,...args].join(',')+');'}
