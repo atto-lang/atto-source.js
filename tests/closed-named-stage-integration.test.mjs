@@ -9,7 +9,7 @@ async function load(source){
 }
 test('production source and supplied IR compile to matching recursive ESM',async()=>{
   for(const [n,want] of [[0,0n],[1,1n],[10,55n],[20,6765n]])assert.equal((await load(fib(n))).main(),want);
-  assert.match(compileProgramV2(fib(55)),/function _self/); // compile only
+  assert.match(compileProgramV2(fib(55)),/function\* _self/); // compile only
   assert.equal((await load('fnc fib(int v): int {return 999;} '+fib(10))).main(),55n);
   assert.equal((await load('pub fnc main(): int {return 1 |> fnc f(int v): int {return v+2;} |> fnc f(int v): int {return v*14;};}')).main(),42n);
 });
