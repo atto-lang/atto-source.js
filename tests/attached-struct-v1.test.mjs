@@ -28,3 +28,15 @@ test('exact common attached struct corpus through independent JS source emitter'
     if(expected==='overflow'){await assert.rejects(run(code),/E_OVERFLOW/,name);receipt.overflow++}else{assert.equal(await run(code),BigInt(expected),name);receipt.positive++}
   }assert.deepEqual(receipt,{positive:4,reject:9,overflow:2});console.log('INDEPENDENT_JS_ATTACHED_STRUCT_RECEIPT',JSON.stringify(receipt));
 });
+
+test('contextual make invokes the declared constructor and preserves nominal category',async()=>{
+  for(const spelling of ['let Point p = make {x:40,y:2};','let Point p = make {y:2,x:40};','let p = make Point {x:40,y:2};']){
+    const source=example.replace('let p = Point(40,2);',spelling);
+    assert.equal(await run(compileAttachedStruct(source)),42n);
+  }
+  for(const spelling of ['let p = make {x:40,y:2};','let Point p = new {x:40,y:2};','let Point p = make {x:40};','let Point p = make {x:40,x:2};','let Point p = make {x:true,y:2};','let Point p = make {x:40,z:2};','let Point p = make {x=40,y:2};']){
+    assert.throws(()=>compileAttachedStruct(example.replace('let p = Point(40,2);',spelling)),/E_ATTACHED_STRUCT/);
+  }
+  const reverse=example.replace('constructor(int x, int y)','constructor(int y, int x)').replace('self.x+self.y','self.x-self.y').replace('let p = Point(40,2);','let Point p = make {x:40,y:2};');
+  assert.equal(await run(compileAttachedStruct(reverse)),38n);
+});
