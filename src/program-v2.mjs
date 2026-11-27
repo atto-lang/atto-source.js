@@ -1279,17 +1279,23 @@ class Parser {
       }while(this.eat(','));
       this.expect(')');this.expect('{');
       const guards=[];
+      let terminalElse=false;
       while(this.eat('if')){
         if(guards.length>=32)fail('state loop guard limit',at);
         const condition=this.expression();this.expect('{');this.expect('break');
         const result=this.expression();this.expect(';');this.expect('}');
         guards.push({condition,result});
+        // A final else containing only recur is equivalent to the
+        // existing fallthrough backedge. No new IR or recursive call.
+        if(this.eat('else')){this.expect('{');terminalElse=true;break;}
       }
       if(!guards.length)fail('state loop requires valued break',at);
       this.expect('recur');this.expect('(');
       const updates=[];
       do{if(updates.length>=32)fail('recur arity limit',at);updates.push(this.expression());}while(this.eat(','));
-      this.expect(')');this.expect(';');this.expect('}');
+      this.expect(')');this.expect(';');
+      if(terminalElse){this.expect('}');this.eat('fi');}
+      this.expect('}');
       if(updates.length!==states.length)fail('recur state arity mismatch',at);
       if(this.peek().value==='(')fail('calling a computed value loop',at);
       return guards.length===1?{kind:'closedRecur',states,...guards[0],updates}:
