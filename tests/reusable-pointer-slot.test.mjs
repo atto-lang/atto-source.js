@@ -21,6 +21,11 @@ test('invalid slot source never emits scalar IR or ESM',()=>{
     'ref! p to a; ref! p to a; unref! p; return 42;',
     'ref! p to a; return 42;','return p;',
     'ref ! p to a; unref! p; return 42;',
+    'ref!p to a; unref! p; return 42;',
+    'ref! p to a; val x = deref!p; unref! p; return x;',
+    'ref! p to a; unref!p; return 42;',
+    'ref!/* separator */p to a; unref! p; return 42;',
+    'ref!\u00a0p to a; unref! p; return 42;',
     'ref! p to missing; unref! p; return 42;',
     'return 9223372036854775807 + 1;',
     'ref! p to a; val p = deref! p; unref! p; return 42;']){
@@ -30,4 +35,10 @@ test('invalid slot source never emits scalar IR or ESM',()=>{
 });
 test('comments cannot activate slot syntax',()=>{
   assert.equal(compile('pub fnc main(): int { return 42; } // RawPointer ref!'),compile('pub fnc main(): int { return 42; }'));
+});
+
+test('ASCII whitespace after slot bang is accepted',async()=>{
+  const code=compile(prefix+'ref!\t p to a; val x = deref!\n p; unref!\r\n p; return x; }');
+  const module=await import('data:text/javascript,'+encodeURIComponent(code));
+  assert.equal(module.main(),42n);
 });

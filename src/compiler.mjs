@@ -82,7 +82,7 @@ function lex(src) {
       if(depth)throw new CompileError('unterminated comment',loc);
       continue;
     }
-    const loc={line,col};
+    const loc={line,col,offset:i};
     if(src[i]==='⧖'||src[i]==='∂'){
       add('id','suspends',loc);advance();continue;
     }
@@ -389,6 +389,8 @@ class Parser {
   }
   primary(){
     const t=this.peek();
+    if(t.kind==='id' && t.value==='spawn' && this.ts[this.pos+1]?.kind==='id')
+      throw new CompileError('E_SPAWN_OPTIONS_UNSUPPORTED: actor spawn requires typed initialization, resource admission and runtime lowering',t);
     if(productFactoryAt(this.ts,this.pos))return this.productProjection();
     if(this.match('-')){
       // The absolute magnitude 2^63 is legal only as a negated literal.
@@ -440,7 +442,7 @@ class Parser {
 
 // Closed, nonescaping immutable i64 slots only. This accepts canonical lexer
 // tokens, not source substrings, and uses checked arithmetic before promotion.
-function lowerReusableSlot(tokens) {
+function lowerReusableSlot(tokens,source) {
   let at=0;
   const bad=()=>{throw new CompileError('E_POINTER_SLOT_PROFILE: invalid closed reusable scalar slot',tokens[Math.min(at,tokens.length-1)]);};
   const is=(kind,value)=>tokens[at]?.kind===kind && tokens[at]?.value===value;
@@ -449,7 +451,7 @@ function lowerReusableSlot(tokens) {
   const reserved=new Set('main int RawPointer Pointer pub fnc let mut val return ref deref unref null true false to empty await suspends rt if else end actor class struct define new copy borrow drop take share freeze weak pin while for task select defer recover throw raise panic trap import export from as use namespace module const unsafe'.split(' '));
   const name=()=>{const t=tokens[at];if(t?.kind!=='id'||!/^[a-z_][a-z0-9_]{0,95}$/.test(t.value)||reserved.has(t.value))bad();at++;return t.value;};
   const number=()=>{const t=tokens[at];if(t?.kind!=='int'||!/^[0-9]+$/.test(t.value))bad();const n=BigInt(t.value);if(n>I64_MAX)bad();at++;return n;};
-  const op=v=>{const a=word(v),b=sym('!');if(a.line!==b.line||b.col!==a.col+v.length)bad();};
+  const op=v=>{const a=word(v),b=sym('!');if(a.line!==b.line||b.col!==a.col+v.length||!/[ \t\r\n\v\f]/.test(source[b.offset+1]??''))bad();};
   word('pub');word('fnc');word('main');sym('(');sym(')');sym(':');word('int');sym('{');word('let');
   const owners=new Map(),values=new Map();
   while(!is('id','mut')){
@@ -501,7 +503,7 @@ export function compileToIR(source) {
   rejectUnsupportedSelect(tokens);
   rejectAmbiguousProductFactories(tokens);
   if(tokens.some(t=>t.kind==='id'&&t.value==='RawPointer'))
-    return compileToIR(lowerReusableSlot(tokens));
+    return compileToIR(lowerReusableSlot(tokens,source));
   // Keep existing affine Future and ownership diagnostics ahead of the
   // unsupported-effect admission decision; never emit a synchronous guest.
   const suspension=tokens.find(t=>t.kind==='id'&&t.value==='suspends');
