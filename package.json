@@ -38,7 +38,8 @@
     "./selectable-i64-future": "./src/selectable-i64-future.mjs",
     "./select-continuation-fence": "./src/select-continuation-fence.mjs",
     "./structural-runtime": "./src/structural-runtime.mjs",
-    "./std-time-runtime": "./src/std-time-runtime.mjs"
+    "./std-time-runtime": "./src/std-time-runtime.mjs",
+    "./attached-struct-v1": "./src/attached-struct-v1.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
@@ -68,6 +69,7 @@
     "test:class-methods": "node --test tests/class-methods-compat-v1.test.mjs",
     "test:shared-scalar50": "node --test tests/shared-scalar50-js-esm.test.mjs",
     "test:atto-canonical": "node --test tests/atto-java-llvm-source-transpilation.test.mjs",
-    "test:std-time": "node --test tests/std-time-runtime.test.mjs"
+    "test:std-time": "node --test tests/std-time-runtime.test.mjs",
+    "test:attached-struct-v1": "ATTO_ATTACHED_STRUCT_REQUIRED=1 node --test tests/attached-struct-v1.test.mjs"
   }
 }

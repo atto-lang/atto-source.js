@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { scalarMachine } from './scalar-machine-commit-reference.mjs';
+const graph = () => [{name:'Done',terminal:true,edges:[]}, {name:'Running',terminal:false,edges:[{event:'Add',target:1},{event:'Finish',target:0}]}];
+const ops = (delta=2n) => [{node:1,event:0,delta},{node:1,event:1,delta:0n}];
+const machine = (delta=2n, value=1n, limit=(1n<<63n)-1n) => scalarMachine(1,graph(),ops(delta),value,limit);
+const snapshot = (node,value,version,generation) => ({node,value,version,generation});
+function unchanged(m, expected, version=0n, generation=1n, event=0, cancel=false) {
+    const old=m.snapshot();
+    assert.equal(m.apply(version,generation,event,cancel),expected);
+    assert.strictEqual(m.snapshot(),old);
+}
+test('cancel-before-commit',()=>unchanged(machine(),'CANCELLED',0n,1n,0,true));
+test('invalid-event',()=>unchanged(machine(),'INVALID_EVENT',0n,1n,2));
+test('self-transition',()=>{const m=machine();assert.equal(m.apply(0n,1n,0),'COMMITTED');assert.deepEqual(m.snapshot(),snapshot(1,3n,1n,2n));});
+test('stale-version',()=>unchanged(machine(),'STALE',1n));
+test('stale-generation',()=>unchanged(machine(),'STALE',0n,0n));
+test('terminal-transition',()=>{const m=machine();m.apply(0n,1n,0);assert.equal(m.apply(1n,2n,1),'COMMITTED');assert.deepEqual(m.snapshot(),snapshot(0,3n,2n,3n));});
+test('terminal-fence',()=>{const m=machine();m.apply(0n,1n,1);unchanged(m,'TERMINAL',1n,2n);});
+test('negative-value',()=>unchanged(machine(-2n),'INVARIANT'));
+test('i64-overflow',()=>unchanged(machine(1n,(1n<<63n)-1n),'OVERFLOW'));
+test('counter-limit',()=>unchanged(machine(2n,1n,1n),'EXHAUSTED'));
+test('same-version sequential contenders, not a thread race',()=>{const m=machine(1n);assert.equal(m.apply(0n,1n,0),'COMMITTED');unchanged(m,'STALE');assert.deepEqual(m.snapshot(),snapshot(1,2n,1n,2n));});
+test('incomplete-plan',()=>assert.throws(()=>scalarMachine(1,graph(),ops().slice(0,1),1n),/E_MACHINE_PLAN/));
+test('duplicate-operation',()=>assert.throws(()=>scalarMachine(1,graph(),[ops()[0],ops()[0]],1n),/E_MACHINE_PLAN/));
+test('unknown-operation',()=>assert.throws(()=>scalarMachine(1,graph(),[{node:0,event:0,delta:1n},ops()[1]],1n),/E_MACHINE_PLAN/));
+test('valid slot without edge',()=>{const nodes=[{name:'A',terminal:false,edges:[{event:'X',target:1}]},{name:'B',terminal:false,edges:[{event:'Y',target:0}]}];const m=scalarMachine(0,nodes,[{node:0,event:0,delta:0n},{node:1,event:1,delta:0n}],1n);unchanged(m,'NO_EDGE',0n,1n,1);});
+test('snapshot and operation alias isolation',()=>{const g=graph(),o=ops(),m=scalarMachine(1,g,o,1n),old=m.snapshot();g[1].terminal=true;o[0].delta=99n;assert.throws(()=>{old.value=9n;},TypeError);assert.equal(m.apply(0n,1n,0),'COMMITTED');assert.equal(m.snapshot().value,3n);assert.equal(old.value,1n);});
+test('out-of-range host scalar rejected',()=>{assert.throws(()=>machine(1n,1n<<63n),/E_MACHINE_PLAN/);assert.throws(()=>machine(1n<<63n),/E_MACHINE_PLAN/);assert.throws(()=>machine(1),/E_MACHINE_PLAN/);});
+test('stale and terminal precede cancellation',()=>{const m=machine();unchanged(m,'STALE',1n,1n,0,true);m.apply(0n,1n,1);unchanged(m,'TERMINAL',1n,2n,0,true);});
+test('invalid host arguments leave snapshot unchanged',()=>{const m=machine(),old=m.snapshot();assert.throws(()=>m.apply(0,1n,0),/E_MACHINE_PLAN/);assert.throws(()=>m.apply(0n,1n,0,1),/E_MACHINE_PLAN/);assert.strictEqual(m.snapshot(),old);});

@@ -83,6 +83,9 @@ function lex(src) {
       continue;
     }
     const loc={line,col};
+    if(src[i]==='⧖'||src[i]==='∂'){
+      add('id','suspends',loc);advance();continue;
+    }
     if(isIdentifierStart(identifierCharAt(src,i))){
       let s='';while(i<src.length&&isIdentifierPart(identifierCharAt(src,i))){const ch=identifierCharAt(src,i);s+=ch;for(let j=0;j<ch.length;j++)advance();}
       // A typed Topic receiver may be a local, parameter or import. Until
@@ -101,7 +104,7 @@ function lex(src) {
           src[i+1]!=='=' &&
           !(src.slice(i+1,i+3)==='eq' && !isIdentifierPart(identifierCharAt(src,i+3))))
         ownershipBang ??= loc;
-      add('id',s,loc);
+      add('id',s==='susp'?'suspends':s,loc);
     }else if(/[0-9]/.test(src[i])){
       let s='';while(i<src.length&&/[0-9_]/.test(src[i])){s+=src[i];advance();}
       if(!/^[0-9]+(?:_[0-9]+)*$/.test(s))throw new CompileError('invalid integer literal',loc);
@@ -386,6 +389,8 @@ class Parser {
   }
   primary(){
     const t=this.peek();
+    if(t.kind==='id' && t.value==='spawn' && this.ts[this.pos+1]?.kind==='id')
+      throw new CompileError('E_SPAWN_OPTIONS_UNSUPPORTED: actor spawn requires typed initialization, resource admission and runtime lowering',t);
     if(productFactoryAt(this.ts,this.pos))return this.productProjection();
     if(this.match('-')){
       // The absolute magnitude 2^63 is legal only as a negated literal.
@@ -448,6 +453,10 @@ export function compileToIR(source) {
   rejectUnloweredActorHeap(tokens);
   rejectUnsupportedSelect(tokens);
   rejectAmbiguousProductFactories(tokens);
+  // Keep existing affine Future and ownership diagnostics ahead of the
+  // unsupported-effect admission decision; never emit a synchronous guest.
+  const suspension=tokens.find(t=>t.kind==='id'&&t.value==='suspends');
+  if(suspension)throw new CompileError('E_SUSPENDS_UNSUPPORTED: scalar-v1 has no callable continuation lowering',suspension);
   const parser=new Parser(tokens);
   const parsed=parser.parse();
   try {
