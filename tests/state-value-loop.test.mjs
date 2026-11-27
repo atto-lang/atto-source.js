@@ -41,3 +41,21 @@ test('external IR revalidation refuses stale state references and wrong arity',(
   const copy=structuredClone(ir);mutate(copy.functions[0].body);assert.throws(()=>compileProgramIRV2(copy));
  }
 });
+
+// Reconciled #272 multi-exit semantics using the mainline closedRecur IR.
+test('multiple guarded exits are ordered, lazy and valid in argument position',async()=>{
+ const body='loop (val i:int=0) { if i>=2 { break 42; } if i>=3 { break 1/0; } recur(i+1); }';
+ assert.equal(await run(program(body)),42n);
+ assert.equal(await run('fnc pass(x:int):int { return x; } pub fnc main():int { return pass('+body+'); }'),42n);
+ assert.equal(await run(program('loop (val i:int=0) { if i>=4 { break 1; } if i>=2 { break 42; } recur(i+1); }')),42n);
+ assert.equal(await run(program('loop (val i:int=0) { if true { break 42; } if i/0 eq 0 { break 1; } recur(i/0); }')),42n);
+});
+test('multi-exit IR rejects mixed shapes, wrong types, foreign slots and empty guards',()=>{
+ const source=program('loop (val i:int=0) { if i>=2 { break 42; } if i>=3 { break 43; } recur(i+1); }');
+ const ir=compileToProgramIRV2(source);
+ assert.equal(ir.functions[0].body.guards.length,2);
+ assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir))),compileProgramV2(source));
+ for(const mutate of [d=>d.guards=[],d=>d.guards.pop(),d=>d.condition={kind:'bool',value:true},d=>d.guards[0].result={kind:'bool',value:true},d=>d.guards[0].condition={kind:'capture',slot:99999}]){
+  const copy=structuredClone(ir);mutate(copy.functions[0].body);assert.throws(()=>compileProgramIRV2(copy));
+ }
+});
