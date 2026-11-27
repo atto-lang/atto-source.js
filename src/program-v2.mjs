@@ -1,3 +1,4 @@
+import {lowerContextualScalar} from './contextual-scalar-v1.mjs';
 import {identifierCharAt,isIdentifierStart,isIdentifierPart,isIdentifier} from './portable-unicode-identifier-v1.mjs';
 import {lowerVerifiedQuantitySource} from './verified-quantity-source.mjs';
 import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
@@ -2661,7 +2662,8 @@ function admitUnusedRefinementsBeforeCheckedUnwrap(tokens){
 }
 
 export function compileToProgramIRV2(source, options) {
-  const tokens=tokenize(source);
+  const sourceTokens=tokenize(source);
+  const tokens=lowerContextualScalar(sourceTokens,fail,GENERATOR_RESERVED,isProtectedPreludeIdentity,MAX_TOKENS);
   rejectExecutionDomains(tokens,fail,{inlineScalarTasks:true});
   rejectUnsupportedHttpActors(tokens,fail);
   rejectUnsupportedStaticSelect(tokens);
