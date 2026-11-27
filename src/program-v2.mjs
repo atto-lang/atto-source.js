@@ -750,6 +750,12 @@ class Parser {
         if(!this.returnsOnAllPaths(body)||!this.returnsOnAllPaths(handler))
           fail('E_TRY_FALLTHROUGH_UNSUPPORTED: both protected and handler paths must terminate',this.peek());
         statements.push({kind:'tryCatch',name,body,handler});
+      } else if(this.eat('defer')){
+        if(depth!==0||!['stdio . out . write (','process . stdout . write ('].includes(this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')))fail('E_STDOUT_PROFILE: only root literal stdout defer supported',this.peek());
+        this.i+=6;const message=this.peek();
+        if(message.kind!=='localString')fail('E_STDOUT_LITERAL: bounded string literal required',message);
+        this.i++;this.expect(')');this.expect(';');
+        statements.push({kind:'stdoutDefer',message:message.literal});
       } else if(['stdio . out . write (','process . stdout . write (','stdio . stdout . write ('].includes(this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' '))) {
         this.i+=6;const message=this.peek();
         if(message.kind!=='localString')fail('E_STDOUT_LITERAL: bounded string literal required',message);
@@ -872,9 +878,9 @@ class Parser {
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
         result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,taskWritable:stmt.taskWritable===true,rebind:stmt.rebind===true,body:result};
       }
-      else if(stmt.kind==='stdoutWrite'){
+      else if(stmt.kind==='stdoutWrite'||stmt.kind==='stdoutDefer'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: stdout must precede a value return');
-        result={kind:'stdoutSeq',message:stmt.message,body:result};
+        result={kind:stmt.kind==='stdoutDefer'?'rootStdoutDefer':'stdoutSeq',message:stmt.message,body:result};
       }
       else if(stmt.kind==='voidCall'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: void call must precede a value return');
@@ -910,7 +916,7 @@ class Parser {
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
-        case 'stdoutSeq':case 'taskScope':case 'taskDefer':add(expr.body);break;
+        case 'rootStdoutDefer':case 'stdoutSeq':case 'taskScope':case 'taskDefer':add(expr.body);break;
         case 'taskSet':add(expr.value);add(expr.body);break;
         case 'local':add(expr.init);add(expr.body);break;
         case 'newClass':for(const arg of expr.args)add(arg.expr??arg);break;
@@ -1496,7 +1502,7 @@ function resolveProgram(parsed) {
       }
       case 'if':return resolvedType(expr.yes,owner);
       case 'seqVoidCall':return resolvedType(expr.value,owner);
-      case 'stdoutSeq':case 'taskDefer':case 'taskSet':return resolvedType(expr.body,owner);
+      case 'rootStdoutDefer':case 'stdoutSeq':case 'taskDefer':case 'taskSet':return resolvedType(expr.body,owner);
       case 'taskScope':return 'int';
       case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return resolvedType(expr.body,owner);
       case 'adtMatch':return resolvedType(expr.arms[0].body,owner);
@@ -1627,9 +1633,10 @@ function resolveProgram(parsed) {
         if(!owner.inlineTask||owner.params.some(n=>n==='stdio'||n==='process')||bindings.some(b=>b.name==='stdio'||b.name==='process')||functions.some(f=>f.name==='stdio'||f.name==='process')||modules.length||classes.length||generators.length)fail('E_SYNC_TASK_PROFILE: unshadowed literal stdout defer required');
         return {kind:'taskDefer',message:expr.message,body:resolve(expr.body,owner,depth+1,bindings)};
       }
+      case 'rootStdoutDefer':
       case 'stdoutSeq': {
-        if(owner.ownerKind==='method'||owner.params.some(n=>n==='stdio'||n==='process')||bindings.some(b=>b.name==='stdio'||b.name==='process')||functions.some(f=>f.name==='stdio'||f.name==='process')||modules.length||classes.length||generators.length)fail('E_STDOUT_PROFILE: unshadowed root callable required');
-        return {kind:'stdoutSeq',message:expr.message,body:resolve(expr.body,owner,depth+1,bindings)};
+        if((expr.kind==='rootStdoutDefer'&&(owner.inlineTask||owner.returnType!=='int'))||owner.ownerKind==='method'||owner.params.some(n=>n==='stdio'||n==='process')||bindings.some(b=>b.name==='stdio'||b.name==='process')||functions.some(f=>f.name==='stdio'||f.name==='process')||modules.length||classes.length||generators.length)fail('E_STDOUT_PROFILE: unshadowed root callable required');
+        return {kind:expr.kind,message:expr.message,body:resolve(expr.body,owner,depth+1,bindings)};
       }
       case 'seqVoidCall': {
         if(expr.call.kind!=='call'||expr.call.qualifier!==null)
@@ -1873,7 +1880,7 @@ function resolveProgram(parsed) {
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='tryCatch'){inspect(expr.body,owner);inspect(expr.handler,owner);}
     else if(expr.kind==='seqVoidCall'){inspect(expr.call,owner);inspect(expr.value,owner);}
-    else if(['stdoutSeq','taskScope','taskDefer'].includes(expr.kind))inspect(expr.body,owner);
+    else if(['rootStdoutDefer','stdoutSeq','taskScope','taskDefer'].includes(expr.kind))inspect(expr.body,owner);
     else if(expr.kind==='taskSet'){inspect(expr.value,owner);inspect(expr.body,owner);}
     else if(['taskMutableLocal','local','floatLocal','boolLocal','stringLocal','trapLocal','trapOptionLocal','trapBoolLocal','optionBoolLocal','optionLocal','resultLocal'].includes(expr.kind)){inspect(expr.init,owner);inspect(expr.body,owner);}
     else if(['trapMethod','trapOptionMethod','trapBoolMethod'].includes(expr.kind))inspect(expr.receiver,owner);
@@ -1905,7 +1912,7 @@ function resolveProgram(parsed) {
 }
 function emitProgram(program) {
   const hosted=program.functions.some(f=>hasStdout(f.body));
-  function hasStdout(n){return !!n&&typeof n==='object'&&(['stdoutSeq','taskDefer'].includes(n.kind)||Object.values(n).some(hasStdout));}
+  function hasStdout(n){return !!n&&typeof n==='object'&&(['rootStdoutDefer','stdoutSeq','taskDefer'].includes(n.kind)||Object.values(n).some(hasStdout));}
   const hostArgs=args=>hosted?['_stdout',...args]:args;
   const out=[
     '// experimental Oreslang program-v2, provisional signed-64 integer model',
@@ -1994,7 +2001,7 @@ function emitProgram(program) {
         emitExpr(expr.yes,depth+1)+'):('+emitExpr(expr.no,depth+1)+'))';
       case 'taskScope':return '('+emitExpr(expr.body,depth+1)+')';
       case 'taskSet':return '(()=>{_v'+expr.slot+'=_check('+emitExpr(expr.value,depth+1)+');return '+emitExpr(expr.body,depth+1)+';})()';
-      case 'taskDefer':return '(()=>{try{return '+emitExpr(expr.body,depth+1)+';}finally{_writeStdout(_stdout,'+JSON.stringify(expr.message)+');}})()';
+      case 'rootStdoutDefer':case 'taskDefer':return '(()=>{try{return '+emitExpr(expr.body,depth+1)+';}finally{_writeStdout(_stdout,'+JSON.stringify(expr.message)+');}})()';
       case 'stdoutSeq':return '(()=>{_writeStdout(_stdout,'+JSON.stringify(expr.message)+');return '+emitExpr(expr.body,depth+1)+';})()';
       case 'seqVoidCall':
         return '(()=>{'+emitExpr(expr.call,depth+1)+';return '+
@@ -2089,7 +2096,7 @@ function emitProgram(program) {
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
       case 'tryCatch':return usesSymbol(expr.body)||usesSymbol(expr.handler);
       case 'seqVoidCall':return usesSymbol(expr.call)||usesSymbol(expr.value);
-      case 'stdoutSeq':case 'taskScope':case 'taskDefer':return usesSymbol(expr.body);
+      case 'rootStdoutDefer':case 'stdoutSeq':case 'taskScope':case 'taskDefer':return usesSymbol(expr.body);
       case 'taskSet':return usesSymbol(expr.value)||usesSymbol(expr.body);
       case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
       case 'trap':return usesSymbol(expr.inner);
@@ -2139,7 +2146,7 @@ function emitProgram(program) {
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
       case 'tryCatch':return usesPortableRuntime(expr.body)||usesPortableRuntime(expr.handler);
       case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
-      case 'stdoutSeq':case 'taskScope':case 'taskDefer':return usesPortableRuntime(expr.body);
+      case 'rootStdoutDefer':case 'stdoutSeq':case 'taskScope':case 'taskDefer':return usesPortableRuntime(expr.body);
       case 'taskSet':return usesPortableRuntime(expr.value)||usesPortableRuntime(expr.body);
       case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'i32Check':case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
