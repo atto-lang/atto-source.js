@@ -15,7 +15,7 @@ test('execute actual compiled contextual ESM guests',async()=>{
   ];
   for(const [s,expected] of cases){
     const ir=compileToProgramIRV2(s);
-    assert.equal(ir.classes.length,0);
+    assert.equal((ir.classes??[]).length,0);
     const mod=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(compileProgramV2(s)));
     assert.deepEqual(Object.keys(mod),['main']);
     assert.equal(mod.main(),expected);
