@@ -47,3 +47,14 @@ test('ordinary source remains on existing frontend',async()=>{
   const mod=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(compileProgramV2('pub fnc main()->int{return 42;}')));
   assert.equal(mod.main(),42n);
 });
+
+test('legacy parenthesized callable body keeps explicit export rules',async()=>{
+  const pub=compileProgramV2('pub fnc main() -> int :: (6 * 7) end');
+  const mod=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(pub));
+  assert.equal(mod.main(),42n);
+  const internal=compileProgramV2('fnc main() -> int :: (42) end');
+  const hidden=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(internal));
+  assert.equal(hidden.main,undefined);
+  assert.throws(()=>compileProgramV2('pub fnc main() -> int :: (true) end'));
+  assert.throws(()=>compileProgramV2('pub fnc main() -> int :: (42 end'));
+});
