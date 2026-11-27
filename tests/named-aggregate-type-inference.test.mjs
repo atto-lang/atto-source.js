@@ -41,12 +41,12 @@ test('reject bad named aggregate declarations before IR',()=>{
 });
 
 test('lexically captured const Record and explicit Struct scalar projections execute',async()=>{
-  for(const expression of ['{:name,:age}','(:name,:age)','{foo:5,:name,:age}','(foo=5,:name,:age)','struct{:name,:age}','(:age,)']){
+  for(const expression of ['{:name,:age}','(:name,:age)','{foo:5,:name,:age}','(foo:5,:name,:age)','struct{:name,:age}','(:age,)']){
     assert.equal(await run('const name="Alice"; const age=42; const z='+expression+'; return z.age;'),42n,expression);
   }
   assert.equal(await run('const age=37; const z={foo:5,:age}; return z.foo+z.age;'),42n);
   assert.equal(await run('const age=42; const Record r=(:age); return r.age;'),42n);
-  assert.equal(await run('const age=42; const z=(age=age); return z.age;'),42n);
+  assert.equal(await run('const age=42; const z=(age:age); return z.age;'),42n);
 });
 test('capture resolves only initialized lexical scalar constants and preserves type boundaries',()=>{
   for(const body of [
@@ -67,7 +67,7 @@ test('capture resolves only initialized lexical scalar constants and preserves t
 });
 
 test('mixed colon and equals scalar Record fields preserve named shapes and execution',async()=>{
-  for(const expression of ['{foo=40,bar:2}','(foo:40,bar=2)','{foo=40,bar=2,}','(foo:40,bar:2)']){
+  for(const expression of ['{foo=40,bar:2}','{foo=40,bar=2,}','(foo:40,bar:2)']){
     assert.equal(await run('const r='+expression+'; return r.foo+r.bar;'),42n,expression);
   }
   assert.equal(await run('const Record<infer T> r={foo=40,bar:2}; const Record<T> s=(bar:2,foo=40); return s.foo+s.bar;'),42n);
@@ -89,8 +89,8 @@ test('scalar Pair binding forms, mixed Record entries and newline separators exe
     'const x = x := 42; return x.value;',
     'const r={foo := 40\nbar = 2,}; return r.foo+r.bar;',
     'const r={foo := 40\nbar := 2}; return r.foo+r.bar;',
-    'const r=(foo := 40,bar = 2); return r.foo+r.bar;',
-    'const r=(foo : 40,bar := 2); return r.foo+r.bar;',
+    'const Record r=(foo := 40,bar = 2); return r.foo+r.bar;',
+    'const Record r=(foo : 40,bar := 2); return r.foo+r.bar;',
     'const foo=7; const r={foo := 40,bar:2}; return r.foo+r.bar+foo-7;',
   ])assert.equal(await run(body),42n,body);
 });
@@ -112,7 +112,7 @@ test('bounded Pair/Record grammar rejects malformed, ambiguous and unsafe forms'
     'const r={foo := 1,foo:2}; return 0;',
     'const r={foo : = 1}; return 0;',
     'const r=(foo := 1,bar := 2); return 0;',
-    'const r=(foo := 1); return 0;',
+    'const r=(foo := 1,); return 0;',
     'const r=(foo := 1\nbar = 2); return 0;',
     'const x := 1; const x = x := 2; return 0;',
     'const x := y := 1; return 0;',
@@ -156,4 +156,31 @@ test('Pair aliases cannot confer scalar, Record or mutation authority',()=>{
     'const x=Pair.of("x",42); const x:=3; return x.value;',
     'const Pair=42; const x=Pair.of("x",42); return x.value;',
   ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),undefined,body);
+});
+
+test('revised declaration-local product grammar preserves supported scalar values',async()=>{
+  for(const body of [
+    'const r=(five:40,six:2); return r.five+r.six;',
+    'const Record r=(five:=40,six:=2); return r.five+r.six;',
+    'const Record r=(five=40,six:2); return r.five+r.six;',
+    'const r={"five":40,"six":2}; return r.five+r.six;',
+    'const r={five:=40,six=2}; return r.five+r.six;',
+    'const p=(a:=42); return p.value;',
+    'const p=("a":=42); return p.value;',
+    'const t=(40,2); return t[0]+t[1];',
+    'const t=(42,); return t[0];',
+    'const empty=(); const Record r=(); const Record s={}; return 42;',
+  ])assert.equal(await run(body),42n,body);
+});
+test('revised syntax rejects invalid shapes and separately fences unsupported recursive products',()=>{
+  for(const [body,error] of [
+    ['const r={}; return 0;',/E_EMPTY_AGGREGATE/],
+    ['const r=(a=1); return 0;',/E_RECORD_CONTEXT/],
+    ['const r=(a:1,b=2); return 0;',/E_LITERAL_KIND/],
+    ['const r=(a:1,b:=2); return 0;',/E_LITERAL_KIND/],
+    ['const r={"a":1,a:=2}; return 0;',/E_DUPLICATE_FIELD/],
+    ['const r={"a-b":1}; return 0;',/E_RECORD_LABEL/],
+    ['const r=(a:=1,b:=2); return 0;',/E_PAIR_TUPLE_UNSUPPORTED/],
+    ['const r=(a:=1,); return 0;',/E_PAIR_TUPLE_UNSUPPORTED/],
+  ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),error,body);
 });
