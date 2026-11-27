@@ -108,6 +108,10 @@ export function lowerContextualScalar(tokens,fail,reserved,protectedName,maxToke
     const t=tokens[i];
     if(['const','let'].includes(v(i))&&safe(tokens[i+1])&&v(i+2)==='='){
       const name=v(i+1);if(name===owner||aliases.has(name)||locals.has(name))deny('duplicate contextual local',t);
+      if(aliases.has(v(i+3))&&i+4===e){
+        if(v(i)!=='const'||aliases.size>=64)deny('immutable context alias or binding limit',t);
+        aliases.set(name,aliases.get(v(i+3)));i=e+1;continue;
+      }
       if(v(i+3)===owner&&v(i+4)==='::'){
         const c=contextsAt(i+3);
         if(c.close+1===e){
