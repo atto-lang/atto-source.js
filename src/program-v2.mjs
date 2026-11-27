@@ -800,6 +800,10 @@ class Parser {
         else if(typedTrapOption)this.i+=9;
         let localType=typedTrapBool?'trapBoolResult':typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
         const name=this.name();
+        if(!isConst&&!readOnlyLet&&localType==='inferredTrap'&&this.eat(':')){
+          localType=this.valueType();
+          if(!['int','float','bool','string'].includes(localType))fail('name-first binding requires primitive type in this profile',this.peek());
+        }
         if(this.peek().value===';')fail('E_MISSING_INITIALIZER: explicit initializer required',this.peek());
         const directional=this.takeDirection('<');
         if(!directional)this.expect('=');
@@ -1194,6 +1198,18 @@ class Parser {
     }finally{this.taskParsing=false;}
   }
   primary() {
+    // Identical narrow single-break scalar profile to Rust #727.
+    // Keep the computed expression boundary; do not admit bare named
+    // callable references or a general state-loop result join.
+    if(this.peek().value==='loop'&&this.tokens[this.i+1]?.value==='{'){
+      const at=this.peek();this.i+=2;this.expect('break');
+      const value=this.expression();
+      if(!['int','float','bool','string','neg','not','binary','compare','if'].includes(value.kind))
+        fail('value-loop operand requires typed CFG lowering',at);
+      this.expect(';');this.expect('}');
+      if(this.peek().value==='(')fail('calling a computed value loop',this.peek());
+      return value;
+    }
     if(this.peek().value==='sync'&&this.tokens[this.i+1]?.value==='task'){this.i++;return this.inlineTask();}
     if(this.eat('trap!')||this.eat('trap'))return {kind:'trap',inner:this.expression(30)};
     if(this.eat('await'))return {kind:'immediateAwait',inner:this.expression(30)};
