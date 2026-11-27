@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {compileProgramV2,compileToProgramIRV2,compileProgramIRV2} from '../src/program-v2.mjs';
-const source='fnc rhs():bool { stdio.stdout.write("R"); val Option<bool> x=None; return x.unwrap(); } pub fnc main(bool run):int { val Result<bool, Error> r=trap! (run && rhs()); return r.is_err()?42:17; }';
+const source='fnc rhs():bool { stdio.out.write("R"); val Option<bool> x=None; return x.unwrap(); } pub fnc main(bool run):int { val Result<bool, Error> r=trap! (run && rhs()); return r.is_err()?42:17; }';
 const opt={stdout:true};
 test('stdout requires explicit source and IR capability; skipped branch has no output',async()=>{
  assert.throws(()=>compileProgramV2(source),/E_STDOUT_PROFILE/);
@@ -24,4 +24,16 @@ test('stdout rejects shadowing, nonliteral, forged message, and wrong arity',()=
  const ir=compileToProgramIRV2(source,opt);
  ir.functions.find(f=>f.name==='rhs').body.message=42;
  assert.throws(()=>compileProgramIRV2(ir,opt),/error:/);
+});
+
+test('canonical process.stdout.write is equivalent and shadowing remains denied',async()=>{
+ const alternate=source.replace('stdio.out.write','process.stdout.write');
+ const ir=compileToProgramIRV2(alternate,opt);
+ const esm=compileProgramV2(alternate,opt);
+ assert.equal(esm,compileProgramV2(source,opt));
+ assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir)),opt),esm);
+ const guest=await import('data:text/javascript,'+encodeURIComponent(esm));
+ let out='';assert.equal(guest.main(s=>{out+=s;},true),42n);assert.equal(out,'R');
+ const shadow='pub fnc main(bool process):int { process.stdout.write("R"); return 42; }';
+ assert.throws(()=>compileProgramV2(shadow,opt),/E_STDOUT_PROFILE/);
 });
