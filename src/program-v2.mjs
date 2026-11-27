@@ -387,7 +387,7 @@ function rejectUnsupportedStaticSelect(tokens) {
   }
 }
 class Parser {
-  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;}
+  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;this.patternConstants=new Map();this.patternUses=new Set();}
   peek() {return this.tokens[this.i];}
   eat(s) {if(this.peek().value === s) {this.i++; return true;} return false;}
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
@@ -974,6 +974,12 @@ class Parser {
     const modules=[],functions=[],generators=[],classes=[],usedModules=new Set(),usedClasses=new Set();
     const exportDeclarations=[];
     while(this.peek().kind!=='eof'){
+      if(this.peek().value==='const'&&this.tokens[this.i+1]?.value==='Pattern'){
+        if(functions.length||modules.length||classes.length||generators.length||exportDeclarations.length)
+          fail('compile-time Pattern declarations must precede runtime declarations in this profile',this.peek());
+        this.readPatternConstant();
+        continue;
+      }
       if(this.peek().value==='export') {
         if(exportDeclarations.length>=1024)fail('file export budget exceeded',this.peek());
         exportDeclarations.push(this.exportDeclaration());
@@ -1029,6 +1035,14 @@ class Parser {
         if(this.generatorStart())generators.push(this.generator(null));
         else functions.push(this.functions(null));
       }
+    }
+    // Initial file-scope profile: reject any other occurrence of a pattern
+    // constant identifier, including runtime use or shadowing. This is
+    // intentionally conservative until the full lexical resolver supports it.
+    for(let i=0;i<this.tokens.length;i++){
+      const t=this.tokens[i];
+      if(t.kind==='id'&&this.patternConstants.has(t.value)&&!this.patternUses.has(i))
+        fail('compile-time Pattern name cannot escape or be shadowed',t);
     }
     if(this.booleanAliasToken&&(usedClasses.has('boolean')||usedModules.has('boolean')))
       fail('E_TYPE_ALIAS_SHADOWED: boolean requires nominal type resolution',this.booleanAliasToken);
@@ -1417,6 +1431,106 @@ class Parser {
       body={kind:'local',name:names[i],localType:'bool',init:values[i],body};
     return body;
   }
+  // Pattern descriptors exist only inside the parser. The existing checked
+  // scalar match IR receives bounded canonical literals or an int-domain proof.
+  patternRef(array) {
+    const at=this.peek(),entry=this.patternConstants.get(at.value);
+    if(at.kind!=='id'||!entry||entry.array!==array)
+      fail('expected previously declared compile-time '+(array?'Pattern[]':'Pattern'),at);
+    this.patternUses.add(this.i++);
+    return entry.pattern;
+  }
+  combinePatterns(parts) {
+    const values=[],types=[];
+    for(const part of parts){
+      for(const v of part.values){
+        if(values.includes(v))fail('duplicate pattern literal alternative',this.peek());
+        values.push(v);
+      }
+      for(const t of part.types){
+        if(types.includes(t))fail('duplicate canonical type in pattern set',this.peek());
+        types.push(t);
+      }
+      if(values.length+types.length>64)fail('compile-time pattern expansion limit',this.peek());
+    }
+    if(!values.length&&!types.length)fail('empty pattern set',this.peek());
+    return {values,types};
+  }
+  patternTypeList() {
+    const aliases=new Map([['int','int'],['Int','int'],['bool','bool'],['boolean','bool'],
+      ['string','string'],['String','string'],['float','float'],['f64','float']]);
+    const list=this.eat('in'),parts=[];
+    if(list&&this.peek().value!=='['){
+      const entry=this.patternRef(true);
+      if(entry.values.length)fail('is in requires type-test-only Pattern[]',this.peek());
+      return entry;
+    }
+    if(list)this.expect('[');
+    do {
+      const at=this.peek(),type=aliases.get(at.value);
+      if(at.kind!=='id'||type===undefined)fail('expected supported scalar type in type list',at);
+      this.i++;parts.push({values:[],types:[type]});
+    } while(list&&this.eat(','));
+    if(list)this.expect(']');
+    return this.combinePatterns(parts);
+  }
+  patternArray(depth) {
+    if(depth>32)fail('compile-time pattern nesting limit',this.peek());
+    this.expect('[');
+    const parts=[];
+    if(this.peek().value===']')fail('empty Pattern[] is unsupported in this profile',this.peek());
+    do {
+      if(parts.length===64)fail('compile-time pattern collection limit',this.peek());
+      parts.push(this.patternDescriptor(depth+1));
+    } while(this.eat(',')&&this.peek().value!==']');
+    this.expect(']');
+    return this.combinePatterns(parts);
+  }
+  patternMembership(depth) {
+    if(depth>32)fail('compile-time pattern nesting limit',this.peek());
+    if(this.peek().value!=='[')return this.patternRef(true);
+    const next=this.tokens[this.i+1];
+    if(['on','is','in'].includes(next?.value)||this.patternConstants.has(next?.value))
+      return this.patternArray(depth+1);
+    this.expect('[');
+    const parts=[];
+    if(this.peek().value===']')fail('empty membership list',this.peek());
+    do {
+      if(parts.length===64)fail('membership limit: 64 integer alternatives',this.peek());
+      parts.push({values:[this.integer(this.eat('-'))],types:[]});
+    } while(this.eat(',')&&this.peek().value!==']');
+    this.expect(']');
+    return this.combinePatterns(parts);
+  }
+  patternDescriptor(depth=0) {
+    if(depth>32)fail('compile-time pattern nesting limit',this.peek());
+    if(this.eat('on')){
+      if(this.patternConstants.has(this.peek().value))return this.patternRef(false);
+      return {values:[this.integer(this.eat('-'))],types:[]};
+    }
+    if(this.eat('is'))return this.patternTypeList();
+    if(this.eat('in'))return this.patternMembership(depth+1);
+    return this.patternRef(false);
+  }
+  readPatternConstant() {
+    this.expect('const');this.expect('Pattern');
+    const array=this.eat('[');
+    if(array)this.expect(']');
+    const index=this.i,name=this.name();
+    if(this.patternConstants.has(name)||GENERATOR_RESERVED.has(name)||name==='Pattern')
+      fail('duplicate or reserved compile-time Pattern name',this.tokens[index]);
+    if(this.patternConstants.size>=128)fail('compile-time Pattern declaration limit',this.peek());
+    this.expect('=');
+    const pattern=array?this.patternArray(0):this.patternDescriptor();
+    this.expect(';');
+    this.patternUses.add(index);
+    this.patternConstants.set(name,{array,pattern});
+  }
+  scalarPatternArm(pattern) {
+    if(pattern.types.includes('int'))return {tag:'wildcard',value:null};
+    if(pattern.values.length)return {tag:'membership',value:pattern.values};
+    fail('pattern set does not cover admitted int subject',this.peek());
+  }
   matchExpression(injectedSubject=null) {
     // A typed scalar match is a canonical source form, not a new
     // dynamically-dispatched container or unchecked JS pattern primitive.
@@ -1437,41 +1551,22 @@ class Parser {
       if(canonicalDefault||legacyElse) {
         if(family==='adt')fail('ADT match requires exhaustive named variants, not default',this.peek());
         family='int';tag='wildcard';
-      } else if(hasOver&&this.eat('in')) {
-        if(family==='adt')fail('cannot mix integer and ADT patterns',this.peek());
-        family='int';tag='membership';value=[];
-        this.expect('[');
-        if(this.peek().value===']')fail('empty membership list',this.peek());
-        do {
-          if(value.length===64)fail('membership limit: 64 integer alternatives',this.peek());
-          const item=this.integer(this.eat('-'));
-          if(value.includes(item))fail('duplicate membership alternative',this.peek());
-          value.push(item);
-        } while(this.eat(',')&&this.peek().value!==']');
-        this.expect(']');
-      } else if(hasOver&&this.peek().value==='is') {
-        if(family==='adt')fail('scalar type list cannot match ADT',this.peek());
-        this.expect('is');this.expect('in');this.expect('[');
-        const aliases=new Map([['int','int'],['bool','bool'],['boolean','bool'],
-          ['string','string'],['String','string'],['float','float'],['f64','float']]);
-        const types=new Set();
-        do {
-          const at=this.peek(),type=aliases.get(at.value);
-          if(at.kind!=='id'||type===undefined)fail('expected supported scalar type in type list',at);
-          this.i++;
-          if(types.has(type))fail('duplicate canonical type in type list',at);
-          types.add(type);
-        } while(this.eat(','));
-        this.expect(']');
-        if(!types.has('int'))fail('type list does not cover admitted int subject',this.peek());
-        // IR validation requires an int subject. No runtime type coercion.
-        family='int';tag='wildcard';
+      } else if(hasOver&&(this.peek().value==='in'||this.peek().value==='is')){
+        if(family==='adt')fail('cannot mix scalar and ADT patterns',this.peek());
+        family='int';
+        const resolved=this.scalarPatternArm(this.patternDescriptor());
+        tag=resolved.tag;value=resolved.value;
       } else {
         this.expect('on');
         const at=this.peek();
         if(this.eat('default'))
           fail("match fallback must use 'default ->' without 'on'",at);
-        if(this.eat('_')){
+        if(this.patternConstants.has(at.value)){
+          if(family==='adt')fail('cannot mix scalar and ADT patterns',at);
+          family='int';
+          const resolved=this.scalarPatternArm(this.patternRef(false));
+          tag=resolved.tag;value=resolved.value;
+        } else if(this.eat('_')){
           if(family==='adt')fail('ADT match forbids wildcard');
           family='int';tag='wildcard';
         } else if(['Some','None','Ok','Err'].includes(at.value)){

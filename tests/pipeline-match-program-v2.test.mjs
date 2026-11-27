@@ -91,3 +91,38 @@ test('membership syntax rejects unsupported and invalid inputs before emission',
   ])assert.throws(()=>compileProgramV2('pub fnc main():int { return match 2 over '+arms+' end; }'),/error:/,arms);
   assert.throws(()=>compileProgramV2('pub fnc main():int { return match true over is in [int,bool] -> 42 end; }'),/error:/);
 });
+
+test('compile-time Pattern declarations erase into ordinary checked match IR',async()=>{
+  const prefix='const Pattern p1 = on 5; const Pattern p2 = is Int; const Pattern p3 = in [6,7]; const Pattern[] z = [p1,p3]; const Pattern[] types = [is int,is bool]; ';
+  const src=prefix+'pub fnc main(int x):int { return match x over on p1 -> 5, in z -> 42, is in types -> 0 end; }';
+  const direct='pub fnc main(int x):int { return match x over on 5 -> 5, in [6,7] -> 42, is in [int,bool] -> 0 end; }';
+  assert.deepEqual(compileToProgramIRV2(src),compileToProgramIRV2(direct));
+  const g=await load(src);
+  assert.equal(g.main(5n),5n);
+  assert.equal(g.main(6n),42n);
+  assert.equal(g.main(7n),42n);
+  assert.equal(g.main(8n),0n);
+  assert.equal((await load(prefix+'pub fnc main():int { return 7 |> match over on p2 -> 42 end; }')).main(),42n);
+  assert.equal((await load('pub fnc main():int { return match 3 over in [on 1,in [2,3]] -> 42,on _ -> 0 end; }')).main(),42n);
+  assert.equal((await load('const Pattern[] types = [is int,is bool]; pub fnc main():int { return match 3 over in types -> 42 end; }')).main(),42n);
+});
+test('compile-time Pattern constants cannot escape or be silently widened',()=>{
+  const invalid=[
+    'const Pattern p = on 5; pub fnc main():int { return p; }',
+    'const Pattern p = on 5; pub fnc main(int p):int { return match p over on p -> 42,on _ -> 0 end; }',
+    'const Pattern p = on q; const Pattern q = on p; pub fnc main():int { return 42; }',
+    'const Pattern[] z = [on 1,2]; pub fnc main():int { return 42; }',
+    'const Pattern[] z = [is int,on 1]; pub fnc main():int { return match 1 over is in z -> 42 end; }',
+    'const Pattern[] z = [on 1,on 1]; pub fnc main():int { return 42; }',
+    'const Pattern[] z = [is int,is Int]; pub fnc main():int { return 42; }',
+    'const Pattern p = on 1; pub fnc main():int { return match 1 over in p -> 42,on _ -> 0 end; }',
+    'const Pattern[] z = [on 1]; pub fnc main():int { return match 1 over on z -> 42,on _ -> 0 end; }',
+    'const Pattern p = on 1; fnc use(Pattern x):int { return 42; } pub fnc main():int { return use(p); }',
+    'pub fnc main(int n):int { const Pattern p = on n; return 42; }',
+    'const Pattern p = on true; pub fnc main():int { return 42; }',
+    'const Pattern p = is Foo; pub fnc main():int { return 42; }',
+    'const Pattern[] z = [on 1,on 2]; pub fnc main():int { return match 2 over in z -> 42,on 2 -> 0,on _ -> 0 end; }',
+    'const Pattern[] z = ['+Array.from({length:65},(_,i)=>'on '+i).join(',')+']; pub fnc main():int { return 42; }'
+  ];
+  for(const src of invalid)assert.throws(()=>compileProgramV2(src),/error:/,src);
+});
