@@ -1161,7 +1161,7 @@ class Parser {
             if(declarations.has(namespace))fail('E_TASK_DEFER: shadowed stdout namespace',this.peek());
             this.expect('.');this.expect(namespace==='stdio'?'out':'stdout');this.expect('.');this.expect('write');this.expect('(');
             const literal=this.peek();
-            if(literal.kind!=='localString'||!(/^[ -~]{0,256}$/).test(literal.literal))fail('E_TASK_DEFER: bounded printable ASCII stdout literal required',literal);
+            if(literal.kind!=='localString'||typeof literal.literal!=='string'||literal.literal.length>256||/[^ -~]/.test(literal.literal))fail('E_TASK_DEFER: bounded printable ASCII stdout literal required',literal);
             this.i++;this.expect(')');this.expect(';');
             locals.push({stdout:true,namespace,message:literal.literal});
             if(locals.length>64)fail('E_TASK_LOCAL: local and write budget exceeded',this.peek());
@@ -2277,7 +2277,7 @@ function emitProgram(program) {
     // No ambient process, console, global buffer or host callback is exposed.
     out.push('export function main(){throw new Error("E_PERMISSION: deferred stdout requires runtime grant");}');
     out.push('export function runWithDeferredStdout(grant){if(grant!==true)throw new Error("E_PERMISSION: deferred stdout requires runtime grant");let stdout="";const value=_f0(s=>{if(stdout.length+s.length>4096)throw new Error("E_PERMISSION: deferred stdout quota exceeded");stdout+=s;});return Object.freeze({value,stdout});}');
-    return out.join("\\n")+"\\n";
+    return out.join('\n')+'\n';
   }
   let dispatcherNumber=0;
   function publicCallableGroups(module) {

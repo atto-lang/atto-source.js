@@ -30,3 +30,15 @@ test('quota failure is not an ordinary guest error and cannot be trapped',async(
   const m=await moduleFor(main('val Result<int,Error> r=trap! sync task<int>{'+writes+'return 42;};return 42;'));
   assert.throws(()=>m.runWithDeferredStdout(true),/quota exceeded/);
 });
+
+test('serialized stdout denies forged control characters, oversized payload, and extra fields',()=>{
+  const src=main('return sync task<int>{defer stdio.out.write("D");return 42;};');
+  const raw=compileToProgramIRV2(src,opts);
+  const find=(x,k)=>x&&typeof x==='object'?(x.kind===k?x:Object.values(x).map(y=>find(y,k)).find(Boolean)):undefined;
+  for(const message of ['D\n','\r','\t','x'.repeat(257),'é']){
+    const ir=JSON.parse(JSON.stringify(raw));find(ir,'deferStdout').message=message;
+    assert.throws(()=>compileProgramIRV2(ir,opts),/invalid deferred stdout literal/);
+  }
+  const ir=JSON.parse(JSON.stringify(raw));find(ir,'deferStdout').callback='host';
+  assert.throws(()=>compileProgramIRV2(ir,opts));
+});

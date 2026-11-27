@@ -530,7 +530,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowDeferr
         record(expr,['kind','message','body'],'deferred stdout');
         if(allowDeferredStdout!==true||allowScalarWhile===true)fail('E_PERMISSION: deferred stdout requires compile grant');
         if(headers.length!==1||owner!==0||headers[0].name!=='main'||headers[0].module!==null||!headers[0].pub||headers[0].params.length!==0||(headers[0].returnType??'int')!=='int'||generatorHeaders.length||classHeaders.length||moduleNames.length||namespace!==null||hasFileExports)fail('E_PERMISSION: deferred stdout requires single root main');
-        if(typeof expr.message!=='string'||!(/^[ -~]{0,256}$/).test(expr.message))fail('E_PERMISSION: invalid deferred stdout literal');
+        if(typeof expr.message!=='string'||expr.message.length>256||/[^ -~]/.test(expr.message))fail('E_PERMISSION: invalid deferred stdout literal');
         return {kind:'deferStdout',message:expr.message,body:node(expr.body,owner,depth+1,expected,active)};
       }
       case 'deferIntLocal':case 'setIntLocal':{
