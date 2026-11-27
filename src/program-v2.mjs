@@ -892,7 +892,7 @@ class Parser {
       switch(expr.kind){
         case 'int':case 'float':case 'bool':case 'string':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':break;
         case 'tryCatch':add(expr.body);add(expr.handler);break;
-        case 'neg':case 'not':case 'trap':case 'immediateAwait':case 'intTypeTest':add(expr.inner);break;
+        case 'neg':case 'not':case 'trap':case 'inlineScalarTask':case 'immediateAwait':case 'intTypeTest':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
@@ -1146,9 +1146,34 @@ class Parser {
     if(!this.eat('}'))fail("single-result ternary block requires closing '}'",this.peek(),'E_VALUE_ARM');
     return value;
   }
+  // Same-thread lexical value task: no Future, scheduling or escaping state.
+  // The bounded read-only subset lowers into existing validated expression IR.
+  inlineScalarTask() {
+    const at=this.peek();
+    if(this.inlineScalarTaskDepth)fail('E_INLINE_TASK: nested inline task unsupported',at);
+    this.expect('sync');this.expect('task');this.expect('<');this.expect('int');this.expect('>');this.expect('{');
+    this.inlineScalarTaskDepth=1;
+    let statements;
+    try {statements=this.statementSequence(['}']);this.expect('}');}
+    finally {this.inlineScalarTaskDepth=0;}
+    if(!this.returnsOnAllPaths(statements))fail('E_INLINE_TASK: explicit int return required',at);
+    const admit=stmts=>{
+      for(const stmt of stmts){
+        if(stmt.kind==='return')continue;
+        if(stmt.kind==='local'&&!stmt.writable&&!stmt.rebind&&['int','bool','option<int>'].includes(stmt.localType))continue;
+        if(stmt.kind==='branch'){admit(stmt.yes);admit(stmt.no);continue;}
+        fail('E_INLINE_TASK: unsupported mutation, effect or cleanup',at);
+      }
+    };
+    admit(statements);
+    const inner=this.lowerStatements(statements,null);
+    if(!inner)fail('E_INLINE_TASK: missing value return',at);
+    return {kind:'inlineScalarTask',inner};
+  }
   primary() {
+    if(this.peek().value==='sync'&&this.tokens[this.i+1]?.value==='task')return this.inlineScalarTask();
     if(this.eat('trap!')||this.eat('trap'))return {kind:'trap',inner:this.expression(30)};
-    if(this.eat('await'))return {kind:'immediateAwait',inner:this.expression(30)};
+    if(this.eat('await')){if(this.inlineScalarTaskDepth)fail('E_INLINE_TASK: suspension unsupported',this.peek());return {kind:'immediateAwait',inner:this.expression(30)};}
     if(this.eat('!')||this.eat('¬')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
     if(this.eat('new')){
       const className=this.name();
@@ -1601,6 +1626,34 @@ function resolveProgram(parsed) {
         const index=owner.params.indexOf(expr.name);
         if(index<0) fail('unresolved identifier '+expr.name);
         return {kind:'param',index};
+      }
+      case 'inlineScalarTask':{
+        if(owner.ownerKind==='method')fail('E_INLINE_TASK: method receiver capture unsupported');
+        const inner=resolve(expr.inner,owner,depth+1,bindings);
+        // Resolve every branch before checking this closed effect whitelist.
+        // Existing IR validation still proves slot/type ownership and checks
+        // both arms, including statically unreachable arms.
+        const admit=e=>{
+          switch(e.kind){
+            case 'int':case 'bool':case 'capture':case 'boolCapture':case 'optionCapture':return;
+            case 'param':
+              if(['int','bool','option<int>'].includes(resolvedType(e,owner)))return;
+              break;
+            case 'neg':case 'not':admit(e.inner);return;
+            case 'binary':case 'compare':case 'boolCompare':admit(e.left);admit(e.right);return;
+            case 'if':admit(e.condition);admit(e.yes);admit(e.no);return;
+            case 'local':case 'boolLocal':case 'optionLocal':admit(e.init);admit(e.body);return;
+            case 'intrinsic':
+              if(['Option.some','Option.none','Option.unwrap','Option.is_some','Option.unwrap_or'].includes(e.name)){
+                e.args.forEach(admit);return;
+              }
+              break;
+          }
+          fail('E_INLINE_TASK: unsupported operand effect or capture');
+        };
+        admit(inner);
+        if(resolvedType(inner,owner)!=='int')fail('E_INLINE_TASK: requires int result');
+        return inner;
       }
       case 'trap':{
         if(owner.ownerKind==='method')fail('trap in methods unsupported');
