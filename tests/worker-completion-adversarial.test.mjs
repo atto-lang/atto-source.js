@@ -8,7 +8,7 @@ function setup(complete = () => true) {
   const deliveries = [], cancellations = [];
   const loop = {
     attachOwner: () => true,
-    retireOwner: () => true,
+    requestRetireOwner: () => true,
     beginSuspension: () => ({}),
     complete(ticket, value) { deliveries.push(value); return complete(ticket, value); },
     cancel(ticket) { cancellations.push(ticket); return true; },
