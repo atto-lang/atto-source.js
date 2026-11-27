@@ -344,3 +344,33 @@ test('active DATA and CONTROL quanta pin their owner through return or throw',()
     }
   }
 });
+
+test('terminal request seals an executing owner and retires only after return or throw',()=>{
+  for(const fails of [false,true]){
+    const h=harness(),seen=[];
+    h.loop.attachOwner('a',1);
+    h.loop.attachOwner('b',1);
+    const old=h.loop.beginSuspension('a',1,()=>seen.push('bad-resume'));
+    h.loop.admitData('a',1,()=>{
+      seen.push(h.loop.requestRetireOwner('a',1));
+      seen.push(h.loop.stats.owners);
+      seen.push(h.loop.admitData('a',1,()=>seen.push('bad-data')));
+      seen.push(h.loop.complete(old,9));
+      seen.push(h.loop.retainOwner('a',1));
+      seen.push(h.loop.attachOwner('a',2));
+      if(fails)throw Error('expected');
+    });
+    h.loop.admitData('a',1,()=>seen.push('abandoned'));
+    h.loop.admitData('b',1,()=>seen.push('peer'));
+    h.step();
+    assert.deepEqual(seen,[true,2,false,false,null,false]);
+    assert.equal(h.loop.stats.owners,1);
+    assert.equal(h.loop.stats.suspended,0);
+    assert.equal(h.loop.stats.dropped,1);
+    assert.equal(h.loop.stats.errors,fails?1:0);
+    assert.equal(h.loop.attachOwner('a',2),true);
+    h.loop.admitData('a',2,()=>seen.push('fresh'));
+    h.drain();
+    assert.deepEqual(seen.slice(-2),['peer','fresh']);
+  }
+});
