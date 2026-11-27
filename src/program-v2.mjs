@@ -1228,14 +1228,21 @@ class Parser {
     // Preserve the existing scalar-only admission boundary: a non-scalar AST
     // is not by itself proof of the checked-effect profile.
     let checkedEffect=false;
+    const standaloneUnwraps=[];
     const inspect=(e,d=0)=>{
       if(!e||typeof e!=='object')return;
       if(d>MAX_DEPTH)fail('E_TASK_UNSUPPORTED: task expression depth');
       if(e.kind==='immediateAwait')fail('E_TASK_UNSUPPORTED: await in synchronous inline task',this.peek());
       if(e.kind==='taskSet'||e.kind==='taskDefer'||(e.kind==='methodCall'&&['unwrap','expect'].includes(e.name)))checkedEffect=true;
+      if(e.kind==='call'&&e.qualifier!==null&&e.name==='unwrap'&&e.args.length===0)standaloneUnwraps.push(e);
       for(const value of Object.values(e))inspect(value,d+1);
     };
     inspect(tail);
+    if(!checkedEffect&&standaloneUnwraps.length){
+      // Only the newly admitted standalone path needs this narrower receiver proof.
+      for(const expr of standaloneUnwraps)expr.standaloneTaskUnwrap=true;
+      checkedEffect=true;
+    }
     if(!checkedEffect)fail('E_TASK_UNSUPPORTED: task expression requires a checked-effect operation',this.peek());
     if(!explicit||scalarOnly)fail('E_SYNC_TASK_PROFILE: inferred or mutable task-local profile requires scalar expressions',this.peek());
     // The checked-effect profile remains explicit and does not admit nested tasks.
@@ -1885,6 +1892,8 @@ function resolveProgram(parsed) {
         yes:resolve(expr.yes,owner,depth+1,bindings),no:resolve(expr.no,owner,depth+1,bindings)};
       case 'call': {
         const local=bindings.findLast(b=>b.name===expr.qualifier);
+        if(expr.standaloneTaskUnwrap&&(!owner.inlineTask||!local||!['option<int>','result<int,int>'].includes(local.type)||expr.args.length!==0))
+          fail('E_SYNC_TASK_PROFILE: checked unwrap requires a typed lexical Option<int> or Result<int,int>');
         if(local){
           if(local.type==='option<bool>'){
             if(expr.name!=='unwrap'||expr.args.length!==0)fail('unsupported bool Option method/arity');
