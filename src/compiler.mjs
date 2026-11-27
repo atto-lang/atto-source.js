@@ -331,7 +331,11 @@ class Parser {
         field=this.scalarConsts?.get(key);
         if(!field)throw new CompileError('E_TYPE_INFER_AMBIGUOUS: capture needs a local const scalar',this.peek());
       }else{
-        if(kind!=='Tuple')this.expect(open==='{'?':':'=');
+        // Record punctuation is independent of its delimiter. Keep nominal
+        // Struct field grammar and positional Tuple grammar unchanged.
+        if(kind==='Record'){
+          if(!this.match(':'))this.expect('=');
+        }else if(kind==='struct')this.expect(':');
         field=this.readAggregateScalar(params,allowRuntime);
       }
       fields.set(key,field);

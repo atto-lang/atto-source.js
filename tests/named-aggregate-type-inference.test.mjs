@@ -65,3 +65,20 @@ test('capture resolves only initialized lexical scalar constants and preserves t
   assert.throws(()=>compileToIR('pub fnc f(int age):int{const z=(:age);return z.age;}'));
   assert.throws(()=>compileToIR('fnc f():int{const age=42;return age;} pub fnc main():int{const z=(:age);return z.age;}'));
 });
+
+test('mixed colon and equals scalar Record fields preserve named shapes and execution',async()=>{
+  for(const expression of ['{foo=40,bar:2}','(foo:40,bar=2)','{foo=40,bar=2,}','(foo:40,bar:2)']){
+    assert.equal(await run('const r='+expression+'; return r.foo+r.bar;'),42n,expression);
+  }
+  assert.equal(await run('const Record<infer T> r={foo=40,bar:2}; const Record<T> s=(bar:2,foo=40); return s.foo+s.bar;'),42n);
+});
+test('mixed Record syntax retains duplicate, delimiter, and kind boundaries',()=>{
+  for(const body of [
+    'const r={foo=1,foo:2}; return 0;',
+    'const r=(foo:1,foo=2); return 0;',
+    'const r={foo=1\nbar=2}; return 0;',
+    'const r=(foo:1,2); return 0;',
+    'const struct r={foo=1}; return 0;',
+    'const r={foo:1;bar:2}; return 0;',
+  ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),undefined,body);
+});
