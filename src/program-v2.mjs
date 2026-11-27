@@ -387,7 +387,7 @@ function rejectUnsupportedStaticSelect(tokens) {
   }
 }
 class Parser {
-  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;this.scalarDenotations=new Map();}
+  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;this.scalarDenotations=new Map();this.literalDenotations=new Map();}
   peek() {return this.tokens[this.i];}
   eat(s) {if(this.peek().value === s) {this.i++; return true;} return false;}
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
@@ -468,11 +468,28 @@ class Parser {
         'Boolean','Float','Array','List','Vector','Tuple','Record','Map','Set','Pair','Entry',
         'Pointer','Channel','Future','Task','Duration','UUID','Any','Never','Sendable',
         'Serializable','Copyable','DeepCopyable','Newable','Atomic','Mutex','RwLock'].includes(name)||
-       this.scalarDenotations.has(name))
+       this.scalarDenotations.has(name)||this.literalDenotations.has(name))
       fail('duplicate, reserved or unsupported denotation name '+name,start,'E_DUPLICATE');
-    if(this.scalarDenotations.size>=512)fail('denotation count limit',start,'E_SOURCE_LIMIT');
+    if(this.scalarDenotations.size+this.literalDenotations.size>=512)fail('denotation count limit',start,'E_SOURCE_LIMIT');
     this.expect('=');
+    if(this.peek().kind==='int'||this.peek().value==='-'){
+      const members=new Set();
+      do {
+        if(members.size>=128)fail('literal union member budget exceeded',this.peek(),'E_DENOTE_LIMIT');
+        const value=this.integer(this.eat('-'));
+        if(members.has(value))fail('duplicate literal union member',this.peek(),'E_DENOTE_DUPLICATE_MEMBER');
+        members.add(value);
+      }while(this.eat('|'));
+      this.expect(';');
+      this.literalDenotations.set(name,members);
+      return;
+    }
     const rhs=this.peek(),type=['int','bool'].includes(rhs.value)?rhs.value:this.scalarDenotations.get(rhs.value);
+    if(this.literalDenotations.has(rhs.value)){
+      this.i++;this.expect(';');
+      this.literalDenotations.set(name,this.literalDenotations.get(rhs.value));
+      return;
+    }
     if(rhs.kind!=='id'||type===undefined)
       fail('unresolved or unsupported scalar denotation RHS',rhs,'E_UNSUPPORTED_TYPE');
     this.i++;
@@ -480,6 +497,8 @@ class Parser {
     this.scalarDenotations.set(name,type);
   }
   valueType() {
+    if(this.literalDenotations.has(this.peek().value))
+      fail('literal denotation requires a proven immutable local initializer in this profile',this.peek(),'E_DENOTE_BOUNDARY_UNSUPPORTED');
     if(this.scalarDenotations.has(this.peek().value))
       return this.scalarDenotations.get(this.tokens[this.i++].value);
     if(this.eat('int'))return 'int';
@@ -824,6 +843,21 @@ class Parser {
         const typedTrapBool=this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')==='Result < bool , Error >';
         if(typedTrapResult||typedTrapBool)this.i+=6;
         else if(typedTrapOption)this.i+=9;
+        // A literal denotation must not be erased by the general scalar parser.
+        // Only a fixed local initialized by a proven member is supported.
+        const literalMembers=this.tokens[this.i+1]?.kind==='id'?this.literalDenotations.get(this.peek().value):undefined;
+        if(literalMembers){
+          if(readOnlyLet)fail('literal denotation requires immutable val or const',this.peek(),'E_DENOTE_BOUNDARY_UNSUPPORTED');
+          this.i++;
+          const name=this.name();
+          this.expect('=');
+          const init=this.expression();
+          this.expect(';');
+          if(init.kind!=='int'||!literalMembers.has(init.value))
+            fail('literal denotation initializer is not a proven member',this.peek(),'E_DENOTE_MEMBERSHIP');
+          statements.push({kind:'local',name,init,localType:isConst?'constInt':'int',writable:false,taskWritable:false});
+          continue;
+        }
         let localType=typedTrapBool?'trapBoolResult':typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():(['Option','Result'].includes(this.peek().value)||(this.scalarDenotations.has(this.peek().value)&&this.tokens[this.i+1]?.kind==='id'))?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
         const name=this.name();
         if(!isConst&&!readOnlyLet&&localType==='inferredTrap'&&this.eat(':')){
@@ -1060,7 +1094,7 @@ class Parser {
         else functions.push(this.functions(null));
       }
     }
-    if(this.scalarDenotations.size&&(classes.length||modules.length||generators.length||exportDeclarations.length))
+    if((this.scalarDenotations.size||this.literalDenotations.size)&&(classes.length||modules.length||generators.length||exportDeclarations.length))
       fail('denotations with nominal, module, generator or explicit export declarations require linked type identities',this.peek(),'E_UNSUPPORTED');
     if(this.booleanAliasToken&&(usedClasses.has('boolean')||usedModules.has('boolean')))
       fail('E_TYPE_ALIAS_SHADOWED: boolean requires nominal type resolution',this.booleanAliasToken);
