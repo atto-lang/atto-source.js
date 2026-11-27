@@ -58,3 +58,16 @@ test('legacy parenthesized callable body keeps explicit export rules',async()=>{
   assert.throws(()=>compileProgramV2('pub fnc main() -> int :: (true) end'));
   assert.throws(()=>compileProgramV2('pub fnc main() -> int :: (42 end'));
 });
+
+test('stored named context slots map by schema while evaluating in source order',async()=>{
+ for(const [src,want] of [
+ [multi('const x = Scale::(offset=7,factor=5); return x.apply(7);'),42n],
+ [multi('let n = 3; const x = Scale::(offset=n+1,factor=n); set n = 9; return x.apply(5) + Scale::(2,1).apply(7);'),34n],
+ [source('let n = 6; const x = Scale::(factor=n); set n = 1; return x.apply(7);'),42n]
+ ]){
+  const mod=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(compileProgramV2(src)));
+  assert.equal(mod.main(),want);
+ }
+ for(const body of ['const x = Scale::(offset=7,offset=5); return x.apply(7);','const x = Scale::(offset=7,5); return x.apply(7);','const x = Scale::(unknown=7,factor=5); return x.apply(7);','const x = Scale::(offset=7); return x.apply(7);','const x = Scale::(offset=true,factor=5); return x.apply(7);','const x = Scale::(offset=7,factor=5); set x = 2; return x.apply(7);'])
+  assert.throws(()=>compileProgramV2(multi(body)),undefined,body);
+});
