@@ -915,7 +915,9 @@ class Parser {
         if(total>MAX_TOKENS)fail('expanded conditional IR node budget exceeded');
       }
       switch(expr.kind){
-        case 'int':case 'float':case 'bool':case 'string':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':break;
+        case 'int':case 'float':case 'bool':case 'string':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':case 'stageArg':break;
+        case 'stageSelf':add(expr.inner);break;
+        case 'closedNamedStage':add(expr.input);add(expr.body);break;
         case 'tryCatch':add(expr.body);add(expr.handler);break;
         case 'neg':case 'not':case 'trap':case 'immediateAwait':case 'intTypeTest':case 'inlineScalarTask':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
@@ -2311,6 +2313,7 @@ function emitProgram(program) {
     if(expr===null)return false;
     switch(expr.kind) {
       case 'symbol':return true;
+      case 'closedNamedStage':return usesSymbol(expr.input);
       case 'newClass':return false;
       case 'methodCall':case 'namedMethodCall':
         return usesSymbol(expr.receiver)||expr.args.some(usesSymbol);
@@ -2360,6 +2363,7 @@ function emitProgram(program) {
     if(expr===null)return false;
     switch(expr.kind) {
       case 'intrinsic':case 'trap':case 'trapMethod':case 'trapOptionMethod':case 'trapBoolMethod':return true;
+      case 'closedNamedStage':return usesPortableRuntime(expr.input);
       case 'newClass':return false;
       case 'methodCall':case 'namedMethodCall':
         return usesPortableRuntime(expr.receiver)||expr.args.some(usesPortableRuntime);
