@@ -22,6 +22,7 @@ function checked_decimal(token, ceiling=INT_MAX) {
 }
 function tokenize(source) {
   const tokens = [];
+  const offsets = [];
   let i=0;
   while (i < source.length) {
     const tail = source.slice(i);
@@ -39,16 +40,22 @@ function tokenize(source) {
       if(!/^[ \t\r\n\v\f]$/.test(tail[bang[0].length]??''))
         throw new TranspileError('E_BANG_KEYWORD_WHITESPACE');
       tokens.push(bang[0]);
+      offsets.push(i);
       if(tokens.length>MAX_TOKENS)throw new TranspileError('E_TOKEN_LIMIT');
       i+=bang[0].length;
       continue;
     }
-    const token = /^(?:"(?:\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})|[^"\\\x00-\x1f])*"|->|<<<|>>>|<<|>>|\^\^|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;,+*\-.=<>?^&|])/.exec(tail);
+    const token = /^(?:"(?:\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})|[^"\\\x00-\x1f])*"|->|<<<|>>>|<<|>>|\^\^|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[(){}:;,+*\-.=<>!?^&|])/.exec(tail);
     if (!token) throw new TranspileError('E_UNSUPPORTED_TOKEN');
+    // Bare bangs are admitted only for explicitly unlowered actor forms.
+    if(token[0]==='!' && !['stop','pipe','rpipe','share'].includes(tokens.at(-1)))
+      throw new TranspileError('E_UNSUPPORTED_TOKEN');
     tokens.push(token[0]);
+    offsets.push(i);
     if (tokens.length > MAX_TOKENS) throw new TranspileError('E_TOKEN_LIMIT');
     i += token[0].length;
   }
+  Object.defineProperty(tokens,'offsets',{value:offsets});
   return tokens;
 }
 // Only split shift-like closers in recognized type contexts. Never join
@@ -115,7 +122,36 @@ function checked_tokens(source) {
   // Trojan Source controls can reorder displayed source invisibly.
   if (/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(source))
     throw new TranspileError('E_BIDI_CONTROL');
-  const tokens=normalize_generic_closers(tokenize(source));
+  const rawTokens=tokenize(source);
+  {
+    const tokens=rawTokens;
+  // Continuous actor/channel/stream pipelines have no executable guest ABI in
+  // this JS subset. Lex first so comments cannot accidentally authorize or
+  // reject a program; preserve |> as the separate functional operator.
+  if(tokens.includes('pipe') || tokens.includes('rpipe'))
+    throw new TranspileError('E_UNSUPPORTED_CONTINUOUS_PIPE');
+
+  for(let i=0;i<tokens.length;i++){
+    const current=tokens[i],next=tokens[i+1];
+    // Alias/imported Topic handles need no local actor.group/Topic spelling.
+    // Reject before JS emission; no checked Topic/Result/share! runtime exists.
+    if(current==='.'&&next==='try_publish')
+      throw new TranspileError('E_ACTOR_PUBSUB_UNSUPPORTED');
+    // The contextual stop! spelling is only recognized with contiguous '!'.
+    // A separated operator stays an unsupported expression, not a rewritten
+    // actor STOP request. Neither form has executable graceful-stop lowering.
+    if(current==='stop'&&next==='!' &&
+       tokens.offsets[i+1]===tokens.offsets[i]+4)
+      throw new TranspileError('E_STOP_BACKEND_UNSUPPORTED');
+    if(current==='.'&&(next==='get_ready'||next==='get_done')&&tokens[i+2]==='(')
+      throw new TranspileError(next==='get_ready'
+        ?'E_UNSUPPORTED_ACTOR_READY_FUTURE'
+        :'E_UNSUPPORTED_ACTOR_DONE_FUTURE');
+    if(current==='.'&&(next==='ready'||next==='done'))
+      throw new TranspileError('E_UNSUPPORTED_ACTOR_LIFECYCLE_PROPERTY');
+  }
+  }
+  const tokens=normalize_generic_closers(rawTokens);
   reject_unsupported_mutex_constructor(tokens);
   return tokens;
 }
@@ -283,20 +319,114 @@ function transpile_actor_tokens(tokens) {
     const token=tokens[i++];
     if(!/^[0-9]+$/.test(token??''))
       throw new TranspileError('E_UNSUPPORTED_ACTOR_LITERAL');
-    // Check the significant decimal digits before materializing BigInt.
-    // An attacker can supply a near-MAX_SOURCE decimal literal; avoid
-    // allocating a huge temporary bignum merely to reject it.
-    const magnitude=checked_decimal(token,negative?INT_MAX+1n:INT_MAX);
+    const magnitude=checked_decimal(token, negative?INT_MAX+1n:INT_MAX);
     return negative ? -magnitude : magnitude;
   };
   expect('define');expect('actor');
   const actor=identifier();
-  expect('as');expect('let');expect('int');
+  // Stage 1 typed ingress: the only executable actor subset has exactly one
+  // ActorMail<int> handler and a checked signed-i64 worker wire. An explicit
+  // receives header must describe that EXISTING handler, never widen it.
+  let received=null;
+  if(peek()==='receives'){
+    i++;
+    received=identifier();
+    if(received==='never')throw new TranspileError('E_ACTOR_RECEIVES_NEVER_UNSUPPORTED');
+    if(received!=='int'&&received!=='bool')throw new TranspileError('E_ACTOR_RECEIVES');
+  }
+  // In this exact admitted program shape the actor handler only updates its
+  // scalar state and prints. There are NO application send operations, helper
+  // calls, dynamic actor references or user callbacks in the accepted grammar.
+  // Its statically computed outbound effect is therefore the empty set; it
+  // respects any supported declared upper bound. This does NOT generalize to
+  // future actor-to-actor sends without a genuine typed call-graph checker.
+  if(peek()==='sends'){
+    i++;
+    const payload=identifier();
+    if(payload==='void')throw new TranspileError('E_ACTOR_SEND_CONTRACT');
+    if(!['int','bool','never'].includes(payload))
+      throw new TranspileError('E_ACTOR_SENDS_EFFECT_UNSUPPORTED');
+  }
+  if(peek()==='sends'||peek()==='receives')
+    throw new TranspileError('E_ACTOR_CONTRACT');
+  if(peek()==='emits')throw new TranspileError('E_ACTOR_EMITS_EFFECT_UNSUPPORTED');
+  expect('as');
+  // Independent trusted-JS boolean mailbox profile. This is generated JS
+  // guest execution, NOT a compiled Wasm inbox or cross-tenant capability.
+  // Source grammar is deliberately exact: no host callbacks, dynamic sends,
+  // generic erasure, mutable aliases or arbitrary JavaScript expressions.
+  if(peek()==='let' && tokens[i+1]==='bool'){
+    if(received!==null&&received!=='bool')
+      throw new TranspileError('E_ACTOR_RECEIVES');
+    expect('let');expect('bool');
+    const field=identifier();
+    expect('=');
+    const initial=peek();
+    if(initial!=='false'&&initial!=='true')
+      throw new TranspileError('E_UNSUPPORTED_ACTOR_LITERAL');
+    i++;expect(';');
+    if(peek()==='susp')i++; // syntactic only, no await/resume body admitted
+    expect('receive');expect('(');
+    expect('ActorMail');expect('<');
+    const handlerPayload=identifier();
+    expect('>');
+    if(handlerPayload!=='bool')throw new TranspileError('E_ACTOR_RECEIVES');
+    const mail=identifier();
+    expect(')');expect(':');expect('void');expect('{');
+    expect('self');expect('.');expect(field);expect('=');
+    expect(mail);expect('.');expect('value');expect(';');
+    expect('stdio');expect('.');expect('println');expect('(');
+    expect('self');expect('.');expect(field);expect(')');expect(';');
+    if(peek()==='^')i++;else expect('return');expect(';');expect('}');expect('end');
+    if(peek()==='pub')i++;
+    if(peek()==='susp')i++;
+    expect('fnc');expect('main');expect('(');expect(')');expect(':');
+    expect('int');expect('{');expect('val');
+    identifier();
+    expect('=');expect('spawn');expect(actor);expect('(');expect(')');
+    expect(';');if(peek()==='^')i++;else expect('return');
+    const main_value=literal();
+    expect(';');expect('}');
+    if(i!==tokens.length)throw new TranspileError('E_TRAILING_SOURCE');
+    const code=[
+      '// Generated by AttoLang strict boolean DATA mailbox subset; trusted JS only.',
+      'export async function create_tenant({tenant,generation}){',
+      ' let initialized=false;',
+      ' let state='+initial+';',
+      ' return {',
+      '  async on_message(){',
+      "   if(initialized)throw new Error('E_MAIN_ALREADY_CALLED');",
+      '   initialized=true;',
+      "   return {value:'"+main_value+"',stdout:'',actors:1};",
+      '  },',
+      '  async on_route({actor_id,wire_type,buffer}){',
+      "   if(!initialized)throw new Error('E_GUEST_NOT_READY');",
+      "   if(actor_id!==1)throw new Error('E_ACTOR_REF');",
+      "   if(wire_type!=='bool'||!(buffer instanceof ArrayBuffer)||buffer.byteLength!==1)",
+      "    throw new Error('E_ROUTE_WIRE');",
+      '   const raw=new DataView(buffer).getUint8(0);',
+      "   if(raw!==0&&raw!==1)throw new Error('E_ROUTE_WIRE');",
+      '   state=raw===1;',
+      "   return {value:'delivered',stdout:String(state)+'\\n',actors:1};",
+      '  }',
+      ' };',
+      '}',
+      ''
+    ].join('\n');
+    return {backend:'js',trusted:true,guest_abi:'atto.js.browser.actor-subset.v1',module_source:code};
+  }
+  if(received==='bool')throw new TranspileError('E_ACTOR_RECEIVES');
+  expect('let');expect('int');
   const field=identifier();
   expect('=');
   const initial=literal();
-  expect(';');expect('receive');expect('(');
-  expect('ActorMail');expect('<');expect('int');expect('>');
+  expect(';');
+  if(peek()==='susp')i++; // inert marker in the fixed no-await actor subset
+  expect('receive');expect('(');
+  expect('ActorMail');expect('<');
+  const handlerPayload=identifier();
+  expect('>');
+  if(handlerPayload!=='int')throw new TranspileError('E_ACTOR_RECEIVES');
   const mail=identifier();
   expect(')');expect(':');expect('void');expect('{');
   expect('self');expect('.');expect(field);expect('=');
@@ -306,6 +436,7 @@ function transpile_actor_tokens(tokens) {
   expect('self');expect('.');expect(field);expect(')');expect(';');
   if(peek()==='^')i++;else expect('return');expect(';');expect('}');expect('end');
   if(peek()==='pub')i++;
+  if(peek()==='susp')i++; // still no general async/continuation lowering
   expect('fnc');expect('main');expect('(');expect(')');expect(':');
   expect('int');expect('{');expect('val');
   identifier(); // The local actor binding is not exposed to JavaScript.
@@ -320,6 +451,7 @@ function transpile_actor_tokens(tokens) {
     "function checked(n){if(n<MIN||n>MAX)throw new Error('E_GUEST_PANIC_1');return n;}",
     'export async function create_tenant({tenant,generation}){',
     ' let initialized=false;',
+    ' let terminated=false;',
     ' let total='+initial+'n;',
     ' return {',
     '  async on_message(){',
@@ -329,6 +461,7 @@ function transpile_actor_tokens(tokens) {
     '  },',
     '  async on_route({actor_id,wire_type,buffer}){',
     "   if(!initialized)throw new Error('E_GUEST_NOT_READY');",
+    "   if(terminated)throw new Error('E_ACTOR_TERMINATED');",
     "   if(actor_id!==1)throw new Error('E_ACTOR_REF');",
     "   if(wire_type!=='i64'||!(buffer instanceof ArrayBuffer)||buffer.byteLength!==8)",
     "    throw new Error('E_ROUTE_WIRE');",
@@ -337,8 +470,10 @@ function transpile_actor_tokens(tokens) {
     '    total=next;',
     "    return {value:'delivered',stdout:String(total)+'\\n',actors:1};",
     '   } catch(error) {',
-    "    if(error?.message==='E_GUEST_PANIC_1')",
+    "    if(error?.message==='E_GUEST_PANIC_1') {",
+    '     terminated=true;',
     "     error.actor_failure={kind:'panic',actor_id:1,parent_id:0,actor_type:'"+actor+"',reason:'E_GUEST_PANIC_1'};",
+    '    }',
     '    throw error;',
     '   }',
     '  }',

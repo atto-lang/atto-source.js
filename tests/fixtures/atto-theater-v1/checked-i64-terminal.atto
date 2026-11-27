@@ -1,0 +1,16 @@
+// Atto Theater v1: checked-i64 actor terminal-panic candidate.
+// JavaScript subset supports this exact guest; HDL cannot lower actors.
+// A guest must terminate on overflow, never emit repeated panic receipts,
+// and must not terminate an unrelated actor instance.
+define actor Counter receives int as
+  let int total = 0;
+  receive(ActorMail<int> mail): void {
+    self.total = self.total + mail.value;
+    stdio.println(self.total);
+    return;
+  }
+end
+pub fnc main(): int {
+  val counter = spawn Counter();
+  return 0;
+}
