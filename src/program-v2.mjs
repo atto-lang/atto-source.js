@@ -1,3 +1,4 @@
+import {lowerContextualScalar} from './contextual-scalar-v1.mjs';
 import {identifierCharAt,isIdentifierStart,isIdentifierPart,isIdentifier} from './portable-unicode-identifier-v1.mjs';
 import {lowerVerifiedQuantitySource} from './verified-quantity-source.mjs';
 import {MEASURE_SOURCE,requestsMeasurePrelude} from './measure-prelude.mjs';
@@ -648,7 +649,21 @@ class Parser {
     const began=!braced&&returnFirst&&this.eat('begin');
     if(!braced&&!began&&!arrow&&!returnFirst)
       fail('expected { or begin for return-first function body',this.peek());
-    if(!braced&&!began&&!returnFirst){if(!this.eat('as'))this.eat('::');}
+    let explicitScalarBody=false;
+    if(!braced&&!began&&!returnFirst&&!this.eat('as')){
+      if(this.eat('::')&&arrow&&returnType==='int'&&this.peek().value==='('){
+        // Only a complete parenthesized expression followed immediately by end.
+        // Existing explicit statement bodies and visibility rules stay intact.
+        let depth=0;
+        for(let j=this.i;j<this.tokens.length;j++){
+          const t=this.tokens[j];
+          if(t.kind==='sym'&&t.value==='(')depth++;
+          else if(t.kind==='sym'&&t.value===')'&&--depth===0){
+            explicitScalarBody=this.tokens[j+1]?.value==='end';break;
+          }
+        }
+      }
+    }
     const terminator=braced?'}':'end';
     let body=null;
     if(returnType==='void'){
@@ -661,8 +676,11 @@ class Parser {
       if(this.peek().value!==terminator)
         fail('void function effects require checked statement lowering',this.peek());
     }else{
-      const statements=this.statementSequence([terminator]);
-      body=this.lowerStatements(statements,null);
+      if(explicitScalarBody)body=this.expression();
+      else {
+        const statements=this.statementSequence([terminator]);
+        body=this.lowerStatements(statements,null);
+      }
       if(!body)fail('RETURN_EXPLICIT_REQUIRED: int function requires a return on every path',this.peek(),'E_RETURN');
       this.checkExpandedBudget(body);
       if(returnType==='infer'){
@@ -2668,7 +2686,8 @@ function admitUnusedRefinementsBeforeCheckedUnwrap(tokens){
 }
 
 export function compileToProgramIRV2(source, options) {
-  const tokens=tokenize(source);
+  const sourceTokens=tokenize(source);
+  const tokens=lowerContextualScalar(sourceTokens,fail,GENERATOR_RESERVED,isProtectedPreludeIdentity,MAX_TOKENS);
   rejectExecutionDomains(tokens,fail,{inlineScalarTasks:true});
   rejectUnsupportedHttpActors(tokens,fail);
   rejectUnsupportedStaticSelect(tokens);
