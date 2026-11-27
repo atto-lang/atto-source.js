@@ -45,7 +45,7 @@ export function createPortableTaskHostV5({
   module,loop=createWorkerControlLoop()
 }={}) {
   verifyPortableTaskGuestV5(module);
-  if(!loop||!['beginSuspension','admitData','admitControl','retireOwner',
+  if(!loop||!['beginSuspension','admitData','admitControl','requestRetireOwner',
       'attachOwner','complete','cancel'].every(k=>typeof loop[k]==='function'))
     throw new TypeError('E_V5_LOOP');
   const api=new WebAssembly.Instance(module,{atto:{
