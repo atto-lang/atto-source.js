@@ -825,9 +825,24 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
             wildcard=true;value=null;
           } else {
             if(wildcard)fail('unreachable arm after wildcard');
-            value=int(arm.value);
-            if(literals.has(value))fail('duplicate scalar pattern');
-            literals.add(value);
+            if(Array.isArray(arm.value)){
+              const items=sequence(arm.value,64,'membership alternatives');
+              if(!items.length)fail('empty membership alternatives');
+              value=[];
+              const local=new Set();
+              for(const item of items){
+                const canonical=int(item);
+                if(local.has(canonical))fail('duplicate membership alternative');
+                local.add(canonical);
+                if(!literals.has(canonical))value.push(canonical);
+              }
+              if(!value.length)fail('unreachable membership arm');
+              for(const item of value)literals.add(item);
+            } else {
+              value=int(arm.value);
+              if(literals.has(value))fail('duplicate scalar pattern');
+              literals.add(value);
+            }
           }
           return {value,body:node(arm.body,owner,depth+1,expected,active)};
         });

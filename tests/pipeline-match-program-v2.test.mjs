@@ -58,3 +58,89 @@ test('bare immediate await erases to checked integer identity in prefix and pipe
   for(const expr of ['true |> await','42 |> await(7)','42 |> await<int>','Ok(42) |> await'])
     assert.throws(()=>compileProgramV2(program(expr)),/error:/,expr);
 });
+
+test('bounded integer membership executes actual compiled ESM and preserves one body',async()=>{
+  const source=`fnc pick(int x):int {
+    return match x over on 2 -> 42, in [1,2,3] -> 41, on _ -> 0 end;
+  }
+  pub fnc main():int { return pick(2); }
+  pub fnc hit():int { return pick(3); }
+  pub fnc miss():int { return pick(7); }`;
+  const guest=await load(source);
+  assert.equal(guest.main(),42n);
+  assert.equal(guest.hit(),41n);
+  assert.equal(guest.miss(),0n);
+  const boundary=await load('pub fnc main():int { return -9223372036854775808 |> match over in [-9223372036854775808, 0] -> 42, on _ -> 0 end; }');
+  assert.equal(boundary.main(),42n);
+  const lazy=await load('pub fnc main(int x):int { return match x over in [1,2] -> 42, on _ -> 1 / (x - x) end; }');
+  assert.equal(lazy.main(2n),42n);
+});
+test('static int type lists use checked scalar exhaustiveness',async()=>{
+  const guest=await load('pub fnc main():int { return 7 |> match over on 42 -> 0, is in [int,bool] -> 42 end; }');
+  assert.equal(guest.main(),42n);
+});
+test('membership syntax rejects unsupported and invalid inputs before emission',()=>{
+  for(const arms of [
+    'in [] -> 42, on _ -> 0','in [2,2] -> 42, on _ -> 0',
+    'on 2 -> 42, in [2] -> 0, on _ -> 0','in [1,2] -> 42',
+    'in [1,true] -> 42, on _ -> 0','in values -> 42, on _ -> 0',
+    'in [1,2] when false -> 42, on _ -> 0',
+    'is in [] -> 42','is in [int,int] -> 42',
+    'is in [int,String,string] -> 42','is in [int,42] -> 42',
+    'is in [bool,string] -> 42','is in [int,bool] -> 42, on _ -> 0'
+  ])assert.throws(()=>compileProgramV2('pub fnc main():int { return match 2 over '+arms+' end; }'),/error:/,arms);
+  assert.throws(()=>compileProgramV2('pub fnc main():int { return match true over is in [int,bool] -> 42 end; }'),/error:/);
+});
+
+test('compile-time Pattern declarations erase into ordinary checked match IR',async()=>{
+  const prefix='const Pattern p1 = on 5; const Pattern p2 = is Int; const Pattern p3 = in [6,7]; const Pattern[] z = [p1,p3]; const Pattern[] type_patterns = [is int,is bool]; ';
+  const src=prefix+'pub fnc main(int x):int { return match x over on p1 -> 5, in z -> 42, is in type_patterns -> 0 end; }';
+  const direct='pub fnc main(int x):int { return match x over on 5 -> 5, in [6,7] -> 42, is in [int,bool] -> 0 end; }';
+  assert.deepEqual(compileToProgramIRV2(src),compileToProgramIRV2(direct));
+  const g=await load(src);
+  assert.equal(g.main(5n),5n);
+  assert.equal(g.main(6n),42n);
+  assert.equal(g.main(7n),42n);
+  assert.equal(g.main(8n),0n);
+  assert.equal((await load(prefix+'pub fnc main():int { return 7 |> match over on p2 -> 42 end; }')).main(),42n);
+  assert.equal((await load('pub fnc main():int { return match 3 over in [on 1,in [2,3]] -> 42,on _ -> 0 end; }')).main(),42n);
+  assert.equal((await load('const Pattern[] type_patterns = [is int,is bool]; pub fnc main():int { return match 3 over in type_patterns -> 42 end; }')).main(),42n);
+});
+test('compile-time Pattern constants cannot escape or be silently widened',()=>{
+  const invalid=[
+    'const Pattern p = on 5; pub fnc main():int { return p; }',
+    'const Pattern p = on 5; pub fnc main(int p):int { return match p over on p -> 42,on _ -> 0 end; }',
+    'const Pattern p = on q; const Pattern q = on p; pub fnc main():int { return 42; }',
+    'const Pattern[] z = [on 1,2]; pub fnc main():int { return 42; }',
+    'const Pattern[] z = [is int,on 1]; pub fnc main():int { return match 1 over is in z -> 42 end; }',
+    'const Pattern[] z = [on 1,on 1]; pub fnc main():int { return 42; }',
+    'const Pattern[] z = [is int,is Int]; pub fnc main():int { return 42; }',
+    'const Pattern p = on 1; pub fnc main():int { return match 1 over in p -> 42,on _ -> 0 end; }',
+    'const Pattern[] z = [on 1]; pub fnc main():int { return match 1 over on z -> 42,on _ -> 0 end; }',
+    'const Pattern p = on 1; fnc use(Pattern x):int { return 42; } pub fnc main():int { return use(p); }',
+    'pub fnc main(int n):int { const Pattern p = on n; return 42; }',
+    'const Pattern p = on true; pub fnc main():int { return 42; }',
+    'const Pattern p = is Foo; pub fnc main():int { return 42; }',
+    'const Pattern[] z = [on 1,on 2]; pub fnc main():int { return match 2 over in z -> 42,on 2 -> 0,on _ -> 0 end; }',
+    'const Pattern[] z = ['+Array.from({length:65},(_,i)=>'on '+i).join(',')+']; pub fnc main():int { return 42; }'
+  ];
+  for(const src of invalid)assert.throws(()=>compileProgramV2(src),/error:/,src);
+});
+
+test('scalar type aliases resolve before pattern lowering',async()=>{
+  const direct='pub fnc main():int { return match 7 over is in [int,bool] -> 42 end; }';
+  for(const src of [
+    'type X = int | bool; pub fnc main():int { return match 7 over is X -> 42 end; }',
+    'type X = int | bool; const Pattern p = is X; pub fnc main():int { return match 7 over on p -> 42 end; }',
+    'type X = int; type Y = X | bool; const Pattern[] z = [is Y]; pub fnc main():int { return match 7 over is in z -> 42 end; }'
+  ]){
+    assert.deepEqual(compileToProgramIRV2(src),compileToProgramIRV2(direct));
+    assert.equal((await load(src)).main(),42n);
+  }
+  for(const src of [
+    'type X = Y; type Y = X; pub fnc main():int { return 42; }',
+    'type X = int; type Y = X | Int; pub fnc main():int { return 42; }',
+    'type X = int; pub fnc main():int { return X; }',
+    'type X = int; const Pattern X = on 5; pub fnc main():int { return 42; }'
+  ])assert.throws(()=>compileProgramV2(src),/error:/,src);
+});
