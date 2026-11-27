@@ -40,3 +40,14 @@ test('contextual make invokes the declared constructor and preserves nominal cat
   const reverse=example.replace('constructor(int x, int y)','constructor(int y, int x)').replace('self.x+self.y','self.x-self.y').replace('let p = Point(40,2);','let Point p = make {x:40,y:2};');
   assert.equal(await run(compileAttachedStruct(reverse)),38n);
 });
+
+test('nested contextual make preserves the declared field owner and value isolation',async()=>{
+  const source='define struct Point { int x; int y; } with { constructor(int x, int y) { self.x=x; self.y=y; } mut mtd change(int n):void {self.x=n;} } define struct Scene { Point origin; int bias; } with { constructor(int bias, Point origin) { self.origin=origin; self.bias=bias; } mtd int • total(){return self.origin.x+self.origin.y+self.bias;} } pub fnc main():int { let Scene s = make {origin:make {y:2,x:39},bias:1}; return s.total(); }';
+  assert.equal(await run(compileAttachedStruct(source)),42n);
+  assert.equal(await run(compileAttachedStruct(source.replace('make {y:2,x:39}','make Point {y:2,x:39}'))),42n);
+  const isolation=source.replace('let Scene s = make {origin:make {y:2,x:39},bias:1};','let mut Point p = make {x:39,y:2}; let Scene s = make {origin:p,bias:1}; p.change(100);');
+  assert.equal(await run(compileAttachedStruct(isolation)),42n);
+  for(const value of ['new {x:39,y:2}','make Scene {x:39,y:2}','make {x:39}','make {x:39,y:true}','make {x:39,x:2}'])
+    assert.throws(()=>compileAttachedStruct(source.replace('make {y:2,x:39}',value)),/E_ATTACHED_STRUCT/);
+  assert.throws(()=>compileAttachedStruct(source.replace('bias:1','bias:make {x:1,y:2}')),/E_ATTACHED_STRUCT/);
+});
