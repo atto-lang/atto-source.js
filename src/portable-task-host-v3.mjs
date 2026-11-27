@@ -40,7 +40,7 @@ export function createPortableTaskHostV3({
       !/^[A-Za-z0-9_-]{1,128}$/.test(owner))
     throw new TypeError('E_V3_IDENTITY');
   if(typeof loop?.attachOwner!=='function'||typeof loop?.admitData!=='function'||
-     typeof loop?.admitControl!=='function'||typeof loop?.retireOwner!=='function')
+     typeof loop?.admitControl!=='function'||typeof loop?.requestRetireOwner!=='function')
     throw new TypeError('E_V3_LOOP');
   const instance=new WebAssembly.Instance(module,{atto:{
     // This import exists only for backward-compatible main(); portable
@@ -74,7 +74,7 @@ export function createPortableTaskHostV3({
       }
     } finally {
       finished=true;
-      loop.retireOwner(owner,epoch);
+      loop.requestRetireOwner(owner,epoch);
     }
   }
   function finish(error,value) {
