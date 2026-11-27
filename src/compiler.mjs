@@ -350,8 +350,67 @@ class Parser {
     this.expect('end');
     this.nominalRecords.set(name,{name,fields,methods});
   }
+  // Bounded immutable scalar capture. The source is an already checked
+  // local aggregate, not a runtime expression. No mutable/borrowed slots,
+  // array layout, ownership transfer or escaping aggregate ABI is admitted.
+  localDestructureCapture(params){
+    const at=this.peek();
+    this.expect('const');
+    const open=this.peek().value;
+    const kind=open==='('? 'Tuple':'Record';
+    const close=open==='('?')':'}';
+    this.expect(open);
+    const names=[], unique=new Set();
+    while(this.peek().value!==close){
+      if(names.length>=64)throw new CompileError('E_DESTRUCTURE_LIMIT',at);
+      if(['let','val','mut','take','borrow','copy','share','...'].includes(this.peek().value))
+        throw new CompileError('E_DESTRUCTURE_POLICY_UNSUPPORTED: scalar capture admits readonly const leaves only',this.peek());
+      this.match('const');
+      const name=this.aggregateIdentifier();
+      if(name==='_'||unique.has(name))throw new CompileError('E_DESTRUCTURE_DUPLICATE_OR_DISCARD',at);
+      unique.add(name);names.push(name);
+      if(!this.match(','))break;
+    }
+    this.expect(close);this.expect('as');
+    let target=kind;
+    if(['Record','Tuple','Array'].includes(this.peek().value)){
+      target=this.peek().value;this.pos++;
+    }
+    const capture=this.aggregateIdentifier();
+    if(unique.has(capture))throw new CompileError('E_DESTRUCTURE_DUPLICATE: capture collides with leaf',at);
+    this.expect('=');
+    const source=this.aggregateLocals.get(this.aggregateIdentifier());
+    this.expect(';');
+    if(!source||source.kind!==kind)throw new CompileError('E_DESTRUCTURE_KIND: expected initialized '+kind,at);
+    if(target!==kind&&!(kind==='Tuple'&&target==='Record'))
+      throw new CompileError('E_DESTRUCTURE_CONVERSION_UNSUPPORTED',at);
+    if(kind==='Tuple'&&names.length!==source.fields.size)
+      throw new CompileError('E_DESTRUCTURE_ARITY',at);
+    if(!names.length&&source.fields.size)throw new CompileError('E_DESTRUCTURE_ARITY',at);
+    const slots=names.map((name,i)=>{
+      const field=source.fields.get(kind==='Tuple'?String(i):name);
+      if(!field||!['int','bool','string'].includes(field.type)||field.type==='int'&&typeof field.value!=='bigint')
+        throw new CompileError('E_DESTRUCTURE_FIELD: requires initialized constant scalar',at);
+      return field;
+    });
+    if([...source.fields.values()].some(f=>!['int','bool','string'].includes(f.type)||f.type==='int'&&typeof f.value!=='bigint'))
+      throw new CompileError('E_DESTRUCTURE_SOURCE_UNSUPPORTED',at);
+    for(const name of [...names,capture]){
+      if(params.includes(name)||this.aggregateLocals.has(name)||this.scalarConsts.has(name)||this.aggregateTypes.has(name)||this.nominalRecords.has(name))
+        throw new CompileError('E_DESTRUCTURE_DUPLICATE: '+name,at);
+    }
+    if(this.aggregateLocals.size+this.scalarConsts.size+names.length+1>64)
+      throw new CompileError('E_DESTRUCTURE_LIMIT',at);
+    // Publish only after every check succeeds. Scalar payloads are immutable;
+    // existing Map objects are compiler metadata, never guest aliases.
+    const fields=target===kind?new Map(source.fields):new Map(names.map((n,i)=>[n,slots[i]]));
+    names.forEach((n,i)=>this.scalarConsts.set(n,slots[i]));
+    this.aggregateLocals.set(capture,{kind:target,fields});
+  }
   localConst(params){
     const at=this.peek(), next=this.ts[this.pos+1]?.value;
+    if(next==='('||next==='{'){this.localDestructureCapture(params);return;}
+    if(next==='[')throw new CompileError('E_DESTRUCTURE_ARRAY_UNSUPPORTED: array capture requires typed layout',at);
     if(['Record','Tuple','struct'].includes(next)){
       this.aggregateConst(params);return;
     }
