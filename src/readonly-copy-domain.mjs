@@ -108,6 +108,14 @@ export class ReadonlyCopyDomain {
     for(const child of reach)if(this.#node(child).initial)error('E_COPY_LAYOUT');
     const loan=token();this.#loans.set(loan,reach);this.#adjust(this.#readers,reach,1);return loan;
   }
+  // Read authority is tied to the live loan, not the original root. A
+  // detached subtree remains reachable through this token until release.
+  readBorrowed(loan,id,key){
+    const reach=this.#loans.get(loan);if(!reach)error('E_COPY_STALE');
+    if(!reach.has(id))error('E_COPY_DOMAIN');
+    const n=this.#node(id);if(n.initial||typeof key!=='string')error('E_COPY_LAYOUT');
+    return n.slots.get(key)?.value;
+  }
   release(loan){const reach=this.#loans.get(loan);if(!reach)error('E_COPY_STALE');this.#loans.delete(loan);this.#adjust(this.#readers,reach,-1);}
   drop(owner){const r=this.#root(owner);this.#roots.delete(owner);this.#adjust(this.#holders,r.reach,-1);}
   canWrite(owner,id){const r=this.#root(owner);return r.reach.has(id)&&this.#holders.get(id)===1&&!this.#readers.has(id);}
