@@ -83,8 +83,13 @@ function lex(src) {
       continue;
     }
     const loc={line,col};
+    if(src[i]==='⧖'||src[i]==='∂'){
+      throw new CompileError('E_SUSPENDS_UNSUPPORTED: scalar-v1 has no callable continuation lowering',loc);
+    }
     if(isIdentifierStart(identifierCharAt(src,i))){
       let s='';while(i<src.length&&isIdentifierPart(identifierCharAt(src,i))){const ch=identifierCharAt(src,i);s+=ch;for(let j=0;j<ch.length;j++)advance();}
+      if(s==='suspends'||s==='susp')
+        throw new CompileError('E_SUSPENDS_UNSUPPORTED: scalar-v1 has no callable continuation lowering',loc);
       // A typed Topic receiver may be a local, parameter or import. Until
       // scalar ESM owns actor/group capabilities, share! and Result lowering,
       // reject actual member publication before producing source/IR artifacts.
