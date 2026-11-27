@@ -526,11 +526,13 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           update:node(expr.update,owner,depth+1,'int',scoped),
           body:node(expr.body,owner,depth+1,expected,scoped)};
       }
-      case 'setIntLocal':{
+      case 'deferIntLocal':case 'setIntLocal':{
         record(expr,['kind','slot','init','body'],'mutable integer assignment');
         if(allowScalarWhile===true||owner>=headers.length||!Number.isSafeInteger(expr.slot)||Object.is(expr.slot,-0)||expr.slot<0||!active.includes(expr.slot)||!mutableIntSlots[owner].has(expr.slot))
           fail('assignment requires active mutable int local');
-        return {kind:'setIntLocal',slot:expr.slot,init:node(expr.init,owner,depth+1,'int',active),body:node(expr.body,owner,depth+1,expected,active)};
+        const init=node(expr.init,owner,depth+1,'int',active);
+        if(desc.value==='deferIntLocal'&&(expected!=='int'||!['int','capture','param'].includes(init.kind)))fail('cleanup requires pure int read and int body');
+        return {kind:desc.value,slot:expr.slot,init,body:node(expr.body,owner,depth+1,expected,active)};
       }
       case 'mutableIntLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':{
         record(expr,['kind','slot','init','body'],'immutable local');
