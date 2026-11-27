@@ -1635,7 +1635,7 @@ function resolveProgram(parsed) {
       }
       case 'rootStdoutDefer':
       case 'stdoutSeq': {
-        if((expr.kind==='rootStdoutDefer'&&(owner.inlineTask||owner.returnType!=='int'))||owner.ownerKind==='method'||owner.params.some(n=>n==='stdio'||n==='process')||bindings.some(b=>b.name==='stdio'||b.name==='process')||functions.some(f=>f.name==='stdio'||f.name==='process')||modules.length||classes.length||generators.length)fail('E_STDOUT_PROFILE: unshadowed root callable required');
+        if((expr.kind==='rootStdoutDefer'&&(owner.inlineTask||(owner.returnType??'int')!=='int'))||owner.ownerKind==='method'||owner.params.some(n=>n==='stdio'||n==='process')||bindings.some(b=>b.name==='stdio'||b.name==='process')||functions.some(f=>f.name==='stdio'||f.name==='process')||modules.length||classes.length||generators.length)fail('E_STDOUT_PROFILE: unshadowed root callable required');
         return {kind:expr.kind,message:expr.message,body:resolve(expr.body,owner,depth+1,bindings)};
       }
       case 'seqVoidCall': {
