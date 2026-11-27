@@ -339,6 +339,27 @@ class Parser {
       this.expect('with');this.readAggregateFields('Record',name,null,false,params,at,false,base);return;
     }
     const open=this.peek().value;
+    if(open==='('){
+      const first=this.ts[this.pos+1], sep=this.ts[this.pos+2];
+      if(first?.value===')'){
+        this.readAggregateFields('Tuple',name,null,false,params,at,false);return;
+      }
+      if(['id','string'].includes(first?.kind)&&sep?.value===':='){
+        // A single grouped Pair retains nominal identity. The scalar profile
+        // cannot represent a Tuple of Pair values: fail closed, never Record.
+        this.expect('(');
+        const key=this.peek().kind==='string'?this.readStaticPairKey():this.aggregateIdentifier();
+        this.expect(':=');const field=this.readAggregateScalar([],false);
+        if(this.peek().value===',')throw new CompileError('E_PAIR_TUPLE_UNSUPPORTED: recursive tuple product requires typed lowering',this.peek());
+        this.expect(')');this.expect(';');
+        this.aggregateLocals.set(name,{kind:'Pair',key,fields:new Map([['value',field]])});return;
+      }
+      if(first?.value!==':' && sep?.value!==':'){
+        if(sep?.value==='=')throw new CompileError('E_RECORD_CONTEXT: inferred parenthesized Record fields require colon',sep);
+        // Only the existing bounded scalar tuple profile is extended here.
+        this.readAggregateFields('Tuple',name,null,false,params,at,false);return;
+      }
+    }
     if(open==='{'||open==='('||open==='struct'){
       const kind=open==='struct'?'struct':'Record';
       if(kind==='struct')this.pos++;
@@ -431,9 +452,13 @@ class Parser {
     else if(kind==='Record'&&(open==='{'||open==='('))this.pos++;
     else this.expect('(');
     const close=open==='{'?'}':')', fields=new Map(base?.fields), explicit=new Set(), spreadConflicts=new Set();
-    let ordinaryField=false,entryCount=0;
+    let entryCount=0;
     if(base&&open!=='{')throw new CompileError('E_RECORD_SPREAD: with requires braces',at);
-    do {
+    if(this.peek().value===close && kind==='Record'&&!allowRuntime&&!base)
+      throw new CompileError('E_EMPTY_AGGREGATE: untyped empty braces are ambiguous',at);
+    if(this.peek().value===close && kind==='struct')
+      throw new CompileError('E_EMPTY_AGGREGATE: empty Struct not admitted in scalar profile',at);
+    while(this.peek().value!==close){
       if(++entryCount>64)throw new CompileError('aggregate entry limit',this.peek());
       if(kind==='Record'&&open==='{'&&this.match('...')){
         const source=this.readConstRecordOperand();
@@ -449,12 +474,19 @@ class Parser {
       }
       if(explicit.size>=64)throw new CompileError('aggregate field limit',this.peek());
       const capture=kind!=='Tuple'&&this.match(':');
-      const key=kind==='Tuple'?String(fields.size):this.aggregateIdentifier();
+      let key;
+      if(kind==='Tuple')key=String(fields.size);
+      else if(kind==='Record'&&this.peek().kind==='string'){
+        const label=this.peek();
+        if(!label.value.raw.startsWith('"'))throw new CompileError('E_RECORD_LABEL: ordinary double-quoted identifier required',label);
+        key=this.readStaticPairKey();
+        if(!isIdentifier(key)||key.length>128||AGGREGATE_RESERVED_WORDS.has(key)||key==='infer')
+          throw new CompileError('E_RECORD_LABEL: invalid static identifier',label);
+      }else key=this.aggregateIdentifier();
       if(explicit.has(key))throw new CompileError('E_DUPLICATE_FIELD: '+key,this.peek());
       explicit.add(key);spreadConflicts.delete(key);
       let field,pairEntry=false;
       if(capture){
-        ordinaryField=true;
         // Capture only already resolved compile-time scalar bindings. A
         // parameter is not a compile-time constant; do not invent its value.
         field=this.scalarConsts?.get(key);
@@ -463,8 +495,10 @@ class Parser {
         // Record punctuation is independent of its delimiter. Keep nominal
         // Struct field grammar and positional Tuple grammar unchanged.
         if(kind==='Record'){
-          if(this.match(':='))pairEntry=true;
-          else {if(!this.match(':'))this.expect('=');ordinaryField=true;}
+          if(open==='('&&!allowRuntime){
+            if(!this.match(':'))throw new CompileError('E_LITERAL_KIND: inferred parenthesized Record requires colon fields',this.peek());
+          }else if(this.match(':='))pairEntry=true;
+          else if(!this.match(':'))this.expect('=');
         }else if(kind==='struct')this.expect(':');
         field=this.readAggregateScalar(params,allowRuntime);
       }
@@ -476,9 +510,13 @@ class Parser {
         break;
       }
       if(this.peek().value===close)break;
-    } while(true);
+    }
+    // A single scalar with no comma is grouping, not a singleton Tuple.
+    // The bounded aggregate parser handles only actual Tuples; reject
+    // that unsupported scalar grouping instead of silently changing shape.
+    if(kind==='Tuple'&&fields.size===1&&this.ts[this.pos-1]?.value!==',')
+      throw new CompileError('E_TUPLE_ARITY: singleton tuple requires trailing comma',at);
     this.expect(close);this.expect(';');
-    if(kind==='Record'&&open==='('&&!ordinaryField)throw new CompileError('E_LITERAL_KIND: Pair-only parentheses are not a Record',at);
     if(spreadConflicts.size)throw new CompileError('E_RECORD_SPREAD: unresolved spread overlap',at);
     const shape={kind,fields:new Map([...fields].map(([k,v])=>[k,v.type]))};
     if(alias!==null&&!binder){
