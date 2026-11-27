@@ -2,6 +2,7 @@
 // Not a guest-visible capability API or security boundary for hostile JS.
 import {create_execution_context} from './unwind-context.mjs';
 import {SelectableI64Future} from './selectable-i64-future.mjs';
+const claimedFutures=new WeakSet();
 export function validateFutures(futures,count){
   if(!Array.isArray(futures)||futures.length!==count||!Number.isSafeInteger(count)||count<1||count>8)
     throw new TypeError('E_SCHEDULED_FUTURE_ARITY');
@@ -18,6 +19,16 @@ export function validateFutures(futures,count){
     snapshot.push(d.value);
   }
   return Object.freeze(snapshot);
+}
+// All-or-nothing trusted host handoff. Once admitted, a sealed Future may not
+// be handed to another guest invocation, even if its recovery arm was skipped.
+// Failed admission before execution refunds every reservation.
+export function claimFutures(futures,count){
+  const snapshot=validateFutures(futures,count);
+  if(snapshot.some(f=>claimedFutures.has(f)))throw new Error('E_SCHEDULED_FUTURE_MOVED');
+  for(const f of snapshot)claimedFutures.add(f);
+  let state='reserved';
+  return Object.freeze({futures:snapshot,commit(){if(state!=='reserved')return false;state='committed';return true;},abort(){if(state!=='reserved')return false;state='aborted';for(const f of snapshot)claimedFutures.delete(f);return true;}});
 }
 export function createContext(identity){return create_execution_context(identity);}
 function suspendFuture(ctx,future,project){

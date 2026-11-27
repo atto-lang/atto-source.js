@@ -1,10 +1,10 @@
 // Explicit closed-world source profile; no general function/actor lowering.
 // Use the production lexer and fixed numeric slots; never interpolate user names.
-import {tokenizeCountedProfileSource} from './program-v2.mjs';
+import {tokenizeScheduledUnwindSource} from './program-v2.mjs';
 const MAX=(1n<<63n)-1n, MIN=-(1n<<63n);
 const RESERVED=new Set(['pub','suspends','fnc','run','Future','int','defer','await','return','recover','let','val','const','borrow','mut','self','new','select','if','true','false','raise','throw','panic']);
 class Parser {
-  constructor(source){this.tokens=tokenizeCountedProfileSource(source);this.i=0;this.params=new Map();this.used=new Set();this.defers=[];this.recovery=null;}
+  constructor(source){this.tokens=tokenizeScheduledUnwindSource(source);this.i=0;this.params=new Map();this.used=new Set();this.defers=[];this.recovery=null;}
   peek(){return this.tokens[this.i];}
   fail(message){const t=this.peek();throw new Error('E_SCHEDULED_UNWIND_PROFILE: '+message+' at '+t.line+':'+t.col);}
   eat(v){const t=this.peek();if((t.kind==='id'||t.kind==='sym')&&t.value===v){this.i++;return true;}return false;}
@@ -19,7 +19,7 @@ class Parser {
     this.need('pub');this.need('suspends');this.need('fnc');this.need('run');this.need('(');
     do {
       if(this.params.size>=8)this.fail('parameter quota exceeded');
-      this.need('Future');this.need('<');this.need('int');this.need('>');const n=this.name();
+      this.need('take!');this.need('Future');this.need('<');this.need('int');this.need('>');const n=this.name();
       if(this.params.has(n))this.fail('duplicate parameter');this.params.set(n,this.params.size);
     }while(this.eat(','));
     this.need(')');this.need(':');this.need('int');this.need('{');
@@ -56,7 +56,7 @@ export function compileScheduledUnwindV1(source){
   if(p.recovery!==null)registrations.push('  _ctx.register_scheduled_recover(()=>_rt.recoverFuture(_ctx,_f['+p.recovery+']));');
   const exit=p.body===null?'_ctx.return_frame_scheduled('+p.value+'n,_loop,_owner,_done)':'_ctx.run_body_scheduled(()=>_rt.awaitFuture(_ctx,_f['+p.body+']),_loop,_owner,_done)';
   return 'export function start(_rt,_loop,_owner,_identity,_futures,_done){\n'+
-    '  const _f=_rt.validateFutures(_futures,'+p.params+');\n'+
+    '  const _claim=_rt.claimFutures(_futures,'+p.params+');\n  const _f=_claim.futures;\n  try {\n'+
     '  const _ctx=_rt.createContext(_identity);\n  _ctx.push_frame(1);\n'+registrations.join('\n')+'\n'+
-    '  return '+exit+';\n}\n';
+    '  const _admitted='+exit+';\n  if(_admitted)_claim.commit();\n  return _admitted;\n  } finally {_claim.abort();}\n}\n';
 }

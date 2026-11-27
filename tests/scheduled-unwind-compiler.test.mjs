@@ -6,7 +6,7 @@ import {compileScheduledUnwindV1} from '../src/scheduled-unwind-compiler.mjs';
 import * as runtime from '../src/scheduled-unwind-runtime.mjs';
 import {createWorkerControlLoop} from '../src/worker-control-loop.mjs';
 import {SelectableI64Future} from '../src/selectable-i64-future.mjs';
-const source=readFileSync(new URL('./fixtures/scheduled-unwind-pending.atto',import.meta.url),'utf8');
+const source=readFileSync(new URL('./fixtures/scheduled-unwind-owned-pending.atto',import.meta.url),'utf8');
 const identity={tenant_id:'t',actor_id:1,generation:1};
 const compile=async s=>import('data:text/javascript,'+encodeURIComponent(compileScheduledUnwindV1(s)));
 function harness(){
