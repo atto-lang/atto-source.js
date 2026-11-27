@@ -88,19 +88,29 @@ class Reader{
     const i=o.leaves.findIndex(l=>l.path===path);demand(i>=0,'unknown field');return val(o.leaves[i].type,v.code+'['+i+']')
   }
   operand(){const v=this.values.get(this.peek());if(v&&this.t[this.i+1]!=='.'){this.i++;return val(v.type,v.code)}return this.expr(null)}
+  makeValue(expected,depth=0){
+    demand(depth<16&&++this.nodes<=1024,'contextual construction depth/node budget');
+    this.need('make');const type=this.peek()==='{'?expected:this.name();
+    const o=this.owners.get(type);demand(o&&(!expected||expected===type),'missing or incompatible expected nominal owner');
+    this.need('{');const entries=[];
+    if(!this.eat('}')){do{
+      demand(entries.length<8,'field budget');const name=this.name(),field=o.fields.find(f=>f.name===name);
+      demand(field&&!entries.some(e=>e.name===name),'unknown or duplicate contextual field');this.need(':');
+      if(this.peek()==='new')fail('reference construction cannot initialize an attached value struct');
+      const nested=this.peek()==='make'&&(this.t[this.i+1]==='{'||this.t[this.i+2]==='{');
+      const value=nested?this.makeValue(field.type,depth+1):this.operand();
+      demand(value.type===field.type,'contextual field type mismatch');entries.push({name,type:value.type,code:value.code});
+    }while(this.eat(','));this.need('}')}
+    const plan=planContextualMake(o,entries),params=entries.map((_,i)=>'_f'+i);
+    return val(type,'(('+params.join(',')+')=>'+plan.id+'('+plan.order.map(i=>params[i]).join(',')+'))('+entries.map(e=>e.code).join(',')+')');
+  }
   bind(){
     this.need('let');const mut=this.eat('mut');let name=this.name(),annotation=null;if(this.owners.has(name)){annotation=name;name=this.name()}
     demand(!this.values.has(name)&&!this.owners.has(name)&&this.values.size<64,'binding identity/limit');this.need('=');const copy=this.eat('copy!');let type,code;
     const prior=this.values.get(this.peek());
     if(this.peek()==='new')fail('reference construction cannot initialize an attached value struct');
     if(this.peek()==='make' && (this.t[this.i+1]==='{' || this.t[this.i+2]==='{')){
-      demand(!copy,'copy operand');this.need('make');type=this.peek()==='{'?annotation:this.name();
-      const o=this.owners.get(type);demand(o,'missing expected nominal owner');
-      this.need('{');const entries=[];
-      if(!this.eat('}')){do{demand(entries.length<8,'field budget');const field=this.name();this.need(':');const value=this.operand();entries.push({name:field,type:value.type,code:value.code})}while(this.eat(','));this.need('}')}
-      const plan=planContextualMake(o,entries);
-      const params=entries.map((_,i)=>'_f'+i);
-      code='(('+params.join(',')+')=>'+plan.id+'('+plan.order.map(i=>params[i]).join(',')+'))('+entries.map(e=>e.code).join(',')+')';
+      demand(!copy,'copy operand');const made=this.makeValue(annotation);type=made.type;code=made.code;
     }
     else if(prior&&this.t[this.i+1]!=='.'){this.i++;type=prior.type;code=prior.code+'.slice()'}
     else{demand(!copy,'copy operand');type=this.name();const o=this.owners.get(type);demand(o,'unknown owner');this.need('(');const args=[];if(!this.eat(')')){do{demand(args.length<8,'argument limit');args.push(this.operand())}while(this.eat(','));this.need(')')}const c=o.ctors.find(c=>c.formals.length===args.length&&c.formals.every((x,i)=>x.type===args[i].type));demand(c,'constructor identity');code=c.id+'('+args.map(a=>a.code).join(',')+')'}
