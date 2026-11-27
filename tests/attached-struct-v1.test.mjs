@@ -60,3 +60,20 @@ test('colon-annotated contextual make agrees with type-first spelling',async()=>
   for(const bad of ['let p: int = make {x:40,y:2};','let p: Unknown = make {x:40,y:2};','let p: Point = new {x:40,y:2};'])
     assert.throws(()=>compileAttachedStruct(example.replace('let p = Point(40,2);',bad)),/E_ATTACHED_STRUCT/);
 });
+
+test('contextual make in constructor arguments uses a unique viable nominal formal',async()=>{
+  const point='define struct Point { int x; int y; } with { constructor(int x,int y){self.x=x;self.y=y;} } ';
+  const scene='define struct Scene { Point origin; int bias; } with { constructor(int bias,Point origin){self.origin=origin;self.bias=bias;} mtd int • total(){return self.origin.x+self.origin.y+self.bias;} } ';
+  const body='pub fnc main():int { let s=Scene(1,make {y:2,x:39}); return s.total(); }';
+  assert.equal(await run(compileAttachedStruct(point+scene+body)),42n);
+  assert.equal(await run(compileAttachedStruct(point+scene+body.replace('make {','make Point {'))),42n);
+  const other=point.replaceAll('Point','Other');
+  // Existing attachment constructors only accept direct field/parameter maps;
+  // use a second nominal field owner in the first formal with an extra parameter.
+  const ambiguous=scene.replace(' mtd int',' constructor(int bias,Other other,Point origin){self.origin=origin;self.bias=bias;} mtd int');
+  assert.throws(()=>compileAttachedStruct(point+other+ambiguous+body),/ambiguous or missing contextual constructor argument owner/);
+  assert.equal(await run(compileAttachedStruct(point+other+ambiguous+body.replace('make {','make Point {'))),42n);
+  for(const bad of ['new {y:2,x:39}','make {x:39}','make Other {x:39,y:2}','make {x:39,y:true}'])
+    assert.throws(()=>compileAttachedStruct(point+other+scene+body.replace('make {y:2,x:39}',bad)),/E_ATTACHED_STRUCT/);
+  assert.throws(()=>compileAttachedStruct(point+scene+body.replace('Scene(1,','Scene(make {x:1,y:2},')),/E_ATTACHED_STRUCT/);
+});
