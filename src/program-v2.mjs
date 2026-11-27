@@ -294,7 +294,12 @@ function tokenize(source) {
       if (['copy','take','move','borrow','share'].includes(word) && source[pos]==='!' &&
           source[pos+1]!=='=' &&
           !(source.slice(pos+1,pos+3)==='eq' && !isIdentifierPart(identifierCharAt(source,pos+3))))
-        fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
+        {
+          if(word!=='copy')
+            fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
+          advance();word+='!';
+          if(source[pos]==='!'){advance();word+='!';}
+        }
       // Canonical bang exceptional control requires typed Error/Result and
       // checked guest unwind; no fallback to an ordinary JS exception.
       if(['trap','throw','raise','panic'].includes(word) && source[pos]==='!' &&
@@ -916,7 +921,7 @@ class Parser {
       switch(expr.kind){
         case 'int':case 'float':case 'bool':case 'string':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':break;
         case 'tryCatch':add(expr.body);add(expr.handler);break;
-        case 'neg':case 'not':case 'trap':case 'immediateAwait':case 'intTypeTest':case 'inlineScalarTask':add(expr.inner);break;
+        case 'neg':case 'not':case 'trap':case 'scalarCopy':case 'immediateAwait':case 'intTypeTest':case 'inlineScalarTask':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'closedRecur':
           for(const state of expr.states)add(state.init);
@@ -1260,6 +1265,7 @@ class Parser {
     return {kind:'taskScope',body:tail};
   }
   primary() {
+    if(this.eat('copy!')||this.eat('copy!!'))return {kind:'scalarCopy',inner:this.expression(30)};
     if(this.peek().kind==='id' && this.peek().value==='spawn' && this.tokens[this.i+1]?.kind==='id')
       fail('actor spawn requires typed initialization, resource admission and runtime lowering',this.peek(),'E_SPAWN_OPTIONS_UNSUPPORTED');
     if(this.peek().value==='loop'&&this.tokens[this.i+1]?.value==='('){
@@ -1868,6 +1874,14 @@ function resolveProgram(parsed) {
         const operandType=resolvedType(inner,owner);
         if(!['int','bool','option<int>','result<int,int>','trapResult','trapOptionResult','trapBoolResult'].includes(operandType))fail('trap requires int, Option<int> or closed Result operand');
         return {kind:'trap',operandType,inner};
+      }
+      case 'scalarCopy':{
+        const inner=resolve(expr.inner,owner,depth+1,bindings);
+        if(!['int','bool'].includes(resolvedType(inner,owner)))
+          fail('E_COPY_UNSUPPORTED_TYPE: only identity-free int and bool copies are admitted');
+        // Identity-free values preserve the original checked expression once.
+        // The final typed IR validator still checks all operand types/effects.
+        return inner;
       }
       case 'neg':case 'not':{
         const inner=resolve(expr.inner,owner,depth+1,bindings);
