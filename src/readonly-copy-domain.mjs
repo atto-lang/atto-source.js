@@ -102,7 +102,11 @@ export class ReadonlyCopyDomain {
   readLoan(owner,id){
     this.#reachable(this.#root(owner),id);
     if(this.#loans.size>=this.#limits.maxLoans)error('E_COPY_BUDGET');
-    const reach=this.#walk(id), loan=token();this.#loans.set(loan,reach);this.#adjust(this.#readers,reach,1);return loan;
+    const reach=this.#walk(id);
+    // A read loan may only expose fully initialized storage. Preflight all
+    // reachable nodes before consuming loan capacity or changing counters.
+    for(const child of reach)if(this.#node(child).initial)error('E_COPY_LAYOUT');
+    const loan=token();this.#loans.set(loan,reach);this.#adjust(this.#readers,reach,1);return loan;
   }
   release(loan){const reach=this.#loans.get(loan);if(!reach)error('E_COPY_STALE');this.#loans.delete(loan);this.#adjust(this.#readers,reach,-1);}
   drop(owner){const r=this.#root(owner);this.#roots.delete(owner);this.#adjust(this.#holders,r.reach,-1);}
