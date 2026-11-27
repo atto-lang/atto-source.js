@@ -916,7 +916,7 @@ class Parser {
       switch(expr.kind){
         case 'int':case 'float':case 'bool':case 'string':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':break;
         case 'tryCatch':add(expr.body);add(expr.handler);break;
-        case 'neg':case 'not':case 'trap':case 'immediateAwait':case 'intTypeTest':add(expr.inner);break;
+        case 'neg':case 'not':case 'trap':case 'immediateAwait':case 'intTypeTest':case 'inlineScalarTask':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
@@ -1178,24 +1178,55 @@ class Parser {
     return value;
   }
   inlineTask() {
-    if(this.taskParsing)fail('E_SYNC_TASK_PROFILE: nested task unsupported',this.peek());
-    this.taskParsing=true;
-    try{
-      this.expect('task');this.expect('<');this.expect('int');this.expect('>');this.expect('{');
-      const steps=[];let tail=null;
-      while(!this.eat('}')){
-        if(steps.length>=64)fail('E_SYNC_TASK_PROFILE: task statement budget',this.peek());
-        if(tail!==null)fail('E_SYNC_TASK_PROFILE: unreachable task statement',this.peek());
-        if(this.eat('return')){tail=this.expression();this.expect(';');continue;}
-        if(this.eat('val')){this.expect('int');const name=this.name();this.expect('=');const init=this.expression();this.expect(';');steps.push({kind:'bind',name,init});continue;}
-        if(this.eat('defer')){if(!['stdio . out . write (','process . stdout . write (','stdio . stdout . write ('].includes(this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')))fail('E_SYNC_TASK_PROFILE: stdout defer required',this.peek());this.i+=6;const t=this.peek();if(t.kind!=='localString')fail('E_SYNC_TASK_PROFILE: literal defer required',t);this.i++;this.expect(')');this.expect(';');steps.push({kind:'defer',message:t.literal});continue;}
-        if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){const name=this.name();this.expect('=');const value=this.expression();this.expect(';');steps.push({kind:'set',name,value});continue;}
-        fail('E_SYNC_TASK_PROFILE: unsupported task statement',this.peek());
+    this.expect('task');
+    const explicit=this.eat('<');if(explicit){this.expect('int');this.expect('>');}
+    this.expect('{');
+    const steps=[], declarations=new Map();let tail=null,scalarOnly=false;
+    while(!this.eat('}')){
+      if(steps.length>=64)fail('E_SYNC_TASK_PROFILE: task statement budget',this.peek());
+      if(tail!==null)fail('E_SYNC_TASK_PROFILE: unreachable task statement',this.peek());
+      if(this.eat('return')||this.eat('^')){tail=this.expression();this.expect(';');continue;}
+      if(this.peek().value==='val'||this.peek().value==='let'){
+        const mutable=this.eat('let');if(!mutable)this.expect('val');this.expect('int');
+        const name=this.name();
+        if(GENERATOR_RESERVED.has(name)||name==='task'||name==='sync'||declarations.has(name))
+          fail('E_TASK_LOCAL: reserved or duplicate task-local name',this.peek());
+        this.expect('=');const init=this.expression();this.expect(';');
+        declarations.set(name,mutable);scalarOnly||=mutable;steps.push({kind:'bind',name,init});continue;
       }
-      if(tail===null)fail('E_SYNC_TASK_PROFILE: explicit task return required',this.peek());
-      for(let i=steps.length-1;i>=0;i--){const step=steps[i];tail=step.kind==='bind'?{kind:'local',name:step.name,init:step.init,localType:'int',body:tail}:step.kind==='defer'?{kind:'taskDefer',message:step.message,body:tail}:{kind:'taskSet',name:step.name,value:step.value,body:tail};}
-      return {kind:'taskScope',body:tail};
-    }finally{this.taskParsing=false;}
+      if(this.eat('defer')){
+        if(!['stdio . out . write (','process . stdout . write (','stdio . stdout . write ('].includes(this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')))fail('E_SYNC_TASK_PROFILE: stdout defer required',this.peek());
+        this.i+=6;const t=this.peek();if(t.kind!=='localString')fail('E_SYNC_TASK_PROFILE: literal defer required',t);this.i++;this.expect(')');this.expect(';');steps.push({kind:'defer',message:t.literal});continue;
+      }
+      if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
+        const name=this.name();this.expect('=');const value=this.expression();this.expect(';');
+        if(declarations.has(name)){
+          if(!declarations.get(name))fail('E_TASK_LOCAL_WRITE: only a mutable task local may be assigned',this.peek());
+          scalarOnly=true;steps.push({kind:'bind',name,init:value,taskRebind:true});
+        }else steps.push({kind:'set',name,value});
+        continue;
+      }
+      fail('E_SYNC_TASK_PROFILE: unsupported task statement',this.peek());
+    }
+    if(tail===null)fail('E_SYNC_TASK_PROFILE: explicit task return required',this.peek());
+    for(let i=steps.length-1;i>=0;i--){const step=steps[i];tail=step.kind==='bind'?{kind:'local',name:step.name,init:step.init,localType:'int',taskRebind:step.taskRebind===true,body:tail}:step.kind==='defer'?{kind:'taskDefer',message:step.message,body:tail}:{kind:'taskSet',name:step.name,value:step.value,body:tail};}
+    // Classify the parsed AST, never retry a failed compiler as another profile.
+    const pure=(e,d=0)=>{
+      if(d>MAX_DEPTH)fail('E_TASK_UNSUPPORTED: task expression depth');
+      switch(e.kind){
+        case 'int':case 'variable':return true;
+        case 'inlineScalarTask':case 'neg':return pure(e.inner,d+1);
+        case 'binary':return pure(e.left,d+1)&&pure(e.right,d+1);
+        case 'local':return pure(e.init,d+1)&&pure(e.body,d+1);
+        default:return false;
+      }
+    };
+    if(pure(tail))return {kind:'inlineScalarTask',inner:tail};
+    if(!explicit||scalarOnly)fail('E_SYNC_TASK_PROFILE: inferred or mutable task-local profile requires scalar expressions',this.peek());
+    // The checked-effect profile remains explicit and does not admit nested tasks.
+    const nested=e=>!!e&&typeof e==='object'&&(['inlineScalarTask','taskScope'].includes(e.kind)||Object.values(e).some(nested));
+    if(nested(tail))fail('E_SYNC_TASK_PROFILE: nested effectful task unsupported',this.peek());
+    return {kind:'taskScope',body:tail};
   }
   primary() {
     if(this.peek().kind==='id' && this.peek().value==='spawn' && this.tokens[this.i+1]?.kind==='id')
@@ -1592,11 +1623,38 @@ function resolveProgram(parsed) {
         if(resolvedType(inner,owner)!=='int')fail('await requires immediate int in program-v2; asynchronous await unsupported');
         return inner;
       }
+      case 'inlineScalarTask': {
+        // No arbitrary calls, suspension, ownership or external effects in
+        // this scalar profile. Check the source AST before erasing the wrapper.
+        const admit=(e,d=0)=>{
+          if(d>MAX_DEPTH)fail('E_TASK_UNSUPPORTED: task expression depth');
+          switch(e.kind){
+            case 'int':case 'variable':return;
+            case 'inlineScalarTask':case 'neg':admit(e.inner,d+1);return;
+            case 'binary':admit(e.left,d+1);admit(e.right,d+1);return;
+            case 'local':admit(e.init,d+1);admit(e.body,d+1);return;
+            default:fail('E_TASK_UNSUPPORTED: inline scalar task cannot admit '+e.kind);
+          }
+        };
+        admit(expr.inner);
+        const inner=resolve(expr.inner,owner,depth+1,bindings);
+        if(resolvedType(inner,owner)!=='int')fail('E_TASK_RETURN_TYPE: expected int');
+        return inner;
+      }
+      case 'immediateAwait': {
+        const inner=resolve(expr.inner,owner,depth+1,bindings);
+        // No Future/actor readiness lowering exists in this frontend. Admit
+        // only statically typed i64 values, and erase the identity operator.
+        if(resolvedType(inner,owner)!=='int')fail('await requires immediate int in program-v2; asynchronous await unsupported');
+        return inner;
+      }
       case 'local': {
         const previous=bindings.findLast(b=>b.name===expr.name);
         if(owner.ownerKind==='method'||owner.params.includes(expr.name))
           fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
-        if(expr.rebind){
+        if(expr.taskRebind){
+          if(expr.rebind||!previous||previous.type!=='int')fail('E_TASK_LOCAL_WRITE: requires previously declared int local');
+        }else if(expr.rebind){
           if(!previous||previous.type!=='string'||!previous.writable)
             fail('E_STRING_REBIND: requires writable typed string local');
         }else if(previous)fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
@@ -1634,6 +1692,7 @@ function resolveProgram(parsed) {
           };
           if(typeof fold(init)!=='bigint')fail('directional const int requires int');
         }
+        if(expr.taskRebind&&resolvedType(init,owner)!=='int')fail('E_TASK_LOCAL_WRITE: int assignment required');
         const taskMutable=expr.taskWritable===true&&taskWrites(expr.body,expr.name);
         return {kind:taskMutable?'taskMutableLocal':type==='option<bool>'?'optionBoolLocal':type==='trapBoolResult'?'trapBoolLocal':type==='option<int>'?'optionLocal':type==='result<int,int>'?'resultLocal':type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':type==='bool'?'boolLocal':type==='string'?'stringLocal':'local',slot,init,
           body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string',taskMutable}])};
@@ -2498,7 +2557,7 @@ function admitUnusedRefinementsBeforeCheckedUnwrap(tokens){
 
 export function compileToProgramIRV2(source, options) {
   const tokens=tokenize(source);
-  rejectExecutionDomains(tokens,fail);
+  rejectExecutionDomains(tokens,fail,{inlineScalarTasks:true});
   rejectUnsupportedHttpActors(tokens,fail);
   rejectUnsupportedStaticSelect(tokens);
   rejectUnsupportedTrapEffect(tokens);
