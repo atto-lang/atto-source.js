@@ -1147,6 +1147,8 @@ class Parser {
     return value;
   }
   primary() {
+    if(this.peek().kind==='id' && this.peek().value==='spawn' && this.tokens[this.i+1]?.kind==='id')
+      fail('actor spawn requires typed initialization, resource admission and runtime lowering',this.peek(),'E_SPAWN_OPTIONS_UNSUPPORTED');
     if(this.eat('trap!')||this.eat('trap'))return {kind:'trap',inner:this.expression(30)};
     if(this.eat('await'))return {kind:'immediateAwait',inner:this.expression(30)};
     if(this.eat('!')||this.eat('¬')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
