@@ -1550,11 +1550,30 @@ function resolveProgram(parsed) {
             case 'inlineScalarTask':case 'neg':admit(e.inner,d+1);return;
             case 'binary':admit(e.left,d+1);admit(e.right,d+1);return;
             case 'local':admit(e.init,d+1);admit(e.body,d+1);return;
+            case 'call':
+              if(e.qualifier!==null&&e.name==='unwrap'&&e.args.length===0)return;
+              fail('E_TASK_UNSUPPORTED: only checked local unwrap is admitted');
             default:fail('E_TASK_UNSUPPORTED: inline scalar task cannot admit '+e.kind);
           }
         };
         admit(expr.inner);
         const inner=resolve(expr.inner,owner,depth+1,bindings);
+        // A source name alone is not authority: require the resolved, typed
+        // core Option/Result operation, never a module or user function.
+        const checkResolved=(n,d=0)=>{
+          if(d>MAX_DEPTH)fail('E_TASK_UNSUPPORTED: resolved task depth');
+          switch(n.kind){
+            case 'int':case 'param':case 'capture':case 'optionCapture':case 'resultCapture':return;
+            case 'neg':checkResolved(n.inner,d+1);return;
+            case 'binary':checkResolved(n.left,d+1);checkResolved(n.right,d+1);return;
+            case 'local':case 'setIntLocal':checkResolved(n.init,d+1);checkResolved(n.body,d+1);return;
+            case 'intrinsic':
+              if(n.args.length===1&&((n.name==='Option.unwrap'&&n.args[0].kind==='optionCapture')||(n.name==='Result.unwrap'&&n.args[0].kind==='resultCapture')))return;
+              break;
+          }
+          fail('E_TASK_UNSUPPORTED: resolved task operation '+n.kind);
+        };
+        checkResolved(inner);
         if(resolvedType(inner,owner)!=='int')fail('E_TASK_RETURN_TYPE: expected int');
         return inner;
       }
