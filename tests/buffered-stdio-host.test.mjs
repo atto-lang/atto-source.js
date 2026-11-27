@@ -27,8 +27,13 @@ test('abort settles accepted, pending and close receipts; ignores late physical 
  const a=q.admit('A');await a.admitted;await entered.promise;
  const b=q.admit('B');assert.equal(q.abort(),true);
  assert.equal((await a.delivered).code,'ABORTED');assert.equal((await b.admitted).code,'ABORTED');
- assert.equal((await q.seal()).code,'ABORTED');release.open();await Promise.resolve();
+ assert.equal((await q.seal()).code,'ABORTED');
+ assert.equal(q.accounting.acceptedBytes,1);assert.equal(q.accounting.acceptedRecords,1);
+ let quiescent=false;void q.quiescence.then(()=>{quiescent=true;});await Promise.resolve();
+ assert.equal(quiescent,false);
+ release.open();await q.quiescence;
  assert.equal((await a.delivered).code,'ABORTED');assert.equal(q.accounting.acceptedBytes,0);
+ assert.equal(q.accounting.acceptedRecords,0);
 });
 test('quota, malformed unicode, sink rejection and seal are explicit',async()=>{
  const entered=gate(),release=gate();const q=new BufferedStdioHost(async()=>{entered.open();await release.promise;throw Error('sink');},1,8,1,1);
