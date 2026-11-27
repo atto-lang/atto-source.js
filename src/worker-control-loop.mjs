@@ -22,7 +22,7 @@ export function createWorkerControlLoop({
   const ownerFences = new Map();
   let retainedOwners = 0;
   // A synchronous quantum is itself physical ownership, even without a parked lease.
-  let runningOwner = null;
+  let runningOwner = null, retiringOwner = null;
   // One coalesced scheduling hint per active owner. This is trusted host-only
   // authority, not a guest-exposed TaskId or forced native-thread preemption.
   const cooperatePending = new Map();
@@ -30,7 +30,7 @@ export function createWorkerControlLoop({
   let nextTicket = 1, scheduled = false, executing = false, closed = false;
   let completed = 0, dropped = 0, errors = 0;
   let cooperateRequests = 0, cooperateDeferrals = 0, cooperateCoalesced = 0;
-  const active = (owner, epoch) => owners.get(owner) === epoch;
+  const active = (owner, epoch) => owners.get(owner) === epoch && retiringOwner !== owner;
   // An async function would continue executing off-scheduler after its first await.
   // Symbol.toStringTag can be forged on function objects, so checking only
   // Object.prototype.toString is insufficient even in the trusted host lane.
@@ -142,6 +142,11 @@ export function createWorkerControlLoop({
       } catch (error) {report(error);}
     } finally {
       runningOwner = null;
+      if (retiringOwner !== null) {
+        const owner = retiringOwner;
+        retiringOwner = null;
+        if (!closed) retireNow(owner, owners.get(owner));
+      }
       executing = false;
       promoteSettled();
       schedule();
@@ -156,6 +161,31 @@ export function createWorkerControlLoop({
     queue.push({owner, epoch, run, value});
     schedule();
     return !closed;
+  }
+
+  function retireNow(owner, epoch) {
+    if (owners.get(owner) !== epoch || !owners.has(owner) || ownerFences.has(owner)) return false;
+  owners.delete(owner);
+  cooperatePending.delete(owner);
+  for (const [id, entry] of waiting) {
+    if (entry.owner === owner && entry.epoch === epoch) {
+      waiting.delete(id);
+      entry.value = undefined;
+    }
+  }
+  for (const queue of [ready, control, settled]) {
+    for (let i = queue.length - 1; i >= 0; i--) {
+      if (queue[i].owner === owner && queue[i].epoch === epoch) {
+        queue.splice(i, 1);
+        if (queue !== settled) dropped++;
+      }
+    }
+  }
+  // Retirement refunds ready capacity immediately, not after stale turns run.
+  // Pending active guard cleanup is NOT certified by this host-only queue.
+  promoteSettled();
+  schedule();
+  return true;
   }
 
   return Object.freeze({
@@ -255,27 +285,15 @@ export function createWorkerControlLoop({
       return true;
     },
     retireOwner(owner, epoch) {
-      if (!active(owner, epoch) || runningOwner === owner || ownerFences.has(owner)) return false;
-      owners.delete(owner);
-      cooperatePending.delete(owner);
-      for (const [id, entry] of waiting) {
-        if (entry.owner === owner && entry.epoch === epoch) {
-          waiting.delete(id);
-          entry.value = undefined;
-        }
-      }
-      for (const queue of [ready, control, settled]) {
-        for (let i = queue.length - 1; i >= 0; i--) {
-          if (queue[i].owner === owner && queue[i].epoch === epoch) {
-            queue.splice(i, 1);
-            if (queue !== settled) dropped++;
-          }
-        }
-      }
-      // Retirement refunds ready capacity immediately, not after stale turns run.
-      // Pending active guard cleanup is NOT certified by this host-only queue.
-      promoteSettled();
-      schedule();
+      if (!active(owner, epoch) || runningOwner === owner) return false;
+      return retireNow(owner, epoch);
+    },
+    // Terminal task epilogues may seal their own owner now, but may not
+    // reclaim its scheduler identity until the physical quantum returns.
+    requestRetireOwner(owner, epoch) {
+      if (!active(owner, epoch) || ownerFences.has(owner)) return false;
+      if (runningOwner !== owner) return retireNow(owner, epoch);
+      retiringOwner = owner;
       return true;
     },
     close() {
