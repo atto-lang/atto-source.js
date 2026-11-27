@@ -104,6 +104,18 @@ class Reader{
     const plan=planContextualMake(o,entries),params=entries.map((_,i)=>'_f'+i);
     return val(type,'(('+params.join(',')+')=>'+plan.id+'('+plan.order.map(i=>params[i]).join(',')+'))('+entries.map(e=>e.code).join(',')+')');
   }
+  constructorOperand(owner,prior){
+    if(this.peek()==='new')fail('reference construction cannot initialize an attached value argument');
+    if(this.peek()!=='make'||(this.t[this.i+1]!=='{'&&this.t[this.i+2]!=='{'))return this.operand();
+    // Only context shared by all viable prefix signatures may supply an
+    // omitted owner. Later arguments never retroactively guess its identity.
+    const viable=owner.ctors.filter(c=>c.formals.length>prior.length&&prior.every((a,i)=>a.type===c.formals[i].type));
+    const expected=new Set(viable.map(c=>c.formals[prior.length].type));
+    if(this.t[this.i+1]==='{')demand(expected.size===1,'ambiguous or missing contextual constructor argument owner');
+    const made=this.makeValue(expected.size===1?[...expected][0]:null);
+    demand(expected.has(made.type),'contextual constructor argument type mismatch');
+    return made;
+  }
   bind(){
     this.need('let');const mut=this.eat('mut');let name=this.name(),annotation=null;if(this.eat(':')){annotation=this.type();demand(this.owners.has(annotation),'expected nominal value type')}else if(this.owners.has(name)){annotation=name;name=this.name()}
     demand(!this.values.has(name)&&!this.owners.has(name)&&this.values.size<64,'binding identity/limit');this.need('=');const copy=this.eat('copy!');let type,code;
@@ -113,7 +125,7 @@ class Reader{
       demand(!copy,'copy operand');const made=this.makeValue(annotation);type=made.type;code=made.code;
     }
     else if(prior&&this.t[this.i+1]!=='.'){this.i++;type=prior.type;code=prior.code+'.slice()'}
-    else{demand(!copy,'copy operand');type=this.name();const o=this.owners.get(type);demand(o,'unknown owner');this.need('(');const args=[];if(!this.eat(')')){do{demand(args.length<8,'argument limit');args.push(this.operand())}while(this.eat(','));this.need(')')}const c=o.ctors.find(c=>c.formals.length===args.length&&c.formals.every((x,i)=>x.type===args[i].type));demand(c,'constructor identity');code=c.id+'('+args.map(a=>a.code).join(',')+')'}
+    else{demand(!copy,'copy operand');type=this.name();const o=this.owners.get(type);demand(o,'unknown owner');this.need('(');const args=[];if(!this.eat(')')){do{demand(args.length<8,'argument limit');args.push(this.constructorOperand(o,args))}while(this.eat(','));this.need(')')}const c=o.ctors.find(c=>c.formals.length===args.length&&c.formals.every((x,i)=>x.type===args[i].type));demand(c,'constructor identity');code=c.id+'('+args.map(a=>a.code).join(',')+')'}
     demand(!annotation||annotation===type,'binding nominal identity');this.need(';');const id='_v'+this.values.size;this.values.set(name,{type,code:id,mut});return 'const '+id+'='+code+';'
   }
   invoke(){const n=this.name(),v=this.values.get(n);demand(v?.mut,'immutable receiver');this.need('.');const name=this.name(),m=this.owners.get(v.type).methods.get(name);demand(m?.mut,'mutable method');this.need('(');const args=[];if(!this.eat(')')){do{demand(args.length<m.formals.length,'mutation arity');const a=this.expr(null);demand(a.type===m.formals[args.length].type,'mutation type');args.push(a.code)}while(this.eat(','));this.need(')')}demand(args.length===m.formals.length,'mutation arity');this.need(';');return m.id+'('+[v.code,...args].join(',')+');'}
