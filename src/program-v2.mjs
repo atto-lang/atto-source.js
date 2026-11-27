@@ -142,7 +142,9 @@ function normalizeProcessSymbolName(input) {
   return value;
 }
 export function tokenizeCountedProfileSource(source) { return tokenize(source); }
-function tokenize(source) {
+// Separate opt-in lexer entry: only the closed scheduled profile consumes take! formals.
+export function tokenizeScheduledUnwindSource(source) { return tokenize(source,true); }
+function tokenize(source, scheduledFutureFormals=false) {
   validateSourceText(source);
   if (new TextEncoder().encode(source).length > MAX_BYTES) fail('oversized or invalid source');
   requireWellFormedCheckedI64Header(source);
@@ -296,7 +298,10 @@ function tokenize(source) {
       if (['copy','take','move','borrow','share'].includes(word) && source[pos]==='!' &&
           source[pos+1]!=='=' &&
           !(source.slice(pos+1,pos+3)==='eq' && !isIdentifierPart(identifierCharAt(source,pos+3))))
-        fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
+        {
+          if(scheduledFutureFormals&&word==='take'){advance();word='take!';}
+          else fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
+        }
       // Canonical bang exceptional control requires typed Error/Result and
       // checked guest unwind; no fallback to an ordinary JS exception.
       if(['trap','throw','raise','panic'].includes(word) && source[pos]==='!' &&
