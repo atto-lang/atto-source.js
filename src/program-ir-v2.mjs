@@ -460,6 +460,43 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           ...(named?{paramOrder:order}:{})
         };
       }
+      case 'scalarRecur': {
+        record(expr,['kind','states','guards','args'],'scalar recur');
+        if(expected!=='int'||owner>=headers.length||allowScalarWhile===true)fail('scalar recur requires ordinary integer expression');
+        const scope=[];
+        // Check the normalized tree, not arbitrary unvalidated object fields.
+        const closed=e=>{
+          switch(e.kind){
+            case 'int':case 'bool':return true;
+            case 'capture':return scope.includes(e.slot);
+            case 'neg':case 'not':return closed(e.inner);
+            case 'binary':case 'compare':case 'boolCompare':return closed(e.left)&&closed(e.right);
+            case 'if':return closed(e.condition)&&closed(e.yes)&&closed(e.no);
+            default:return false;
+          }
+        };
+        const typed=(e,t)=>{
+          const v=node(e,owner,depth+1,t,scope);
+          if(!closed(v))fail('scalar recur requires closed integer operands');
+          return v;
+        };
+        const states=sequence(expr.states,32,'recur states').map(s=>{
+          record(s,['slot','init'],'recur state');
+          const init=typed(s.init,'int'),slot=s.slot;
+          if(!Number.isSafeInteger(slot)||Object.is(slot,-0)||slot<0||slot>=LIMIT_NODES||captureSlots[owner].has(slot)||active.includes(slot))
+            fail('invalid recur slot');
+          captureSlots[owner].add(slot);scope.push(slot);return {slot,init};
+        });
+        if(!states.length)fail('empty recur state');
+        const guards=sequence(expr.guards,32,'recur guards').map(g=>{
+          record(g,['condition','value'],'recur guard');
+          return {condition:typed(g.condition,'bool'),value:typed(g.value,'int')};
+        });
+        if(!guards.length)fail('recur loop needs valued break');
+        const args=sequence(expr.args,32,'recur args').map(a=>typed(a,'int'));
+        if(args.length!==states.length)fail('recur arity mismatch');
+        return {kind:'scalarRecur',states,guards,args};
+      }
       case 'scalarWhileMany': {
         if(allowScalarWhile!==true||owner>=headers.length)fail('scalar loop requires strict source admission');
         record(expr,['kind','states','condition','steps','body'],'scalar loop');

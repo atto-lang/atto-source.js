@@ -900,6 +900,10 @@ class Parser {
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
+        case 'scalarRecur':
+          for(const s of expr.states)add(s.init);
+          for(const g of expr.guards){add(g.condition);add(g.value);}
+          for(const a of expr.args)add(a);break;
         case 'local':add(expr.init);add(expr.body);break;
         case 'newClass':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'methodCall':
@@ -1153,6 +1157,9 @@ class Parser {
   primary() {
     if(this.peek().kind==='id' && this.peek().value==='spawn' && this.tokens[this.i+1]?.kind==='id')
       fail('actor spawn requires typed initialization, resource admission and runtime lowering',this.peek(),'E_SPAWN_OPTIONS_UNSUPPORTED');
+    // Closed int state loop with guarded valued breaks and a final recur.
+    if(this.peek().value==='loop'&&this.tokens[this.i+1]?.value==='(')
+      return this.scalarRecurExpression();
     // Identical narrow single-break scalar profile to Rust #727.
     // Keep the computed expression boundary; do not admit bare named
     // callable references or a general state-loop result join.
@@ -1269,6 +1276,34 @@ class Parser {
       }
     }
     return {kind:'call',qualifier,name:symbol,args};
+  }
+  scalarRecurExpression(){
+    const at=this.peek(),states=[],names=new Set(),guards=[];
+    this.expect('loop');this.expect('(');
+    do {
+      if(states.length>=32)fail('E_RECUR_ARITY: state limit',at);
+      this.expect('val');const name=this.name();this.expect(':');this.expect('int');
+      if(names.has(name)||GENERATOR_RESERVED.has(name))fail('duplicate or reserved state binding',at);
+      this.expect('=');const init=this.expression();
+      states.push({name,init});names.add(name);
+    }while(this.eat(','));
+    this.expect(')');this.expect('{');
+    while(this.eat('if')){
+      if(guards.length>=32)fail('value loop guard limit',at);
+      const condition=this.expression();this.expect('{');this.expect('break');
+      const value=this.expression();this.expect(';');this.expect('}');this.eat('fi');
+      guards.push({condition,value});
+    }
+    if(!guards.length)fail('E_LOOP_VALUE: value loop requires guarded valued break',at);
+    this.expect('recur');this.expect('(');
+    const args=[];
+    if(!this.eat(')')){
+      do {if(args.length>=32)fail('E_RECUR_ARITY: operand limit',at);args.push(this.expression());}while(this.eat(','));
+      this.expect(')');
+    }
+    if(args.length!==states.length)fail('E_RECUR_ARITY: operand count mismatch',at);
+    this.expect(';');this.expect('}');
+    return {kind:'scalarRecur',states,guards,args};
   }
   namedBooleanReduction(name, token) {
     // Literal packs are private scalar temporaries, never first-class arrays.
@@ -1471,7 +1506,7 @@ function resolveProgram(parsed) {
   let nodeCount=0,nextCaptureSlot=0;
   function resolvedType(expr,owner) {
     switch(expr.kind){
-      case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
+      case 'scalarRecur':case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
       case 'float':case 'floatNeg':case 'floatBin':case 'floatCapture':return 'float';
       case 'trap':return ['option<int>','trapOptionResult'].includes(expr.operandType)?'trapOptionResult':'trapResult';
       case 'errorCapture':return 'error';
@@ -1555,6 +1590,34 @@ function resolveProgram(parsed) {
         // All admitted integers are signed i64. Comparison with MIN retains
         // receiver evaluation (including errors) exactly once, no fake constant.
         return {kind:'compare',op:'>=',left:inner,right:{kind:'int',value:MIN.toString()}};
+      }
+      case 'scalarRecur': {
+        if(owner.ownerKind==='method')fail('state loop method profile unsupported');
+        const scope=[],states=[];
+        // Closed source subset: no calls, captures outside this lexical loop,
+        // ownership, suspension or guest effects.
+        const admit=(e,d=0)=>{
+          if(d>MAX_DEPTH)fail('state loop expression depth');
+          switch(e.kind){
+            case 'int':case 'bool':return;
+            case 'variable':if(scope.some(s=>s.name===e.name))return;break;
+            case 'neg':case 'not':admit(e.inner,d+1);return;
+            case 'binary':case 'compare':admit(e.left,d+1);admit(e.right,d+1);return;
+            case 'if':admit(e.condition,d+1);admit(e.yes,d+1);admit(e.no,d+1);return;
+          }
+          fail('state loop requires closed scalar operands');
+        };
+        const typed=(e,t)=>{admit(e);const v=resolve(e,owner,depth+1,scope);
+          if(resolvedType(v,owner)!==t)fail('state loop operand type mismatch');return v;};
+        for(const s of expr.states){
+          const init=typed(s.init,'int');
+          if(nextCaptureSlot>=MAX_TOKENS)fail('state loop slot budget exceeded');
+          const slot=nextCaptureSlot++;
+          states.push({slot,init});scope.push({name:s.name,slot,type:'int'});
+        }
+        return {kind:'scalarRecur',states,
+          guards:expr.guards.map(g=>({condition:typed(g.condition,'bool'),value:typed(g.value,'int')})),
+          args:expr.args.map(a=>typed(a,'int'))};
       }
       case 'inlineScalarTask': {
         // No arbitrary calls, suspension, ownership or external effects in
@@ -1852,6 +1915,11 @@ function resolveProgram(parsed) {
       // fieldless construction has no call-graph edge in this slice
     } else if(expr.kind==='intrinsic')expr.args.forEach(a=>inspect(a,owner));
     else if(['binary','floatBin','compare','boolCompare','stringCompare','numericCompare','symbolCompare'].includes(expr.kind)) {inspect(expr.left,owner);inspect(expr.right,owner);}
+    else if(expr.kind==='scalarRecur'){
+      expr.states.forEach(s=>inspect(s.init,owner));
+      expr.guards.forEach(g=>{inspect(g.condition,owner);inspect(g.value,owner);});
+      expr.args.forEach(a=>inspect(a,owner));
+    }
     else if(expr.kind==='if') {inspect(expr.condition,owner);inspect(expr.yes,owner);inspect(expr.no,owner);}
     else if(expr.kind==='tryCatch'){inspect(expr.body,owner);inspect(expr.handler,owner);}
     else if(expr.kind==='seqVoidCall'){inspect(expr.call,owner);inspect(expr.value,owner);}
@@ -1907,6 +1975,16 @@ function emitProgram(program) {
       case 'bool': return expr.value?'true':'false';
       case 'string': return JSON.stringify(expr.value);
       case 'param':return '_p'+expr.index;
+      case 'scalarRecur': {
+        const states=expr.states;
+        const init=states.map(s=>'let _v'+s.slot+'='+emitExpr(s.init,depth+1)+';').join('');
+        const guards=expr.guards.map(g=>'if('+emitExpr(g.condition,depth+1)+')return '+emitExpr(g.value,depth+1)+';').join('');
+        // Stage every operand before mutating any slot. Lexical temporaries
+        // are per iteration and never form recursive JS calls.
+        const staged=expr.args.map((a,i)=>'const _n'+states[i].slot+'='+emitExpr(a,depth+1)+';').join('');
+        const commit=states.map(s=>'_v'+s.slot+'=_n'+s.slot+';').join('');
+        return '(()=>{'+init+'while(true){'+guards+staged+commit+'}})()';
+      }
       case 'scalarWhileMany': {
         const emitSteps=(steps,d)=>steps.map(step=>{
           if(d>MAX_DEPTH)fail('loop codegen depth exceeded');
@@ -2047,6 +2125,7 @@ function emitProgram(program) {
       case 'call':case 'namedCall':case 'intrinsic':return expr.args.some(usesSymbol);
       case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'stringCompare':case 'numericCompare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
+      case 'scalarRecur':return expr.states.some(s=>usesSymbol(s.init))||expr.guards.some(g=>usesSymbol(g.condition)||usesSymbol(g.value))||expr.args.some(usesSymbol);
       case 'scalarWhileMany': {
         const visit=steps=>steps.some(s=>s.kind==='loop'?usesSymbol(s.condition)||visit(s.steps):s.kind==='loopExit'?usesSymbol(s.condition):usesSymbol(s.init??s.value));
         return expr.states.some(s=>usesSymbol(s.init))||usesSymbol(expr.condition)||visit(expr.steps)||usesSymbol(expr.body);
@@ -2094,6 +2173,7 @@ function emitProgram(program) {
       case 'call':case 'namedCall':return expr.args.some(usesPortableRuntime);
       case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'stringCompare':case 'numericCompare':case 'symbolCompare':
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
+      case 'scalarRecur':return expr.states.some(s=>usesPortableRuntime(s.init))||expr.guards.some(g=>usesPortableRuntime(g.condition)||usesPortableRuntime(g.value))||expr.args.some(usesPortableRuntime);
       case 'scalarWhileMany': {
         const visit=steps=>steps.some(s=>s.kind==='loop'?usesPortableRuntime(s.condition)||visit(s.steps):s.kind==='loopExit'?usesPortableRuntime(s.condition):usesPortableRuntime(s.init??s.value));
         return expr.states.some(s=>usesPortableRuntime(s.init))||usesPortableRuntime(expr.condition)||visit(expr.steps)||usesPortableRuntime(expr.body);
