@@ -76,7 +76,15 @@ export function lowerContextualScalar(tokens,fail,reserved,protectedName,maxToke
     const close=pair(i+2);
     const parts=split(tokens.slice(i+3,close));
     if(parts.length!==context.length)deny('context arity mismatch',tokens[i]);
-    return {close,args:parts.map(p=>plain(p,locals))};
+    const named=parts.some(p=>p[1]?.value==='=');
+    if(!named)return {close,args:parts.map(p=>plain(p,locals)),order:context.map((_,j)=>j),named:false};
+    const seen=new Set(),order=[],args=[];
+    for(const p of parts){
+      const j=context.findIndex(c=>c.name.value===p[0]?.value);
+      if(!id(p[0])||p[1]?.value!=='='||j<0||seen.has(j))deny('unknown, duplicate or mixed named context',p[0]);
+      seen.add(j);order.push(j);args.push(plain(p.slice(2),locals));
+    }
+    return {close,args,order,named:true};
   };
   const expression=(a,b)=>{
     const result=[];
@@ -85,7 +93,7 @@ export function lowerContextualScalar(tokens,fail,reserved,protectedName,maxToke
       if(v(i)===owner||alias){
         let dot=i+1,args;
         if(alias)args=alias.map(s=>[ident(s,t)]);
-        else {if(v(i+1)!=='::')deny('explicit context binding required',t);const c=contextsAt(i);dot=c.close+1;args=c.args;}
+        else {if(v(i+1)!=='::')deny('explicit context binding required',t);const c=contextsAt(i);if(c.named)deny('direct named context requires stored binding in this profile',t);dot=c.close+1;args=c.args;}
         if(!exact(dot,['.',member,'(']))deny('only declared contextual member may be called',t);
         const close=pair(dot+2);if(close>=b)deny('contextual call crosses statement',t);
         const ordinaryArgs=split(tokens.slice(dot+3,close),true);
@@ -116,12 +124,14 @@ export function lowerContextualScalar(tokens,fail,reserved,protectedName,maxToke
         const c=contextsAt(i+3);
         if(c.close+1===e){
           if(v(i)!=='const'||aliases.size>=64)deny('immutable context or binding limit',t);
-          const slots=c.args.map((arg,j)=>{const s=PREFIX+'cap_'+slot++;local(s,context[j].type.value,arg,t);return s;});
+          const slots=[];c.args.forEach((arg,k)=>{const j=c.order[k],s=PREFIX+'cap_'+slot++;local(s,context[j].type.value,arg,t);slots[j]=s;});
           aliases.set(name,slots);if(out.length>maxTokens)deny('contextual token budget',t);i=e+1;continue;
         }
       }
       const rhs=expression(i+3,e),s=PREFIX+'local_'+slot++;
       local(s,'int',rhs,t);locals.set(name,s);if(v(i)==='let')writable.add(name);
+    }else if(v(i)==='set'&&id(tokens[i+1])&&v(i+2)==='='&&writable.has(v(i+1))){
+      const rhs=expression(i+3,e),s=PREFIX+'local_'+slot++;local(s,'int',rhs,t);locals.set(v(i+1),s);
     }else if(id(t)&&v(i+1)==='='&&writable.has(t.value)){
       const rhs=expression(i+2,e),s=PREFIX+'local_'+slot++;local(s,'int',rhs,t);locals.set(t.value,s);
     }else if(v(i)==='return'){
