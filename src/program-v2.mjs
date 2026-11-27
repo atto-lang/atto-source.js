@@ -1,6 +1,7 @@
 import {lowerContextualScalar} from './contextual-scalar-v1.mjs';
 import {identifierCharAt,isIdentifierStart,isIdentifierPart,isIdentifier} from './portable-unicode-identifier-v1.mjs';
 import {lowerVerifiedQuantitySource} from './verified-quantity-source.mjs';
+import {MEASURE_SOURCE,requestsMeasurePrelude} from './measure-prelude.mjs';
 import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
 import {validLocalString,validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 import {TESTING_SCALAR_SOURCE, TESTING_SCALAR_EXPORTS} from './compiler-owned-testing-scalar.mjs';
@@ -1296,17 +1297,23 @@ class Parser {
       }while(this.eat(','));
       this.expect(')');this.expect('{');
       const guards=[];
+      let terminalElse=false;
       while(this.eat('if')){
         if(guards.length>=32)fail('state loop guard limit',at);
         const condition=this.expression();this.expect('{');this.expect('break');
         const result=this.expression();this.expect(';');this.expect('}');
         guards.push({condition,result});
+        // A final else containing only recur is equivalent to the
+        // existing fallthrough backedge. No new IR or recursive call.
+        if(this.eat('else')){this.expect('{');terminalElse=true;break;}
       }
       if(!guards.length)fail('state loop requires valued break',at);
       this.expect('recur');this.expect('(');
       const updates=[];
       do{if(updates.length>=32)fail('recur arity limit',at);updates.push(this.expression());}while(this.eat(','));
-      this.expect(')');this.expect(';');this.expect('}');
+      this.expect(')');this.expect(';');
+      if(terminalElse){this.expect('}');this.eat('fi');}
+      this.expect('}');
       if(updates.length!==states.length)fail('recur state arity mismatch',at);
       if(this.peek().value==='(')fail('calling a computed value loop',at);
       return guards.length===1?{kind:'closedRecur',states,...guards[0],updates}:
@@ -2686,7 +2693,12 @@ export function compileToProgramIRV2(source, options) {
   rejectUnsupportedStaticSelect(tokens);
   rejectUnsupportedTrapEffect(tokens);
   const mixed=admitUnusedRefinementsBeforeCheckedUnwrap(tokens);
-  const quantity=mixed===null?lowerVerifiedQuantitySource(tokens,fail):null;
+  // Preserve original user token locations and all original admission checks.
+  // A selected implicit profile never falls back to ordinary lowering.
+  const implicit=mixed===null&&requestsMeasurePrelude(tokens);
+  const quantity=mixed===null?lowerVerifiedQuantitySource(
+    implicit?[...tokenize(MEASURE_SOURCE).slice(0,-1),...tokens]:tokens,fail):null;
+  if(implicit&&quantity===null)fail('E_VERIFY_UNSUPPORTED: measurement prelude requires typed quantity source',tokens[0]);
   if(quantity!==null)return validateProgramIRV2({
     schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,integerModel:PROGRAM_IR_INT_MODEL,...quantity
   });
