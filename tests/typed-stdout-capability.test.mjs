@@ -37,3 +37,17 @@ test('canonical process.stdout.write is equivalent and shadowing remains denied'
  const shadow='pub fnc main(bool process):int { process.stdout.write("R"); return 42; }';
  assert.throws(()=>compileProgramV2(shadow,opt),/E_STDOUT_PROFILE/);
 });
+
+test('root stdout cleanup is scoped, capability-gated and LIFO',async()=>{
+ const root='pub fnc main():int { defer stdio.out.write("A"); defer process.stdout.write("B"); stdio.out.write("C"); return 42; }';
+ assert.throws(()=>compileProgramV2(root),/E_STDOUT_PROFILE/);
+ for(const bad of [root.replace('main()','main(bool process)'),root.replace('write("B")','write(42)'),root.replace('defer stdio.out.write("A");','if true { defer stdio.out.write("A"); return 42; }')])assert.throws(()=>compileProgramV2(bad,opt),/error:/);
+ const ir=compileToProgramIRV2(root,opt);
+ assert.throws(()=>compileProgramIRV2(ir),/E_STDOUT_PROFILE/);
+ const esm=compileProgramV2(root,opt);
+ assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir)),opt),esm);
+ const guest=await import('data:text/javascript,'+encodeURIComponent(esm));
+ let out='';assert.equal(guest.main(s=>{out+=s;}),42n);assert.equal(out,'CBA');
+ ir.functions[0].body.message=42;
+ assert.throws(()=>compileProgramIRV2(ir,opt),/E_STDOUT_PROFILE/);
+});
