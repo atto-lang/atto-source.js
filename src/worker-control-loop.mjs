@@ -165,27 +165,27 @@ export function createWorkerControlLoop({
 
   function retireNow(owner, epoch) {
     if (owners.get(owner) !== epoch || !owners.has(owner) || ownerFences.has(owner)) return false;
-  owners.delete(owner);
-  cooperatePending.delete(owner);
-  for (const [id, entry] of waiting) {
-    if (entry.owner === owner && entry.epoch === epoch) {
-      waiting.delete(id);
-      entry.value = undefined;
-    }
-  }
-  for (const queue of [ready, control, settled]) {
-    for (let i = queue.length - 1; i >= 0; i--) {
-      if (queue[i].owner === owner && queue[i].epoch === epoch) {
-        queue.splice(i, 1);
-        if (queue !== settled) dropped++;
+    owners.delete(owner);
+    cooperatePending.delete(owner);
+    for (const [id, entry] of waiting) {
+      if (entry.owner === owner && entry.epoch === epoch) {
+        waiting.delete(id);
+        entry.value = undefined;
       }
     }
-  }
-  // Retirement refunds ready capacity immediately, not after stale turns run.
-  // Pending active guard cleanup is NOT certified by this host-only queue.
-  promoteSettled();
-  schedule();
-  return true;
+    for (const queue of [ready, control, settled]) {
+      for (let i = queue.length - 1; i >= 0; i--) {
+        if (queue[i].owner === owner && queue[i].epoch === epoch) {
+          queue.splice(i, 1);
+          if (queue !== settled) dropped++;
+        }
+      }
+    }
+    // Retirement refunds ready capacity immediately, not after stale turns run.
+    // Pending active guard cleanup is NOT certified by this host-only queue.
+    promoteSettled();
+    schedule();
+    return true;
   }
 
   return Object.freeze({
