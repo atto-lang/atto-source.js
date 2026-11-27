@@ -34,3 +34,33 @@ test('inlined Boolean Option IR retains runtime helpers without local binding',a
    else assert.equal(guest.main(),expected);
  }
 });
+
+test('inlined Boolean trap retains runtime helpers without a typed local or bool signature',async()=>{
+ for(const [literal,expected] of [['true',42n],['false',0n]]){
+   const ir=compileToProgramIRV2('pub fnc main():int { val Result<bool, Error> r=trap! '+literal+'; return r.unwrap()?42:0; }');
+   const local=ir.functions[0].body;
+   assert.equal(local.kind,'trapBoolLocal');
+   assert.equal(local.body.condition.kind,'trapBoolMethod');
+   ir.functions[0].body={...local.body,condition:{...local.body.condition,receiver:local.init}};
+   const esm=compileProgramIRV2(ir);
+   assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir))),esm);
+   const guest=await import('data:text/javascript,'+encodeURIComponent(esm));
+   assert.equal(guest.main(),expected);
+ }
+});
+
+test('inlined private String Result retains runtime helpers after removal of producer',async()=>{
+ for(const [payload,expected] of [['Ok(42)',42n],['Err("original")',null]]){
+   const ir=compileToProgramIRV2('fnc outcome(): Result<int, String> { return '+payload+'; } pub fnc main():int { return outcome().unwrap(); }');
+   const producer=ir.functions.find(f=>f.name==='outcome');
+   const main=ir.functions.find(f=>f.name==='main');
+   assert.equal(main.body.name,'Result.stringUnwrap');
+   main.body={...main.body,args:[producer.body]};
+   ir.functions=[main];
+   const esm=compileProgramIRV2(ir);
+   assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir))),esm);
+   const guest=await import('data:text/javascript,'+encodeURIComponent(esm));
+   if(expected===null)assert.throws(()=>guest.main(),e=>e.name==='ResultUnwrapError'&&e.cause==='original');
+   else assert.equal(guest.main(),expected);
+ }
+});
