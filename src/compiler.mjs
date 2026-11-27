@@ -306,7 +306,7 @@ class Parser {
     const name=this.aggregateIdentifier();
     if(params.includes(name)||this.aggregateLocals.has(name))
       throw new CompileError('duplicate aggregate binding '+name,at);
-    if(this.aggregateLocals.size>=64)
+    if(this.aggregateLocals.size+(this.scalarConsts?.size??0)>=64)
       throw new CompileError('aggregate binding limit',at);
     if(this.scalarConsts?.has(name))
       throw new CompileError('duplicate local binding '+name,at);
