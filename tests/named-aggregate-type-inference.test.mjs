@@ -39,3 +39,29 @@ test('reject bad named aggregate declarations before IR',()=>{
   assert.throws(()=>compileToIR('fnc other(): int { const Record<infer T> r=(a=1); return r.a; } pub fnc main(): int { const Record<T> s=(a=42); return s.a; }'),/E_UNKNOWN_TYPE/);
   assert.throws(()=>compileToIR('pub fnc main(): int { const Record<infer T> r=(a=1); return r.missing; }'),/E_NO_FIELD/);
 });
+
+test('lexically captured const Record and explicit Struct scalar projections execute',async()=>{
+  for(const expression of ['{:name,:age}','(:name,:age)','{foo:5,:name,:age}','(foo=5,:name,:age)','struct{:name,:age}','(:age,)']){
+    assert.equal(await run('const name="Alice"; const age=42; const z='+expression+'; return z.age;'),42n,expression);
+  }
+  assert.equal(await run('const age=37; const z={foo:5,:age}; return z.foo+z.age;'),42n);
+  assert.equal(await run('const age=42; const Record r=(:age); return r.age;'),42n);
+  assert.equal(await run('const age=42; const z=(age=age); return z.age;'),42n);
+});
+test('capture resolves only initialized lexical scalar constants and preserves type boundaries',()=>{
+  for(const body of [
+    'const z=(:missing); return 0;',
+    'const age=42; const z=(:age,age=5); return 0;',
+    'const age=42; const z={age:5,:age}; return 0;',
+    'const age=42; const z=(:age,5); return 0;',
+    'const age=42; const z=(:age.value); return 0;',
+    'const age=42; const z=struct{:age}; return z["age"];',
+    'const age=42; const z={:age}; return z;',
+    'const name="Alice"; const z={:name}; return z.name;',
+    'const age=42; const age=5; return age;',
+    'const z={:age}; const age=42; return 0;',
+    'const age=42; const z=(:age); const w=(:z); return 0;',
+  ]) assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),undefined,body);
+  assert.throws(()=>compileToIR('pub fnc f(int age):int{const z=(:age);return z.age;}'));
+  assert.throws(()=>compileToIR('fnc f():int{const age=42;return age;} pub fnc main():int{const z=(:age);return z.age;}'));
+});
