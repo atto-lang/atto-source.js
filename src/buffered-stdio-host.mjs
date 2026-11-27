@@ -2,7 +2,23 @@
 // The owner must be a trusted tenant runtime and must fence guest continuations.
 const OK = Object.freeze({ok:true});
 const failed = code => Object.freeze({ok:false,code});
-const encoder = new TextEncoder();
+// Count UTF-8 scalar bytes without allocating an encoded byte array.
+// Negative denotes malformed UTF-16; caller bounds code units before scanning.
+export function boundedUtf8Bytes(text) {
+  if(typeof text!=='string'||text.length>65536)return -1;
+  let bytes=0;
+  for(let i=0;i<text.length;i++){
+    const c=text.charCodeAt(i);
+    if(c>=0xd800&&c<=0xdbff){
+      if(++i>=text.length)return -1;
+      const low=text.charCodeAt(i);
+      if(low<0xdc00||low>0xdfff)return -1;
+      bytes+=4;
+    }else if(c>=0xdc00&&c<=0xdfff)return -1;
+    else bytes+=c<=0x7f?1:c<=0x7ff?2:3;
+  }
+  return bytes;
+}
 const bounded = (n,max) => {
   if (!Number.isSafeInteger(n) || n < 1 || n > max) throw new RangeError('invalid stdio quota');
   return n;
@@ -34,10 +50,10 @@ export class BufferedStdioHost {
   }
   #commit(e) {
     e.state='accepted'; this.#bytes+=e.bytes; this.#queue.push(e);
-    e.admission.resolve(OK);
+    e.admission?.resolve(OK);
   }
   #finish(e,outcome) {
-    e.state='terminal'; e.text=null; e.delivery.resolve(outcome);
+    e.state='terminal'; e.text=null; e.delivery?.resolve(outcome);
   }
   #reject(e,outcome) {
     e.admission.resolve(outcome); this.#finish(e,outcome);
@@ -47,6 +63,19 @@ export class BufferedStdioHost {
     while (this.#waiting.length && this.#fits(this.#waiting[0])) {
       const e=this.#waiting.shift(); this.#pendingBytes-=e.bytes; this.#commit(e);
     }
+  }
+  // Trusted scheduler fast path: null means ordinary pressure; no write was
+  // committed and the caller must use owned pending admission. No per-record
+  // Promise or delivery handle is allocated on success. Terminal failures
+  // remain observable by the descriptor owner via seal()/subsequent admission.
+  tryAdmitImmediate(text) {
+    if(this.#failure||this.#sealed)return this.#failure??failed('CLOSED');
+    const bytes=boundedUtf8Bytes(text);
+    if(bytes<0)return failed('INVALID_RECORD');
+    if(bytes>65536||bytes>this.#maxBytes)return failed('OVERSIZE');
+    const e={text,bytes,state:'new',admission:null,delivery:null};
+    if(this.#waiting.length||!this.#fits(e))return null;
+    this.#commit(e);this.#schedule();return OK;
   }
   // Outcomes are resolved rather than rejected: an unobserved delivery receipt
   // cannot generate an unhandled rejection. Cancellation wins only precommit.
@@ -61,10 +90,10 @@ export class BufferedStdioHost {
       this.#reject(e,failed('CANCELLED')); this.#promote(); this.#schedule(); return true;
     }});
     if(this.#failure || this.#sealed) {this.#reject(e,this.#failure??failed('CLOSED'));return handle;}
-    if(typeof text!=='string'||text.length>65536||!text.isWellFormed()) {
+    const bytes=boundedUtf8Bytes(text);
+    if(bytes<0) {
       this.#reject(e,failed('INVALID_RECORD'));return handle;
     }
-    const bytes=encoder.encode(text).length;
     if(bytes>65536||bytes>this.#maxBytes) {this.#reject(e,failed('OVERSIZE'));return handle;}
     e.text=text;e.bytes=bytes;
     if(!this.#waiting.length&&this.#fits(e)) this.#commit(e);

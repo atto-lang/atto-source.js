@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {BufferedStdioHost} from '../src/buffered-stdio-host.mjs';
+import {BufferedStdioHost,boundedUtf8Bytes} from '../src/buffered-stdio-host.mjs';
 function gate(){let open;const promise=new Promise(r=>{open=r;});return {promise,open};}
 test('bounded bytes include in-flight; waiters FIFO; cancellation is precommit only',async()=>{
  const entered=gate(), release=gate(), out=[];
@@ -45,4 +45,40 @@ test('seal rejects pending but drains previously accepted',async()=>{
  assert.equal((await b.admitted).code,'CLOSED');release.open();
  assert.equal((await a.delivered).ok,true);assert.equal((await closed).ok,true);
  assert.equal((await q.admit('c').admitted).code,'CLOSED');
+});
+
+test('UTF-8 quota counter matches encoder for every Unicode scalar',()=>{
+ const enc=new TextEncoder();
+ for(let cp=0;cp<=0x10ffff;cp++){
+   if(cp>=0xd800&&cp<=0xdfff)continue;
+   const s=String.fromCodePoint(cp);
+   assert.equal(boundedUtf8Bytes(s),enc.encode(s).length);
+ }
+ for(const s of ['','x'.repeat(65536),'é'.repeat(32768),'€'.repeat(21845)+'x','😀'.repeat(16384),'😀'.repeat(16385)])
+   assert.equal(boundedUtf8Bytes(s),enc.encode(s).length);
+ for(const s of ['\ud800','\udc00','\ud800x','x\ud800','\udc00\ud800','x'.repeat(65537)])assert.equal(boundedUtf8Bytes(s),-1);
+});
+test('immediate admission never overtakes waiters and counts active zero-byte records',async()=>{
+ const entered=gate(),release=gate(),out=[];
+ const q=new BufferedStdioHost(async s=>{entered.open();await release.promise;out.push(s);},2,8,3,8);
+ const immediate=q.tryAdmitImmediate('');assert.deepEqual(immediate,{ok:true});
+ await entered.promise;
+ assert.deepEqual(q.tryAdmitImmediate(''),{ok:true});
+ const pending=q.admit('B');
+ assert.equal(q.accounting.acceptedRecords,2);
+ assert.equal(q.tryAdmitImmediate('C'),null);
+ assert.equal(q.accounting.pendingRecords,1);
+ release.open();
+ assert.equal((await pending.admitted).ok,true);
+ assert.equal((await q.seal()).ok,true);
+ assert.deepEqual(out,['','','B']);
+ assert.equal(q.tryAdmitImmediate('x').code,'CLOSED');
+});
+test('fast admission retains terminal sink failure and rejects malformed or oversized text',async()=>{
+ const q=new BufferedStdioHost(()=>{throw Error('sink');},1,8);
+ assert.equal(q.tryAdmitImmediate('\ud800').code,'INVALID_RECORD');
+ assert.equal(q.tryAdmitImmediate('😀😀😀').code,'OVERSIZE');
+ assert.deepEqual(q.tryAdmitImmediate('x'),{ok:true});
+ assert.equal((await q.seal()).code,'SINK_FAILURE');
+ assert.equal(q.tryAdmitImmediate('x').code,'SINK_FAILURE');
 });
