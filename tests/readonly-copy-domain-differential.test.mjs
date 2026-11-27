@@ -8,7 +8,7 @@ test('deterministic root reachability and transitive read-loan differential', ()
     state ^= state << 13; state ^= state >>> 17; state ^= state << 5;
     return (state >>> 0) % n;
   };
-  let checks = 0;
+  let checks = 0, borrowedChecks = 0;
   for (let trial = 0; trial < 128; trial++) {
     const d = new ReadonlyCopyDomain({ maxRoots: 10, maxLoans: 8 });
     const roots = [], loans = [], graphs = [];
@@ -23,7 +23,7 @@ test('deterministic root reachability and transitive read-loan differential', ()
     const keys = ['a', 'b'];
     const install = (r, slot) => {
       const childOwner = make(), leafOwner = make();
-      const g = { child: d.identity(childOwner), leaf: d.identity(leafOwner) };
+      const g = { child: d.identity(childOwner), leaf: d.identity(leafOwner), childValue: 0, leafValue: 0 };
       d.moveInto(childOwner, g.child, 'leaf', leafOwner);
       d.moveInto(r.owner, r.id, keys[slot], childOwner);
       r.edges[slot] = g;
@@ -65,6 +65,8 @@ test('deterministic root reachability and transitive read-loan differential', ()
             const [l] = loans.splice(pick(loans.length), 1);
             d.release(l.token);
             assert.throws(() => d.release(l.token), { code: 'E_COPY_STALE' });
+            assert.throws(() => d.readBorrowed(l.token, l.g.leaf, 'n'), { code: 'E_COPY_STALE' });
+            borrowedChecks++;
           }
           break;
         case 6:
@@ -93,6 +95,8 @@ test('deterministic root reachability and transitive read-loan differential', ()
             if (expected) {
               d.setScalar(root.owner, id, 'n', step);
               assert.equal(d.read(root.owner, id, 'n'), step);
+              if (id === candidate.child) candidate.childValue = step;
+              else candidate.leafValue = step;
             } else {
               assert.throws(() => d.setScalar(root.owner, id, 'n', step), {
                 code: holders > 1 ? 'E_COPY_READONLY' : 'E_COPY_LOAN',
@@ -102,10 +106,24 @@ test('deterministic root reachability and transitive read-loan differential', ()
           }
         }
       }
+      // Loan authority follows the selected subtree even after all root edges
+      // have been replaced or dropped. Compare against independent model values.
+      for (const l of loans) {
+        assert.equal(d.readBorrowed(l.token, l.g.leaf, 'n'), l.g.leafValue);
+        if (l.leafOnly) {
+          assert.throws(() => d.readBorrowed(l.token, l.g.child, 'n'), { code: 'E_COPY_DOMAIN' });
+        } else {
+          assert.equal(d.readBorrowed(l.token, l.g.child, 'n'), l.g.childValue);
+          assert.equal(d.readBorrowed(l.token, l.g.child, 'leaf'), l.g.leaf);
+          borrowedChecks++;
+        }
+        borrowedChecks += 2;
+      }
     }
     for (const l of loans) d.release(l.token);
     for (const r of roots) d.drop(r.owner);
   }
   assert.ok(checks > 100000);
-  console.log(`COPY_DOMAIN_DIFFERENTIAL checks=${checks} trials=128 steps=96`);
+  assert.ok(borrowedChecks > 1000);
+  console.log(`COPY_DOMAIN_DIFFERENTIAL checks=${checks} borrowedChecks=${borrowedChecks} trials=128 steps=96`);
 });
