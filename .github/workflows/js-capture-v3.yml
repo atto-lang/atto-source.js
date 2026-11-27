@@ -1,0 +1,25 @@
+name: Lexical aggregate capture guest
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  scalar-esm-guest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact source head
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED"
+      - name: Check Node version
+        run: node -e 'if (+process.versions.node.split(".")[0] < 22) process.exit(1)'
+      - name: Run named aggregate and capture ESM guests
+        run: node --test tests/named-aggregate-type-inference.test.mjs tests/named-aggregate-reserved-types.test.mjs tests/named-aggregate-module-scalar.test.mjs
+      - name: Run compiler regression
+        run: npm test
