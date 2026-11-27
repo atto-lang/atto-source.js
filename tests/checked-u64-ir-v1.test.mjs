@@ -32,7 +32,7 @@ for(const [name,mutate] of [
   ['overflow literal',p=>p.functions[0].body.args[0].value='18446744073709551616'],['noncanonical literal',p=>p.functions[0].body.args[0].value='01'],
   ['number literal',p=>p.functions[0].body.args[0].value=42],['wrong arity',p=>p.functions[0].body.args=[]],
   ['unknown call',p=>p.functions[0].body.target=32],['negative zero target',p=>p.functions[0].body.target=-0],
-  ['unknown parameter',p=>p.functions[1].body.left.index=1],['unknown operator',p=>p.functions[1].body.op='/'],
+  ['unknown parameter',p=>p.functions[1].body.left.index=1],['unknown operator',p=>p.functions[1].body.op='%'],
   ['recursive graph',p=>p.functions[1].body={kind:'call',target:1,args:[{kind:'param',index:0}]}],['extra property',p=>p.functions[0].body.extra=true],
   ['sparse array',p=>delete p.functions[0].body.args[0]],['module',p=>p.modules=['m']],['invalid main visibility',p=>p.functions[0].pub=false]
 ])test('reject '+name,()=>{const p=baseline();mutate(p);assert.throws(()=>emit(p),/E_U64_PROFILE/);});
