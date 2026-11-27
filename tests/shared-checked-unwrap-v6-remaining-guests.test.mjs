@@ -55,14 +55,16 @@ for (const fixture of cases) {
     const replay=compileProgramIRV2(JSON.parse(JSON.stringify(ir)),options);
     assert.equal(replay,direct,'serialized typed IR changed lowering');
     if (fixture.expected.runtime_failure) {
+      assert.equal(fixture.expected.runtime_failure,'uncaught_guest_panic','unknown runtime failure oracle');
       const guest=await import('data:text/javascript,'+encodeURIComponent(direct));
       assert.throws(()=>guest.main(),e=>e?.effect==='panic' && e.message.includes('explicit panic control'));
       return;
     }
     // Child process isolates output and prevents harness output being
     // confused with guest stdout. No source adaptation or injected guest code.
-    const runner='const g=await import(process.argv[1]); const value=process.argv[2]==="hosted"?g.main(s=>{process.stdout.write(s);}):g.main(); if(value!==42n) process.exitCode=23;';
-    const run=spawnSync(process.execPath,['--input-type=module','-e',runner,'data:text/javascript,'+encodeURIComponent(direct),hosted?'hosted':'pure'],{encoding:'utf8',timeout:10000,maxBuffer:65536});
+    assert.ok(Number.isSafeInteger(fixture.expected.result),'missing or invalid integer result oracle');
+    const runner='const g=await import(process.argv[1]); const value=process.argv[2]==="hosted"?g.main(s=>{process.stdout.write(s);}):g.main(); if(value!==BigInt(process.argv[3])) process.exitCode=23;';
+    const run=spawnSync(process.execPath,['--input-type=module','-e',runner,'data:text/javascript,'+encodeURIComponent(direct),hosted?'hosted':'pure',String(fixture.expected.result)],{encoding:'utf8',timeout:10000,maxBuffer:65536});
     assert.ifError(run.error);
     assert.equal(run.signal,null);
     assert.equal(run.status,0,run.stderr);
