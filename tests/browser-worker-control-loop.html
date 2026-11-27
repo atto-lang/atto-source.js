@@ -44,6 +44,13 @@ try{
   worker.postMessage({kind:'unwind-retire'});
   const quiesced=await next('unwind-retired');
   if(!quiesced.retired||!quiesced.attached||quiesced.stale||quiesced.retained!==0)throw Error('unwind retirement failed');
+  worker.postMessage({kind:'guest-start'});await next('guest-parked');
+  worker.postMessage({kind:'guest-second'});await next('guest-first-parked');
+  worker.postMessage({kind:'guest-first'});
+  if((await next('guest-done')).value!=='42')throw Error('compiled guest result');
+  worker.postMessage({kind:'guest-retire'});await next('guest-retired');
+  if(frames.filter(f=>f.kind.startsWith('guest-')).map(f=>f.kind).join(',')!=='guest-parked,guest-before-second,guest-after-second,guest-first-parked,guest-after-first,guest-done,guest-retired')
+    throw Error('compiled guest ordering');
   worker.postMessage({kind:'close'});
   if(!(await next('closed')).closed)throw Error('close did not revoke');
   output.textContent='PASS_BROWSER_CONTROL_LOOP';

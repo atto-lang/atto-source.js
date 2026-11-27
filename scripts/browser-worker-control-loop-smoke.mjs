@@ -7,6 +7,9 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {readBrowserWorkerFixture,BrowserWorkerFixtureAccessError} from './browser-worker-fixture-path.mjs';
+import {compileScheduledUnwindV1} from '../src/scheduled-unwind-compiler.mjs';
+const guestSource=await readFile(new URL('../tests/fixtures/scheduled-unwind-pending.atto',import.meta.url),'utf8');
+const generated=compileScheduledUnwindV1(guestSource);
 const root=resolve(fileURLToPath(new URL('../',import.meta.url)));
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const profile=await mkdtemp(join(tmpdir(),'atto-js-control-chrome-'));
@@ -14,6 +17,11 @@ const server=createServer(async(req,res)=>{
   try{
     if(req.method!=='GET'&&req.method!=='HEAD'){
       res.writeHead(405,{Allow:'GET, HEAD'});res.end();return;
+    }
+    // Exact generated module served from memory, no source fixture rewriting.
+    if(req.url==='/tests/fixtures/scheduled-unwind-generated.mjs'){
+      res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
+      res.end(req.method==='HEAD'?undefined:generated);return;
     }
     const file=await readBrowserWorkerFixture(root,req.url,{head:req.method==='HEAD'});
     res.writeHead(200,{'Content-Type':file.contentType,

@@ -6,8 +6,21 @@ loop.attachOwner('browser-task',1);
 let ticket=loop.beginSuspension('browser-task',1,value=>{
   self.postMessage({kind:'resumed',value});
 });
-self.addEventListener('message',event=>{
+import {createCompiledUnwindProbe} from './scheduled-unwind-worker-probe.mjs';
+let compiledProbe;
+self.addEventListener('message',async event=>{
   const msg=event.data;
+  if(msg?.kind?.startsWith('guest-')){
+    try{
+      if(msg.kind==='guest-start'&&!compiledProbe){
+        const guest=await import('./scheduled-unwind-generated.mjs');
+        compiledProbe=createCompiledUnwindProbe(guest,frame=>self.postMessage(frame));
+      }
+      if(!compiledProbe)throw Error('guest not loaded');
+      compiledProbe(msg);
+    }catch(e){self.postMessage({kind:'guest-error',message:String(e)});}
+    return;
+  }
   if(unwind(msg))return;
   if(msg?.kind==='complete'){
     self.postMessage({kind:'before'});

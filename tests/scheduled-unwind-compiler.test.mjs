@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {Worker} from 'node:worker_threads';
 import {compileScheduledUnwindV1} from '../src/scheduled-unwind-compiler.mjs';
 import * as runtime from '../src/scheduled-unwind-runtime.mjs';
 import {createWorkerControlLoop} from '../src/worker-control-loop.mjs';
@@ -70,4 +71,25 @@ test('duplicate, forged or accessor futures fail before scheduler admission',asy
   for(const f of [[a,a],[a,{}],[a],Object.defineProperty([a,a],1,{get(){assert.fail('accessor ran');}})])
     assert.throws(()=>guest.start(runtime,h.loop,'a',identity,f,()=>{}),/E_SCHEDULED_FUTURE_/);
   assert.equal(h.turns.length,0);assert.equal(h.loop.stats.retainedOwners,0);
+});
+
+test('real Node Worker executes compiler-emitted ESM with pending futures',async()=>{
+  const worker=new Worker(new URL('./fixtures/scheduled-unwind-node-worker.mjs',import.meta.url),{workerData:compileScheduledUnwindV1(source)});
+  const frames=[];let wake;
+  worker.on('message',frame=>{frames.push(frame);wake?.();});
+  const next=async kind=>{
+    for(let i=0;i<20;i++){
+      const error=frames.find(f=>f.kind==='guest-error');if(error)throw Error(error.message);
+      const frame=frames.find(f=>f.kind===kind);if(frame)return frame;
+      await new Promise((ok,fail)=>{const timer=setTimeout(()=>{wake=null;fail(Error('timeout '+kind));},1000);wake=()=>{clearTimeout(timer);wake=null;ok();};});
+    }
+    throw Error('unbounded worker wait');
+  };
+  try{
+    worker.postMessage({kind:'guest-start'});await next('guest-parked');
+    worker.postMessage({kind:'guest-second'});await next('guest-first-parked');
+    worker.postMessage({kind:'guest-first'});assert.equal((await next('guest-done')).value,'42');
+    worker.postMessage({kind:'guest-retire'});await next('guest-retired');
+    assert.deepEqual(frames.map(f=>f.kind),['guest-parked','guest-before-second','guest-after-second','guest-first-parked','guest-after-first','guest-done','guest-retired']);
+  }finally{await worker.terminate();}
 });
