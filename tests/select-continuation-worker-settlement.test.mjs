@@ -49,7 +49,9 @@ if (!isMainThread) {
   parentPort.postMessage({op:'start', pending});
 } else {
   const receive = (worker, op) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => onError(new Error(`timeout waiting for ${op}`)), 5000);
     const cleanup = () => {
+      clearTimeout(timer);
       worker.off('message', onMessage);
       worker.off('error', onError);
       worker.off('exit', onExit);
