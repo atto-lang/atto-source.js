@@ -55,7 +55,7 @@ function lex(src) {
     else col++;
     i++;
   }
-  function add(kind, value, loc) { if(out.length>=30000) throw new CompileError('token limit exceeded'); out.push({kind,value,...loc}); }
+  function add(kind, value, loc) { if(out.length>=30000) throw new CompileError('token limit exceeded'); out.push({kind,value,...loc,endLine:line}); }
   while(i<src.length){
     if(/\s/.test(src[i])||src[i]==='\u0085') {advance();continue;}
     if(src.startsWith('//',i)){
@@ -326,8 +326,7 @@ class Parser {
       this.expect('>');
       if(binder&&this.aggregateTypes.has(alias))
         throw new CompileError('E_DUPLICATE_TYPE: '+alias,at);
-      if(!binder&&!this.aggregateTypes.has(alias))
-        throw new CompileError('E_UNKNOWN_TYPE: '+alias,at);
+      // Unknown aliases are resolved only after inspecting explicit infer.
     }
     const name=this.aggregateIdentifier();
     if(params.includes(name)||this.aggregateLocals.has(name))
@@ -337,7 +336,23 @@ class Parser {
     if(this.scalarConsts?.has(name))
       throw new CompileError('duplicate local binding '+name,at);
     this.expect('=');
-    this.readAggregateFields(kind,name,alias,binder,params,at,true);
+    const infer=this.match('infer');
+    if(infer){
+      if(kind!=='Record'||alias===null||binder||!this.scalarConsts)
+        throw new CompileError('E_TYPE_INFER_AMBIGUOUS: infer requires local Record<T>',at);
+      if(!this.aggregateTypes.has(alias)){
+        if(params.includes(alias)||this.aggregateLocals.has(alias)||this.scalarConsts.has(alias)||alias===name)
+          throw new CompileError('E_DUPLICATE_TYPE: '+alias,at);
+        binder=true;
+      }
+    }
+    if(alias!==null&&!binder&&!this.aggregateTypes.has(alias))
+      throw new CompileError('E_UNKNOWN_TYPE: '+alias,at);
+    let base=null;
+    if(kind==='Record'&&this.peek().kind==='id'&&this.ts[this.pos+1]?.value==='with'){
+      base=this.readConstRecordOperand();this.expect('with');
+    }
+    this.readAggregateFields(kind,name,alias,binder,params,at,true,base);
   }
   readAggregateFields(kind,name,alias,binder,params,at,allowRuntime,base=null){
     const open=this.peek().value;
@@ -345,8 +360,10 @@ class Parser {
     else if(kind==='Record'&&(open==='{'||open==='('))this.pos++;
     else this.expect('(');
     const close=open==='{'?'}':')', fields=new Map(base?.fields), explicit=new Set(), spreadConflicts=new Set();
+    let ordinaryField=false,entryCount=0;
     if(base&&open!=='{')throw new CompileError('E_RECORD_SPREAD: with requires braces',at);
     do {
+      if(++entryCount>64)throw new CompileError('aggregate entry limit',this.peek());
       if(kind==='Record'&&open==='{'&&this.match('...')){
         const source=this.readConstRecordOperand();
         for(const [key,field] of source.fields){
@@ -366,6 +383,7 @@ class Parser {
       explicit.add(key);spreadConflicts.delete(key);
       let field,pairEntry=false;
       if(capture){
+        ordinaryField=true;
         // Capture only already resolved compile-time scalar bindings. A
         // parameter is not a compile-time constant; do not invent its value.
         field=this.scalarConsts?.get(key);
@@ -374,8 +392,8 @@ class Parser {
         // Record punctuation is independent of its delimiter. Keep nominal
         // Struct field grammar and positional Tuple grammar unchanged.
         if(kind==='Record'){
-          if(open==='{'&&this.match(':='))pairEntry=true;
-          else if(!this.match(':'))this.expect('=');
+          if(this.match(':='))pairEntry=true;
+          else {if(!this.match(':'))this.expect('=');ordinaryField=true;}
         }else if(kind==='struct')this.expect(':');
         field=this.readAggregateScalar(params,allowRuntime);
       }
@@ -383,12 +401,13 @@ class Parser {
       if(fields.size>64)throw new CompileError('aggregate field limit',this.peek());
       if(!this.match(',')){
         // Only a complete inline Pair entry may use a newline separator.
-        if(pairEntry&&this.peek().kind==='id'&&this.peek().line>this.ts[this.pos-1].line)continue;
+        if(open==='{'&&pairEntry&&this.peek().kind==='id'&&this.peek().line>this.ts[this.pos-1].endLine)continue;
         break;
       }
       if(this.peek().value===close)break;
     } while(true);
     this.expect(close);this.expect(';');
+    if(kind==='Record'&&open==='('&&!ordinaryField)throw new CompileError('E_LITERAL_KIND: Pair-only parentheses are not a Record',at);
     if(spreadConflicts.size)throw new CompileError('E_RECORD_SPREAD: unresolved spread overlap',at);
     const shape={kind,fields:new Map([...fields].map(([k,v])=>[k,v.type]))};
     if(alias!==null&&!binder){
