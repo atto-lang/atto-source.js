@@ -58,3 +58,36 @@ test('bare immediate await erases to checked integer identity in prefix and pipe
   for(const expr of ['true |> await','42 |> await(7)','42 |> await<int>','Ok(42) |> await'])
     assert.throws(()=>compileProgramV2(program(expr)),/error:/,expr);
 });
+
+test('bounded integer membership executes actual compiled ESM and preserves one body',async()=>{
+  const source=`fnc pick(int x):int {
+    return match x over on 2 -> 42, in [1,2,3] -> 41, on _ -> 0 end;
+  }
+  pub fnc main():int { return pick(2); }
+  pub fnc hit():int { return pick(3); }
+  pub fnc miss():int { return pick(7); }`;
+  const guest=await load(source);
+  assert.equal(guest.main(),42n);
+  assert.equal(guest.hit(),41n);
+  assert.equal(guest.miss(),0n);
+  const boundary=await load('pub fnc main():int { return -9223372036854775808 |> match over in [-9223372036854775808, 0] -> 42, on _ -> 0 end; }');
+  assert.equal(boundary.main(),42n);
+  const lazy=await load('pub fnc main(int x):int { return match x over in [1,2] -> 42, on _ -> 1 / (x - x) end; }');
+  assert.equal(lazy.main(2n),42n);
+});
+test('static int type lists use checked scalar exhaustiveness',async()=>{
+  const guest=await load('pub fnc main():int { return 7 |> match over on 42 -> 0, is in [int,bool] -> 42 end; }');
+  assert.equal(guest.main(),42n);
+});
+test('membership syntax rejects unsupported and invalid inputs before emission',()=>{
+  for(const arms of [
+    'in [] -> 42, on _ -> 0','in [2,2] -> 42, on _ -> 0',
+    'on 2 -> 42, in [2] -> 0, on _ -> 0','in [1,2] -> 42',
+    'in [1,true] -> 42, on _ -> 0','in values -> 42, on _ -> 0',
+    'in [1,2] when false -> 42, on _ -> 0',
+    'is in [] -> 42','is in [int,int] -> 42',
+    'is in [int,String,string] -> 42','is in [int,42] -> 42',
+    'is in [bool,string] -> 42','is in [int,bool] -> 42, on _ -> 0'
+  ])assert.throws(()=>compileProgramV2('pub fnc main():int { return match 2 over '+arms+' end; }'),/error:/,arms);
+  assert.throws(()=>compileProgramV2('pub fnc main():int { return match true over is in [int,bool] -> 42 end; }'),/error:/);
+});

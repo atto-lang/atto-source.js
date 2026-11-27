@@ -1437,6 +1437,35 @@ class Parser {
       if(canonicalDefault||legacyElse) {
         if(family==='adt')fail('ADT match requires exhaustive named variants, not default',this.peek());
         family='int';tag='wildcard';
+      } else if(hasOver&&this.eat('in')) {
+        if(family==='adt')fail('cannot mix integer and ADT patterns',this.peek());
+        family='int';tag='membership';value=[];
+        this.expect('[');
+        if(this.peek().value===']')fail('empty membership list',this.peek());
+        do {
+          if(value.length===64)fail('membership limit: 64 integer alternatives',this.peek());
+          const item=this.integer(this.eat('-'));
+          if(value.includes(item))fail('duplicate membership alternative',this.peek());
+          value.push(item);
+        } while(this.eat(',')&&this.peek().value!==']');
+        this.expect(']');
+      } else if(hasOver&&this.peek().value==='is') {
+        if(family==='adt')fail('scalar type list cannot match ADT',this.peek());
+        this.expect('is');this.expect('in');this.expect('[');
+        const aliases=new Map([['int','int'],['bool','bool'],['boolean','bool'],
+          ['string','string'],['String','string'],['float','float'],['f64','float']]);
+        const types=new Set();
+        do {
+          const at=this.peek(),type=aliases.get(at.value);
+          if(at.kind!=='id'||type===undefined)fail('expected supported scalar type in type list',at);
+          this.i++;
+          if(types.has(type))fail('duplicate canonical type in type list',at);
+          types.add(type);
+        } while(this.eat(','));
+        this.expect(']');
+        if(!types.has('int'))fail('type list does not cover admitted int subject',this.peek());
+        // IR validation requires an int subject. No runtime type coercion.
+        family='int';tag='wildcard';
       } else {
         this.expect('on');
         const at=this.peek();
@@ -1467,9 +1496,17 @@ class Parser {
         fail('match default/wildcard arm cannot have a guard or binding',this.peek());
       if(wildcard)fail('unreachable arm after wildcard',this.peek());
       if(tag==='wildcard')wildcard=true;
-      const key=tag==='integer'?'int:'+value:tag;
-      if(seen.has(key))fail('duplicate match pattern '+key);
-      seen.add(key);
+      if(tag==='membership') {
+        // Preserve ordered semantics with one shared body. Prior literal
+        // coverage may eliminate alternatives, never the whole arm.
+        value=value.filter(item=>!seen.has('int:'+item));
+        if(!value.length)fail('unreachable membership arm');
+        for(const item of value)seen.add('int:'+item);
+      } else {
+        const key=tag==='integer'?'int:'+value:tag;
+        if(seen.has(key))fail('duplicate match pattern '+key);
+        seen.add(key);
+      }
       if(typed&&this.eat(':'))this.expect('int');
       const arrow=this.eat('->');
       if(!arrow&&(canonicalDefault||this.peek().value!=='{'))
@@ -1484,7 +1521,7 @@ class Parser {
       const body=this.expression();
       if(block){this.expect(';');this.expect('}');}
       const separated=this.eat(',');
-      if(!block&&!separated&&!ended()&&!['on','default','else'].includes(this.peek().value))
+      if(!block&&!separated&&!ended()&&!['on','in','is','default','else'].includes(this.peek().value))
         fail('expected match arm boundary',this.peek());
       arms.push({tag,bind,value,body});
       if(arms.length>256)fail('match arm limit');
@@ -2239,7 +2276,9 @@ function emitProgram(program) {
         // so no fallthrough and unmatched arm expressions stay lazy.
         const lines=['(()=>{const _subject='+emitExpr(expr.subject,depth+1)+';switch(_subject){'];
         expr.arms.forEach(arm=>{
-          lines.push(arm.value===null?'default:':'case '+arm.value+'n:');
+          if(Array.isArray(arm.value)) {
+            for(const value of arm.value)lines.push('case '+value+'n:');
+          } else lines.push(arm.value===null?'default:':'case '+arm.value+'n:');
           lines.push('return '+emitExpr(arm.body,depth+1)+';');
         });
         lines.push('}})()');
