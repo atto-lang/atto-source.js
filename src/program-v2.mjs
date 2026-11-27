@@ -918,6 +918,9 @@ class Parser {
         case 'tryCatch':add(expr.body);add(expr.handler);break;
         case 'neg':case 'not':case 'trap':case 'immediateAwait':case 'intTypeTest':case 'inlineScalarTask':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
+        case 'closedRecur':
+          for(const state of expr.states)add(state.init);
+          add(expr.condition);add(expr.result);for(const update of expr.updates)add(update);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
         case 'rootStdoutDefer':case 'stdoutSeq':case 'taskScope':case 'taskDefer':add(expr.body);break;
