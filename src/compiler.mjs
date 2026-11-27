@@ -102,8 +102,11 @@ function lex(src) {
         ownershipBang ??= loc;
       // Lexical declaration gate, before callbacks can trigger generic syntax
       // errors. Quoted/comment text and unrelated state identifiers stay inert.
-      if (s==='container' && out.at(-1)?.kind==='id' && out.at(-1).value==='state' &&
-          (out.at(-2)?.value==='define' || (out.at(-2)?.value==='pub' && out.at(-3)?.value==='define')))
+      // Attached actor/class state is protected too; do not fall through to
+      // a generic declaration parser or mistake string tokens for keywords.
+      const stateDeclWord = (offset, value) => out.at(offset)?.kind==='id' && out.at(offset).value===value;
+      if ((s==='container' || s==='on') && stateDeclWord(-1,'state') &&
+          (stateDeclWord(-2,'define') || (stateDeclWord(-2,'pub') && stateDeclWord(-3,'define'))))
         throw new CompileError('STATE_CONTAINER_BACKEND_UNSUPPORTED: typed protected-state loans and native ESM lowering required',loc);
       add('id',s,loc);
     }else if(/[0-9]/.test(src[i])){
