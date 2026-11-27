@@ -389,6 +389,8 @@ class Parser {
   }
   primary(){
     const t=this.peek();
+    if(t.kind==='id' && t.value==='spawn' && this.ts[this.pos+1]?.kind==='id')
+      throw new CompileError('E_SPAWN_OPTIONS_UNSUPPORTED: actor spawn requires typed initialization, resource admission and runtime lowering',t);
     if(productFactoryAt(this.ts,this.pos))return this.productProjection();
     if(this.match('-')){
       // The absolute magnitude 2^63 is legal only as a negated literal.
