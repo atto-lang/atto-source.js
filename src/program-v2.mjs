@@ -1232,7 +1232,8 @@ class Parser {
       if(!e||typeof e!=='object')return;
       if(d>MAX_DEPTH)fail('E_TASK_UNSUPPORTED: task expression depth');
       if(e.kind==='immediateAwait')fail('E_TASK_UNSUPPORTED: await in synchronous inline task',this.peek());
-      if(e.kind==='taskSet'||e.kind==='taskDefer'||(e.kind==='methodCall'&&['unwrap','expect'].includes(e.name)))checkedEffect=true;
+      if(e.kind==='taskSet'||e.kind==='taskDefer'||(e.kind==='methodCall'&&['unwrap','expect'].includes(e.name))||
+        (e.kind==='call'&&e.qualifier!==null&&e.name==='unwrap'&&e.args.length===0))checkedEffect=true;
       for(const value of Object.values(e))inspect(value,d+1);
     };
     inspect(tail);
@@ -1885,6 +1886,8 @@ function resolveProgram(parsed) {
         yes:resolve(expr.yes,owner,depth+1,bindings),no:resolve(expr.no,owner,depth+1,bindings)};
       case 'call': {
         const local=bindings.findLast(b=>b.name===expr.qualifier);
+        if(owner.inlineTask&&expr.name==='unwrap'&&(!local||!['option<int>','result<int,int>'].includes(local.type)||expr.args.length!==0))
+          fail('E_SYNC_TASK_PROFILE: checked unwrap requires a typed lexical Option<int> or Result<int,int>');
         if(local){
           if(local.type==='option<bool>'){
             if(expr.name!=='unwrap'||expr.args.length!==0)fail('unsupported bool Option method/arity');
