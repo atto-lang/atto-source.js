@@ -31,6 +31,19 @@ try{
   if(!stale.retired||stale.stale||!stale.attached)throw Error('generation fence failed');
   worker.postMessage({kind:'complete',value:43});
   if((await next('resumed2')).value!==43)throw Error('new epoch did not resume');
+  worker.postMessage({kind:'unwind-start'});
+  const parked=await next('unwind-parked');
+  if(!parked.retirementBlocked||!parked.closeBlocked)throw Error('unwind lease not held');
+  worker.postMessage({kind:'unwind-complete',value:7});
+  const admitted=await next('unwind-after');
+  if(!admitted.accepted||admitted.duplicate)throw Error('unwind completion replay');
+  const done=await next('unwind-done');
+  if(done.failure!=='cancel'||!done.retirementBlocked)throw Error('unwind cancellation or publication lease failed');
+  if(frames.filter(f=>f.kind.startsWith('unwind-')).map(f=>f.kind).join(',')!=='unwind-parked,unwind-before,unwind-after,unwind-resumed,unwind-outer,unwind-done')
+    throw Error('unwind ordering failed');
+  worker.postMessage({kind:'unwind-retire'});
+  const quiesced=await next('unwind-retired');
+  if(!quiesced.retired||!quiesced.attached||quiesced.stale||quiesced.retained!==0)throw Error('unwind retirement failed');
   worker.postMessage({kind:'close'});
   if(!(await next('closed')).closed)throw Error('close did not revoke');
   output.textContent='PASS_BROWSER_CONTROL_LOOP';

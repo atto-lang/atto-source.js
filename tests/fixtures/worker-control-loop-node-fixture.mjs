@@ -1,12 +1,15 @@
 import {parentPort} from 'node:worker_threads';
 import {createWorkerControlLoop} from '../../src/worker-control-loop.mjs';
 
+import {createUnwindProbe} from './worker-unwind-probe.mjs';
 const loop = createWorkerControlLoop();
+const unwind=createUnwindProbe(loop,frame=>parentPort.postMessage(frame));
 loop.attachOwner('node-task', 1);
 let ticket = loop.beginSuspension('node-task', 1, value => {
   parentPort.postMessage({kind: 'resumed', value});
 });
 parentPort.on('message', msg => {
+  if(unwind(msg))return;
   if (msg?.kind === 'complete') {
     parentPort.postMessage({kind: 'before'});
     const accepted = loop.complete(ticket, msg.value);

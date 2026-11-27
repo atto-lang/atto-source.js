@@ -1,11 +1,14 @@
 import {createWorkerControlLoop} from '../../src/worker-control-loop.mjs';
+import {createUnwindProbe} from './worker-unwind-probe.mjs';
 const loop=createWorkerControlLoop();
+const unwind=createUnwindProbe(loop,frame=>self.postMessage(frame));
 loop.attachOwner('browser-task',1);
 let ticket=loop.beginSuspension('browser-task',1,value=>{
   self.postMessage({kind:'resumed',value});
 });
 self.addEventListener('message',event=>{
   const msg=event.data;
+  if(unwind(msg))return;
   if(msg?.kind==='complete'){
     self.postMessage({kind:'before'});
     const accepted=loop.complete(ticket,msg.value);

@@ -38,6 +38,16 @@ test('real Node worker uses event-loop handoff, no inline reactor continuation, 
     worker.postMessage({kind:'complete',value:43});
     await next('resumed2');
     assert.equal(frames.find(f=>f.kind==='resumed2').value,43);
+    worker.postMessage({kind:'unwind-start'});
+    assert.deepEqual(await next('unwind-parked'),{kind:'unwind-parked',retirementBlocked:true,closeBlocked:true});
+    worker.postMessage({kind:'unwind-complete',value:7});
+    assert.deepEqual(await next('unwind-after'),{kind:'unwind-after',accepted:true,duplicate:false});
+    assert.deepEqual(await next('unwind-done'),{kind:'unwind-done',failure:'cancel',retirementBlocked:true});
+    assert.deepEqual(frames.filter(f=>f.kind.startsWith('unwind-')).map(f=>f.kind),
+      ['unwind-parked','unwind-before','unwind-after','unwind-resumed','unwind-outer','unwind-done']);
+    assert.equal(frames.find(f=>f.kind==='unwind-resumed').value,7);
+    worker.postMessage({kind:'unwind-retire'});
+    assert.deepEqual(await next('unwind-retired'),{kind:'unwind-retired',retired:true,attached:true,stale:false,retained:0});
     worker.postMessage({kind:'close'});
     assert.equal((await next('closed')).stats.closed,true);
   } finally {await worker.terminate();}
