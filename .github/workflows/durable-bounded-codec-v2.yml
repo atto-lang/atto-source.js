@@ -9,6 +9,9 @@ on:
       - '.github/workflows/durable-bounded-codec-v2.yml'
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   generated:
     runs-on: ubuntu-24.04

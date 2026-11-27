@@ -11,6 +11,9 @@ on:
       - '.github/workflows/checked-u64-scalar-v1.yml'
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   compiled-guests:
     runs-on: ubuntu-latest

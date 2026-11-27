@@ -1,6 +1,7 @@
 name: AttoLang value-block/range guest harness self-tests (SOURCE-FREE)
 on:
   push:
+    branches: [main]
     paths:
       - 'contracts/value-block-range-v0/**'
       - 'scripts/run-value-block-range-v0.mjs'
@@ -14,6 +15,9 @@ on:
       - '.github/workflows/value-block-range-v0-harness.yml'
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   harness-negative-controls-not-guest:
     runs-on: ubuntu-24.04
