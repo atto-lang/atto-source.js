@@ -1,39 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {create_execution_context} from '../src/unwind-context.mjs';
+import {createWorkerControlLoop} from '../src/worker-control-loop.mjs';
 
-// Deterministic contract harness, not the production Worker scheduler. The same
-// tests must be rerun with #121's real loop when it is integrated.
-function harness() {
-  const turns=[], tickets=new Map(), owners=new Map();
-  const loop={
-    attachOwner(owner,epoch) { owners.set(owner,epoch); return true; },
-    admitData(owner,epoch,run) {
-      if (owners.get(owner)!==epoch) return false;
-      turns.push(()=>{if(owners.get(owner)===epoch)run();});
-      return true;
-    },
-    beginSuspension(owner,epoch,run) {
-      if(owners.get(owner)!==epoch)return null;
-      const t={}; tickets.set(t,{owner,epoch,run,queued:false});return t;
-    },
-    complete(t,value) {
-      const e=tickets.get(t);
-      if(!e||e.queued||owners.get(e.owner)!==e.epoch)return false;
-      e.queued=true;
-      turns.push(()=>{if(tickets.delete(t)&&owners.get(e.owner)===e.epoch)e.run(value);});
-      return true;
-    },
-    cancel(t){return tickets.delete(t);},
-    retireOwner(owner,epoch){
-      if(owners.get(owner)!==epoch)return false;
-      owners.delete(owner);
-      for(const [t,e] of tickets)if(e.owner===owner&&e.epoch===epoch)tickets.delete(t);
-      return true;
-    }
-  };
+// Actual scheduler with deterministic host wakeup injection.
+function harness(options={}) {
+  const turns=[], errors=[];
+  const loop=createWorkerControlLoop({...options,postTurn:f=>turns.push(f),onTurnError:e=>errors.push(e)});
   loop.attachOwner('a',1);
-  return {loop,turns,turn(){assert.ok(turns.length);turns.shift()();}};
+  return {loop,turns,errors,turn(){assert.ok(turns.length);turns.shift()();assert.deepEqual(errors,[]);}};
 }
 const context=()=>create_execution_context({tenant_id:'t',actor_id:1,generation:1});
 test('scheduled LIFO return: no inline wakeup, single delivery, busy until settlement',()=>{
@@ -78,17 +53,23 @@ test('successful recover retains original error and returns scheduler-owned deci
   complete(42);assert.equal(done,undefined);turn();
   assert.equal(done.kind,'recovered');assert.equal(done.value,42);assert.equal(done.error,err);
 });
-test('old generation completion after retirement cannot run guest or report success',()=>{
+test('retirement and scheduler shutdown wait for active cleanup and recovery',()=>{
   for(const kind of ['defer','recover']){
     const {loop,turn}=harness(),c=context();let complete,done,resumed=0;
     c.push_frame(1);const handler=()=>c.suspend_step(ok=>{complete=ok;},()=>{resumed++;return kind==='recover'?c.recovered(1):undefined;});
-    if(kind==='defer'){c.register_scheduled_defer(handler);c.return_frame_scheduled(42,loop,'a',v=>{done=v;});}
-    else{c.register_scheduled_recover(handler);c.dispatch_failure_scheduled('raise',Error('x'),loop,'a',v=>{done=v;});}
-    turn();loop.retireOwner('a',1);loop.attachOwner('a',2);
-    assert.equal(complete(42),false);assert.equal(resumed,0);assert.equal(done,undefined);
-    // Deliberately fail closed: retirement coordinator must not drop a live
-    // unwind. Busy is retained, not falsely marked quiescent.
+    const publish=v=>{done=v;assert.equal(loop.retireOwner('a',1),false);assert.equal(loop.close(),false);};
+    if(kind==='defer'){c.register_scheduled_defer(handler);c.return_frame_scheduled(42,loop,'a',publish);}
+    else{c.register_scheduled_recover(handler);c.dispatch_failure_scheduled('raise',Error('x'),loop,'a',publish);}
+    assert.equal(loop.stats.retainedOwners,1);
+    assert.equal(loop.retireOwner('a',1),false);assert.equal(loop.close(),false);
+    turn();assert.equal(loop.retireOwner('a',1),false);assert.equal(loop.attachOwner('a',2),false);
     assert.equal(c.unwind_busy,true);assert.throws(()=>c.retire(),/E_UNWIND_REENTRANT/);
+    assert.equal(complete(42),true);assert.equal(resumed,0);assert.equal(done,undefined);
+    assert.equal(loop.retireOwner('a',1),false);turn();
+    assert.equal(resumed,1);assert.equal(c.unwind_busy,false);assert.equal(loop.stats.retainedOwners,0);
+    c.retire();assert.equal(loop.retireOwner('a',1),true);assert.equal(loop.attachOwner('a',2),true);
+    assert.equal(complete(99),false);assert.equal(resumed,1);assert.ok(done);
+    loop.close();assert.equal(loop.stats.closed,true);
   }
 });
 test('legacy Promise path and scheduled callbacks cannot mix; async callback rejected before execution',async()=>{
@@ -131,4 +112,45 @@ test('scheduler admission failure leaves frames intact',()=>{
   const {loop}=harness(),c=context();c.push_frame(1);c.register_scheduled_defer(()=>{});
   assert.equal(c.return_frame_scheduled(1,loop,'missing',()=>{}),false);
   assert.equal(c.depth,1);assert.equal(c.unwind_busy,false);
+});
+
+test('bounded physical credits reject second context and refund after completion',()=>{
+  const {loop,turn}=harness({maxSuspended:1}), a=context(), b=context();let complete;
+  a.push_frame(1);a.register_scheduled_defer(()=>a.suspend_step(ok=>{complete=ok;},()=>{}));
+  b.push_frame(1);b.register_scheduled_defer(()=>{});
+  assert.equal(a.return_frame_scheduled(1,loop,'a',()=>{}),true);
+  assert.equal(b.return_frame_scheduled(2,loop,'a',()=>{}),false);
+  assert.equal(b.depth,1);assert.equal(b.unwind_busy,false);turn();
+  complete(1);turn();assert.equal(loop.stats.retainedOwners,0);
+  assert.equal(b.return_frame_scheduled(2,loop,'a',()=>{}),true);turn();
+  assert.equal(loop.stats.retainedOwners,0);
+});
+test('failed ready queue admission refunds physical credit',()=>{
+  const {loop,turn}=harness({maxReady:1}),c=context();
+  loop.admitData('a',1,()=>{});c.push_frame(1);c.register_scheduled_defer(()=>{});
+  assert.equal(c.return_frame_scheduled(1,loop,'a',()=>{}),false);
+  assert.equal(loop.stats.retainedOwners,0);assert.equal(c.depth,1);turn();
+});
+test('physical credit cannot be released twice or acquired for stale generations',()=>{
+  const {loop}=harness({maxSuspended:2});const x=loop.retainOwner('a',1),y=loop.retainOwner('a',1);
+  assert.equal(loop.retainOwner('a',1),null);assert.equal(x.close(),true);assert.equal(x.close(),false);
+  assert.equal(loop.retireOwner('a',1),false);assert.equal(y.close(),true);
+  assert.equal(loop.retireOwner('a',1),true);assert.equal(loop.attachOwner('a',2),true);
+  assert.equal(loop.retainOwner('a',1),null);assert.equal(loop.stats.retainedOwners,0);
+});
+test('terminal publication failure refunds physical credit without allowing premature retirement',()=>{
+  const {loop,turns,errors}=harness(),c=context();c.push_frame(1);
+  c.return_frame_scheduled(1,loop,'a',()=>{assert.equal(loop.retireOwner('a',1),false);throw Error('publish');});
+  turns.shift()();assert.equal(errors.length,1);assert.match(errors[0].message,/publish/);
+  assert.equal(loop.stats.retainedOwners,0);assert.equal(loop.retireOwner('a',1),true);
+});
+test('cancellation through reserved CONTROL settles before actor retirement',()=>{
+  const {loop,turn}=harness(),c=context(),trace=[];let complete,done;
+  c.push_frame(1);c.register_defer(()=>trace.push('outer'));
+  c.register_scheduled_defer(()=>c.suspend_step(ok=>{complete=ok;},()=>trace.push('resume')));
+  c.return_frame_scheduled(1,loop,'a',v=>{done=v;});turn();
+  loop.admitControl('a',1,()=>{c.request_cancel(Error('stop'));assert.equal(loop.retireOwner('a',1),false);});
+  complete(0);turn();assert.deepEqual(trace,[]);turn();
+  assert.deepEqual(trace,['resume','outer']);assert.equal(done.failure_kind,'cancel');
+  assert.equal(loop.retireOwner('a',1),true);
 });

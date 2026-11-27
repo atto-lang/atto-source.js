@@ -1,6 +1,7 @@
 // Host-side logical continuation queue shared by browser and Node Worker hosts.
 // Not a Wasm guest ABI, NIO implementation, or an untrusted TenantVM sandbox.
 // Reactor/MessagePort callbacks may *admit* a completion, never run guest code.
+import {SelectContinuationFence} from './select-continuation-fence.mjs';
 const validLimit = (n, maximum) => Number.isSafeInteger(n) && n >= 1 && n <= maximum;
 const validEpoch = n => Number.isSafeInteger(n) && n >= 1;
 const validOwner = x => typeof x === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(x);
@@ -17,6 +18,9 @@ export function createWorkerControlLoop({
 
   const owners = new Map(), epochs = new Map(), waiting = new Map(), ticketEntries = new WeakMap();
   const ready = [], control = [], settled = [];
+  // Physical credits survive every park/resume until logical unwind quiesces.
+  const ownerFences = new Map();
+  let retainedOwners = 0;
   // One coalesced scheduling hint per active owner. This is trusted host-only
   // authority, not a guest-exposed TaskId or forced native-thread preemption.
   const cooperatePending = new Map();
@@ -160,6 +164,29 @@ export function createWorkerControlLoop({
       epochs.set(owner, epoch);
       return true;
     },
+    // Trusted host only. Bounded independently of the ready/waiting queues.
+    // A closed/faulted scheduler never revives a retained generation.
+    retainOwner(owner, epoch) {
+      if (!validOwner(owner) || !validEpoch(epoch)) throw new TypeError('invalid owner epoch');
+      if (closed || !active(owner,epoch) || retainedOwners >= maxSuspended) return null;
+      let fence=ownerFences.get(owner);
+      if (!fence) {
+        fence=new SelectContinuationFence({generation:epoch,maxTickets:Math.min(maxSuspended,4096)});
+        ownerFences.set(owner,fence);
+      }
+      if (fence.executing >= Math.min(maxSuspended,4096)) return null;
+      const lease=fence.tryClaim(fence.register(epoch));
+      retainedOwners++;
+      let held=true;
+      return Object.freeze({generation:epoch,close(){
+        if (!held) return false;
+        held=false;
+        lease.close();
+        retainedOwners--;
+        if (fence.executing===0) ownerFences.delete(owner);
+        return true;
+      }});
+    },
     admitData(owner, epoch, run, value) {
       return enqueue(ready, maxReady, owner, epoch, run, value);
     },
@@ -224,7 +251,7 @@ export function createWorkerControlLoop({
       return true;
     },
     retireOwner(owner, epoch) {
-      if (!active(owner, epoch)) return false;
+      if (!active(owner, epoch) || ownerFences.has(owner)) return false;
       owners.delete(owner);
       cooperatePending.delete(owner);
       for (const [id, entry] of waiting) {
@@ -248,6 +275,7 @@ export function createWorkerControlLoop({
       return true;
     },
     close() {
+      if (retainedOwners!==0) return false;
       if (closed) return;
       closed = true;
       owners.clear(); epochs.clear(); waiting.clear(); cooperatePending.clear(); ready.length = 0; control.length = 0; settled.length = 0;
@@ -256,7 +284,7 @@ export function createWorkerControlLoop({
       return Object.freeze({closed, owners: owners.size, suspended: waiting.size,
         ready: ready.length, control: control.length, settled: settled.length, completed, dropped, errors,
         cooperatePending: cooperatePending.size, cooperateRequests, cooperateDeferrals,
-        cooperateCoalesced});
+        cooperateCoalesced, retainedOwners});
     }
   });
 }

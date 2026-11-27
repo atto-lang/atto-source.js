@@ -357,20 +357,23 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
     return token;
   }
   // Reuse the exact same unwind state machine as the host reference driver.
-  // The caller must retain the owning scheduler generation until quiescence.
-  // Scheduler shutdown/retirement coordination is a separate integration gate:
-  // dropping a ticket must NOT be reported as successful cleanup.
+  // Hold the scheduler's physical generation credit before admission and until
+  // terminal publication returns. A fatal scheduler failure is fail-stop:
+  // do not pretend a parked unwind is quiescent or free its actor storage.
   function start_scheduled(steps,scheduler,owner_key,on_done) {
     check_available(); require_quantum(on_done);
     if (frames.some(f => [...f.defers,...f.recovers].some(c => c?.suspends&&!c.scheduled)))
       throw new Error('E_LEGACY_ASYNC_UNWIND_FORBIDDEN');
-    if (!scheduler || !['admitData','beginSuspension','complete','cancel'].every(k=>typeof scheduler[k]==='function'))
+    if (!scheduler || !['admitData','beginSuspension','complete','cancel','retainOwner'].every(k=>typeof scheduler[k]==='function'))
       throw new TypeError('E_SCHEDULER_REQUIRED');
     const epoch=owner.generation;
+    const lease=scheduler.retainOwner(owner_key,epoch);
+    if (!lease) return false;
     let step, action;
     function finish(value) {
       scheduled_driver=false;
-      reject_thenable(on_done(value));
+      try { reject_thenable(on_done(value)); }
+      finally { lease.close(); }
     }
     function drive(result,failed=false,has_result=false) {
       // Every call is on the scheduler lane, including resume after a wakeup.
@@ -429,7 +432,7 @@ export function create_execution_context({tenant_id, actor_id, generation} = {})
       });
       return admitted;
     } finally {
-      if (!admitted) scheduled_admission=false;
+      if (!admitted) { scheduled_admission=false; lease.close(); }
     }
   }
   function return_frame_scheduled(value,scheduler,owner_key,on_done) {
