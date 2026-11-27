@@ -926,7 +926,7 @@ class Parser {
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
         case 'rootStdoutDefer':case 'stdoutSeq':case 'taskScope':case 'taskDefer':add(expr.body);break;
-        case 'taskSet':add(expr.value);add(expr.body);break;
+        case 'taskSet':case 'taskDeferInt':add(expr.value);add(expr.body);break;
         case 'local':add(expr.init);add(expr.body);break;
         case 'newClass':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'methodCall':
@@ -1200,6 +1200,13 @@ class Parser {
         declarations.set(name,mutable);scalarOnly||=mutable;steps.push({kind:'bind',name,init});continue;
       }
       if(this.eat('defer')){
+        if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
+          const name=this.name();this.expect('=');
+          if(declarations.has(name))fail('E_SYNC_TASK_PROFILE: cleanup requires outer mutable int',this.peek());
+          const value=this.expression();this.expect(';');
+          if(!['int','variable'].includes(value.kind))fail('E_SYNC_TASK_PROFILE: cleanup requires pure int read',this.peek());
+          steps.push({kind:'deferInt',name,value});continue;
+        }
         if(!['stdio . out . write (','process . stdout . write (','stdio . stdout . write ('].includes(this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')))fail('E_SYNC_TASK_PROFILE: stdout defer required',this.peek());
         this.i+=6;const t=this.peek();if(t.kind!=='localString')fail('E_SYNC_TASK_PROFILE: literal defer required',t);this.i++;this.expect(')');this.expect(';');steps.push({kind:'defer',message:t.literal});continue;
       }
@@ -1214,7 +1221,7 @@ class Parser {
       fail('E_SYNC_TASK_PROFILE: unsupported task statement',this.peek());
     }
     if(tail===null)fail('E_SYNC_TASK_PROFILE: explicit task return required',this.peek());
-    for(let i=steps.length-1;i>=0;i--){const step=steps[i];tail=step.kind==='bind'?{kind:'local',name:step.name,init:step.init,localType:'int',taskRebind:step.taskRebind===true,body:tail}:step.kind==='defer'?{kind:'taskDefer',message:step.message,body:tail}:{kind:'taskSet',name:step.name,value:step.value,body:tail};}
+    for(let i=steps.length-1;i>=0;i--){const step=steps[i];tail=step.kind==='bind'?{kind:'local',name:step.name,init:step.init,localType:'int',taskRebind:step.taskRebind===true,body:tail}:step.kind==='defer'?{kind:'taskDefer',message:step.message,body:tail}:{kind:step.kind==='deferInt'?'taskDeferInt':'taskSet',name:step.name,value:step.value,body:tail};}
     // Classify the parsed AST, never retry a failed compiler as another profile.
     const pure=(e,d=0)=>{
       if(d>MAX_DEPTH)fail('E_TASK_UNSUPPORTED: task expression depth');
@@ -1235,7 +1242,7 @@ class Parser {
       if(!e||typeof e!=='object')return;
       if(d>MAX_DEPTH)fail('E_TASK_UNSUPPORTED: task expression depth');
       if(e.kind==='immediateAwait')fail('E_TASK_UNSUPPORTED: await in synchronous inline task',this.peek());
-      if(e.kind==='taskSet'||e.kind==='taskDefer'||(e.kind==='methodCall'&&['unwrap','expect'].includes(e.name)))checkedEffect=true;
+      if(e.kind==='taskSet'||e.kind==='taskDeferInt'||e.kind==='taskDefer'||(e.kind==='methodCall'&&['unwrap','expect'].includes(e.name)))checkedEffect=true;
       if(e.kind==='call'&&e.qualifier!==null&&e.name==='unwrap'&&e.args.length===0)standaloneUnwraps.push(e);
       for(const value of Object.values(e))inspect(value,d+1);
     };
@@ -1605,7 +1612,7 @@ function resolveProgram(parsed) {
       }
       case 'if':return resolvedType(expr.yes,owner);
       case 'seqVoidCall':return resolvedType(expr.value,owner);
-      case 'rootStdoutDefer':case 'stdoutSeq':case 'taskDefer':case 'taskSet':return resolvedType(expr.body,owner);
+      case 'rootStdoutDefer':case 'stdoutSeq':case 'taskDefer':case 'taskSet':case 'taskDeferInt':return resolvedType(expr.body,owner);
       case 'taskScope':return 'int';
       case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return resolvedType(expr.body,owner);
       case 'adtMatch':return resolvedType(expr.arms[0].body,owner);
@@ -1637,7 +1644,7 @@ function resolveProgram(parsed) {
     if(!n||typeof n!=='object')return false;
     let byName=taskWriteCache.get(n);if(!byName){byName=new Map();taskWriteCache.set(n,byName);}
     if(byName.has(name))return byName.get(name);
-    const result=(n.kind==='taskSet'&&n.name===name)||Object.values(n).some(v=>taskWrites(v,name));
+    const result=(['taskSet','taskDeferInt'].includes(n.kind)&&n.name===name)||Object.values(n).some(v=>taskWrites(v,name));
     byName.set(name,result);return result;
   }
   function resolve(expr,owner,depth=0,bindings=[]) {
@@ -1783,10 +1790,10 @@ function resolveProgram(parsed) {
         if(owner.inlineTask||owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer')fail('E_SYNC_TASK_PROFILE: unsupported task boundary');
         return {kind:'taskScope',body:resolve(expr.body,{...owner,inlineTask:true},depth+1,bindings)};
       }
-      case 'taskSet':{
+      case 'taskSet':case 'taskDeferInt':{
         const target=bindings.findLast(b=>b.name===expr.name);
         if(!owner.inlineTask||!target?.taskMutable||target.type!=='int')fail('E_SYNC_TASK_PROFILE: assignment requires writable outer int local');
-        return {kind:'taskSet',slot:target.slot,value:resolve(expr.value,owner,depth+1,bindings),body:resolve(expr.body,owner,depth+1,bindings)};
+        return {kind:expr.kind,slot:target.slot,value:resolve(expr.value,owner,depth+1,bindings),body:resolve(expr.body,owner,depth+1,bindings)};
       }
       case 'taskDefer':{
         if(!owner.inlineTask||owner.params.some(n=>n==='stdio'||n==='process')||bindings.some(b=>b.name==='stdio'||b.name==='process')||functions.some(f=>f.name==='stdio'||f.name==='process')||modules.length||classes.length||generators.length)fail('E_SYNC_TASK_PROFILE: unshadowed literal stdout defer required');
@@ -2042,7 +2049,7 @@ function resolveProgram(parsed) {
     else if(expr.kind==='tryCatch'){inspect(expr.body,owner);inspect(expr.handler,owner);}
     else if(expr.kind==='seqVoidCall'){inspect(expr.call,owner);inspect(expr.value,owner);}
     else if(['rootStdoutDefer','stdoutSeq','taskScope','taskDefer'].includes(expr.kind))inspect(expr.body,owner);
-    else if(expr.kind==='taskSet'){inspect(expr.value,owner);inspect(expr.body,owner);}
+    else if(['taskSet','taskDeferInt'].includes(expr.kind)){inspect(expr.value,owner);inspect(expr.body,owner);}
     else if(['taskMutableLocal','local','floatLocal','boolLocal','stringLocal','trapLocal','trapOptionLocal','trapBoolLocal','optionBoolLocal','optionLocal','resultLocal'].includes(expr.kind)){inspect(expr.init,owner);inspect(expr.body,owner);}
     else if(['trapMethod','trapOptionMethod','trapBoolMethod'].includes(expr.kind))inspect(expr.receiver,owner);
     else if(['neg','floatNeg','not','trap'].includes(expr.kind)) inspect(expr.inner,owner);
@@ -2172,6 +2179,7 @@ function emitProgram(program) {
       case 'if':return '(('+emitExpr(expr.condition,depth+1)+')?('+
         emitExpr(expr.yes,depth+1)+'):('+emitExpr(expr.no,depth+1)+'))';
       case 'taskScope':return '('+emitExpr(expr.body,depth+1)+')';
+      case 'taskDeferInt':return '(()=>{try{return '+emitExpr(expr.body,depth+1)+';}finally{_v'+expr.slot+'='+emitExpr(expr.value,depth+1)+';}})()';
       case 'taskSet':return '(()=>{_v'+expr.slot+'=_check('+emitExpr(expr.value,depth+1)+');return '+emitExpr(expr.body,depth+1)+';})()';
       case 'rootStdoutDefer':case 'taskDefer':return '(()=>{try{return '+emitExpr(expr.body,depth+1)+';}finally{_writeStdout(_stdout,'+JSON.stringify(expr.message)+');}})()';
       case 'stdoutSeq':return '(()=>{_writeStdout(_stdout,'+JSON.stringify(expr.message)+');return '+emitExpr(expr.body,depth+1)+';})()';
@@ -2269,7 +2277,7 @@ function emitProgram(program) {
       case 'tryCatch':return usesSymbol(expr.body)||usesSymbol(expr.handler);
       case 'seqVoidCall':return usesSymbol(expr.call)||usesSymbol(expr.value);
       case 'rootStdoutDefer':case 'stdoutSeq':case 'taskScope':case 'taskDefer':return usesSymbol(expr.body);
-      case 'taskSet':return usesSymbol(expr.value)||usesSymbol(expr.body);
+      case 'taskSet':case 'taskDeferInt':return usesSymbol(expr.value)||usesSymbol(expr.body);
       case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
       case 'trap':return usesSymbol(expr.inner);
       case 'trapMethod':case 'trapOptionMethod':case 'trapBoolMethod':return usesSymbol(expr.receiver);
@@ -2319,7 +2327,7 @@ function emitProgram(program) {
       case 'tryCatch':return usesPortableRuntime(expr.body)||usesPortableRuntime(expr.handler);
       case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
       case 'rootStdoutDefer':case 'stdoutSeq':case 'taskScope':case 'taskDefer':return usesPortableRuntime(expr.body);
-      case 'taskSet':return usesPortableRuntime(expr.value)||usesPortableRuntime(expr.body);
+      case 'taskSet':case 'taskDeferInt':return usesPortableRuntime(expr.value)||usesPortableRuntime(expr.body);
       case 'taskMutableLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'trapBoolLocal':case 'optionBoolLocal':case 'optionLocal':case 'resultLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'i32Check':case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
       case 'match':return usesPortableRuntime(expr.subject)||
