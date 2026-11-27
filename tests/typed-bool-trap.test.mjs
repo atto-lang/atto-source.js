@@ -18,3 +18,19 @@ test('Boolean option Some payload validated and forged trap type rejected',async
  root.init.operandType='int';
  assert.throws(()=>compileProgramIRV2(ir),/error:/);
 });
+
+test('inlined Boolean Option IR retains runtime helpers without local binding',async()=>{
+ for(const [literal,expected] of [['Some(true)',true],['Some(false)',false],['None',null]]){
+   const ir=compileToProgramIRV2('pub fnc main(): bool { val Option<bool> x='+literal+'; return x.unwrap(); }');
+   const local=ir.functions[0].body;
+   assert.equal(local.kind,'optionBoolLocal');
+   assert.equal(local.body.name,'Option.boolUnwrap');
+   // A typed IR optimization can eliminate a single-use immutable binding.
+   ir.functions[0].body={...local.body,args:[local.init]};
+   const esm=compileProgramIRV2(ir);
+   assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir))),esm);
+   const guest=await import('data:text/javascript,'+encodeURIComponent(esm));
+   if(expected===null)assert.throws(()=>guest.main(),e=>e.name==='OptionUnwrapError');
+   else assert.equal(guest.main(),expected);
+ }
+});
