@@ -2,6 +2,8 @@ name: JS compiler bootstrap tests
 on:
   push:
   pull_request:
+  merge_group:
+    types: [checks_requested]
 permissions:
   contents: read
 jobs:
