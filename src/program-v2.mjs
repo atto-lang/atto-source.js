@@ -387,7 +387,7 @@ function rejectUnsupportedStaticSelect(tokens) {
   }
 }
 class Parser {
-  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;}
+  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;this.scalarDenotations=new Map();}
   peek() {return this.tokens[this.i];}
   eat(s) {if(this.peek().value === s) {this.i++; return true;} return false;}
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
@@ -455,7 +455,33 @@ class Parser {
     const type=this.valueType(),name=readName();
     return {name,type};
   }
+  scalarDenotation() {
+    const start=this.peek();
+    this.expect('denote');
+    if(this.peek().value==='pub'||this.peek().value==='private')
+      fail('denotation visibility unsupported in this profile',this.peek(),'E_UNSUPPORTED');
+    this.expect('type');
+    const name=this.name();
+    if(!/^[A-Z][A-Za-z0-9_]*$/.test(name)||isProtectedPreludeIdentity(name)||
+       GENERATOR_RESERVED.has(name)||CLASS_METHOD_RESERVED.has(name)||
+       ['Object','Actor','ActorRef','ActorMail','Error','Option','Result','Integer','String',
+        'Boolean','Float','Array','List','Vector','Tuple','Record','Map','Set','Pair','Entry',
+        'Pointer','Channel','Future','Task','Duration','UUID','Any','Never','Sendable',
+        'Serializable','Copyable','DeepCopyable','Newable','Atomic','Mutex','RwLock'].includes(name)||
+       this.scalarDenotations.has(name))
+      fail('duplicate, reserved or unsupported denotation name '+name,start,'E_DUPLICATE');
+    if(this.scalarDenotations.size>=512)fail('denotation count limit',start,'E_SOURCE_LIMIT');
+    this.expect('=');
+    const rhs=this.peek(),type=['int','bool'].includes(rhs.value)?rhs.value:this.scalarDenotations.get(rhs.value);
+    if(rhs.kind!=='id'||type===undefined)
+      fail('unresolved or unsupported scalar denotation RHS',rhs,'E_UNSUPPORTED_TYPE');
+    this.i++;
+    this.expect(';');
+    this.scalarDenotations.set(name,type);
+  }
   valueType() {
+    if(this.scalarDenotations.has(this.peek().value))
+      return this.scalarDenotations.get(this.tokens[this.i++].value);
     if(this.eat('int'))return 'int';
     if(this.eat('bool'))return 'bool';
     if(this.peek().value==='boolean') {
@@ -798,7 +824,7 @@ class Parser {
         const typedTrapBool=this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')==='Result < bool , Error >';
         if(typedTrapResult||typedTrapBool)this.i+=6;
         else if(typedTrapOption)this.i+=9;
-        let localType=typedTrapBool?'trapBoolResult':typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
+        let localType=typedTrapBool?'trapBoolResult':typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():(['Option','Result'].includes(this.peek().value)||(this.scalarDenotations.has(this.peek().value)&&this.tokens[this.i+1]?.kind==='id'))?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
         const name=this.name();
         if(!isConst&&!readOnlyLet&&localType==='inferredTrap'&&this.eat(':')){
           localType=this.valueType();
@@ -973,6 +999,10 @@ class Parser {
     }
     const modules=[],functions=[],generators=[],classes=[],usedModules=new Set(),usedClasses=new Set();
     const exportDeclarations=[];
+    while(this.peek().value==='denote'){
+      if(namespace!==null)fail('namespace denotations require verified type linking',this.peek(),'E_UNSUPPORTED');
+      this.scalarDenotation();
+    }
     while(this.peek().kind!=='eof'){
       if(this.peek().value==='export') {
         if(exportDeclarations.length>=1024)fail('file export budget exceeded',this.peek());
@@ -1030,6 +1060,8 @@ class Parser {
         else functions.push(this.functions(null));
       }
     }
+    if(this.scalarDenotations.size&&(classes.length||modules.length||generators.length||exportDeclarations.length))
+      fail('denotations with nominal, module, generator or explicit export declarations require linked type identities',this.peek(),'E_UNSUPPORTED');
     if(this.booleanAliasToken&&(usedClasses.has('boolean')||usedModules.has('boolean')))
       fail('E_TYPE_ALIAS_SHADOWED: boolean requires nominal type resolution',this.booleanAliasToken);
     if(!functions.length&&!generators.length&&!modules.length&&!classes.length)fail('empty program');
