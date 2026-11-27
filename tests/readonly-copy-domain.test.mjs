@@ -31,11 +31,28 @@ test('read loan blocks recovery after dropping other owner',()=>{
   d.drop(b);deny('E_COPY_LOAN',()=>d.setScalar(a,child,'n',42));
   d.release(l);d.setScalar(a,child,'n',42);deny('E_COPY_STALE',()=>d.release(l));
 });
-test('self cycle protects original root, independent clone may detach',()=>{
-  const d=new ReadonlyCopyDomain(),a=make(d),ar=d.identity(a);d.linkWithin(a,ar,'self',ar);
+test('source root back edges reject atomically; internal descendant cycles stay shared',()=>{
+  const d=new ReadonlyCopyDomain(),a=make(d),ar=d.identity(a);
+  d.linkWithin(a,ar,'self',ar);
+  deny('E_COPY_SHALLOW_ALIAS',()=>d.copy(a));
+  assert.equal(d.canWrite(a,ar),true);
+  d.setScalar(a,ar,'n',2);
+  d.remove(a,ar,'self');
+  const c=make(d,20),cr=d.identity(c);
+  d.moveInto(a,ar,'child',c);
+  d.linkWithin(a,cr,'back',ar);
+  deny('E_COPY_SHALLOW_ALIAS',()=>d.copy(a));
+  assert.equal(d.canWrite(a,ar),true);
+  assert.equal(d.canWrite(a,cr),true);
+  d.remove(a,cr,'back');
+  d.linkWithin(a,cr,'self',cr);
   const b=d.copy(a),br=d.identity(b);
-  deny('E_COPY_READONLY',()=>d.setScalar(a,ar,'n',2));
-  d.remove(b,br,'self');d.setScalar(a,ar,'n',3);
+  d.setScalar(a,ar,'n',20);d.setScalar(b,br,'n',22);
+  assert.equal(d.read(a,ar,'n')+d.read(b,br,'n'),42);
+  deny('E_COPY_READONLY',()=>d.setScalar(a,cr,'n',99));
+  deny('E_COPY_READONLY',()=>d.setScalar(b,cr,'n',99));
+  d.drop(b);d.setScalar(a,cr,'n',23);
+  assert.equal(d.read(a,cr,'n'),23);
 });
 test('failed move retains donor and original slot, readonly and foreign denial',()=>{
   const d=new ReadonlyCopyDomain({maxWork:5}),a=make(d),ar=d.identity(a),fresh=d.create({dynamic:true});
@@ -59,4 +76,14 @@ test('bounded root and read-loan capacity, scalar fast path',()=>{
   const l=d.readLoan(a,ar);deny('E_COPY_BUDGET',()=>d.readLoan(a,ar));
   d.release(l);for(let i=0;i<10000;i++)d.setScalar(a,ar,'n',i);
   assert.equal(d.read(a,ar,'n'),9999);assert.equal(d.read(b,d.identity(b),'n'),1);
+});
+test('rejected cycles do not consume root quota or change holder counts',()=>{
+  const d=new ReadonlyCopyDomain({maxRoots:2}),a=make(d),ar=d.identity(a);
+  d.linkWithin(a,ar,'self',ar);
+  for(let i=0;i<1000;i++)deny('E_COPY_SHALLOW_ALIAS',()=>d.copy(a));
+  assert.equal(d.canWrite(a,ar),true);
+  d.remove(a,ar,'self');
+  const b=d.copy(a);deny('E_COPY_BUDGET',()=>d.copy(a));
+  d.drop(b);d.setScalar(a,ar,'n',42);
+  assert.equal(d.read(a,ar,'n'),42);
 });
