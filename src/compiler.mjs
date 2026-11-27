@@ -230,13 +230,18 @@ function productFactoryAt(tokens, i) {
   return tokens[i]?.kind==='id' && ['Pair','Entry'].includes(tokens[i].value)
     && tokens[i+1]?.value==='.' && tokens[i+2]?.value==='of';
 }
+function localPairTypeAt(tokens,i) {
+  return tokens[i-1]?.value==='const' && tokens[i]?.kind==='id' && tokens[i].value==='Pair'
+    && tokens[i+1]?.value==='<' && tokens[i+2]?.value==='int' && tokens[i+3]?.value==='>'
+    && tokens[i+4]?.kind==='id' && tokens[i+5]?.value==='=';
+}
 function rejectAmbiguousProductFactories(tokens) {
-  const active=new Set(tokens.filter((_,i)=>productFactoryAt(tokens,i)).map(t=>t.value));
+  const active=new Set(tokens.filter((_,i)=>productFactoryAt(tokens,i)||localPairTypeAt(tokens,i)).map(t=>t.value));
   if(!active.size)return;
   for(let i=0;i<tokens.length;i++){
     const t=tokens[i];
     if(t.kind!=='id')continue;
-    if(active.has(t.value) && (!productFactoryAt(tokens,i)
+    if(active.has(t.value) && ((!productFactoryAt(tokens,i)&&!localPairTypeAt(tokens,i))
        || ['.','::'].includes(tokens[i-1]?.value)))
       throw new CompileError('E_PRODUCT_SCOPE_UNSUPPORTED: competing '+t.value+' reference',t);
     if(['import','use','macro'].includes(t.value))
@@ -295,19 +300,39 @@ class Parser {
     if(['Record','Tuple','struct'].includes(next)){
       this.aggregateConst(params);return;
     }
+    const typedPair=localPairTypeAt(this.ts,this.pos+1);
     this.expect('const');
+    if(typedPair){this.expect('Pair');this.expect('<');this.expect('int');this.expect('>');}
     const name=this.aggregateIdentifier();
     if(params.includes(name)||this.aggregateLocals.has(name)||this.scalarConsts.has(name)||this.aggregateTypes.has(name))
       throw new CompileError('duplicate local binding '+name,at);
     if(this.aggregateLocals.size+this.scalarConsts.size>=64)
       throw new CompileError('aggregate binding limit',at);
+    if(typedPair){
+      this.expect('=');
+      const origin=this.peek(),source=this.aggregateLocals.get(this.aggregateIdentifier());
+      if(source?.kind!=='Pair'||source.fields.get('value')?.type!=='int')
+        throw new CompileError('E_PAIR_TYPE: expected initialized Pair<int> alias',origin);
+      this.expect(';');
+      this.aggregateLocals.set(name,{kind:'Pair',key:source.key,fields:new Map(source.fields)});
+      return;
+    }
     // Name-derived Pair binding is distinct from a Record field.
     if(this.match(':=')){
       this.readLocalPair(name,name,at);return;
     }
     this.expect('=');
-    if(this.peek().kind==='id'&&this.ts[this.pos+1]?.value===':='){
-      const key=this.aggregateIdentifier();this.expect(':=');this.readLocalPair(name,key,at);return;
+    if(['id','string'].includes(this.peek().kind)&&this.ts[this.pos+1]?.value===':='){
+      const key=this.peek().kind==='string'?this.readStaticPairKey():this.aggregateIdentifier();
+      this.expect(':=');this.readLocalPair(name,key,at);return;
+    }
+    if(productFactoryAt(this.ts,this.pos)&&this.peek().value==='Pair'){
+      this.pos+=3;
+      if(this.match('<')){if(this.match('string'))this.expect(',');this.expect('int');this.expect('>');}
+      this.expect('(');const key=this.readStaticPairKey();this.expect(',');
+      const field=this.readAggregateScalar([],false);
+      this.expect(')');this.expect(';');
+      this.aggregateLocals.set(name,{kind:'Pair',key,fields:new Map([['value',field]])});return;
     }
     if(this.peek().kind==='id'&&this.ts[this.pos+1]?.value==='with'){
       const base=this.readConstRecordOperand();
@@ -324,6 +349,14 @@ class Parser {
       const value=this.readAggregateScalar([],false);
       this.expect(';');this.scalarConsts.set(name,value);
     }
+  }
+  readStaticPairKey(){
+    const token=this.peek();
+    if(token.kind!=='string')throw new CompileError('E_PAIR_KEY_TYPE: static string required',token);
+    const raw=token.value.raw.slice(1,-1);
+    if(!/^[\x20-\x7e]*$/.test(raw)||/[\\$]/.test(raw))
+      throw new CompileError('E_PAIR_KEY_UNSUPPORTED: scalar profile requires a plain static string',token);
+    this.pos++;return raw;
   }
   readLocalPair(name,key,at){
     // The scalar subset exposes only integer .value projection. Preserve
