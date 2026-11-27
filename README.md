@@ -104,3 +104,11 @@ signed-i64 bounds **before** invoking BigInt, including negative-minimum
 literals with long leading-zero padding. Source bytes, token count, expression
 nesting, and task count are bounded. This admission check does not implement
 cancellation or make JavaScript Workers into a secure TenantVM.
+
+## Fieldless class receiver calls (experimental program-v2)
+
+Within an instance method, `self.helper(x)` and unqualified `helper(x)` resolve to the same method slot in the current class (name + caller-visible arity), with class methods taking precedence over identically named file functions. Private methods are callable internally, but remain inaccessible externally. Named argument evaluation order is preserved. The generated class uses private, receiver-branded JS entrypoints with strict argument type checking.
+
+Bare `self.helper` is **rejected**, not silently converted to an unbound JS function. Recursion through method calls is rejected until bounded execution fuel exists. This slice does not add fields, constructors with parameters, general closures, first-class method references, inheritance, or `pkg::` root calls from methods.
+
+Run `node --test tests/class-receiver-calls.test.mjs tests/program-classes-v2.test.mjs` and `npm test` on an authorized Node 22 source-local runner before merging.

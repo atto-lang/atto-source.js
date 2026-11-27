@@ -751,6 +751,8 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
       default:fail('unsupported expression kind');
     }
   }
+  const methodEdges=classHeaders.map(cls=>cls.methods.map(()=>new Set()));
+  let activeClassIndex=-1,activeMethodIndex=-1;
   function methodNode(expr,method,depth=0,expected=method.returnType){
     if(++nodes>LIMIT_NODES||depth>LIMIT_DEPTH)fail('method expression complexity exceeded');
     if(!expr||typeof expr!=='object'||Array.isArray(expr))fail('invalid method expression');
@@ -817,6 +819,40 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
           condition:methodNode(expr.condition,method,depth+1,'bool'),
           yes:methodNode(expr.yes,method,depth+1,expected),
           no:methodNode(expr.no,method,depth+1,expected)};
+      case 'selfCall':
+      case 'namedSelfCall': {
+        const named=desc.value==='namedSelfCall';
+        record(expr,named?
+          ['kind','methodIndex','args','paramOrder']:
+          ['kind','methodIndex','args'],named?'named self call':'self call');
+        const methods=classHeaders[activeClassIndex]?.methods;
+        if(!methods||!Number.isSafeInteger(expr.methodIndex)||
+           Object.is(expr.methodIndex,-0)||expr.methodIndex<0||
+           expr.methodIndex>=methods.length)
+          fail('invalid self method target');
+        const target=methods[expr.methodIndex];
+        if(target.returnType==='void'||target.returnType!==expected)
+          fail('self method return type mismatch');
+        const args=sequence(expr.args,32,'self call args');
+        if(args.length!==target.params.length)fail('self method arity mismatch');
+        let order=target.params.map((_,i)=>i);
+        if(named){
+          const requested=sequence(expr.paramOrder,32,'self call argument order');
+          if(requested.length!==args.length)fail('named self call arity mismatch');
+          const seen=new Set();
+          order=requested.map(i=>{
+            if(!Number.isSafeInteger(i)||Object.is(i,-0)||i<0||
+              i>=target.params.length||seen.has(i))
+              fail('invalid self call parameter order');
+            seen.add(i);return i;
+          });
+          if(seen.size!==target.params.length)fail('incomplete self call parameter order');
+        }
+        methodEdges[activeClassIndex][activeMethodIndex].add(expr.methodIndex);
+        return {kind:desc.value,methodIndex:expr.methodIndex,
+          args:args.map((arg,i)=>methodNode(arg,method,depth+1,target.paramTypes[order[i]])),
+          ...(named?{paramOrder:order}:{})};
+      }
       case 'intrinsic': {
         record(expr,['kind','name','args'],'method intrinsic');
         const signatures={
@@ -845,13 +881,23 @@ export function validateProgramIRV2(input, allowScalarWhile = false) {
     ...gen,
     yields:gen.yields.map(expr=>node(expr,headers.length+i,0,gen.elementType))
   }));
-  const classes=classHeaders.map(cls=>({
+  const classes=classHeaders.map((cls,classIndex)=>({
     name:cls.name,pub:cls.pub,
-    methods:cls.methods.map(method=>({
-      ...method,
-      body:method.returnType==='void'?null:methodNode(method.body,method,0,method.returnType)
-    }))
+    methods:cls.methods.map((method,methodIndex)=>{
+      activeClassIndex=classIndex;activeMethodIndex=methodIndex;
+      return {...method,
+        body:method.returnType==='void'?null:methodNode(method.body,method,0,method.returnType)};
+    })
   }));
+  methodEdges.forEach(edges=>{
+    const color=new Uint8Array(edges.length);
+    function visit(i){
+      if(color[i]===1)fail('recursive class method graph unsupported pending fuel');
+      if(color[i]===2)return;
+      color[i]=1;for(const j of edges[i])visit(j);color[i]=2;
+    }
+    edges.forEach((_,i)=>visit(i));
+  });
   const color=new Uint8Array(headers.length);
   function visit(i) {
     if(color[i]===1)fail('recursive call graph unsupported pending fuel');

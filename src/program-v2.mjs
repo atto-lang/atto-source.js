@@ -419,11 +419,19 @@ class Parser {
     const marker=this.peek().value;
     if(marker!=='mtd'&&marker!=='method'&&marker!=='fnc')return false;
     const next=this.tokens[this.i+1],after=this.tokens[this.i+2];
-    if(!next||next.kind!=='id'||after?.value!=='(')return false;
+    const isMarker=value=>value==='mtd'||value==='method'||value==='fnc';
+    const following=this.tokens[this.i+3];
+    if(next?.kind==='id'&&isMarker(next.value)&&after?.kind==='id'&&
+       (following?.value==='('||following?.value==='<'))
+      fail('DUPLICATE_METHOD_INTRODUCER: use one instance marker',this.peek());
+    if(!next||next.kind!=='id')return false;
+    // Reject obsolete generic-looking declarations too, without enabling generic methods.
+    if(marker==='method'&&(after?.value==='('||after?.value==='<'))
+      fail('OBSOLETE_METHOD_INTRODUCER: obsolete method introducer; use mtd or a bare method name',this.peek());
+    if(after?.value!=='(')return false;
     const value=next.value;
     if(CLASS_METHOD_RESERVED.has(value)&&!CLASS_METHOD_CALLABLE_KEYWORDS.has(value))
       return false;
-    if(marker==='method')fail('obsolete method introducer; use mtd',this.peek());
     this.i++;return true;
   }
   argumentsAfterOpen() {
@@ -472,37 +480,71 @@ class Parser {
     }
     fail('unsupported scalar type (int, bool, Symbol, Option<int>, Result<int,int>)',this.peek());
   }
+  nominalMethodSignature() {
+    this.eatMethodMarker();
+    const methodName=this.callableName();
+    this.expect('(');
+    if(this.eat('self')){
+      if(this.eat(',')){
+        if(this.peek().value===')')fail('trailing receiver comma',this.peek());
+      }else if(this.peek().value!==')')fail('unsupported self parameter spelling',this.peek());
+      else if(this.tokens[this.i+1]?.value==='('){
+        // Legacy split shared receiver: erase self before the normal value formals.
+        // Neither mut self nor a second receiver is admitted by this profile.
+        this.expect(')');this.expect('(');
+      }
+    }
+    const params=[],paramTypes=[];
+    if(!this.eat(')')){
+      do {
+        if(params.length>=32)fail('method arity budget',this.peek());
+        const {type,name:param}=this.typedParameter(()=>this.classIdentifier());
+        if(param==='self'||params.includes(param))fail('duplicate or reserved method parameter '+param,this.peek());
+        params.push(param);paramTypes.push(type);
+      } while(this.eat(','));
+      this.expect(')');
+    }
+    const arrow=this.eat('->');
+    if(!arrow)this.expect(':');
+    const returnType=this.eat('void')?'void':this.valueType();
+    return {methodName,params,paramTypes,returnType,arrow};
+  }
+  nominalContractDeclaration(kind) {
+    const name=this.classIdentifier();
+    if(isProtectedPreludeIdentity(name))fail('E_PRELUDE_SPOOF: reserved nominal contract '+name,this.peek());
+    this.expect('as');
+    const methods=[],slots=new Set();
+    while(!this.eat('end')){
+      if(this.peek().kind==='eof'||methods.length>=256)fail('nominal contract method budget or terminator',this.peek());
+      this.eat('pub');
+      const {methodName,params,paramTypes,returnType}=this.nominalMethodSignature();
+      this.expect(';'); // Abstract signatures only; defaults/effects need separate lowering.
+      const key=methodName+'/'+params.length;
+      if(slots.has(key))fail('duplicate method name/arity '+name+'.'+key,this.peek());
+      slots.add(key);methods.push({name:methodName,params,paramTypes,returnType});
+    }
+    return {name,kind,methods};
+  }
   classDeclaration(pub, writtenPrivate=false) {
     const name=this.classIdentifier();
     if(isProtectedPreludeIdentity(name))
       fail('E_PRELUDE_SPOOF: cannot define compiler-owned core class '+name,this.peek());
+    const implementsNames=[];
+    if(this.eat('implements')){
+      do{
+        const contract=this.classIdentifier();
+        if(implementsNames.length>=32||implementsNames.includes(contract))
+          fail('duplicate or excessive implements entry '+contract,this.peek());
+        implementsNames.push(contract);
+      }while(this.eat(','));
+    }
     this.expect('as');
     const methods=[],slots=new Set();
     while(!this.eat('end')) {
       if(this.peek().kind==='eof')fail('unterminated class '+name,this.peek());
       if(methods.length>=256)fail('method count limit',this.peek());
       const methodPub=this.eat('pub');
-      this.eatMethodMarker();
-      const methodName=this.callableName();
-      this.expect('(');
-      if(this.eat('self')){
-        if(this.eat(',')){
-          if(this.peek().value===')')fail('trailing receiver comma',this.peek());
-        }else if(this.peek().value!==')')fail('unsupported self parameter spelling',this.peek());
-      }
-      const params=[],paramTypes=[];
-      if(!this.eat(')')){
-        do {
-          if(params.length>=32)fail('method arity budget',this.peek());
-          const {type,name:param}=this.typedParameter(()=>this.classIdentifier());
-          if(param==='self'||params.includes(param))fail('duplicate or reserved method parameter '+param,this.peek());
-          params.push(param);paramTypes.push(type);
-        } while(this.eat(','));
-        this.expect(')');
-      }
-      const arrow=this.eat('->');
-      if(!arrow)this.expect(':');
-      const returnType=this.eat('void')?'void':this.valueType();
+      const {methodName,params,paramTypes,returnType,arrow}=this.nominalMethodSignature();
       const braced=this.eat('{');
       if(!braced){
         if(!arrow)fail('colon method bodies require braces',this.peek());
@@ -529,7 +571,7 @@ class Parser {
       slots.add(slot);
       methods.push({name:methodName,pub:methodPub,params,paramTypes,returnType,body});
     }
-    return {name,pub,methods,...(writtenPrivate?{writtenPrivate:true}:{})};
+    return {name,pub,methods,implementsNames,...(writtenPrivate?{writtenPrivate:true}:{})};
   }
   generatorStart() {
     let j=this.i;
@@ -897,6 +939,7 @@ class Parser {
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
         case 'local':add(expr.init);add(expr.body);break;
+        case 'selfCall':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'newClass':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'methodCall':
           add(expr.receiver);for(const arg of expr.args)add(arg.expr??arg);break;
@@ -940,7 +983,7 @@ class Parser {
       namespace = this.name();
       this.expect(';');
     }
-    const modules=[],functions=[],generators=[],classes=[],usedModules=new Set(),usedClasses=new Set();
+    const modules=[],functions=[],generators=[],classes=[],contracts=new Map(),usedModules=new Set(),usedClasses=new Set();
     const exportDeclarations=[];
     while(this.peek().kind!=='eof'){
       if(this.peek().value==='export') {
@@ -965,6 +1008,15 @@ class Parser {
         const declarationPrivate=(prefixVisibility||afterVisibility)==='private';
         if(this.peek().value==='symbol')
           fail('Symbol declaration/export manifest not implemented',this.peek());
+        if(['interface','trait'].includes(this.peek().value)){
+          if(declarationPub||declarationPrivate)fail('explicit contract visibility unsupported in local abstract profile',this.peek());
+          if(contracts.size>=512)fail('contract declaration budget exceeded',this.peek());
+          const contract=this.nominalContractDeclaration(this.tokens[this.i++].value);
+          if(usedClasses.has(contract.name)||usedModules.has(contract.name))
+            fail('duplicate nominal declaration '+contract.name,this.peek());
+          usedClasses.add(contract.name);contracts.set(contract.name,contract);
+          continue;
+        }
         if(this.eat('class')){
           if(classes.length>=512)fail('class declaration budget exceeded',this.peek());
           const cls=this.classDeclaration(declarationPub,declarationPrivate);
@@ -999,6 +1051,34 @@ class Parser {
         else functions.push(this.functions(null));
       }
     }
+    // Local nominal contracts are compile-time obligations only. Check every
+    // implementation before erasing the declaration metadata; no runtime cast,
+    // interface value, structural projection or dynamic dispatch is admitted.
+    for(const f of [...functions,...generators])
+      if(f.module===null&&contracts.has(f.name))fail('nominal contract/callable name collision '+f.name);
+    const usedContracts=new Set();
+    for(const cls of classes){
+      const slots=new Map(cls.methods.map(method=>[method.name+'/'+method.params.length,method]));
+      for(const name of cls.implementsNames){
+        const contract=contracts.get(name);
+        if(!contract)fail('E_IMPL_UNRESOLVED: unknown local interface or trait '+name);
+        usedContracts.add(name);
+        for(const required of contract.methods){
+          const key=required.name+'/'+required.params.length,actual=slots.get(key);
+          if(!actual)fail('MISSING_INSTANCE_OBLIGATION: '+cls.name+'.'+key);
+          if(!actual.pub)fail('E_IMPL_VISIBILITY: required method must be public '+cls.name+'.'+key);
+          if(actual.returnType!==required.returnType||
+             actual.paramTypes.some((type,i)=>type!==required.paramTypes[i])||
+             actual.params.some((param,i)=>param!==required.params[i]))
+            fail('E_IMPL_SIGNATURE: required method signature mismatch '+cls.name+'.'+key);
+        }
+      }
+      delete cls.implementsNames;
+    }
+    // This bounded slice cannot export or represent an unused contract type.
+    // Do not let a contract-only program masquerade as scalar-only input.
+    for(const name of contracts.keys())if(!usedContracts.has(name))
+      fail('E_CONTRACT_PROFILE: unused local contract unsupported '+name);
     if(this.booleanAliasToken&&(usedClasses.has('boolean')||usedModules.has('boolean')))
       fail('E_TYPE_ALIAS_SHADOWED: boolean requires nominal type resolution',this.booleanAliasToken);
     if(!functions.length&&!generators.length&&!modules.length&&!classes.length)fail('empty program');
@@ -1147,6 +1227,13 @@ class Parser {
     return value;
   }
   primary() {
+    // A bare self.method is not an implicitly bound function reference.
+    if(this.eat('self')){
+      this.expect('.');
+      const name=this.callableName();
+      this.expect('(');
+      return {kind:'selfCall',name,args:this.argumentsAfterOpen()};
+    }
     if(this.eat('trap!')||this.eat('trap'))return {kind:'trap',inner:this.expression(30)};
     if(this.eat('await'))return {kind:'immediateAwait',inner:this.expression(30)};
     if(this.eat('!')||this.eat('¬')||this.eat('not'))return {kind:'not',inner:this.expression(30)};
@@ -1436,6 +1523,8 @@ function resolveProgram(parsed) {
       case 'newClass':return 'class:'+expr.classIndex;
       case 'methodCall':case 'namedMethodCall':
         return classes[expr.classIndex].methods[expr.methodIndex].returnType;
+      case 'selfCall':case 'namedSelfCall':
+        return classes[owner.classIndex].methods[expr.methodIndex].returnType;
       case 'call':case 'namedCall':return functions[expr.target].returnType??'int';
       case 'intrinsic': {
         const results={
@@ -1563,6 +1652,23 @@ function resolveProgram(parsed) {
         if((functions[call.target].returnType??'int')!=='void')
           fail('VOID_STATEMENT_REQUIRES_VOID_RETURN');
         return {kind:'seqVoidCall',call,value:resolve(expr.value,owner,depth+1,bindings)};
+      }
+      case 'selfCall': {
+        if(owner.ownerKind!=='method')fail('self call outside an instance method');
+        const cls=classes[owner.classIndex],table=classTables[owner.classIndex];
+        const methodIndex=table.methodSlots.get(expr.name+'/'+expr.args.length);
+        if(methodIndex===undefined){
+          if(table.methodFamilies.has(expr.name))
+            fail('method arity mismatch for '+cls.name+'.'+expr.name);
+          fail('unknown self method '+cls.name+'.'+expr.name);
+        }
+        const method=cls.methods[methodIndex];
+        if(method.returnType==='void')fail('void self method cannot be used as expression');
+        const bound=bindArguments(method.params,expr.args,cls.name+'.'+expr.name,
+          owner,depth,bindings);
+        return bound.hasNamed?
+          {kind:'namedSelfCall',methodIndex,args:bound.args,paramOrder:bound.paramOrder}:
+          {kind:'selfCall',methodIndex,args:bound.args};
       }
       case 'newClass': {
         if(owner.ownerKind==='method')
@@ -1702,8 +1808,14 @@ function resolveProgram(parsed) {
           if(expr.args.length!==sig[0])fail('intrinsic arity mismatch '+key);
           return {kind:'intrinsic',name:key,args:expr.args.map(a=>resolve(a.expr,owner,depth+1,bindings))};
         }
-        if(owner.ownerKind==='method')
-          fail('function calls inside method body unsupported in convergence slice');
+        // Unqualified class methods shadow file-level functions. In this
+        // bounded slice, explicit root calls from methods remain rejected.
+        if(owner.ownerKind==='method'){
+          if(expr.qualifier!==null)
+            fail('qualified function calls inside method body unsupported');
+          return resolve({kind:'selfCall',name:expr.name,args:expr.args},
+            owner,depth+1,bindings);
+        }
         const mod=expr.qualifier===null?owner.module:expr.qualifier;
         if(mod!==null && !modules.includes(mod)) fail('unknown module '+mod);
         const key=(mod===null?'@file/':'@module/'+mod+'/')+expr.name;
@@ -1896,6 +2008,16 @@ function emitProgram(program) {
         return '(()=>{'+emitExpr(expr.call,depth+1)+';return '+
           emitExpr(expr.value,depth+1)+';})()';
       case 'newClass':return 'new _class'+expr.classIndex+'()';
+      case 'selfCall':return 'this.#ores_method'+expr.methodIndex+'('+
+        expr.args.map(x=>emitExpr(x,depth+1)).join(',')+')';
+      case 'namedSelfCall': {
+        const definitions=expr.args.map((arg,i)=>
+          'const _selfArg'+i+'='+emitExpr(arg,depth+1)+';');
+        const order=new Array(expr.args.length);
+        expr.paramOrder.forEach((slot,i)=>{order[slot]='_selfArg'+i;});
+        return '(()=>{'+definitions.join('')+'return this.#ores_method'+expr.methodIndex+
+          '('+order.join(',')+');})()';
+      }
       case 'methodCall': {
         const method=program.classes[expr.classIndex].methods[expr.methodIndex];
         return '('+emitExpr(expr.receiver,depth+1)+')['+JSON.stringify(method.name)+']('+
@@ -1968,6 +2090,8 @@ function emitProgram(program) {
       case 'newClass':return false;
       case 'methodCall':case 'namedMethodCall':
         return usesSymbol(expr.receiver)||expr.args.some(usesSymbol);
+      case 'selfCall':case 'namedSelfCall':
+        return expr.args.some(usesSymbol);
       case 'call':case 'namedCall':case 'intrinsic':return expr.args.some(usesSymbol);
       case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'stringCompare':case 'numericCompare':case 'symbolCompare':
         return usesSymbol(expr.left)||usesSymbol(expr.right);
@@ -2015,6 +2139,8 @@ function emitProgram(program) {
       case 'newClass':return false;
       case 'methodCall':case 'namedMethodCall':
         return usesPortableRuntime(expr.receiver)||expr.args.some(usesPortableRuntime);
+      case 'selfCall':case 'namedSelfCall':
+        return expr.args.some(usesPortableRuntime);
       case 'call':case 'namedCall':return expr.args.some(usesPortableRuntime);
       case 'binary':case 'floatBin':case 'compare':case 'boolCompare':case 'stringCompare':case 'numericCompare':case 'symbolCompare':
         return usesPortableRuntime(expr.left)||usesPortableRuntime(expr.right);
@@ -2104,6 +2230,20 @@ function emitProgram(program) {
     const local='_class'+classIndex;
     out.push('class '+local+' {','#oresBrand=1;',
       'constructor(..._args){if(new.target!=='+local+')throw new TypeError("unsupported class derivation");if(_args.length!==0)throw new TypeError("constructor arity mismatch");Object.preventExtensions(this);}');
+    // Methods remain receiver-bound. Private entrypoints are not properties
+    // that guest code can extract and invoke with an unrelated receiver.
+    cls.methods.forEach((method,methodIndex)=>{
+      out.push('#ores_method'+methodIndex+'(..._args){',
+        'if(_args.length!=='+method.params.length+')throw new TypeError("method arity mismatch");');
+      method.params.forEach((_,i)=>{
+        const type=method.paramTypes[i];
+        const check={int:'_check',bool:'_checkbool',symbol:'_checksymbol',
+          'option<int>':'_checkoption','result<int,int>':'_checkresult'}[type];
+        if(!check)fail('unsupported method parameter type');
+        out.push('const _p'+i+'=_args['+i+'];'+check+'(_p'+i+');');
+      });
+      out.push(method.returnType==='void'?'return;':'return '+emitExpr(method.body)+';','}');
+    });
     const families=new Map();
     cls.methods.forEach((method,methodIndex)=>{
       if(!method.pub)return;
@@ -2116,15 +2256,7 @@ function emitProgram(program) {
         'switch(_args.length){');
       for(const methodIndex of indices){
         const method=cls.methods[methodIndex];
-        out.push('case '+method.params.length+':{');
-        method.params.forEach((_,i)=>{
-          const type=method.paramTypes[i];
-          const check={int:'_check',bool:'_checkbool',symbol:'_checksymbol',
-            'option<int>':'_checkoption','result<int,int>':'_checkresult'}[type];
-          if(!check)fail('unsupported method parameter type');
-          out.push('const _p'+i+'=_args['+i+'];'+check+'(_p'+i+');');
-        });
-        out.push(method.returnType==='void'?'return;':'return '+emitExpr(method.body)+';','}');
+        out.push('case '+method.params.length+':return this.#ores_method'+methodIndex+'(..._args);');
       }
       out.push('default:throw new TypeError("method arity mismatch");','}','}');
     }
