@@ -6,6 +6,7 @@ on:
       - 'tests/checked-u64-scalar-v1.test.mjs'
       - 'tests/checked-u64-ir-v1.test.mjs'
       - 'tests/checked-u64-generated-guests.test.mjs'
+      - 'tests/checked-u64-division.test.mjs'
       - 'contracts/atto-xo-checked-u64-debit-v1/**'
       - '.github/workflows/checked-u64-scalar-v1.yml'
 permissions:
@@ -19,4 +20,4 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha }}
-      - run: node --test tests/checked-u64-scalar-v1.test.mjs tests/checked-u64-ir-v1.test.mjs tests/checked-u64-generated-guests.test.mjs
+      - run: node --test tests/checked-u64-scalar-v1.test.mjs tests/checked-u64-ir-v1.test.mjs tests/checked-u64-generated-guests.test.mjs tests/checked-u64-division.test.mjs
