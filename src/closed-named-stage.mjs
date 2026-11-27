@@ -30,6 +30,9 @@ export function validateNamedStageBody(body,charge=()=>{}){
         if(!['+','-','*','/'].includes(e.op))fail('invalid arithmetic operator');
         return {kind:'binary',op:e.op,left:visit(e.left,depth+1),right:visit(e.right,depth+1)};
       case 'match':{
+        // At most one match frame per recursive activation; nested match
+        // expressions require a verified execution-stack lowering.
+        if(depth!==0)fail('nested match requires stack lowering');
         record(e,['kind','subject','arms']);
         const arms=e.arms;
         if(!Array.isArray(arms)||Object.getPrototypeOf(arms)!==Array.prototype||arms.length<1||arms.length>64||
