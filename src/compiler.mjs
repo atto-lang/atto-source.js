@@ -437,6 +437,55 @@ class Parser {
 }
 // The isolated parser is a bootstrap adapter. Future language frontends
 // should produce this versioned IR instead of duplicating parser semantics.
+
+// Closed, nonescaping immutable i64 slots only. This accepts canonical lexer
+// tokens, not source substrings, and uses checked arithmetic before promotion.
+function lowerReusableSlot(tokens) {
+  let at=0;
+  const bad=()=>{throw new CompileError('E_POINTER_SLOT_PROFILE: invalid closed reusable scalar slot',tokens[Math.min(at,tokens.length-1)]);};
+  const is=(kind,value)=>tokens[at]?.kind===kind && tokens[at]?.value===value;
+  const need=(kind,value)=>{if(!is(kind,value))bad();return tokens[at++];};
+  const word=v=>need('id',v), sym=v=>need('sym',v);
+  const reserved=new Set('main int RawPointer Pointer pub fnc let mut val return ref deref unref null true false to empty await suspends rt if else end actor class struct define new copy borrow drop take share freeze weak pin while for task select defer recover throw raise panic trap import export from as use namespace module const unsafe'.split(' '));
+  const name=()=>{const t=tokens[at];if(t?.kind!=='id'||!/^[a-z_][a-z0-9_]{0,95}$/.test(t.value)||reserved.has(t.value))bad();at++;return t.value;};
+  const number=()=>{const t=tokens[at];if(t?.kind!=='int'||!/^[0-9]+$/.test(t.value))bad();const n=BigInt(t.value);if(n>I64_MAX)bad();at++;return n;};
+  const op=v=>{const a=word(v),b=sym('!');if(a.line!==b.line||b.col!==a.col+v.length)bad();};
+  word('pub');word('fnc');word('main');sym('(');sym(')');sym(':');word('int');sym('{');word('let');
+  const owners=new Map(),values=new Map();
+  while(!is('id','mut')){
+    if(owners.size>=16)bad();
+    const n=name();sym(':');word('int');sym('=');const v=number();sym(';');
+    if(values.has(n))bad();owners.set(n,v);values.set(n,v);word('let');
+  }
+  word('mut');word('RawPointer');sym('<');word('int');sym('>');const slot=name();
+  if(values.has(slot))bad();sym('=');word('RawPointer');sym('.');word('empty');sym('<');word('int');sym('>');sym('(');sym(')');sym(';');
+  let bound,ops=0;
+  while(!is('id','return')){
+    if(++ops>32)bad();
+    if(is('id','ref')){
+      op('ref');word(slot);word('to');const n=name();if(bound!==undefined||!owners.has(n))bad();bound=n;
+    }else if(is('id','val')){
+      word('val');const n=name();sym('=');op('deref');word(slot);
+      if(bound===undefined||n===slot||values.has(n))bad();values.set(n,owners.get(bound));
+    }else if(is('id','unref')){
+      op('unref');word(slot);if(bound===undefined)bad();bound=undefined;
+    }else bad();
+    sym(';');
+  }
+  if(bound!==undefined)bad();word('return');
+  const term=()=>{if(tokens[at]?.kind==='int')return number();const n=name();if(!values.has(n))bad();return values.get(n);};
+  let result=term(),terms=1;
+  while(is('sym','+')||is('sym','-')){
+    if(++terms>32)bad();const add=is('sym','+');at++;const rhs=term();
+    result=add?result+rhs:result-rhs;
+    if(result<-(1n<<63n)||result>I64_MAX)bad();
+  }
+  sym(';');sym('}');need('eof','<eof>');
+  // Numeric data only: the ordinary scalar IR validator still owns emission.
+  const literal=result===-(1n<<63n)?'(-9223372036854775807 - 1)':String(result);
+  return 'pub fnc main(): int { return '+literal+'; }';
+}
+
 export function compileToIR(source) {
   const {tokens,ownershipBang}=lex(source);
   // Reject affine Future violations at the compiler core boundary before IR.
@@ -451,6 +500,8 @@ export function compileToIR(source) {
   rejectUnloweredActorHeap(tokens);
   rejectUnsupportedSelect(tokens);
   rejectAmbiguousProductFactories(tokens);
+  if(tokens.some(t=>t.kind==='id'&&t.value==='RawPointer'))
+    return compileToIR(lowerReusableSlot(tokens));
   // Keep existing affine Future and ownership diagnostics ahead of the
   // unsupported-effect admission decision; never emit a synchronous guest.
   const suspension=tokens.find(t=>t.kind==='id'&&t.value==='suspends');
