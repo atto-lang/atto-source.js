@@ -786,10 +786,17 @@ class Parser {
         statements.push({kind:'branch',condition:{kind:'not',inner:condition},
           yes:failure,no:[]});
       } else if(this.peek().value==='val'||this.peek().value==='const'||
-                 (this.peek().value==='let'&&['int','bool','string'].includes(this.tokens[this.i+1]?.value))) {
-        const isConst=this.eat('const');
-        const readOnlyLet=!isConst&&this.eat('let');
-        if(!isConst&&!readOnlyLet)this.expect('val');
+                 (this.peek().value==='int'&&this.tokens[this.i+1]?.kind==='id'&&this.tokens[this.i+2]?.value==='=')||
+                 (this.peek().value==='let'&&(['int','bool','string'].includes(this.tokens[this.i+1]?.value)||
+                   (this.tokens[this.i+1]?.kind==='id'&&[':', 'as'].includes(this.tokens[this.i+2]?.value)&&this.tokens[this.i+3]?.value==='int')))) {
+        // Only the bounded root scalar profile. Never reinterpret a failed
+        // declaration as an expression or widen task/actor ownership.
+        const implicitConst=this.peek().value==='int';
+        const explicitConst=!implicitConst&&this.eat('const');
+        const constMut=explicitConst&&this.eat('mut');
+        const isConst=implicitConst||(explicitConst&&!constMut);
+        const readOnlyLet=!implicitConst&&!explicitConst&&this.eat('let');
+        if(!implicitConst&&!explicitConst&&!readOnlyLet)this.expect('val');
         // Function-scope scalar locals; only typed string let may rebind.
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
         // Keep existing Option, Result, string, bool, and directional bindings.
@@ -800,7 +807,7 @@ class Parser {
         else if(typedTrapOption)this.i+=9;
         let localType=typedTrapBool?'trapBoolResult':typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
         const name=this.name();
-        if(!isConst&&!readOnlyLet&&localType==='inferredTrap'&&this.eat(':')){
+        if(localType==='inferredTrap'&&(this.eat(':')||this.eat('as'))){
           localType=this.valueType();
           if(!['int','float','bool','string'].includes(localType))fail('name-first binding requires primitive type in this profile',this.peek());
         }
@@ -813,8 +820,15 @@ class Parser {
           else {localType='inferredInt';init=this.expression();}
         }else init=this.expression();
         this.expect(';');
-        if(isConst&&(!directional||localType!=='int'))fail('only directional const int is admitted here',this.peek());
-        statements.push({kind:'local',name,init,localType:isConst?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string',taskWritable:readOnlyLet&&localType==='int'});
+        if(isConst&&directional&&localType!=='int')fail('only directional const int is admitted here',this.peek());
+        // Keep the historic directional constexpr profile separate. Ordinary
+        // locals are fixed, eagerly initialized runtime values; the validated
+        // typed IR owns checking and lowering. This slice admits int only.
+        if(isConst&&!directional){
+          if(localType==='inferredTrap')localType='inferredInt';
+          else if(localType!=='int')fail('ordinary const requires int in this bounded profile',this.peek());
+        }
+        statements.push({kind:'local',name,init,localType:isConst&&directional?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string',taskWritable:readOnlyLet&&localType==='int'});
       } else if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
         if(depth!==0)fail('E_STRING_VIEW_SCOPE: rebinding requires root function scope',this.peek());
         const name=this.name();this.expect('=');
