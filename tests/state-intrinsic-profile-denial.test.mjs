@@ -36,3 +36,22 @@ test('commented attachment spelling is inert in executable scalar source',async(
     assert.equal(ns.main(),42n);
   }
 });
+
+test('short protected state declarations deny with the same diagnostic',()=>{
+  for(const prefix of ['define state','pub define state','define pub state','define /* nested /* x */ */ state']){
+    const source=prefix+' C as end\npub fnc main(): int { return 42; }';
+    for(const c of compilers)assert.throws(()=>c(source),/STATE_CONTAINER_BACKEND_UNSUPPORTED/,c.name+': '+prefix);
+  }
+});
+test('nonkeyword tokens cannot spoof a protected declaration',()=>{
+  for(const source of ["from 'define' state container C","define pub #state on actor C"]){
+    for(const c of compilers)assert.throws(()=>c(source),error=>!String(error).includes('STATE_CONTAINER_BACKEND_UNSUPPORTED'));
+  }
+});
+test('ordinary scalar parameter named state remains executable',async()=>{
+  const source='pub fnc main(int state): int { return state; }';
+  for(const c of [compile,compileProgramV2,compileAttoScalarV1]){
+    const ns=await import('data:text/javascript,'+encodeURIComponent(c(source)));
+    assert.equal(ns.main(42n),42n);
+  }
+});
