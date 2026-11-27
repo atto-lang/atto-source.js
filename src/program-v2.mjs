@@ -2063,7 +2063,8 @@ function emitProgram(program) {
   }
   const classMethods=(program.classes??[]).flatMap(cls=>cls.methods);
   function containsKind(value,kind){return !!value&&typeof value==='object'&&(value.kind===kind||Object.values(value).some(v=>containsKind(v,kind)));}
-  const hasBoolTrap=containsKind(program,'trapBoolLocal');
+  const hasBoolTrap=containsKind(program,'trapBoolLocal')||containsKind(program,'trapBoolMethod')||containsKind(program,'trapBoolCapture')||containsTypedBoolTrap(program);
+  function containsTypedBoolTrap(v){return !!v&&typeof v==='object'&&((v.kind==='trap'&&['bool','trapBoolResult'].includes(v.operandType))||Object.values(v).some(containsTypedBoolTrap));}
   function containsIntrinsic(value,name){return !!value&&typeof value==='object'&&((value.kind==='intrinsic'&&value.name===name)||Object.values(value).some(v=>containsIntrinsic(v,name)));}
   // Validated IR may inline the carrier rather than bind an Option<bool> local.
   const hasBoolOption=containsKind(program,'optionBoolLocal')||containsIntrinsic(program,'Option.boolSome')||containsIntrinsic(program,'Option.boolUnwrap');
@@ -2179,7 +2180,7 @@ function emitProgram(program) {
 
     );
   }
-  if(program.functions.some(fn=>fn.returnType==='result<int,string>'))out.push(
+  if((program.functions.some(fn=>fn.returnType==='result<int,string>')||containsIntrinsic(program,'Result.stringOk')||containsIntrinsic(program,'Result.stringErr')||containsIntrinsic(program,'Result.stringUnwrap')))out.push(
     'function _stringOk(v){return _tag("Ok",_check(v));}',
     'function _stringErr(v){if(typeof v!=="string")throw new TypeError("typed Result string required");return _tag("Err",v);}'
   );
@@ -2211,7 +2212,7 @@ function emitProgram(program) {
       'function _optionUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Option unwrap carrier");const x=_checkoption(v);if(x.kind==="Some")return x.value;return _unwrapFailure("OptionUnwrapError","cannot unwrap None",undefined);}',
       ...(hasBoolOption?['function _boolOptionUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted bool Option");if(v.kind==="Some"&&typeof v.value==="boolean")return v.value;if(v.kind!=="None"||v.value!==null)throw new TypeError("invalid bool Option");return _unwrapFailure("OptionUnwrapError","cannot unwrap None",undefined);}']:[]),
       'function _resultUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Result unwrap carrier");const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",x.value);}',
-      ...(program.functions.some(fn=>fn.returnType==='result<int,string>')?['function _stringResultUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Result unwrap carrier");if(v.kind==="Ok")return _check(v.value);if(v.kind!=="Err"||typeof v.value!=="string")throw new TypeError("invalid typed Result payload");return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",v.value);}']:[]),
+      ...((program.functions.some(fn=>fn.returnType==='result<int,string>')||containsIntrinsic(program,'Result.stringOk')||containsIntrinsic(program,'Result.stringErr')||containsIntrinsic(program,'Result.stringUnwrap'))?['function _stringResultUnwrap(v){if(!_tagBrand.has(v))throw new TypeError("untrusted Result unwrap carrier");if(v.kind==="Ok")return _check(v.value);if(v.kind!=="Err"||typeof v.value!=="string")throw new TypeError("invalid typed Result payload");return _unwrapFailure("ResultUnwrapError","cannot unwrap Err",v.value);}']:[]),
       'function _expectPanic(message,cause){if(typeof message!=="string")throw new TypeError("expect message must be string");const e=new Error(message,{cause});Object.defineProperty(e,"effect",{value:"panic",enumerable:true});throw Object.freeze(e);}',
       'function _optionExpect(v,message){if(!_tagBrand.has(v))throw new TypeError("untrusted Option expect carrier");if(typeof message!=="string")throw new TypeError("expect message must be string");const x=_checkoption(v);if(x.kind==="Some")return x.value;return _expectPanic(message,undefined);}',
       'function _resultExpect(v,message){if(!_tagBrand.has(v))throw new TypeError("untrusted Result expect carrier");if(typeof message!=="string")throw new TypeError("expect message must be string");const x=_checkresult(v);if(x.kind==="Ok")return x.value;return _expectPanic(message,x.value);}'
