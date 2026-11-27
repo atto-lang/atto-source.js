@@ -32,7 +32,8 @@ test('reject bad named aggregate declarations before IR',()=>{
     ['const Record<infer T> r=(a=1); const Record<T> s=(a=1,b=2);',/E_TYPE_MISMATCH/],
     ['const Record<infer T> r=(a=1,b=2); const Record<T> s=(a=1);',/E_TYPE_MISMATCH/],
     ['const Tuple<infer T> r=(1,true); const Tuple<T> s=(true,1);',/E_TYPE_MISMATCH/],
-    ['const Tuple<infer T> r=(1,true); const Tuple<T> s=(1);',/E_TYPE_MISMATCH/],
+    ['const Tuple<infer T> r=(1,true); const Tuple<T> s=(1,);',/E_TYPE_MISMATCH/],
+    ['const Tuple<infer T> r=(1,true); const Tuple<T> s=(1);',/E_TUPLE_ARITY/],
     ['const struct<infer T> r={a:1}; const Record<T> s=(a=1);',/E_AGGREGATE_KIND/],
     ['const Record<infer T> r=(a=unknown);',/E_TYPE_INFER_AMBIGUOUS/],
   ])assert.throws(()=>compileToIR('pub fnc main(): int { '+body+' return 0; }'),error);
