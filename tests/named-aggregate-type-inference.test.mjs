@@ -82,3 +82,50 @@ test('mixed Record syntax retains duplicate, delimiter, and kind boundaries',()=
     'const r={foo:1;bar:2}; return 0;',
   ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),undefined,body);
 });
+
+test('scalar Pair binding forms, mixed Record entries and newline separators execute',async()=>{
+  for(const body of [
+    'const x := 42; return x.value;',
+    'const x = x := 42; return x.value;',
+    'const r={foo := 40\nbar = 2,}; return r.foo+r.bar;',
+    'const r={foo := 40\nbar := 2}; return r.foo+r.bar;',
+    'const r=(foo := 40,bar = 2); return r.foo+r.bar;',
+    'const r=(foo : 40,bar := 2); return r.foo+r.bar;',
+    'const foo=7; const r={foo := 40,bar:2}; return r.foo+r.bar+foo-7;',
+  ])assert.equal(await run(body),42n,body);
+});
+test('scalar Record with, spread, and inferred lexical aliases execute',async()=>{
+  for(const body of [
+    'const r={foo:40}; const v=r with {bar:true,foo:42}; return r.foo+v.foo-40;',
+    'const r={foo:40}; const v={...r,bar:2}; return v.foo+v.bar;',
+    'const r={foo:40}; const Record<T> v=infer {...r,bar:2}; const Record<T> w=(bar:2,foo:40); return w.foo+v.bar;',
+    'const r={foo:40}; const Record<infer T> v={...r,bar:2}; const Record<T> w=r with {bar:2}; return w.foo+v.bar;',
+    'const r={foo:40}; const s={foo:1}; const v={...r,...s,foo:42}; return v.foo;',
+    'const r={foo:true}; const v=r with {foo:42}; return v.foo;',
+  ])assert.equal(await run(body),42n,body);
+});
+test('bounded Pair/Record grammar rejects malformed, ambiguous and unsafe forms',()=>{
+  for(const body of [
+    'const r={foo := 1 bar := 2}; return 0;',
+    'const r={foo = 1\nbar := 2}; return 0;',
+    'const r={foo : 1\nbar := 2}; return 0;',
+    'const r={foo := 1,foo:2}; return 0;',
+    'const r={foo : = 1}; return 0;',
+    'const r=(foo := 1,bar := 2); return 0;',
+    'const r=(foo := 1); return 0;',
+    'const r=(foo := 1\nbar = 2); return 0;',
+    'const x := 1; const x = x := 2; return 0;',
+    'const x := y := 1; return 0;',
+    'const x := 42; return x;',
+    'const x := 42; const r={...x}; return 0;',
+    'const r={foo:1}; const s={foo:2}; const v={...r,...s}; return 0;',
+    'const r={foo:1}; const v={foo:2,...r}; return 0;',
+    'const r={foo:1}; const v=r with {foo:2,foo:=3}; return 0;',
+    'const Record<T> v=infer {...v,foo:1}; return 0;',
+    'const T=1; const Record<T> v=infer {foo:1}; return 0;',
+    'const Record<T> v={foo:1}; return 0;',
+    'const Record<infer T> v={foo:1}; const Record<T> w=infer {foo:true}; return 0;',
+    'const struct r={foo:=1}; return 0;',
+  ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),undefined,body);
+  assert.throws(()=>compileToIR('pub fnc main(int a):int{const Record r=(x=a); const v={...r}; return v.x;}'),/E_RECORD_SPREAD/);
+});
