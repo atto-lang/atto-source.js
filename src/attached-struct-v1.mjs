@@ -1,5 +1,6 @@
 // Explicit, bounded attached-value source compiler. No host eval, dynamic property
 // names, host-object arguments, native ABI, or zero-GC claim.
+import {planContextualMake} from './contextual-struct-construction.mjs';
 const fail=message=>{throw new Error('E_ATTACHED_STRUCT: '+message)};
 const demand=(v,m)=>{if(!v)fail(m)};
 const MIN=-(1n<<63n),MAX=(1n<<63n)-1n;
@@ -51,7 +52,7 @@ class Reader{
       const id='_c'+o.index+'_'+o.ctors.length;
       const params=f.map((_,i)=>'_a'+i);
       const slots=[];for(const field of o.fields){const j=assign.get(field.name);if(scalar(field.type))slots.push(params[j]);else for(let k=0;k<this.leaves(field.type).length;k++)slots.push(params[j]+'['+k+']')}
-      this.code.push('function '+id+'('+params.join(',')+'){return ['+slots.join(',')+'];}');o.ctors.push({formals:f,id});return;
+      this.code.push('function '+id+'('+params.join(',')+'){return ['+slots.join(',')+'];}');o.ctors.push({formals:f,id,fieldParams:o.fields.map(field=>assign.get(field.name))});return;
     }
     const mut=this.eat('mut');this.need('mtd');let name,f,result;
     if(['int','bool','void'].includes(this.peek())){result=this.peek();this.i++;demand(this.eat('•')||this.eat('<-')||this.eat('*'),'return marker');name=this.name();f=this.formals()}
@@ -91,7 +92,17 @@ class Reader{
     this.need('let');const mut=this.eat('mut');let name=this.name(),annotation=null;if(this.owners.has(name)){annotation=name;name=this.name()}
     demand(!this.values.has(name)&&!this.owners.has(name)&&this.values.size<64,'binding identity/limit');this.need('=');const copy=this.eat('copy!');let type,code;
     const prior=this.values.get(this.peek());
-    if(prior&&this.t[this.i+1]!=='.'){this.i++;type=prior.type;code=prior.code+'.slice()'}
+    if(this.peek()==='new')fail('reference construction cannot initialize an attached value struct');
+    if(this.peek()==='make' && (this.t[this.i+1]==='{' || this.t[this.i+2]==='{')){
+      demand(!copy,'copy operand');this.need('make');type=this.peek()==='{'?annotation:this.name();
+      const o=this.owners.get(type);demand(o,'missing expected nominal owner');
+      this.need('{');const entries=[];
+      if(!this.eat('}')){do{demand(entries.length<8,'field budget');const field=this.name();this.need(':');const value=this.operand();entries.push({name:field,type:value.type,code:value.code})}while(this.eat(','));this.need('}')}
+      const plan=planContextualMake(o,entries);
+      const params=entries.map((_,i)=>'_f'+i);
+      code='(('+params.join(',')+')=>'+plan.id+'('+plan.order.map(i=>params[i]).join(',')+'))('+entries.map(e=>e.code).join(',')+')';
+    }
+    else if(prior&&this.t[this.i+1]!=='.'){this.i++;type=prior.type;code=prior.code+'.slice()'}
     else{demand(!copy,'copy operand');type=this.name();const o=this.owners.get(type);demand(o,'unknown owner');this.need('(');const args=[];if(!this.eat(')')){do{demand(args.length<8,'argument limit');args.push(this.operand())}while(this.eat(','));this.need(')')}const c=o.ctors.find(c=>c.formals.length===args.length&&c.formals.every((x,i)=>x.type===args[i].type));demand(c,'constructor identity');code=c.id+'('+args.map(a=>a.code).join(',')+')'}
     demand(!annotation||annotation===type,'binding nominal identity');this.need(';');const id='_v'+this.values.size;this.values.set(name,{type,code:id,mut});return 'const '+id+'='+code+';'
   }
