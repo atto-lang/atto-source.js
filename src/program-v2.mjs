@@ -896,7 +896,7 @@ class Parser {
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
-        case 'local':add(expr.init);add(expr.body);break;
+        case 'taskDefer':case 'local':add(expr.init);add(expr.body);break;
         case 'newClass':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'methodCall':
           add(expr.receiver);for(const arg of expr.args)add(arg.expr??arg);break;
@@ -1153,8 +1153,11 @@ class Parser {
       this.expect('{');
       const locals=[], declarations=new Map();
       while(true){
-        let name,rebind=false,outerWrite=false;
-        if(this.peek().value==='val'||this.peek().value==='let'){
+        let name,rebind=false,outerWrite=false,deferred=false;
+        if(this.eat('defer')){
+          name=this.name();deferred=true;
+          if(declarations.has(name))fail('E_TASK_DEFER: enclosing mutable int required',this.peek());
+        }else if(this.peek().value==='val'||this.peek().value==='let'){
           const mutable=this.eat('let');
           if(!mutable)this.expect('val');
           this.expect('int');
@@ -1172,7 +1175,8 @@ class Parser {
         this.expect('=');
         const init=this.expression();
         this.expect(';');
-        locals.push({name,init,rebind,outerWrite});
+        if(deferred&&init.kind!=='int')fail('E_TASK_DEFER: bounded literal assignment required',this.peek());
+        locals.push({name,init,rebind,outerWrite,deferred});
         if(locals.length>64)fail('E_TASK_LOCAL: local and write budget exceeded',this.peek());
       }
       if(!this.eat('return')&&!this.eat('^'))
@@ -1180,7 +1184,8 @@ class Parser {
       let inner=this.expression();
       this.expect(';');this.expect('}');
       for(let i=locals.length-1;i>=0;i--)
-        inner={kind:'local',name:locals[i].name,init:locals[i].init,localType:'int',taskRebind:locals[i].rebind,taskOuterWrite:locals[i].outerWrite,body:inner};
+        inner=locals[i].deferred?{kind:'taskDefer',name:locals[i].name,init:locals[i].init,body:inner}:
+          {kind:'local',name:locals[i].name,init:locals[i].init,localType:'int',taskRebind:locals[i].rebind,taskOuterWrite:locals[i].outerWrite,body:inner};
       return {kind:'inlineScalarTask',inner};
     }
     if(this.eat('trap!')||this.eat('trap'))return {kind:'trap',inner:this.expression(30)};
@@ -1484,7 +1489,7 @@ function resolveProgram(parsed) {
       }
       case 'if':return resolvedType(expr.yes,owner);
       case 'seqVoidCall':return resolvedType(expr.value,owner);
-      case 'setIntLocal':return resolvedType(expr.body,owner);
+      case 'deferIntLocal':case 'setIntLocal':return resolvedType(expr.body,owner);
       case 'mutableIntLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return resolvedType(expr.body,owner);
       case 'adtMatch':return resolvedType(expr.arms[0].body,owner);
       default:fail('cannot infer resolved expression type '+expr.kind);
@@ -1549,7 +1554,7 @@ function resolveProgram(parsed) {
             case 'int':case 'variable':return;
             case 'inlineScalarTask':case 'neg':admit(e.inner,d+1);return;
             case 'binary':admit(e.left,d+1);admit(e.right,d+1);return;
-            case 'local':admit(e.init,d+1);admit(e.body,d+1);return;
+            case 'taskDefer':case 'local':admit(e.init,d+1);admit(e.body,d+1);return;
             case 'call': {
               // Only the existing checked core unwrap on an enclosing typed
               // ADT is admitted here, never arbitrary functions or methods.
@@ -1573,6 +1578,12 @@ function resolveProgram(parsed) {
         // only statically typed i64 values, and erase the identity operator.
         if(resolvedType(inner,owner)!=='int')fail('await requires immediate int in program-v2; asynchronous await unsupported');
         return inner;
+      }
+      case 'taskDefer': {
+        const target=bindings.findLast(b=>b.name===expr.name);
+        if(!target||target.type!=='int'||!target.writableInt||expr.init.kind!=='int')
+          fail('E_TASK_DEFER: enclosing mutable int and literal required');
+        return {kind:'deferIntLocal',slot:target.slot,init:resolve(expr.init,owner,depth+1,bindings),body:resolve(expr.body,owner,depth+1,bindings)};
       }
       case 'local': {
         const previous=bindings.findLast(b=>b.name===expr.name);
@@ -1923,6 +1934,7 @@ function emitProgram(program) {
         return '(('+v+')=>{while('+emitExpr(expr.condition,depth+1)+'){'+v+'='+emitExpr(expr.update,depth+1)+';}return '+emitExpr(expr.body,depth+1)+';})('+emitExpr(expr.init,depth+1)+')';
       }
       case 'capture':case 'floatCapture':case 'boolCapture':case 'stringCapture':case 'trapCapture':case 'trapOptionCapture':case 'optionCapture':case 'resultCapture':case 'errorCapture':return '_v'+expr.slot;
+      case 'deferIntLocal':return '(()=>{try{return '+emitExpr(expr.body,depth+1)+';}finally{_v'+expr.slot+'='+emitExpr(expr.init,depth+1)+';}})()';
       case 'setIntLocal':return '((_v'+expr.slot+'='+emitExpr(expr.init,depth+1)+'),('+emitExpr(expr.body,depth+1)+'))';
       case 'mutableIntLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return '((_v'+expr.slot+')=>('+emitExpr(expr.body,depth+1)+'))('+emitExpr(expr.init,depth+1)+')';
       // Oreslang checked signed-i64 arithmetic is not JS BigInt.asIntN
@@ -2056,7 +2068,7 @@ function emitProgram(program) {
       case 'if':return usesSymbol(expr.condition)||usesSymbol(expr.yes)||usesSymbol(expr.no);
       case 'tryCatch':return usesSymbol(expr.body)||usesSymbol(expr.handler);
       case 'seqVoidCall':return usesSymbol(expr.call)||usesSymbol(expr.value);
-      case 'setIntLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
+      case 'deferIntLocal':case 'setIntLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
       case 'mutableIntLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return usesSymbol(expr.init)||usesSymbol(expr.body);
       case 'trap':return usesSymbol(expr.inner);
       case 'trapMethod':case 'trapOptionMethod':return usesSymbol(expr.receiver);
@@ -2105,7 +2117,7 @@ function emitProgram(program) {
         usesPortableRuntime(expr.yes)||usesPortableRuntime(expr.no);
       case 'tryCatch':return usesPortableRuntime(expr.body)||usesPortableRuntime(expr.handler);
       case 'seqVoidCall':return usesPortableRuntime(expr.call)||usesPortableRuntime(expr.value);
-      case 'setIntLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
+      case 'deferIntLocal':case 'setIntLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'mutableIntLocal':case 'local':case 'floatLocal':case 'boolLocal':case 'stringLocal':case 'trapLocal':case 'trapOptionLocal':case 'optionLocal':case 'resultLocal':return usesPortableRuntime(expr.init)||usesPortableRuntime(expr.body);
       case 'i32Check':case 'refinementCheck':case 'neg':case 'floatNeg':case 'not':return usesPortableRuntime(expr.inner);
       case 'match':return usesPortableRuntime(expr.subject)||
