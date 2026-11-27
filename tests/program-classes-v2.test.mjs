@@ -31,7 +31,7 @@ test('typed method calls reuse named-argument binding and Symbol semantics',asyn
   const source=[
     'pub define class Box as',
     '  pub mtd pick(self,int a,int b):int{return a*10+b;}',
-    '  pub method is_ready(self,Symbol s):bool{return s==#ready;}',
+    '  pub mtd is_ready(self,Symbol s):bool{return s==#ready;}',
     'end',
     'pub fnc run():int{return new Box().pick(b:2,a:1);}',
     'pub fnc ready():bool{return new Box().is_ready(#ready);}'
@@ -53,9 +53,9 @@ test('contextual mtd/method and Java callable keyword names survive convergence'
   const source=[
     'pub define class mtd as',
     '  pub mtd do():int{return 1;}',
-    '  pub method select() -> int :: return 2; end',
+    '  pub mtd select() -> int :: return 2; end',
     '  pub mtd mtd():int{return 3;}',
-    '  pub method mtd(int value):int{return value;}',
+    '  pub mtd mtd(int value):int{return value;}',
     '  pub method():int{return 4;}',
     '  pub done():int{return 5;}',
     '  pub true():int{return 6;}',
@@ -154,13 +154,13 @@ test('legacy function-only program-v2 keeps the legacy IR shape',()=>{
   assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir))),esm);
 });
 
-test('fnc, mtd, method and bare instance declarations share the checked class method ABI',async()=>{
+test('fnc, mtd and bare instance declarations share the checked class method ABI',async()=>{
   const source=[
     'pub define class Calculator as',
     '  pub fnc twice(int value):int{return value*2;}',
     '  pub fnc method():int{return 1;}',
     '  pub fnc mtd():int{return 2;}',
-    '  pub method legacy():int{return 3;}',
+    '  pub mtd legacy():int{return 3;}',
     '  pub mtd canonical():int{return 4;}',
     '  pub bare():int{return 5;}',
     'end',
@@ -189,6 +189,18 @@ test('fnc class prefix never admits duplicate markers, static methods or duplica
     'define class X as mtd fnc wrong():int{return 1;} end',
     'define class X as static fnc wrong():int{return 1;} end',
     'define class X as mtd f():int{return 1;} fnc f():int{return 2;} end',
-    'define class X as fnc f(self):int{return 1;} method f():int{return 2;} end'
+    'define class X as fnc f(self):int{return 1;} mtd f():int{return 2;} end'
   ]) assert.throws(()=>compileProgramV2(source),/error: program v2:/,source);
+});
+
+test('obsolete method introducer rejects while contextual names execute',async()=>{
+  for(const name of ['answer','mtd','method']){
+    const source='define class X as pub method '+name+'():int{return 42;} end';
+    assert.throws(()=>compileProgramV2(source),/obsolete method introducer/);
+  }
+  for(const spelling of ['','mtd ','fnc ']){
+    const source='pub define class X as pub '+spelling+'method():int{return 42;} end pub fnc main():int{return new X().method();}';
+    const mod=await load(source,'canonical-method-'+spelling);
+    assert.equal(mod.main(),42n);
+  }
 });
