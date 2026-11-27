@@ -896,7 +896,7 @@ class Parser {
       switch(expr.kind){
         case 'int':case 'float':case 'bool':case 'string':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':break;
         case 'tryCatch':add(expr.body);add(expr.handler);break;
-        case 'neg':case 'not':case 'trap':case 'immediateAwait':case 'intTypeTest':add(expr.inner);break;
+        case 'neg':case 'not':case 'trap':case 'immediateAwait':case 'intTypeTest':case 'inlineScalarTask':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
         case 'if':add(expr.condition);add(expr.yes);add(expr.no);break;
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
@@ -1164,6 +1164,41 @@ class Parser {
       this.expect(';');this.expect('}');
       if(this.peek().value==='(')fail('calling a computed value loop',this.peek());
       return value;
+    }
+    if(this.eat('sync')){
+      this.expect('task');
+      if(this.eat('<')){this.expect('int');this.expect('>');}
+      this.expect('{');
+      const locals=[], declarations=new Map();
+      while(true){
+        let name,rebind=false;
+        if(this.peek().value==='val'||this.peek().value==='let'){
+          const mutable=this.eat('let');
+          if(!mutable)this.expect('val');
+          this.expect('int');
+          name=this.name();
+          if(GENERATOR_RESERVED.has(name)||name==='task'||name==='sync'||declarations.has(name))
+            fail('E_TASK_LOCAL: reserved or duplicate task-local name',this.peek());
+          declarations.set(name,mutable);
+        }else if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
+          name=this.name();
+          if(declarations.get(name)!==true)
+            fail('E_TASK_LOCAL_WRITE: only this task\'s mutable local may be assigned',this.peek());
+          rebind=true;
+        }else break;
+        this.expect('=');
+        const init=this.expression();
+        this.expect(';');
+        locals.push({name,init,rebind});
+        if(locals.length>64)fail('E_TASK_LOCAL: local and write budget exceeded',this.peek());
+      }
+      if(!this.eat('return')&&!this.eat('^'))
+        fail('E_TASK_RETURN_TYPE: scalar inline task requires a terminal int return',this.peek());
+      let inner=this.expression();
+      this.expect(';');this.expect('}');
+      for(let i=locals.length-1;i>=0;i--)
+        inner={kind:'local',name:locals[i].name,init:locals[i].init,localType:'int',taskRebind:locals[i].rebind,body:inner};
+      return {kind:'inlineScalarTask',inner};
     }
     if(this.eat('trap!')||this.eat('trap'))return {kind:'trap',inner:this.expression(30)};
     if(this.eat('await'))return {kind:'immediateAwait',inner:this.expression(30)};
@@ -1521,6 +1556,24 @@ function resolveProgram(parsed) {
         // receiver evaluation (including errors) exactly once, no fake constant.
         return {kind:'compare',op:'>=',left:inner,right:{kind:'int',value:MIN.toString()}};
       }
+      case 'inlineScalarTask': {
+        // No arbitrary calls, suspension, ownership or external effects in
+        // this scalar profile. Check the source AST before erasing the wrapper.
+        const admit=(e,d=0)=>{
+          if(d>MAX_DEPTH)fail('E_TASK_UNSUPPORTED: task expression depth');
+          switch(e.kind){
+            case 'int':case 'variable':return;
+            case 'inlineScalarTask':case 'neg':admit(e.inner,d+1);return;
+            case 'binary':admit(e.left,d+1);admit(e.right,d+1);return;
+            case 'local':admit(e.init,d+1);admit(e.body,d+1);return;
+            default:fail('E_TASK_UNSUPPORTED: inline scalar task cannot admit '+e.kind);
+          }
+        };
+        admit(expr.inner);
+        const inner=resolve(expr.inner,owner,depth+1,bindings);
+        if(resolvedType(inner,owner)!=='int')fail('E_TASK_RETURN_TYPE: expected int');
+        return inner;
+      }
       case 'immediateAwait': {
         const inner=resolve(expr.inner,owner,depth+1,bindings);
         // No Future/actor readiness lowering exists in this frontend. Admit
@@ -1532,7 +1585,11 @@ function resolveProgram(parsed) {
         const previous=bindings.findLast(b=>b.name===expr.name);
         if(owner.ownerKind==='method'||owner.params.includes(expr.name))
           fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
-        if(expr.rebind){
+        if(expr.taskRebind){
+          // Parser admits writes only to a mutable int declared in this inline task.
+          if(expr.rebind||!previous||previous.type!=='int')
+            fail('E_TASK_LOCAL_WRITE: requires previously declared int local');
+        }else if(expr.rebind){
           if(!previous||previous.type!=='string'||!previous.writable)
             fail('E_STRING_REBIND: requires writable typed string local');
         }else if(previous)fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
@@ -1541,6 +1598,7 @@ function resolveProgram(parsed) {
         const init=resolve(expr.init,owner,depth+1,bindings);
         const type=['inferredTrap','directionalInferred','inferredInt'].includes(expr.localType)?resolvedType(init,owner):expr.localType==='constInt'?'int':expr.localType;
         if(expr.localType==='trapResult'&&(init.kind!=='trap'||resolvedType(init,owner)!=='trapResult'))fail('E_TRAP_TYPE: typed Result<int,Error> local requires checked trap initializer');
+        if(expr.taskRebind&&resolvedType(init,owner)!=='int')fail('E_TASK_LOCAL_WRITE: int assignment required');
         if(expr.localType==='inferredTrap'&&!['trapResult','trapOptionResult'].includes(type))fail('inferred trap local requires Result');
         if(expr.localType==='inferredInt'&&type!=='int')fail('inferred val requires int in program-v2; use an explicit supported type');
         if(expr.localType==='directionalInferred'&&!['int','float','trapResult','trapOptionResult'].includes(type))fail('directional binding requires supported scalar or trapped Result');
@@ -2370,7 +2428,7 @@ function admitUnusedRefinementsBeforeCheckedUnwrap(tokens){
 
 export function compileToProgramIRV2(source) {
   const tokens=tokenize(source);
-  rejectExecutionDomains(tokens,fail);
+  rejectExecutionDomains(tokens,fail,{inlineScalarTasks:true});
   rejectUnsupportedHttpActors(tokens,fail);
   rejectUnsupportedStaticSelect(tokens);
   rejectUnsupportedTrapEffect(tokens);

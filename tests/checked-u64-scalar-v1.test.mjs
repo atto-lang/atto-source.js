@@ -25,7 +25,7 @@ test('operator precedence, alias equivalence and forward calls', async () => {
   assert.equal(await run(guest('later(41)') + ' fnc later(uint n): u64 {return n+1;}'),42n);
 });
 test('unsupported or invalid sources are rejected before emission', () => {
-  for (const src of [guest('18446744073709551616'), guest('-1'), guest('1/2'), guest('x'), guest('main()'),
+  for (const src of [guest('18446744073709551616'), guest('-1'), guest('1%2'), guest('x'), guest('main()'),
     guest('f(1)') + ' fnc f():u64{return 1;}', guest('1') + ' fnc f(int n):u64{return 1;}',
     guest('1') + ' fnc f(u64 n,u64 n):u64{return n;}', guest('1') + guest('2'),
     guest('1') + ' fnc f():u64{return g();} fnc g():u64{return f();}',
