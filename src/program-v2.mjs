@@ -2064,7 +2064,9 @@ function emitProgram(program) {
   const classMethods=(program.classes??[]).flatMap(cls=>cls.methods);
   function containsKind(value,kind){return !!value&&typeof value==='object'&&(value.kind===kind||Object.values(value).some(v=>containsKind(v,kind)));}
   const hasBoolTrap=containsKind(program,'trapBoolLocal');
-  const hasBoolOption=containsKind(program,'optionBoolLocal');
+  function containsIntrinsic(value,name){return !!value&&typeof value==='object'&&((value.kind==='intrinsic'&&value.name===name)||Object.values(value).some(v=>containsIntrinsic(v,name)));}
+  // Validated IR may inline the carrier rather than bind an Option<bool> local.
+  const hasBoolOption=containsKind(program,'optionBoolLocal')||containsIntrinsic(program,'Option.boolSome')||containsIntrinsic(program,'Option.boolUnwrap');
   if(hasBoolTrap||program.functions.some(fn=>fn.returnType==='bool'||fn.paramTypes?.includes('bool'))||
      classMethods.some(method=>method.returnType==='bool'||method.paramTypes.includes('bool')))
     out.push('function _checkbool(v){if(typeof v!=="boolean")throw new TypeError("Oreslang bool required");return v;}');
