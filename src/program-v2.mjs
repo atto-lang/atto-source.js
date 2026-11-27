@@ -437,7 +437,9 @@ class Parser {
         let name=null;
         if(this.peek().kind==='id'&&[':', '='].includes(this.tokens[this.i+1]?.value)){
           // Both immediate call-label separators use the same checked slot binder.
-          // Equality (==) and unsupported Pair (:=) expressions are not labels.
+          // Equality (==) is not a label. Pair (:=) has no scalar ABI here.
+          if(this.tokens[this.i+1]?.value===':'&&this.tokens[this.i+2]?.value==='=')
+            fail('Pair expressions are unsupported in scalar call arguments',this.peek());
           name=this.name();this.i++;namedSeen=true;
         }else if(namedSeen)fail('positional argument cannot follow a named argument',this.peek());
         args.push({name,expr:this.expression()});
