@@ -32,3 +32,8 @@ test('recursive projections fail before artifact for missing fields, bounds, unp
     ['const Record r={x:'+ '['.repeat(40)+'1'+']'.repeat(40)+'};return 0;',/nesting limit/]
   ])assert.throws(()=>compileToIR(source(body)),diagnostic,body);
 });
+
+test('deep admitted Record array shapes do not amplify descriptor encoding',async()=>{
+  const open='['.repeat(28),close=']'.repeat(28);
+  assert.equal(await run('const Record r={x:'+open+'42'+close+'};return r.x'+'[0]'.repeat(28)+';'),42n);
+});
