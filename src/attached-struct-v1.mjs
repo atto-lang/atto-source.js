@@ -1,6 +1,7 @@
 // Explicit, bounded attached-value source compiler. No host eval, dynamic property
 // names, host-object arguments, native ABI, or zero-GC claim.
 import {planContextualMake} from './contextual-struct-construction.mjs';
+import {bindBundle,refineInferred} from './parametric-bundle.mjs';
 const fail=message=>{throw new Error('E_ATTACHED_STRUCT: '+message)};
 const demand=(v,m)=>{if(!v)fail(m)};
 const MIN=-(1n<<63n),MAX=(1n<<63n)-1n;
@@ -15,7 +16,7 @@ function tokens(source){
     if((m=/^[ \t\r\n]+/.exec(rest))){i+=m[0].length;continue}
     if(rest.startsWith('//')){i+=2;while(i<source.length&&!/[\r\n]/.test(source[i]))i++;continue}
     if(rest.startsWith('/*')){i+=2;let d=1;while(i<source.length&&d){if(source.startsWith('/*',i)){demand(++d<=64,'comment depth');i+=2}else if(source.startsWith('*/',i)){d--;i+=2}else i++}demand(!d,'unterminated comment');continue}
-    m=/^(?:copy!(?=[ \t\r\n])|[A-Za-z_][A-Za-z0-9_]*|[0-9]+|->|<-|&&|\|\||==|!=|<=|>=|[{}().,;:=+*\-<>•])/.exec(rest);
+    m=/^(?:copy!(?=[ \t\r\n])|[A-Za-z_][A-Za-z0-9_]*|[0-9]+|->|<-|&&|\|\||==|!=|<=|>=|[{}\[\]().,;:=+*\-<>•])/.exec(rest);
     demand(m,'unsupported token at '+i);demand(m[0].length<=128,'token length');out.push(m[0]);i+=m[0].length;
     demand(out.length<=8192,'token budget');
   }
@@ -25,7 +26,7 @@ const scalar=t=>t==='int'||t==='bool';
 const val=(type,code)=>({type,code});
 const prec=new Map([['||',1],['&&',2],['==',3],['!=',3],['<',4],['<=',4],['>',4],['>=',4],['+',5],['-',5],['*',6]]);
 class Reader{
-  constructor(source){this.t=tokens(source);this.i=0;this.owners=new Map();this.values=new Map();this.code=[];this.nodes=0;this.members=0;}
+  constructor(source){this.t=tokens(source);this.i=0;this.owners=new Map();this.values=new Map();this.code=[];this.nodes=0;this.members=0;this.seed=null;this.capture=null;this.array=null;}
   peek(){return this.t[this.i]}
   eat(t){if(this.peek()===t){this.i++;return true}return false}
   need(t){demand(this.eat(t),'expected '+t)}
@@ -81,7 +82,16 @@ class Reader{
       if(this.eat('self')){this.need('.');const path=this.path(),i=env.self.leaves.findIndex(l=>l.path===path);demand(i>=0,'unknown self leaf');return val(env.self.leaves[i].type,'_self['+i+']')}
       const n=this.name();demand(env.params.has(n),'unknown parameter');return env.params.get(n)
     }
-    const n=this.name(),v=this.values.get(n);demand(v,'unknown value');const o=this.owners.get(v.type);
+    const n=this.name();
+    if(this.array&&(n===this.seed.name||n===this.capture.name)){
+      this.need('.');this.need('size');return val('int',String(n===this.seed.name?this.seed.size:this.capture.size)+'n');
+    }
+    if(this.array&&n===this.array.name){
+      this.need('.');this.need('columns');this.need('.');const field=this.name(),slot=this.array.fields.indexOf(field);
+      demand(slot>=0,'unknown array column');const row=this.fixedIndex(this.array.size);
+      return val('int',this.array.id+'['+this.arrayOffset(slot,row)+']');
+    }
+    const v=this.values.get(n);demand(v,'unknown value');const o=this.owners.get(v.type);
     this.need('.');const first=this.name();
     if(this.eat('(')){this.need(')');const m=o.methods.get(first);demand(m&&!m.mut&&m.formals.length===0,'readonly method');return val(m.result,m.id+'('+v.code+')')}
     let path=first;while(this.eat('.'))path+='.'+this.name();
@@ -134,9 +144,33 @@ class Reader{
     demand(expected.has(made.type),'contextual constructor argument type mismatch');
     return made;
   }
+  bundleName(){const n=this.name();demand(!this.owners.has(n)&&!this.values.has(n)&&!['Array','infer','from','make','size','layout','T','Option','Result','Pointer','Vector','List','Map','Set','String','Symbol','Future','Channel'].includes(n),'invalid bundle identifier');return n}
+  sizeLiteral(){const n=this.peek();demand(/^[0-9]+$/.test(n??'')&&n.length<=4&&Number(n)<=1024,'invalid fixed array size');this.i++;return Number(n)}
+  seedBundle(){
+    demand(!this.seed,'only one seed bundle');this.need('type');const name=this.bundleName();this.need('=');this.need('<');const args=[];
+    do{demand(args.length<3,'bundle formal limit');const key=this.name();this.need('=');const value=key==='size'?this.sizeLiteral():this.name();args.push([key,value])}while(this.eat(','));
+    this.need('>');this.need(';');
+    const schema=[{name:'T',accepts:n=>this.owners.has(n)},{name:'size',accepts:n=>Number.isInteger(n)&&n>=0&&n<=1024},{name:'layout',accepts:n=>n==='soa'||n==='aos'}];
+    const values=bindBundle(schema,[],args,'application');demand(values.length===3,'incomplete seed bundle');const o=Object.fromEntries(values);
+    demand(this.owners.get(o.T).fields.every(f=>f.type==='int'),'only flat int array elements');this.seed={name,schema,values,...o};
+  }
+  fixedIndex(size){this.need('[');const i=this.sizeLiteral();this.need(']');demand(i<size,'array bounds');return i}
+  arrayOffset(field,row){const a=this.array;return a.layout==='soa'?field*a.size+row:row*a.fields.length+field}
+  bindArray(){
+    demand(this.seed&&!this.array,'one seeded array required');this.need('let');const name=this.bundleName();demand(name!==this.seed.name,'array conflicts with seed');this.need(':');this.need('Array');this.need('<');this.need('infer');const capture=this.bundleName();demand(capture!==name&&capture!==this.seed.name,'bundle capture collision');this.need('from');this.need(this.seed.name);this.need('>');this.need('=');this.need('[');
+    const rows=[];if(!this.eat(']')){do{demand(rows.length<1024,'array row limit');demand(this.peek()==='make','inline array requires value construction');rows.push(this.makeValue(this.seed.T).code)}while(this.eat(','));this.need(']')}
+    let values=this.seed.values;if(this.eat('with')){this.need('{');this.need('size');this.need('=');values=this.eat('infer')?refineInferred(this.seed.schema,this.seed.values,[],['size'],[['size',rows.length]]):bindBundle(this.seed.schema,this.seed.values,[['size',this.sizeLiteral()]],'refinement');this.need('}')}
+    this.need(';');const {size,layout}=Object.fromEntries(values);demand(size===rows.length,'fixed size must equal explicit row count');
+    const fields=this.owners.get(this.seed.T).fields.map(f=>f.name),id='_array';this.capture={name:capture,size};this.array={name,id,fields,size,layout};
+    let code='const '+id+'=new BigInt64Array('+size*fields.length+');';
+    for(const [row,expr] of rows.entries()){code+='{const _row='+expr+';';for(let field=0;field<fields.length;field++)code+=id+'['+this.arrayOffset(field,row)+']=_row['+field+'];';code+='}'}
+    return code;
+  }
+  mutateArray(){const a=this.array;this.need(a.name);const row=this.fixedIndex(a.size);this.need('.');const field=a.fields.indexOf(this.name());demand(field>=0,'unknown array field');this.need('+');this.need('=');const delta=this.expr(null);demand(delta.type==='int','array mutation type');this.need(';');const cell=a.id+'['+this.arrayOffset(field,row)+']';return cell+'=_checked('+cell+'+('+delta.code+'));'}
   bind(){
+    if(this.t[this.i+2]===':'&&this.t[this.i+3]==='Array')return this.bindArray();
     this.need('let');const mut=this.eat('mut');let name=this.name(),annotation=null;if(this.eat(':')){annotation=this.type();demand(this.owners.has(annotation),'expected nominal value type')}else if(this.owners.has(name)){annotation=name;name=this.name()}
-    demand(!this.values.has(name)&&!this.owners.has(name)&&this.values.size<64,'binding identity/limit');this.need('=');const copy=this.eat('copy!');let type,code;
+    demand(!this.values.has(name)&&!this.owners.has(name)&&name!==this.seed?.name&&name!==this.capture?.name&&name!==this.array?.name&&this.values.size<64,'binding identity/limit');this.need('=');const copy=this.eat('copy!');let type,code;
     const prior=this.values.get(this.peek());
     if(this.peek()==='new')fail('reference construction cannot initialize an attached value struct');
     if(this.peek()==='make' && (this.t[this.i+1]==='{' || this.t[this.i+2]==='{')){
@@ -148,8 +182,8 @@ class Reader{
   }
   invoke(){const n=this.name(),v=this.values.get(n);demand(v?.mut,'immutable receiver');this.need('.');const name=this.name(),m=this.owners.get(v.type).methods.get(name);demand(m?.mut,'mutable method');this.need('(');const args=[];if(!this.eat(')')){do{demand(args.length<m.formals.length,'mutation arity');const a=this.expr(null);demand(a.type===m.formals[args.length].type,'mutation type');args.push(a.code)}while(this.eat(','));this.need(')')}demand(args.length===m.formals.length,'mutation arity');this.need(';');return m.id+'('+[v.code,...args].join(',')+');'}
   finish(){
-    while(['define','type'].includes(this.peek()))this.decl();demand(this.owners.size,'owner required');this.eat('pub');this.need('fnc');this.need('main');this.need('(');this.need(')');demand(this.eat('->')||this.eat(':'),'main result');this.need('int');this.need('{');const statements=[];
-    while(this.peek()!=='return'){demand(statements.length<128,'statement limit');statements.push(this.peek()==='let'?this.bind():this.invoke())}
+    while(['define','type'].includes(this.peek())){if(this.peek()==='type'&&this.t[this.i+2]==='='&&this.t[this.i+3]==='<')this.seedBundle();else{demand(!this.seed,'nominal declarations must precede seed');this.decl()}}demand(this.owners.size,'owner required');this.eat('pub');this.need('fnc');this.need('main');this.need('(');this.need(')');demand(this.eat('->')||this.eat(':'),'main result');this.need('int');this.need('{');const statements=[];
+    while(this.peek()!=='return'){demand(statements.length<128,'statement limit');statements.push(this.peek()==='let'?this.bind():this.array&&this.peek()===this.array.name?this.mutateArray():this.invoke())}
     this.need('return');const e=this.expr(null);demand(e.type==='int','main result type');this.need(';');this.need('}');demand(this.i===this.t.length,'trailing source');
     return ['// Checked attached struct ESM v1; flattened private scalar values.',
       'function _checked(v){if(v<-(1n<<63n)||v>(1n<<63n)-1n)throw new RangeError("E_OVERFLOW");return v;}',
