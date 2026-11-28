@@ -201,3 +201,23 @@ test('reject wrong key domains, mixed explicit keys and decoded duplicates',()=>
     'const DynRecord r=("x":=42); return 0;'
   ]) assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),undefined,body);
 });
+
+test('DynRecord separators share shape but Record and DynRecord do not silently coerce',async()=>{
+  for(const body of [
+    'val person=("name"="Alice","age"=30); return person.age+12;',
+    'const DynRecord<infer T> a=("x"=1,"y":true); const DynRecord<T> b=("y"=false,"x":42); return b.x;',
+    'const DynRecord a=(); return 42;',
+    'const Record a={x:("first name"=42)}; return a.x["first name"];',
+    'const DynRecord a=("user profile"={age:42}); return a["user profile"].age;'
+  ])assert.equal(await run(body),42n,body);
+  for(const body of [
+    'val person=(name="Alice",age=30); return 0;',
+    'val person=("name"="Alice",age=30); return 0;',
+    'val person=("age"=1,"age":2); return 0;',
+    'const Record a=("x"=1); return 0;',
+    'const DynRecord a={x:1}; return 0;',
+    'const Record<infer T> a={x:1}; const DynRecord<T> b=("x"=42); return 0;',
+    'const DynRecord<infer T> a=("x"=1); const Record<T> b={x:42}; return 0;',
+    'const DynRecord a=("x":=1); return 0;'
+  ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),undefined,body);
+});
