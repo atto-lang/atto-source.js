@@ -865,19 +865,16 @@ class Parser {
         const typedTrapBool=this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')==='Result < bool , Error >';
         if(typedTrapResult||typedTrapBool)this.i+=6;
         else if(typedTrapOption)this.i+=9;
-        // A literal denotation must not be erased by the general scalar parser.
-        // Only a fixed local initialized by a proven member is supported.
-        const literalMembers=this.tokens[this.i+1]?.kind==='id'?this.literalDenotations.get(this.peek().value):undefined;
-        if(literalMembers){
-          if(readOnlyLet)fail('literal denotation requires immutable val or const',this.peek(),'E_DENOTE_BOUNDARY_UNSUPPORTED');
-          this.i++;
+        // Keep literal membership metadata until the closed scalar proof
+        // checks each initializer and root-scope sequential assignment.
+        const literalName=this.tokens[this.i+1]?.kind==='id'&&this.literalDenotations.has(this.peek().value)?this.peek().value:null;
+        if(literalName){
+          this.literalLocalSeen=true;this.i++;
           const name=this.name();
           this.expect('=');
           const init=this.expression();
           this.expect(';');
-          if(init.kind!=='int'||!literalMembers.has(init.value))
-            fail('literal denotation initializer is not a proven member',this.peek(),'E_DENOTE_MEMBERSHIP');
-          statements.push({kind:'local',name,init,localType:isConst?'constInt':'int',writable:false,taskWritable:false});
+          statements.push({kind:'local',name,init,localType:isConst?'constInt':'int',literalName,literalMutable:readOnlyLet,writable:false,taskWritable:false});
           continue;
         }
         let localType=typedTrapBool?'trapBoolResult':typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():(['Option','Result'].includes(this.peek().value)||(this.scalarDenotations.has(this.peek().value)&&this.tokens[this.i+1]?.kind==='id'))?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
@@ -962,7 +959,7 @@ class Parser {
       else if(stmt.kind==='tryCatch')result={kind:'tryCatch',name:stmt.name,body:this.lowerStatements(stmt.body,null),handler:this.lowerStatements(stmt.handler,null)};
       else if(stmt.kind==='local'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
-        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,taskWritable:stmt.taskWritable===true,rebind:stmt.rebind===true,body:result};
+        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,taskWritable:stmt.taskWritable===true,rebind:stmt.rebind===true,...(stmt.literalName?{literalName:stmt.literalName,literalMutable:stmt.literalMutable===true}:{}),body:result};
       }
       else if(stmt.kind==='stdoutWrite'||stmt.kind==='stdoutDefer'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: stdout must precede a value return');
@@ -1130,7 +1127,7 @@ class Parser {
   // public parameters, indirect calls, mutation, effects or task boundaries.
   checkLiteralCallableBoundaries(functions) {
     const members=type=>typeof type==='string'&&type.startsWith('denote:')?this.literalDenotations.get(type.slice(7)):undefined;
-    if(!functions.some(f=>members(f.returnType)||f.paramTypes?.some(members)))return;
+    if(!this.literalLocalSeen&&!functions.some(f=>members(f.returnType)||f.paramTypes?.some(members)))return;
     const slots=new Map();
     const signatures=new Map();
     for(const f of functions){
@@ -1147,27 +1144,54 @@ class Parser {
       if(want&&(!actual||[...actual].some(v=>!want.has(v))))
         fail('E_DENOTE_MEMBERSHIP: '+label+' is not a proven subset');
     };
-    const proof=(e,scope,depth=0)=>{
+    const proof=(e,scope,depth=0,mutable=new Map())=>{
       if(depth>MAX_DEPTH||++visits>MAX_TOKENS)fail('E_DENOTE_LIMIT: proof budget exceeded');
       if(!e)fail('E_DENOTE_BOUNDARY_UNSUPPORTED: missing scalar expression');
-      const child=x=>proof(x,scope,depth+1);
+      const child=x=>proof(x,scope,depth+1,mutable);
+      // Finite abstract interpretation; do not enumerate unbounded products.
+      const arithmetic=(left,right,op)=>{
+        if(!left||!right||left.size*right.size>128)return undefined;
+        const out=new Set();
+        for(const a of left)for(const b of right){
+          const x=BigInt(a),y=BigInt(b);
+          const n=op==='+'?x+y:op==='-'?x-y:op==='*'?x*y:undefined;
+          if(n===undefined||n<MIN||n>MAX)return undefined;
+          out.add(n.toString());
+        }
+        return out;
+      };
       switch(e.kind){
         case 'int':return new Set([e.value]);
         case 'bool':return undefined;
         case 'variable':return scope.get(e.name);
-        case 'neg':case 'not':child(e.inner);return undefined;
-        case 'binary':case 'compare':child(e.left);child(e.right);return undefined;
+        case 'neg':return arithmetic(new Set(['0']),child(e.inner),'-');
+        case 'not':child(e.inner);return undefined;
+        case 'binary':return arithmetic(child(e.left),child(e.right),e.op);
+        case 'compare':child(e.left);child(e.right);return undefined;
         case 'if':{
           child(e.condition);
           const yes=child(e.yes),no=child(e.no);
-          return yes&&no?new Set([...yes,...no]):undefined;
+          return yes&&no&&yes.size+no.size<=128?new Set([...yes,...no]):undefined;
         }
         case 'local':{
-          if(e.writable||e.taskWritable||e.rebind||e.taskRebind)
-            fail('E_DENOTE_BOUNDARY_UNSUPPORTED: mutable binding in literal callable profile');
-          const actual=child(e.init),next=new Map(scope);
-          next.set(e.name,['int','constInt'].includes(e.localType)?actual:undefined);
-          return proof(e.body,next,depth+1);
+          const actual=child(e.init),next=new Map(scope),nextMutable=new Map(mutable);
+          if(e.rebind){
+            const want=mutable.get(e.name);
+            if(!want)fail('E_STRING_REBIND: requires writable typed string local or literal union');
+            requireSubset(actual,want,'assignment to '+e.name);
+            e.literalRebind=true;e.localType='int';e.writable=false;
+            next.set(e.name,want);
+          }else{
+            if(e.writable||e.taskWritable||e.taskRebind)
+              fail('E_DENOTE_BOUNDARY_UNSUPPORTED: mutable binding in literal callable profile');
+            if(e.literalName){
+              const want=this.literalDenotations.get(e.literalName);
+              requireSubset(actual,want,'literal denotation initializer of '+e.name);
+              if(e.literalMutable)nextMutable.set(e.name,want);
+              next.set(e.name,want);
+            }else next.set(e.name,['int','constInt'].includes(e.localType)?actual:undefined);
+          }
+          return proof(e.body,next,depth+1,nextMutable);
         }
         case 'call':{
           if(e.qualifier!==null)
@@ -1916,6 +1940,9 @@ function resolveProgram(parsed) {
           fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
         if(expr.taskRebind){
           if(expr.rebind||!previous||previous.type!=='int')fail('E_TASK_LOCAL_WRITE: requires previously declared int local');
+        }else if(expr.literalRebind){
+          if(!previous||previous.type!=='int'||!previous.literalMutable)
+            fail('E_DENOTE_BOUNDARY_UNSUPPORTED: assignment requires writable literal local');
         }else if(expr.rebind){
           if(!previous||previous.type!=='string'||!previous.writable)
             fail('E_STRING_REBIND: requires writable typed string local');
@@ -1957,7 +1984,7 @@ function resolveProgram(parsed) {
         if(expr.taskRebind&&resolvedType(init,owner)!=='int')fail('E_TASK_LOCAL_WRITE: int assignment required');
         const taskMutable=expr.taskWritable===true&&taskWrites(expr.body,expr.name);
         return {kind:taskMutable?'taskMutableLocal':type==='option<bool>'?'optionBoolLocal':type==='trapBoolResult'?'trapBoolLocal':type==='option<int>'?'optionLocal':type==='result<int,int>'?'resultLocal':type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':type==='bool'?'boolLocal':type==='string'?'stringLocal':'local',slot,init,
-          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string',taskMutable}])};
+          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string',taskMutable,literalMutable:expr.literalMutable===true||expr.literalRebind===true}])};
       }
       case 'taskScope':{
         if(owner.inlineTask||owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer')fail('E_SYNC_TASK_PROFILE: unsupported task boundary');
