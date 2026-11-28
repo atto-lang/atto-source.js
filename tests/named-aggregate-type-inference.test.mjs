@@ -32,7 +32,7 @@ test('reject bad named aggregate declarations before IR',()=>{
     ['const Record<infer T> r=(a=1); const Record<T> s=(a=1,b=2);',/E_TYPE_MISMATCH/],
     ['const Record<infer T> r=(a=1,b=2); const Record<T> s=(a=1);',/E_TYPE_MISMATCH/],
     ['const Tuple<infer T> r=(1,true); const Tuple<T> s=(true,1);',/E_TYPE_MISMATCH/],
-    ['const Tuple<infer T> r=(1,true); const Tuple<T> s=(1);',/E_TYPE_MISMATCH/],
+    ['const Tuple<infer T> r=(1,true); const Tuple<T> s=(1,);',/E_TYPE_MISMATCH/],
     ['const struct<infer T> r={a:1}; const Record<T> s=(a=1);',/E_AGGREGATE_KIND/],
     ['const Record<infer T> r=(a=unknown);',/E_TYPE_INFER_AMBIGUOUS/],
   ])assert.throws(()=>compileToIR('pub fnc main(): int { '+body+' return 0; }'),error);
@@ -81,4 +81,95 @@ test('mixed Record syntax retains duplicate, delimiter, and kind boundaries',()=
     'const struct r={foo=1}; return 0;',
     'const r={foo:1;bar:2}; return 0;',
   ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),undefined,body);
+});
+
+test('scalar Pair binding forms, mixed Record entries and newline separators execute',async()=>{
+  for(const body of [
+    'const x := 42; return x.value;',
+    'const x = x := 42; return x.value;',
+    'const r={foo := 40\nbar = 2,}; return r.foo+r.bar;',
+    'const r={foo := 40\nbar := 2}; return r.foo+r.bar;',
+    'const r=(foo := 40,bar = 2); return r.foo+r.bar;',
+    'const r=(foo : 40,bar := 2); return r.foo+r.bar;',
+    'const foo=7; const r={foo := 40,bar:2}; return r.foo+r.bar+foo-7;',
+  ])assert.equal(await run(body),42n,body);
+});
+test('scalar Record with, spread, and inferred lexical aliases execute',async()=>{
+  for(const body of [
+    'const r={foo:40}; const v=r with {bar:true,foo:42}; return r.foo+v.foo-40;',
+    'const r={foo:40}; const v={...r,bar:2}; return v.foo+v.bar;',
+    'const r={foo:40}; const Record<T> v=infer {...r,bar:2}; const Record<T> w=(bar:2,foo:40); return w.foo+v.bar;',
+    'const r={foo:40}; const Record<infer T> v={...r,bar:2}; const Record<T> w=r with {bar:2}; return w.foo+v.bar;',
+    'const r={foo:40}; const s={foo:1}; const v={...r,...s,foo:42}; return v.foo;',
+    'const r={foo:true}; const v=r with {foo:42}; return v.foo;',
+  ])assert.equal(await run(body),42n,body);
+});
+test('bounded Pair/Record grammar rejects malformed, ambiguous and unsafe forms',()=>{
+  for(const body of [
+    'const r={foo := 1 bar := 2}; return 0;',
+    'const r={foo = 1\nbar := 2}; return 0;',
+    'const r={foo : 1\nbar := 2}; return 0;',
+    'const r={foo := 1,foo:2}; return 0;',
+    'const r={foo : = 1}; return 0;',
+    'const r=(foo := 1,bar := 2); return 0;',
+    'const r=(foo := 1); return 0;',
+    'const r=(foo := 1\nbar = 2); return 0;',
+    'const x := 1; const x = x := 2; return 0;',
+    'const x := y := 1; return 0;',
+    'const x := 42; return x;',
+    'const x := 42; const r={...x}; return 0;',
+    'const r={foo:1}; const s={foo:2}; const v={...r,...s}; return 0;',
+    'const r={foo:1}; const v={foo:2,...r}; return 0;',
+    'const r={foo:1}; const v=r with {foo:2,foo:=3}; return 0;',
+    'const Record<T> v=infer {...v,foo:1}; return 0;',
+    'const T=1; const Record<T> v=infer {foo:1}; return 0;',
+    'const Record<T> v={foo:1}; return 0;',
+    'const Record<infer T> v={foo:1}; const Record<T> w=infer {foo:true}; return 0;',
+    'const struct r={foo:=1}; return 0;',
+  ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),undefined,body);
+  assert.throws(()=>compileToIR('pub fnc main(int a):int{const Record r=(x=a); const v={...r}; return v.x;}'),/E_RECORD_SPREAD/);
+});
+
+
+test('contextual empty local products preserve exact kind and zero shape',async()=>{
+  for(const body of [
+    'const t=(); return 42;',
+    'const Tuple t=(); const Record r=(); const Record s={}; return 42;',
+    'const Record<infer R> r=(); const Record<R> s={}; return 42;',
+    'const Tuple<infer T> t=(); const Tuple<T> u=(); return 42;',
+    'const Record r=(); const s={...r,a:42}; return s.a;',
+    'const Record r=(); const s=r with {a:42}; return s.a;'
+  ])assert.equal(await run(body),42n,body);
+});
+test('empty product kind and exact shape cannot be silently changed',()=>{
+  for(const [body,error] of [
+    ['const Record<infer R> r=(); const Tuple<R> t=(); return 0;',/E_AGGREGATE_KIND/],
+    ['const Tuple<infer T> t=(); const Record<T> r=(); return 0;',/E_AGGREGATE_KIND/],
+    ['const Record<infer R> r={a:1}; const Record<R> s=(); return 0;',/E_TYPE_MISMATCH/],
+    ['const Record<infer R> r=(); const Record<R> s={a:1}; return 0;',/E_TYPE_MISMATCH/],
+    ['const Tuple<infer T> t=(1,2); const Tuple<T> u=(); return 0;',/E_TYPE_MISMATCH/],
+    ['const t=(); const r={...t,a:42}; return r.a;',/E_RECORD_SPREAD/],
+    ['const t=(); return t[0];',/E_NO_FIELD/],
+    ['const Record r=(); return r.a;',/E_NO_FIELD/],
+    ['const Record r=(); return r[0];',/expected/],
+    ['const t=(); return t.a;',/expected/],
+    ['const r={}; return 0;',/E_LITERAL_KIND/],
+    ['const struct s={}; return 0;',/E_LITERAL_KIND/],
+    ['const t=(); const Record r=t; return 0;',/expected/]
+  ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),error,body);
+});
+
+test('explicit Tuple context admits either singleton spelling',async()=>{
+  assert.equal(await run('const Tuple t=(42,); return t[0];'),42n);
+  assert.equal(await run('const Tuple t=(42); return t[0];'),42n);
+  assert.equal(await run('const Tuple<infer T> t=(1); const Tuple<T> u=(42,); return u[0];'),42n);
+  assert.throws(()=>compileToIR('pub fnc main():int{const Tuple<infer T> t=(1,2);const Tuple<T> u=(42);return 0;}'),/E_TYPE_MISMATCH/);
+});
+
+test('untyped grouped scalar remains scalar and is not implicitly wrapped',async()=>{
+  assert.equal(await run('const x=(42); return x;'),42n);
+  assert.equal(await run('const x=(-42); return 0-x;'),42n);
+  assert.equal(await run('const x=42; const y=(x); return y;'),42n);
+  assert.throws(()=>compileToIR('pub fnc main():int{const x=(42);return x[0];}'));
+  assert.throws(()=>compileToIR('pub fnc main():int{const x=(42);const Tuple t=x;return 0;}'));
 });

@@ -55,7 +55,7 @@ function lex(src) {
     else col++;
     i++;
   }
-  function add(kind, value, loc) { if(out.length>=30000) throw new CompileError('token limit exceeded'); out.push({kind,value,...loc}); }
+  function add(kind, value, loc) { if(out.length>=30000) throw new CompileError('token limit exceeded'); out.push({kind,value,...loc,endLine:line}); }
   while(i<src.length){
     if(/\s/.test(src[i])||src[i]==='\u0085') {advance();continue;}
     if(src.startsWith('//',i)){
@@ -118,7 +118,8 @@ function lex(src) {
       }
       while(i<literal.end)advance();
       add(literal.kind,literal,loc);
-    }else if(src.startsWith('->',i)||src.startsWith('::',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
+    }else if(src.startsWith('...',i)){add('sym','...',loc);advance();advance();advance();}
+    else if(src.startsWith('->',i)||src.startsWith('::',i)||src.startsWith(':=',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
     else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
     else if(src[i]==='^')throw new CompileError(src.startsWith('^^',i)?"'^^' is reserved and is not AttoLang source syntax; use Xor(a, b)":"'^' is reserved and is not AttoLang source syntax; use Integer.bitXor(a, b)",loc);
     else if('(){}[]:,;+-*/=.!<>'.includes(src[i])){add('sym',src[i],loc);advance();}
@@ -262,18 +263,60 @@ class Parser {
       throw new CompileError('duplicate local binding '+name,at);
     if(this.aggregateLocals.size+this.scalarConsts.size>=64)
       throw new CompileError('aggregate binding limit',at);
+    // Name-derived Pair binding is distinct from a Record field.
+    if(this.match(':=')){
+      this.readLocalPair(name,name,at);return;
+    }
     this.expect('=');
+    if(this.peek().kind==='id'&&this.ts[this.pos+1]?.value===':='){
+      const key=this.aggregateIdentifier();this.expect(':=');this.readLocalPair(name,key,at);return;
+    }
+    if(this.peek().kind==='id'&&this.ts[this.pos+1]?.value==='with'){
+      const base=this.readConstRecordOperand();
+      this.expect('with');this.readAggregateFields('Record',name,null,false,params,at,false,base);return;
+    }
     const open=this.peek().value;
+    // Scalar grouping without a Tuple expectation is still scalar.
+    // Recognize only the complete existing constexpr scalar leaf grammar;
+    // never speculate, consume a field label, or flatten a nested product.
+    if(open==='('){
+      const leaf=this.ts[this.pos+1], negative=leaf?.value==='-'&&leaf.kind!=='string';
+      const scalar=negative?this.ts[this.pos+2]:leaf;
+      const close=this.ts[this.pos+(negative?3:2)];
+      const end=this.ts[this.pos+(negative?4:3)];
+      const admitted=scalar&&(scalar.kind==='int'||(!negative&&
+        (scalar.kind==='string'||(scalar.kind==='id'&&
+          (['true','false'].includes(scalar.value)||this.scalarConsts.has(scalar.value))))));
+      if(admitted&&close?.kind!=='string'&&close?.value===')'&&end?.value===';'){
+        this.expect('(');const value=this.readAggregateScalar([],false);
+        this.expect(')');this.expect(';');this.scalarConsts.set(name,value);return;
+      }
+    }
     if(open==='{'||open==='('||open==='struct'){
-      const kind=open==='struct'?'struct':'Record';
+      // Without a concrete expected kind, the zero-arity () literal
+      // defaults to Tuple. Nonempty inferred positional tuples remain
+      // outside this bounded local scalar profile.
+      const kind=open==='struct'?'struct':open==='('&&this.ts[this.pos+1]?.value===')'?'Tuple':'Record';
       if(kind==='struct')this.pos++;
-      // No inferred positional Tuple admission. Parentheses with named
-      // fields/captures only; empty and positional forms fail closed.
       this.readAggregateFields(kind,name,null,false,params,at,false);
     }else{
       const value=this.readAggregateScalar([],false);
       this.expect(';');this.scalarConsts.set(name,value);
     }
+  }
+  readLocalPair(name,key,at){
+    // The scalar subset exposes only integer .value projection. Preserve
+    // the literal key and nominal kind; do not resolve it as a variable.
+    const field=this.readAggregateScalar([],false);
+    this.expect(';');
+    this.aggregateLocals.set(name,{kind:'Pair',key,fields:new Map([['value',field]])});
+  }
+  readConstRecordOperand(){
+    const at=this.peek(),name=this.aggregateIdentifier();
+    const record=this.aggregateLocals.get(name);
+    if(record?.kind!=='Record'||[...record.fields.values()].some(f=>f.type==='int'&&typeof f.value!=='bigint'))
+      throw new CompileError('E_RECORD_SPREAD: requires an initialized compile-time scalar Record',at);
+    return record;
   }
   // Restricted scalar aggregate profile: immutable literals and direct int
   // parameter reads only. No aggregate ABI, escaping values or effectful inference.
@@ -300,8 +343,7 @@ class Parser {
       this.expect('>');
       if(binder&&this.aggregateTypes.has(alias))
         throw new CompileError('E_DUPLICATE_TYPE: '+alias,at);
-      if(!binder&&!this.aggregateTypes.has(alias))
-        throw new CompileError('E_UNKNOWN_TYPE: '+alias,at);
+      // Unknown aliases are resolved only after inspecting explicit infer.
     }
     const name=this.aggregateIdentifier();
     if(params.includes(name)||this.aggregateLocals.has(name))
@@ -311,21 +353,58 @@ class Parser {
     if(this.scalarConsts?.has(name))
       throw new CompileError('duplicate local binding '+name,at);
     this.expect('=');
-    this.readAggregateFields(kind,name,alias,binder,params,at,true);
+    const infer=this.match('infer');
+    if(infer){
+      if(kind!=='Record'||alias===null||binder||!this.scalarConsts)
+        throw new CompileError('E_TYPE_INFER_AMBIGUOUS: infer requires local Record<T>',at);
+      if(!this.aggregateTypes.has(alias)){
+        if(params.includes(alias)||this.aggregateLocals.has(alias)||this.scalarConsts.has(alias)||alias===name)
+          throw new CompileError('E_DUPLICATE_TYPE: '+alias,at);
+        binder=true;
+      }
+    }
+    if(alias!==null&&!binder&&!this.aggregateTypes.has(alias))
+      throw new CompileError('E_UNKNOWN_TYPE: '+alias,at);
+    let base=null;
+    if(kind==='Record'&&this.peek().kind==='id'&&this.ts[this.pos+1]?.value==='with'){
+      base=this.readConstRecordOperand();this.expect('with');
+    }
+    this.readAggregateFields(kind,name,alias,binder,params,at,true,base);
   }
-  readAggregateFields(kind,name,alias,binder,params,at,allowRuntime){
+  readAggregateFields(kind,name,alias,binder,params,at,allowRuntime,base=null){
     const open=this.peek().value;
     if(kind==='struct')this.expect('{');
     else if(kind==='Record'&&(open==='{'||open==='('))this.pos++;
     else this.expect('(');
-    const close=open==='{'?'}':')', fields=new Map();
-    do {
-      if(fields.size>=64)throw new CompileError('aggregate field limit',this.peek());
+    const close=open==='{'?'}':')', fields=new Map(base?.fields), explicit=new Set(), spreadConflicts=new Set();
+    let ordinaryField=false,entryCount=0;
+    if(base&&open!=='{')throw new CompileError('E_RECORD_SPREAD: with requires braces',at);
+    if(this.peek().value===close&&(kind==='struct'||base||(kind==='Record'&&open==='{'&&!allowRuntime)))
+      throw new CompileError('E_LITERAL_KIND: empty braces require explicit Record in this profile',at);
+    // An explicitly typed zero-slot Record or Tuple shares this literal
+    // syntax, not its kind. Preserve the kind through shape matching.
+    if(this.peek().value!==close) do {
+      if(++entryCount>64)throw new CompileError('aggregate entry limit',this.peek());
+      if(kind==='Record'&&open==='{'&&this.match('...')){
+        const source=this.readConstRecordOperand();
+        for(const [key,field] of source.fields){
+          if(explicit.has(key))throw new CompileError('E_RECORD_SPREAD: spread overrides explicit field '+key,this.peek());
+          if(fields.has(key))spreadConflicts.add(key);
+          fields.set(key,field);
+          if(fields.size>64)throw new CompileError('aggregate field limit',this.peek());
+        }
+        if(!this.match(','))break;
+        if(this.peek().value===close)break;
+        continue;
+      }
+      if(explicit.size>=64)throw new CompileError('aggregate field limit',this.peek());
       const capture=kind!=='Tuple'&&this.match(':');
       const key=kind==='Tuple'?String(fields.size):this.aggregateIdentifier();
-      if(fields.has(key))throw new CompileError('E_DUPLICATE_FIELD: '+key,this.peek());
-      let field;
+      if(explicit.has(key))throw new CompileError('E_DUPLICATE_FIELD: '+key,this.peek());
+      explicit.add(key);spreadConflicts.delete(key);
+      let field,pairEntry=false;
       if(capture){
+        ordinaryField=true;
         // Capture only already resolved compile-time scalar bindings. A
         // parameter is not a compile-time constant; do not invent its value.
         field=this.scalarConsts?.get(key);
@@ -334,15 +413,24 @@ class Parser {
         // Record punctuation is independent of its delimiter. Keep nominal
         // Struct field grammar and positional Tuple grammar unchanged.
         if(kind==='Record'){
-          if(!this.match(':'))this.expect('=');
+          if(this.match(':='))pairEntry=true;
+          else {if(!this.match(':'))this.expect('=');ordinaryField=true;}
         }else if(kind==='struct')this.expect(':');
         field=this.readAggregateScalar(params,allowRuntime);
       }
       fields.set(key,field);
-      if(!this.match(','))break;
+      if(fields.size>64)throw new CompileError('aggregate field limit',this.peek());
+      const comma=this.match(',');
+      if(!comma){
+        // Only a complete inline Pair entry may use a newline separator.
+        if(open==='{'&&pairEntry&&this.peek().kind==='id'&&this.peek().line>this.ts[this.pos-1].endLine)continue;
+        break;
+      }
       if(this.peek().value===close)break;
     } while(true);
     this.expect(close);this.expect(';');
+    if(kind==='Record'&&open==='('&&entryCount!==0&&!ordinaryField)throw new CompileError('E_LITERAL_KIND: Pair-only parentheses are not a Record',at);
+    if(spreadConflicts.size)throw new CompileError('E_RECORD_SPREAD: unresolved spread overlap',at);
     const shape={kind,fields:new Map([...fields].map(([k,v])=>[k,v.type]))};
     if(alias!==null&&!binder){
       const expected=this.aggregateTypes.get(alias);
