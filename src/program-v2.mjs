@@ -1127,7 +1127,7 @@ class Parser {
   // public parameters, indirect calls, mutation, effects or task boundaries.
   checkLiteralCallableBoundaries(functions) {
     const members=type=>typeof type==='string'&&type.startsWith('denote:')?this.literalDenotations.get(type.slice(7)):undefined;
-    if(!this.literalLocalSeen&&!functions.some(f=>members(f.returnType)||f.paramTypes?.some(members)))return;
+    if(!this.literalLocalSeen&&!this.literalExhaustiveMatchSeen&&!functions.some(f=>members(f.returnType)||f.paramTypes?.some(members)))return;
     const slots=new Map();
     const signatures=new Map();
     for(const f of functions){
@@ -1140,6 +1140,34 @@ class Parser {
       signatures.set(f,{inputs,output:members(f.returnType)});
     }
     let visits=0;
+    const provenExhaustive=new Set();
+    // Branch-local snapshots. Only compare an already-proven integer
+    // binding against a literal; never infer facts from an arbitrary call.
+    const narrowed=(condition,scope,truth)=>{
+      if(condition.kind==='not')return narrowed(condition.inner,scope,!truth);
+      if(condition.kind!=='compare')return scope;
+      const {left,right,op}=condition;
+      const reversed=left.kind==='int'&&right.kind==='variable';
+      const variable=reversed?right:left,literal=reversed?left:right;
+      if(variable.kind!=='variable'||literal.kind!=='int')return scope;
+      const prior=scope.get(variable.name);
+      if(!prior)return scope;
+      const test=(a,b)=>{
+        if(reversed)[a,b]=[b,a];
+        switch(op){
+          case '==':return a===b;case '!=':return a!==b;
+          case '<':return a<b;case '<=':return a<=b;
+          case '>':return a>b;case '>=':return a>=b;
+          default:return undefined;
+        }
+      };
+      if(!['==','!=','<','<=','>','>='].includes(op))return scope;
+      const subset=new Set([...prior].filter(v=>test(BigInt(v),BigInt(literal.value))===truth));
+      // Still validate unreachable arms conservatively; do not use empty
+      // proof sets to waive arbitrary type errors.
+      if(!subset.size)return scope;
+      const next=new Map(scope);next.set(variable.name,subset);return next;
+    };
     const requireSubset=(actual,want,label)=>{
       if(want&&(!actual||[...actual].some(v=>!want.has(v))))
         fail('E_DENOTE_MEMBERSHIP: '+label+' is not a proven subset');
@@ -1170,8 +1198,31 @@ class Parser {
         case 'compare':child(e.left);child(e.right);return undefined;
         case 'if':{
           child(e.condition);
-          const yes=child(e.yes),no=child(e.no);
+          const yes=proof(e.yes,narrowed(e.condition,scope,true),depth+1,mutable);
+          const no=proof(e.no,narrowed(e.condition,scope,false),depth+1,mutable);
           return yes&&no&&yes.size+no.size<=128?new Set([...yes,...no]):undefined;
+        }
+        case 'match':{
+          const subject=child(e.subject);
+          const remaining=subject?new Set(subject):undefined;
+          let result=new Set(),allKnown=true,hasDefault=false;
+          for(const arm of e.arms){
+            const armValues=arm.value===null?remaining:remaining?.has(arm.value)?new Set([arm.value]):undefined;
+            if(arm.value===null)hasDefault=true;
+            const next=new Map(scope);
+            if(e.subject.kind==='variable'&&armValues?.size)
+              next.set(e.subject.name,new Set(armValues));
+            const actual=proof(arm.body,next,depth+1,mutable);
+            if(!actual)allKnown=false;
+            else for(const v of actual)result.add(v);
+            if(arm.value!==null)remaining?.delete(arm.value);
+          }
+          if(!hasDefault){
+            if(!subject?.size||remaining?.size||!e.arms.length)
+              fail('E_DENOTE_NONEXHAUSTIVE: literal match requires all possible members or default');
+            provenExhaustive.add(e);
+          }
+          return allKnown&&result.size<=128?result:undefined;
         }
         case 'local':{
           const actual=child(e.init),next=new Map(scope),nextMutable=new Map(mutable);
@@ -1220,6 +1271,9 @@ class Parser {
         requireSubset(proof(f.body,scope),sig.output,'return of '+f.name);
       }
     }
+    // A lowered statement DAG can share a match between scopes. Delay
+    // conversion of its final arm to a wildcard until every visit passes.
+    for(const e of provenExhaustive)e.arms.at(-1).value=null;
     // Only after every body and call site is checked may the existing
     // validated integer ABI be used. No source-level proof metadata leaks.
     for(const f of functions){
@@ -1698,7 +1752,10 @@ class Parser {
       return {kind:'adtMatch',adt:option?'option<int>':'result<int,int>',
         typed,subject,arms:arms.map(arm=>({tag:arm.tag,bind:arm.bind,body:arm.body}))};
     }
-    if(!wildcard)fail('scalar int match requires exhaustive wildcard/else');
+    if(!wildcard){
+      if(!this.literalDenotations.size)fail('scalar int match requires exhaustive wildcard/else');
+      this.literalExhaustiveMatchSeen=true;
+    }
     return {kind:'match',subject,arms:arms.map(arm=>({value:arm.value,body:arm.body}))};
   }
 }
