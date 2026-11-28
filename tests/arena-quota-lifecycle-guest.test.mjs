@@ -2,6 +2,7 @@
 // Concatenated source is not proof of canonical module import linking.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {arenaPolicyBatches} from './arena-policy-differential-v1.mjs';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {compileProgramV2} from '../src/program-v2.mjs';
@@ -10,11 +11,12 @@ const pins=[
  ['stdlib/policy/alloc/arena_lifecycle.atto','e4795c6d4bd561be3d913cdc617d103d0e2828c8'],
  ['tests/fixtures/arena-quota-lifecycle-guest.atto','2b1eb28f07b792f2727abe9a5691849f024e304a']
 ];
-const source=pins.map(([path,pin])=>{
+const bodies=pins.map(([path,pin])=>{
  const bytes=readFileSync(new URL('../'+path,import.meta.url));
  assert.equal(createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex'),pin,path);
  return bytes.toString('utf8');
-}).join('\n');
+});
+const source=bodies.join('\n');
 test('actual Atto-to-ESM arena policy guest and wrong-oracle negative',async()=>{
  const esm=compileProgramV2(source);
  assert.equal(compileProgramV2(source),esm,'nondeterministic ESM');
@@ -25,4 +27,15 @@ test('actual Atto-to-ESM arena policy guest and wrong-oracle negative',async()=>
  const wrong=await import('data:text/javascript,'+encodeURIComponent(compileProgramV2(source.replace(marker,'arena_end_offset(0, 0, 1, 0) != 1'))));
  assert.equal(wrong.main(),1n);
  console.log('ARENA_POLICY_ESM_ASSERTIONS=56');
+});
+
+test('compiled ESM matches independent widened differential corpus',async()=>{
+ let tested=0;
+ for(const batch of arenaPolicyBatches()){
+   const esm=compileProgramV2(bodies.slice(0,2).join('\n')+'\n'+batch.source);
+   const guest=await import('data:text/javascript,'+encodeURIComponent(esm));
+   assert.equal(guest.main(),100n,'differential batch '+batch.start);
+   tested+=batch.count;
+ }
+ assert.equal(tested,352);console.log('ARENA_POLICY_DIFFERENTIAL_ESM_PASS cases='+tested);
 });
