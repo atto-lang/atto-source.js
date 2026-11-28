@@ -26,7 +26,7 @@ function parse(source){
     const n=BigInt(t.value);if(n>max)fail();return n;
   }
   word('define');word('class');const cls=name();word('as');
-  const fields=[],helpers=[],calls=[],ops=[];
+  const fields=[],helpers=[];
   while(peek()==='pub'){
     if(fields.length>=8)fail();
     word('pub');word('let');word('int');const id=name();
@@ -34,48 +34,103 @@ function parse(source){
     sym('=');const value=literal();sym(';');fields.push({id,value});
   }
   if(!fields.length)fail();word('end');
-  function call(owner){
-    const id=name(),index=helpers.findIndex(h=>h.id===id);if(index<0)fail();
-    sym('(');word(owner);sym(')');return index;
+  let budget=512;
+  function charge(depth){if(depth>16||--budget<0)fail();}
+  function slot(names,id,kind){
+    const i=names.findIndex(n=>n.id===id&&n.kind===kind);
+    if(i<0)fail();return i;
+  }
+  function expr(names,depth=0){
+    charge(depth);
+    let left=atom(names,depth+1),terms=1;
+    while(peek()==='+'||peek()==='-'){
+      if(terms++>=8)fail();charge(depth);
+      const op=peek();sym(op);left={op,left,right:atom(names,depth+1)};
+    }
+    return left;
+  }
+  function atom(names,depth){
+    charge(depth);
+    if(tokens[at]?.kind==='int')return {literal:literal()};
+    if(peek()==='('){sym('(');const e=expr(names,depth+1);sym(')');return e;}
+    const id=name();
+    if(peek()==='.'){
+      const owner=slot(names,id,'ref');sym('.');
+      const field=name(),index=fields.findIndex(f=>f.id===field);if(index<0)fail();
+      return {field:index,owner};
+    }
+    if(peek()==='('){
+      if(names.some(n=>n.id===id))fail();
+      const target=helpers.findIndex(h=>h.id===id);if(target<0)fail();
+      sym('(');
+      const args=helpers[target].params.map((kind,i)=>{
+        if(i)sym(',');
+        return kind==='ref'?{local:slot(names,name(),'ref')}:expr(names,depth+1);
+      });
+      sym(')');return {target,args};
+    }
+    return {local:slot(names,id,'int')};
+  }
+  function body(names){
+    const locals=[];
+    while(peek()==='val'){
+      if(locals.length>=8)fail();
+      word('val');word('int');const id=name();
+      if(names.some(n=>n.id===id)||helpers.some(h=>h.id===id))fail();
+      sym('=');locals.push(expr(names));sym(';');names.push({id,kind:'int'});
+    }
+    word('return');const result=expr(names);sym(';');sym('}');
+    return {locals,result};
   }
   while(peek()==='fnc'){
     if(helpers.length>=8)fail();
     word('fnc');const id=name();if(id===cls||helpers.some(h=>h.id===id))fail();
-    sym('(');word(cls);const p=name();sym(')');sym(':');word('int');sym('{');word('return');
-    let plan;
-    if(peek()===p){
-      word(p);sym('.');const field=name(),index=fields.findIndex(f=>f.id===field);if(index<0)fail();
-      plan={id,field:index};
-    }else plan={id,forward:call(p)};
-    sym(';');sym('}');helpers.push(plan);
+    sym('(');const names=[];
+    for(;;){
+      if(names.length>=8)fail();
+      const kind=peek()==='int'?'int':'ref';word(kind==='int'?'int':cls);
+      const n=name();
+      if(n===id||names.some(x=>x.id===n)||helpers.some(h=>h.id===n))fail();
+      names.push({id:n,kind});if(peek()!==',')break;sym(',');
+    }
+    if(!names.some(n=>n.kind==='ref'))fail();
+    sym(')');sym(':');word('int');sym('{');
+    const params=names.map(n=>n.kind);
+    helpers.push({id,params,body:body(names)});
   }
   if(!helpers.length)fail();
   word('pub');word('fnc');word('main');sym('(');sym(')');sym(':');word('int');sym('{');
-  word('let');const owner=name();sym('=');word('new');word(cls);sym('(');sym(')');sym(';');
-  word('return');calls.push(call(owner));
-  while(peek()==='+'||peek()==='-'){
-    if(calls.length>=8)fail();
-    const op=peek();sym(op);ops.push(op);calls.push(call(owner));
-  }
-  sym(';');sym('}');take('<eof>','eof');if(at!==tokens.length)fail();
-  return {fields,helpers,calls,ops};
+  word('let');const owner=name();if(helpers.some(h=>h.id===owner))fail();
+  sym('=');word('new');word(cls);sym('(');sym(')');sym(';');
+  const root=body([{id:owner,kind:'ref'}]);
+  take('<eof>','eof');if(at!==tokens.length)fail();
+  return {fields,helpers,root};
 }
 
 export function compileReadonlyReferenceV1(source){
-  const {fields,helpers,calls,ops}=parse(source);
-  // No input identifier is interpolated into JavaScript. All names and
-  // properties derive from bounded numeric positions in the admitted plan.
+  const {fields,helpers,root}=parse(source);
   const out=['// atto.closed-readonly-reference-v1',
     'const MIN=-(1n<<63n),MAX=(1n<<63n)-1n;',
     'function checked(v){if(v<MIN||v>MAX)throw new RangeError("i64 arithmetic overflow");return v;}'];
+  const variable=i=>i===0?'p':'v'+i;
+  function render(e){
+    if('literal'in e)return e.literal+'n';
+    if('local'in e)return variable(e.local);
+    if('field'in e)return variable(e.owner)+'.f'+e.field;
+    if('target'in e)return 'f'+e.target+'('+e.args.map(render).join(',')+')';
+    return 'checked('+render(e.left)+e.op+render(e.right)+')';
+  }
+  function renderBody(b,n){
+    for(let i=0;i<b.locals.length;i++)out.push('const '+variable(n+i)+'='+render(b.locals[i])+';');
+    out.push('return '+render(b.result)+';}');
+  }
   for(let i=0;i<helpers.length;i++){
     const h=helpers[i];
-    out.push('function f'+i+'(p){return '+('field'in h?'p.f'+h.field:'f'+h.forward+'(p)')+';}');
+    out.push('function f'+i+'('+h.params.map((_,i)=>variable(i)).join(',')+'){');
+    renderBody(h.body,h.params.length);
   }
   out.push('export function main(){');
   out.push('const p={'+fields.map((f,i)=>'f'+i+':'+f.value+'n').join(',')+'};');
-  out.push('let r=f'+calls[0]+'(p);');
-  for(let i=1;i<calls.length;i++)out.push('r=checked(r'+ops[i-1]+'f'+calls[i]+'(p));');
-  out.push('return r;}');
+  renderBody(root,1);
   return out.join('\n')+'\n';
 }
