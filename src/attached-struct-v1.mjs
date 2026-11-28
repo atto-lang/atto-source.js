@@ -98,7 +98,7 @@ class Reader{
     const i=o.leaves.findIndex(l=>l.path===path);demand(i>=0,'unknown field');return val(o.leaves[i].type,v.code+'['+i+']')
   }
   operand(){const v=this.values.get(this.peek());if(v&&this.t[this.i+1]!=='.'){this.i++;return val(v.type,v.code)}return this.expr(null)}
-  makeValue(expected,depth=0){
+  makeValue(expected,depth=0,destination=false){
     demand(depth<16&&++this.nodes<=1024,'contextual construction depth/node budget');
     this.need('make');const type=this.peek()==='{'?expected:this.name();
     const o=this.owners.get(type);demand(o&&(!expected||expected===type),'missing or incompatible expected nominal owner');
@@ -111,7 +111,12 @@ class Reader{
       const value=nested?this.makeValue(field.type,depth+1):this.operand();
       demand(value.type===field.type,'contextual field type mismatch');entries.push({name,type:value.type,code:value.code});
     }while(this.eat(','));this.need('}')}
-    const plan=planContextualMake(o,entries),params=entries.map((_,i)=>'_f'+i);
+    const plan=planContextualMake(o,entries);
+    // The selected constructor consists solely of a bijective field/parameter
+    // assignment map. Flat int rows may therefore bypass the returned array.
+    // Validate the same constructor before considering direct storage.
+    if(destination){demand(o.fields.every(f=>f.type==='int'),'direct row requires flat int fields');return entries;}
+    const params=entries.map((_,i)=>'_f'+i);
     return val(type,'(('+params.join(',')+')=>'+plan.id+'('+plan.order.map(i=>params[i]).join(',')+'))('+entries.map(e=>e.code).join(',')+')');
   }
   // Count the complete syntactic argument list before contextual inference.
@@ -158,12 +163,20 @@ class Reader{
   arrayOffset(field,row){const a=this.array;return a.layout==='soa'?field*a.size+row:row*a.fields.length+field}
   bindArray(){
     demand(this.seed&&!this.array,'one seeded array required');this.need('let');const name=this.bundleName();demand(name!==this.seed.name,'array conflicts with seed');this.need(':');this.need('Array');this.need('<');this.need('infer');const capture=this.bundleName();demand(capture!==name&&capture!==this.seed.name,'bundle capture collision');this.need('from');this.need(this.seed.name);this.need('>');this.need('=');this.need('[');
-    const rows=[];if(!this.eat(']')){do{demand(rows.length<1024,'array row limit');demand(this.peek()==='make','inline array requires value construction');rows.push(this.makeValue(this.seed.T).code)}while(this.eat(','));this.need(']')}
+    const rows=[];if(!this.eat(']')){do{demand(rows.length<1024,'array row limit');demand(this.peek()==='make','inline array requires value construction');rows.push(this.makeValue(this.seed.T,0,true))}while(this.eat(','));this.need(']')}
     let values=this.seed.values;if(this.eat('with')){this.need('{');this.need('size');this.need('=');values=this.eat('infer')?refineInferred(this.seed.schema,this.seed.values,[],['size'],[['size',rows.length]]):bindBundle(this.seed.schema,this.seed.values,[['size',this.sizeLiteral()]],'refinement');this.need('}')}
     this.need(';');const {size,layout}=Object.fromEntries(values);demand(size===rows.length,'fixed size must equal explicit row count');
     const fields=this.owners.get(this.seed.T).fields.map(f=>f.name),id='_array';this.capture={name:capture,size};this.array={name,id,fields,size,layout};
     let code='const '+id+'=new BigInt64Array('+size*fields.length+');';
-    for(const [row,expr] of rows.entries()){code+='{const _row='+expr+';';for(let field=0;field<fields.length;field++)code+=id+'['+this.arrayOffset(field,row)+']=_row['+field+'];';code+='}'}
+    for(const [row,entries] of rows.entries()){
+      // Evaluate every initializer exactly once in written order, before any
+      // store for that row. The destination is private until initialization
+      // finishes; do not create an intermediate row array or invoke a ctor.
+      code+='{';
+      for(const [i,e] of entries.entries())code+='const _f'+i+'='+e.code+';';
+      for(const [i,e] of entries.entries())code+=id+'['+this.arrayOffset(fields.indexOf(e.name),row)+']=_f'+i+';';
+      code+='}';
+    }
     return code;
   }
   mutateArray(){const a=this.array;this.need(a.name);const row=this.fixedIndex(a.size);this.need('.');const field=a.fields.indexOf(this.name());demand(field>=0,'unknown array field');this.need('+');this.need('=');const delta=this.expr(null);demand(delta.type==='int','array mutation type');this.need(';');const cell=a.id+'['+this.arrayOffset(field,row)+']';return cell+'=_checked('+cell+'+('+delta.code+'));'}
