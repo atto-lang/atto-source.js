@@ -150,3 +150,26 @@ test('seeded AoSoA uses checked constant lanes and zeroed tail padding',async()=
   for(const lanes of ['1','4','1024']) assert.equal(await run(compileAttachedStruct(source.replace('aosoa(3)','aosoa('+lanes+')'))),9n);
   for(const bad of [source.replace('aosoa(3)','aosoa(0)'),source.replace('aosoa(3)','aosoa(1025)'),source.replace('aosoa(3)','aosoa(n)'),source.replace('aosoa(3)','aosoa(-1)'),source.replace('particles[3]','particles[4]'),source.replace('columns.x[3]','columns.x[4]')]) assert.throws(()=>compileAttachedStruct(bad),/E_ATTACHED_STRUCT|E_PARAMETRIC_BUNDLE/);
 });
+
+test('seeded direct storage matches an independent physical oracle over layout and tail boundaries',async()=>{
+  const counts=[0,1,2,3,4,5,7,8,16,17,33];
+  const layouts=['aos','soa',...[1,2,3,4,7,16,1024].map(n=>'aosoa('+n+')')];
+  for(const count of counts) for(const layout of layouts){
+    const rows=Array.from({length:count},(_,i)=>[BigInt(i+1),-BigInt(100+i),BigInt(1000+i)]);
+    const literal=rows.map(([x,y,v])=>`make {v:${v},y:${y},x:${x}}`).join(',');
+    const source=`define struct Particle { int x; int y; int v; } with { constructor(int a,int b,int c){self.x=a;self.y=b;self.v=c;} } type Base = <T=Particle,size=64,layout=${layout}>; pub fnc main():int { let particles: Array<infer X from Base> = [${literal}] with {size=infer}; return X.size; }`;
+    const code=compileAttachedStruct(source),label=layout+' count='+count;
+    assert.equal(await run(code),BigInt(count),label);
+    const exposed=code.replace(/return [0-9]+n;\}\s*$/,'return _array;}');
+    assert.notEqual(exposed,code,label);
+    const expected=[];
+    if(layout==='aos') for(const row of rows) expected.push(...row);
+    else if(layout==='soa') for(let field=0;field<3;field++) for(const row of rows) expected.push(row[field]);
+    else {
+      const lanes=Number(layout.slice(6,-1));
+      for(let start=0;start<count;start+=lanes) for(let field=0;field<3;field++) for(let lane=0;lane<lanes;lane++) expected.push(rows[start+lane]?.[field]??0n);
+    }
+    assert.deepEqual([...(await run(exposed))],expected,label);
+    assert.throws(()=>compileAttachedStruct(source.replace('return X.size;',`return particles.columns.x[${count}];`)),/E_ATTACHED_STRUCT/,label);
+  }
+});
