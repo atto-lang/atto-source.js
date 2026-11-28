@@ -267,6 +267,47 @@ class Parser {
     }else throw new CompileError('E_TYPE_INFER_AMBIGUOUS: literal or immutable int parameter required',token);
     return {type,value};
   }
+  // Bounded immutable literal-only tree. This is compile-time scalar
+  // projection, not an escaping aggregate ABI or dynamic array lowering.
+  readRecordValue(params,allowRuntime,depth=0){
+    const at=this.peek();
+    if(depth>=32)throw new CompileError('E_SOURCE_LIMIT: nested Record/Array depth',at);
+    if(this.match('[')){
+      const items=[];
+      if(this.peek().value!==']')do{
+        if(items.length>=64)throw new CompileError('E_SOURCE_LIMIT: array literal size',this.peek());
+        items.push(this.readRecordValue([],false,depth+1));
+        if(!this.match(','))break;
+        if(this.peek().value===']')break;
+      }while(true);
+      this.expect(']');
+      // No contextual empty-element inference in this profile. Preserve
+      // exact scalar element type, or the finite set of Record shapes.
+      if(!items.length)throw new CompileError('E_TYPE_INFER_AMBIGUOUS: empty Array requires element type',at);
+      const allRecords=items.every(x=>x.type.startsWith('Record:'));
+      const types=[...new Set(items.map(x=>x.type))].sort();
+      if(types.length!==1&&!allRecords)
+        throw new CompileError('E_TYPE_MISMATCH: incompatible Array elements',at);
+      return {type:'Array:'+JSON.stringify(types),items};
+    }
+    if(this.peek().value==='{'||
+       (this.peek().value==='('&&this.ts[this.pos+1]?.kind==='string'&&this.ts[this.pos+2]?.value===':')){
+      const open=this.peek().value;this.pos++;
+      const close=open==='{'?'}':')',fields=new Map();
+      if(this.peek().value!==close)do{
+        if(fields.size>=64)throw new CompileError('E_SOURCE_LIMIT: nested Record size',this.peek());
+        const key=open==='('?this.readQuotedRecordKey():this.aggregateIdentifier();
+        if(fields.has(key))throw new CompileError('E_DUPLICATE_FIELD: '+key,this.peek());
+        this.expect(':');
+        fields.set(key,this.readRecordValue([],false,depth+1));
+        if(!this.match(','))break;
+        if(this.peek().value===close)break;
+      }while(true);
+      this.expect(close);
+      return {type:'Record:'+JSON.stringify([...fields].map(([k,v])=>[k,v.type]).sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0)),fields};
+    }
+    return this.readAggregateScalar(params,allowRuntime);
+  }
   localConst(params){
     const at=this.peek(), next=this.ts[this.pos+1]?.value;
     if(['Record','Tuple','struct'].includes(next)){
@@ -436,7 +477,7 @@ class Parser {
           else if(this.match(':='))pairEntry=true;
           else {if(!this.match(':'))this.expect('=');ordinaryField=true;}
         }else if(kind==='struct')this.expect(':');
-        field=this.readAggregateScalar(params,allowRuntime);
+        field=kind==='Record'?this.readRecordValue(params,allowRuntime):this.readAggregateScalar(params,allowRuntime);
       }
       fields.set(key,field);
       if(fields.size>64)throw new CompileError('aggregate field limit',this.peek());
@@ -477,8 +518,27 @@ class Parser {
     }else{
       this.expect('.');key=this.aggregateIdentifier();
     }
-    const field=aggregate.fields.get(key);
+    let field=aggregate.fields.get(key);
     if(!field)throw new CompileError('E_NO_FIELD: '+key,at);
+    while(this.peek().value==='.'||this.peek().value==='['){
+      const where=this.peek();
+      if(field.items){
+        this.expect('[');
+        const index=this.peek();
+        if(index.kind!=='int'||!/^(0|[1-9][0-9]*)$/.test(index.value))
+          throw new CompileError('E_ARRAY_INDEX: static nonnegative integer required',index);
+        this.pos++;this.expect(']');
+        if(BigInt(index.value)>=BigInt(field.items.length))
+          throw new CompileError('E_ARRAY_BOUNDS: index outside literal array',index);
+        field=field.items[Number(index.value)];
+      }else if(field.fields){
+        let member;
+        if(this.match('[')){member=this.readQuotedRecordKey();this.expect(']');}
+        else {this.expect('.');member=this.aggregateIdentifier();}
+        field=field.fields.get(member);
+        if(!field)throw new CompileError('E_NO_FIELD: '+member,where);
+      }else throw new CompileError('E_TYPE_MISMATCH: scalar cannot be projected',where);
+    }
     if(field.type!=='int')throw new CompileError('JS scalar aggregate profile supports only int projections',at);
     return typeof field.value==='bigint' ? {kind:'int',n:field.value} : {...field.value};
   }
