@@ -404,7 +404,10 @@ class Parser {
       }
       fields.set(key,field);
       if(fields.size>64)throw new CompileError('aggregate field limit',this.peek());
-      if(!this.match(',')){
+      const comma=this.match(',');
+      if(kind==='Tuple'&&fields.size===1&&!comma)
+        throw new CompileError('E_TUPLE_ARITY: singleton Tuple requires trailing comma',at);
+      if(!comma){
         // Only a complete inline Pair entry may use a newline separator.
         if(open==='{'&&pairEntry&&this.peek().kind==='id'&&this.peek().line>this.ts[this.pos-1].endLine)continue;
         break;
