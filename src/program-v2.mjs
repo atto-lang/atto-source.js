@@ -441,6 +441,43 @@ class Parser {
     if(marker==='method')fail('obsolete method introducer; use mtd',this.peek());
     this.i++;return true;
   }
+  // A parenthesized scalar remains an ordinary argument. Only an explicit
+  // fixed tuple (comma or empty) or a brace Record gets apply metadata.
+  immediateApplyTupleAhead() {
+    if(this.peek().value!=='(')return false;
+    if(this.tokens[this.i+1]?.value===')')return true;
+    let depth=0;
+    for(let i=this.i+1;i<this.tokens.length&&i-this.i<=MAX_TOKENS;i++){
+      const v=this.tokens[i].value;
+      if(['(','[','{'].includes(v))depth++;
+      else if([')',']','}'].includes(v)){
+        if(depth===0)return false;
+        depth--;
+      }else if(v===','&&depth===0)return true;
+    }
+    return false;
+  }
+  immediateApplyProduct() {
+    const record=this.eat('{');
+    if(!record)this.expect('(');
+    const close=record?'}':')',args=[];
+    if(!this.eat(close)){
+      do{
+        if(args.length>=128)fail('argument limit',this.peek());
+        let name=null;
+        if(record){
+          name=this.name();
+          if(!this.eat(':')&&!this.eat('='))fail('expected static Record field separator',this.peek());
+        }
+        args.push({name,expr:this.expression()});
+        if(this.eat(close))break;
+        this.expect(',');
+        if(this.eat(close))break;
+      }while(true);
+    }
+    this.expect(')');
+    return {args,applyProduct:record?'record':'tuple'};
+  }
   argumentsAfterOpen() {
     const args=[];let namedSeen=false;
     if(!this.eat(')')) {
@@ -1729,6 +1766,12 @@ class Parser {
       if(!coreBooleanIntrinsic(symbol))fail('E_CORE_BOOL_IMPORT: unknown core Boolean export '+symbol,token);
       return this.namedBooleanReduction(symbol,token);
     }
+    if(qualifier!==null&&symbol==='apply'&&(this.peek().value==='{'||this.immediateApplyTupleAhead())){
+      const product=this.immediateApplyProduct();
+      // This syntax is not general Tuple/Record materialization. Preserve
+      // receiver resolution until the ordinary semantic checker has scope.
+      return {kind:'call',qualifier,name:symbol,...product};
+    }
     const args=this.argumentsAfterOpen();
     // Named integer operations retain their semantics; raw % remains reserved.
     // The binary ops below are internal IR names, never source syntax.
@@ -2461,6 +2504,27 @@ function resolveProgram(parsed) {
         yes:resolve(expr.yes,owner,depth+1,bindings),no:resolve(expr.no,owner,depth+1,bindings)};
       case 'call': {
         const local=bindings.findLast(b=>b.name===expr.qualifier);
+        const invocationMember=expr.qualifier!==null&&['call','apply'].includes(expr.name);
+        if(expr.applyProduct&&(!invocationMember||local||owner.params.includes(expr.qualifier)||
+             modules.includes(expr.qualifier)||['Integer','Option','Result'].includes(expr.qualifier)))
+          fail('E_CALLABLE_APPLY_PROFILE: immediate Product apply requires an unshadowed static fnc');
+        if(invocationMember&&!local&&!owner.params.includes(expr.qualifier)&&
+           !modules.includes(expr.qualifier)&&!['Integer','Option','Result'].includes(expr.qualifier)){
+          const key=(owner.module===null?'@file/':'@module/'+owner.module+'/')+expr.qualifier;
+          if(symbolKinds.has(key)){
+            if(owner.ownerKind==='method'||expr.name==='apply'&&!expr.applyProduct)
+              fail('E_CALLABLE_APPLY_PROFILE: apply requires a fixed immediate Tuple or Record');
+            const target=slots.get(key+'/'+expr.args.length);
+            if(typeof target!=='number'||functions[target].kind!=='fnc')
+              fail('E_CALLABLE_APPLY_PROFILE: wrong arity or unsupported callable');
+            if(expr.applyProduct==='record'&&functions[target].params.some(name=>name==='_'||!name))
+              fail('E_CALLABLE_APPLY_PROFILE: retained formal names required');
+            const bound=bindArguments(functions[target].params,expr.args,key,owner,depth,bindings);
+            return bound.hasNamed?{kind:'namedCall',target,args:bound.args,paramOrder:bound.paramOrder}:
+              {kind:'call',target,args:bound.args};
+          }
+        }
+        if(expr.applyProduct)fail('E_CALLABLE_APPLY_PROFILE: unresolved static fnc');
         if(expr.standaloneTaskUnwrap&&(!owner.inlineTask||!local||!['option<int>','result<int,int>'].includes(local.type)||expr.args.length!==0))
           fail('E_SYNC_TASK_PROFILE: checked unwrap requires a typed lexical Option<int> or Result<int,int>');
         if(local){
