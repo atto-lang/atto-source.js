@@ -230,6 +230,21 @@ class Parser {
       throw new CompileError('E_TYPE_NAME: reserved or oversized aggregate identifier',at);
     return name;
   }
+  // The scalar Record profile supports standard JSON-compatible double-quoted
+  // keys; other legacy string escapes stay fail-closed until a shared decoder
+  // is available. Never compare raw spellings or normalize decoded keys.
+  readQuotedRecordKey(){
+    const token=this.peek();
+    if(token.kind!=='string'||token.value.quote!=='"')
+      throw new CompileError('E_RECORD_LABEL: parenthesized Record requires double-quoted key',token);
+    let key;
+    try { key=JSON.parse(token.value.raw); }
+    catch { throw new CompileError('E_RECORD_LABEL: unsupported quoted key escape in scalar profile',token); }
+    if(key.length===0||key.length>128||/[\x00-\x1f\x7f-\x9f]/.test(key))
+      throw new CompileError('E_RECORD_LABEL: empty, oversized or control-character key outside scalar profile',token);
+    this.pos++;
+    return key;
+  }
   // Only compile-time scalar literals in local const bindings. No dynamic
   // evaluation, aggregate values or runtime reflection in this bootstrap path.
   readAggregateScalar(params, allowRuntime) {
@@ -399,7 +414,10 @@ class Parser {
       }
       if(explicit.size>=64)throw new CompileError('aggregate field limit',this.peek());
       const capture=kind!=='Tuple'&&this.match(':');
-      const key=kind==='Tuple'?String(fields.size):this.aggregateIdentifier();
+      if(kind==='Record'&&open==='{'&&!capture&&this.peek().kind!=='id')
+        throw new CompileError('E_RECORD_LABEL: brace Record requires identifier key',this.peek());
+      const key=kind==='Tuple'?String(fields.size):
+        kind==='Record'&&open==='('&&!capture?this.readQuotedRecordKey():this.aggregateIdentifier();
       if(explicit.has(key))throw new CompileError('E_DUPLICATE_FIELD: '+key,this.peek());
       explicit.add(key);spreadConflicts.delete(key);
       let field,pairEntry=false;
@@ -410,10 +428,12 @@ class Parser {
         field=this.scalarConsts?.get(key);
         if(!field)throw new CompileError('E_TYPE_INFER_AMBIGUOUS: capture needs a local const scalar',this.peek());
       }else{
-        // Record punctuation is independent of its delimiter. Keep nominal
-        // Struct field grammar and positional Tuple grammar unchanged.
+        // Colon is the specified quoted-key parenthesized spelling.
+        // Quoted = and := are unresolved; do not promote them implicitly.
+        // Retain brace punctuation and independent capture/Struct/Tuple paths.
         if(kind==='Record'){
-          if(this.match(':='))pairEntry=true;
+          if(open==='('){this.expect(':');ordinaryField=true;}
+          else if(this.match(':='))pairEntry=true;
           else {if(!this.match(':'))this.expect('=');ordinaryField=true;}
         }else if(kind==='struct')this.expect(':');
         field=this.readAggregateScalar(params,allowRuntime);
@@ -452,6 +472,8 @@ class Parser {
       if(index.kind!=='int'||!/^(0|[1-9][0-9]*)$/.test(index.value))
         throw new CompileError('tuple projection requires a static index',index);
       key=index.value;this.pos++;this.expect(']');
+    }else if(aggregate.kind==='Record'&&this.match('[')){
+      key=this.readQuotedRecordKey();this.expect(']');
     }else{
       this.expect('.');key=this.aggregateIdentifier();
     }

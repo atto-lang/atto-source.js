@@ -9,44 +9,44 @@ const run = async body => {
 };
 test('named literal scalar aggregates reuse types and compile integer projections',async()=>{
   assert.equal(await run(`
-    const Record<infer T1> r = (a=true,b="xyz",c=5);
+    const Record<infer T1> r = ("a":true,"b":"xyz","c":5);
     const Tuple<infer T2> t = (true,"xyz",5);
     const struct<infer T3> s = {a:true,b:"xyz",c:5};
-    const Record<T1> r2 = (c=10,b="abc",a=false);
+    const Record<T1> r2 = ("c":10,"b":"abc","a":false);
     const Tuple<T2> t2 = (false,"abc",12);
     const struct<T3> s2 = {c:20,b:"abc",a:false};
     return r2.c + t2[2] + s2.c;
   `),42n);
 });
 test('bare annotation remains anonymous and does not create a type',async()=>{
-  assert.equal(await run('const Record r=(a=42); return r.a;'),42n);
-  assert.throws(()=>compileToIR('pub fnc main(): int { const Record r=(a=42); const Record<T> s=(a=42); return 0; }'),/E_UNKNOWN_TYPE/);
+  assert.equal(await run('const Record r=("a":42); return r.a;'),42n);
+  assert.throws(()=>compileToIR('pub fnc main(): int { const Record r=("a":42); const Record<T> s=("a":42); return 0; }'),/E_UNKNOWN_TYPE/);
 });
 test('reject bad named aggregate declarations before IR',()=>{
   for(const [body,error] of [
-    ['const Record<infer> r=(a=1);',/identifier/],
-    ['const Record<T> r=(a=1);',/E_UNKNOWN_TYPE/],
-    ['const Record<infer T> r=(a=1); const Tuple<infer T> t=(1,2);',/E_DUPLICATE_TYPE/],
-    ['const Record<infer T> r=(a=1,a=2);',/E_DUPLICATE_FIELD/],
-    ['const Record<infer T> r=(a=1); const Record<T> s=(a=true);',/E_TYPE_MISMATCH/],
-    ['const Record<infer T> r=(a=1); const Record<T> s=(a=1,b=2);',/E_TYPE_MISMATCH/],
-    ['const Record<infer T> r=(a=1,b=2); const Record<T> s=(a=1);',/E_TYPE_MISMATCH/],
+    ['const Record<infer> r=("a":1);',/identifier/],
+    ['const Record<T> r=("a":1);',/E_UNKNOWN_TYPE/],
+    ['const Record<infer T> r=("a":1); const Tuple<infer T> t=(1,2);',/E_DUPLICATE_TYPE/],
+    ['const Record<infer T> r=("a":1,"a":2);',/E_DUPLICATE_FIELD/],
+    ['const Record<infer T> r=("a":1); const Record<T> s=("a":true);',/E_TYPE_MISMATCH/],
+    ['const Record<infer T> r=("a":1); const Record<T> s=("a":1,"b":2);',/E_TYPE_MISMATCH/],
+    ['const Record<infer T> r=("a":1,"b":2); const Record<T> s=("a":1);',/E_TYPE_MISMATCH/],
     ['const Tuple<infer T> r=(1,true); const Tuple<T> s=(true,1);',/E_TYPE_MISMATCH/],
     ['const Tuple<infer T> r=(1,true); const Tuple<T> s=(1,);',/E_TYPE_MISMATCH/],
-    ['const struct<infer T> r={a:1}; const Record<T> s=(a=1);',/E_AGGREGATE_KIND/],
-    ['const Record<infer T> r=(a=unknown);',/E_TYPE_INFER_AMBIGUOUS/],
+    ['const struct<infer T> r={a:1}; const Record<T> s=("a":1);',/E_AGGREGATE_KIND/],
+    ['const Record<infer T> r=("a":unknown);',/E_TYPE_INFER_AMBIGUOUS/],
   ])assert.throws(()=>compileToIR('pub fnc main(): int { '+body+' return 0; }'),error);
-  assert.throws(()=>compileToIR('fnc other(): int { const Record<infer T> r=(a=1); return r.a; } pub fnc main(): int { const Record<T> s=(a=42); return s.a; }'),/E_UNKNOWN_TYPE/);
-  assert.throws(()=>compileToIR('pub fnc main(): int { const Record<infer T> r=(a=1); return r.missing; }'),/E_NO_FIELD/);
+  assert.throws(()=>compileToIR('fnc other(): int { const Record<infer T> r=("a":1); return r.a; } pub fnc main(): int { const Record<T> s=("a":42); return s.a; }'),/E_UNKNOWN_TYPE/);
+  assert.throws(()=>compileToIR('pub fnc main(): int { const Record<infer T> r=("a":1); return r.missing; }'),/E_NO_FIELD/);
 });
 
 test('lexically captured const Record and explicit Struct scalar projections execute',async()=>{
-  for(const expression of ['{:name,:age}','(:name,:age)','{foo:5,:name,:age}','(foo=5,:name,:age)','struct{:name,:age}','(:age,)']){
+  for(const expression of ['{:name,:age}','(:name,:age)','{foo:5,:name,:age}','("foo":5,:name,:age)','struct{:name,:age}','(:age,)']){
     assert.equal(await run('const name="Alice"; const age=42; const z='+expression+'; return z.age;'),42n,expression);
   }
   assert.equal(await run('const age=37; const z={foo:5,:age}; return z.foo+z.age;'),42n);
   assert.equal(await run('const age=42; const Record r=(:age); return r.age;'),42n);
-  assert.equal(await run('const age=42; const z=(age=age); return z.age;'),42n);
+  assert.equal(await run('const age=42; const z=("age":age); return z.age;'),42n);
 });
 test('capture resolves only initialized lexical scalar constants and preserves type boundaries',()=>{
   for(const body of [
@@ -67,17 +67,17 @@ test('capture resolves only initialized lexical scalar constants and preserves t
 });
 
 test('mixed colon and equals scalar Record fields preserve named shapes and execution',async()=>{
-  for(const expression of ['{foo=40,bar:2}','(foo:40,bar=2)','{foo=40,bar=2,}','(foo:40,bar:2)']){
+  for(const expression of ['{foo=40,bar:2}','("foo":40,"bar":2)','{foo=40,bar=2,}','("foo":40,"bar":2)']){
     assert.equal(await run('const r='+expression+'; return r.foo+r.bar;'),42n,expression);
   }
-  assert.equal(await run('const Record<infer T> r={foo=40,bar:2}; const Record<T> s=(bar:2,foo=40); return s.foo+s.bar;'),42n);
+  assert.equal(await run('const Record<infer T> r={foo=40,bar:2}; const Record<T> s=("bar":2,"foo":40); return s.foo+s.bar;'),42n);
 });
 test('mixed Record syntax retains duplicate, delimiter, and kind boundaries',()=>{
   for(const body of [
     'const r={foo=1,foo:2}; return 0;',
-    'const r=(foo:1,foo=2); return 0;',
+    'const r=("foo":1,"foo":2); return 0;',
     'const r={foo=1\nbar=2}; return 0;',
-    'const r=(foo:1,2); return 0;',
+    'const r=("foo":1,2); return 0;',
     'const struct r={foo=1}; return 0;',
     'const r={foo:1;bar:2}; return 0;',
   ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),undefined,body);
@@ -89,8 +89,6 @@ test('scalar Pair binding forms, mixed Record entries and newline separators exe
     'const x = x := 42; return x.value;',
     'const r={foo := 40\nbar = 2,}; return r.foo+r.bar;',
     'const r={foo := 40\nbar := 2}; return r.foo+r.bar;',
-    'const r=(foo := 40,bar = 2); return r.foo+r.bar;',
-    'const r=(foo : 40,bar := 2); return r.foo+r.bar;',
     'const foo=7; const r={foo := 40,bar:2}; return r.foo+r.bar+foo-7;',
   ])assert.equal(await run(body),42n,body);
 });
@@ -98,7 +96,7 @@ test('scalar Record with, spread, and inferred lexical aliases execute',async()=
   for(const body of [
     'const r={foo:40}; const v=r with {bar:true,foo:42}; return r.foo+v.foo-40;',
     'const r={foo:40}; const v={...r,bar:2}; return v.foo+v.bar;',
-    'const r={foo:40}; const Record<T> v=infer {...r,bar:2}; const Record<T> w=(bar:2,foo:40); return w.foo+v.bar;',
+    'const r={foo:40}; const Record<T> v=infer {...r,bar:2}; const Record<T> w=("bar":2,"foo":40); return w.foo+v.bar;',
     'const r={foo:40}; const Record<infer T> v={...r,bar:2}; const Record<T> w=r with {bar:2}; return w.foo+v.bar;',
     'const r={foo:40}; const s={foo:1}; const v={...r,...s,foo:42}; return v.foo;',
     'const r={foo:true}; const v=r with {foo:42}; return v.foo;',
@@ -127,7 +125,7 @@ test('bounded Pair/Record grammar rejects malformed, ambiguous and unsafe forms'
     'const Record<infer T> v={foo:1}; const Record<T> w=infer {foo:true}; return 0;',
     'const struct r={foo:=1}; return 0;',
   ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),undefined,body);
-  assert.throws(()=>compileToIR('pub fnc main(int a):int{const Record r=(x=a); const v={...r}; return v.x;}'),/E_RECORD_SPREAD/);
+  assert.throws(()=>compileToIR('pub fnc main(int a):int{const Record r=("x":a); const v={...r}; return v.x;}'),/E_RECORD_SPREAD/);
 });
 
 
@@ -151,7 +149,7 @@ test('empty product kind and exact shape cannot be silently changed',()=>{
     ['const t=(); const r={...t,a:42}; return r.a;',/E_RECORD_SPREAD/],
     ['const t=(); return t[0];',/E_NO_FIELD/],
     ['const Record r=(); return r.a;',/E_NO_FIELD/],
-    ['const Record r=(); return r[0];',/expected/],
+    ['const Record r=(); return r[0];',/E_RECORD_LABEL/],
     ['const t=(); return t.a;',/expected/],
     ['const r={}; return 0;',/E_LITERAL_KIND/],
     ['const struct s={}; return 0;',/E_LITERAL_KIND/],
@@ -172,4 +170,31 @@ test('untyped grouped scalar remains scalar and is not implicitly wrapped',async
   assert.equal(await run('const x=42; const y=(x); return y;'),42n);
   assert.throws(()=>compileToIR('pub fnc main():int{const x=(42);return x[0];}'));
   assert.throws(()=>compileToIR('pub fnc main():int{const x=(42);const Tuple t=x;return 0;}'));
+});
+
+test('delimiter-local Record key domains and decoded projections execute',async()=>{
+  for(const body of [
+    'const Record r={"x":42}; return 0;', // explicitly rejected below, not a guest
+  ]) assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),/E_RECORD_LABEL/);
+  for(const body of [
+    'const Record r={x:42}; return r.x;',
+    'const Record r=("x":42); return r.x;',
+    'const Record r=("content-type":42); return r["content-type"];',
+    'const Record r=("first name":42); return r["first name"];',
+    String.raw`const Record r=("\u0078":42); return r.x;`,
+    'const Record r=("x":42); return r["x"];',
+    'const Record<infer T> r={x:1}; const Record<T> s=("x":42); return s.x;'
+  ]) assert.equal(await run(body),42n,body);
+});
+test('reject wrong key domains, mixed explicit keys and decoded duplicates',()=>{
+  for(const body of [
+    'const Record r=(x:42); return 0;',
+    'const Record r={x:1,"y":2}; return 0;',
+    'const Record r=("x":1,y:2); return 0;',
+    'const Record r=("x":1,"x":2); return 0;',
+    String.raw`const Record r=("x":1,"\u0078":2); return 0;`,
+    'const Record r=("x":42); return r["missing"];',
+    'const Record r=("x"=42); return 0;',
+    'const Record r=("x":=42); return 0;'
+  ]) assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),undefined,body);
 });

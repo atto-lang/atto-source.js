@@ -15,7 +15,7 @@ test('parenthesized and bare returns produce identical typed IR and guest result
   assert.equal(await guest(b),42n);
   assert.equal(await guest('return seq 42;'),42n);
   assert.equal(await guest('return 2+seq(7,seq(8,40));'),42n);
-  assert.equal(await guest('const Record<infer R> r=(a=1,b=2,c=42); return seq r.a,r.b,r.c;'),42n);
+  assert.equal(await guest('const Record<infer R> r=("a":1,"b":2,"c":42); return seq r.a,r.b,r.c;'),42n);
 });
 test('discarded prefix still evaluates and traps',async()=>{
   for(const body of ['return seq(Integer.rem(1,0),42);','return seq Integer.rem(1,0),42;'])
