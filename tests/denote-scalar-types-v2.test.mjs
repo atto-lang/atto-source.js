@@ -184,3 +184,16 @@ test('narrowing cannot leak across branches, writes, or incomplete match coverag
     ['fnc bad(Wide x): Narrow { return match x over on 5 -> 5, on 5 -> 6, default -> 5 end; } pub fnc main(): int { return bad(5); }',/duplicate match pattern/],
   ]) assert.throws(()=>compileProgramV2(prefix+src),why,src);
 });
+
+test('bounded ordinary const strings retain keyword text and immutable typed slots',async()=>{
+  const prefix='denote type Count = int; ';
+  const body='pub fnc main(): int { const String s = "denote type Ignored = bool;"; const bool ok = true; return s == "denote type Ignored = bool;" && ok ? 42 : 0; }';
+  assert.equal((await load(prefix+body)).main(),42n);
+  assert.deepEqual(compileToProgramIRV2(prefix+body),compileToProgramIRV2(body.replace('const String','val string').replace('const bool','val bool')));
+  const exact='// denote type Ignored = bool;\npub fnc main(): int { const String s = "denote type Ignored = bool;"; return 42; }\n';
+  assert.equal((await load(exact)).main(),42n);
+  for(const binding of ['const String s = 42;','const bool s = 42;','const String s = "a"; s = "b";','const String s = "a"; return s;']){
+    assert.throws(()=>compileProgramV2('pub fnc main(): int { '+binding+' return 42; }'));
+  }
+  assert.equal((await load('denote type Dice = 5 | 6; pub fnc main(): int { const String s = "hello"; val Dice x = 5; return x + 37; }')).main(),42n);
+});
