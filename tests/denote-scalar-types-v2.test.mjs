@@ -137,3 +137,50 @@ test('literal mutable assignments reject invalid values without widening or over
     ['let Wide x = 5; let Wide x = 6; return x;',/LOCAL_DUPLICATE_OR_SHADOW/],
   ]) assert.throws(()=>compileProgramV2(prefix+'pub fnc main(): int { '+body+' }'),reason,body);
 });
+
+test('literal union comparisons narrow independent branches and call arguments',async()=>{
+  const prefix='denote type Wide = 5 | 6 | 7; denote type Narrow = 5 | 6; ';
+  const id='fnc id(Narrow n): Narrow { return n; } ';
+  const body='fnc select(Wide x): Narrow { if x != 7 then return id(x); else return 5; fi } ';
+  for(const value of [5,6,7]){
+    const src=prefix+id+body+'pub fnc main(): int { return select('+value+') + '+(value===6?36:37)+'; }';
+    assert.equal((await load(src)).main(),42n);
+  }
+  for(const condition of ['x < 7','7 > x','x <= 6','not (x == 7)']){
+    const src=prefix+id+'fnc select(Wide x): Narrow { return '+condition+' ? id(x) : 5; } pub fnc main(): int { return select(5) + 37; }';
+    assert.equal((await load(src)).main(),42n);
+  }
+  const control=prefix+id+'fnc select(Wide x): Narrow { return x == 7 ? 5 : id(x); } pub fnc main(): int { return select(6) + 36; }';
+  assert.equal((await load(control)).main(),42n);
+});
+test('literal match narrows explicit arms and residual defaults and proves exhaustiveness',async()=>{
+  const prefix='denote type Wide = 5 | 6 | 7; denote type Narrow = 5 | 6; ';
+  const id='fnc id(Narrow n): Narrow { return n; } ';
+  for(const [arms,offset] of [
+    ['on 5 -> id(x), on 6 -> id(x), on 7 -> 5',37],
+    ['on 7 -> 5, default -> id(x)',37],
+    ['on 5 -> id(x), on 6 -> id(x), default -> 5',37],
+  ]){
+    for(const v of [5,6,7]){
+      const src=prefix+id+'fnc select(Wide x): Narrow { return match x over '+arms+' end; } pub fnc main(): int { return select('+v+') + '+(v===6?36:offset)+'; }';
+      assert.equal((await load(src)).main(),42n);
+    }
+  }
+  const full=prefix+'fnc select(Wide x): int { return match x over on 5 -> 42, on 6 -> 42, on 7 -> 42 end; } pub fnc main(): int { return select(7); }';
+  const fallback=full.replace('on 7 -> 42','default -> 42');
+  assert.deepEqual(compileToProgramIRV2(full),compileToProgramIRV2(fallback));
+  assert.equal(compileProgramV2(full),compileProgramV2(fallback));
+});
+test('narrowing cannot leak across branches, writes, or incomplete match coverage',()=>{
+  const prefix='denote type Wide = 5 | 6 | 7; denote type Narrow = 5 | 6; fnc id(Narrow n): Narrow { return n; } ';
+  for(const [src,why] of [
+    ['fnc bad(Wide x): Narrow { return x != 7 ? 5 : id(x); } pub fnc main(): int { return bad(7); }',/not a proven subset/],
+    ['fnc bad(Wide x): Narrow { if x != 7 then return 5; fi return id(x); } pub fnc main(): int { return bad(7); }',/not a proven subset/],
+    ['fnc bad(Wide x): Narrow { return match x over on 5 -> 5, on 6 -> 6 end; } pub fnc main(): int { return bad(7); }',/literal match requires all possible members/],
+    ['fnc bad(int x): int { return match x over on 5 -> 5, on 6 -> 6 end; } pub fnc main(): int { return bad(5); }',/literal match requires all possible members/],
+    ['fnc bad(Wide x): Narrow { return match x over on 5 -> 5, default -> id(x) end; } pub fnc main(): int { return bad(7); }',/not a proven subset/],
+    ['fnc bad(Wide x): Narrow { return match x over on 5 -> 5, on 6 -> 6, on 7 -> 7 end; } pub fnc main(): int { return bad(7); }',/not a proven subset/],
+    ['pub fnc main(): int { let Wide x = 5; x = 7; return id(x); }',/not a proven subset/],
+    ['fnc bad(Wide x): Narrow { return match x over on 5 -> 5, on 5 -> 6, default -> 5 end; } pub fnc main(): int { return bad(5); }',/duplicate match pattern/],
+  ]) assert.throws(()=>compileProgramV2(prefix+src),why,src);
+});
