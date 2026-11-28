@@ -82,3 +82,52 @@ test('contextual make in constructor arguments uses a unique viable nominal form
     assert.throws(()=>compileAttachedStruct(point+other+scene+body.replace('make {y:2,x:39}',bad)),/E_ATTACHED_STRUCT/);
   assert.throws(()=>compileAttachedStruct(point+scene+body.replace('Scene(1,','Scene(make {x:1,y:2},')),/E_ATTACHED_STRUCT/);
 });
+
+
+test('seeded scalar arrays refine size and execute checked physical column operations',async()=>{
+  const source='define struct Particle { int x; int y; int velocity; } with { constructor(int x,int y,int v){self.x=x;self.y=y;self.velocity=v;} } type Base = <T=Particle,size=5,layout=soa>; pub fnc main():int { let particles: Array<infer X from Base> = [make {x:10,y:20,velocity:1},make {velocity:2,x:30,y:40}] with {size=infer}; particles[0].x += 5; return particles.columns.x[0]; }';
+  const code=compileAttachedStruct(source);
+  assert.equal(await run(code),15n);
+  assert.match(code,/new BigInt64Array\(6\)/);
+  assert.match(code,/_array\[2\]=_f1/); // SoA y[0]
+  assert.match(compileAttachedStruct(source.replace('layout=soa','layout=aos')),/_array\[1\]=_f1/);
+  assert.equal(await run(compileAttachedStruct(source.replace('layout=soa','layout=aos'))),15n);
+  assert.equal(await run(compileAttachedStruct(source.replace('particles.columns.x[0]','X.size+Base.size'))),7n);
+  assert.equal(await run(compileAttachedStruct(source.replace('size=infer','size=2'))),15n);
+  assert.equal(await run(compileAttachedStruct(source.replace('size=5','size=2').replace(' with {size=infer}',''))),15n);
+  assert.equal(compileAttachedStruct(source.replace('T=Particle,size=5,layout=soa','layout=soa,size=5,T=Particle')),code);
+  for(const bad of [source.replace(' with {size=infer}',''),source.replace('size=infer','size=3'),source.replace('size=5','size=1025'),source.replace('size=5','size=5,size=5'),source.replace('T=Particle','T=Unknown'),source.replace('infer X from Base','infer Base from Base'),source.replace('infer X from Base','infer particles from Base'),source.replace('from Base','from Unknown'),source.replace('make {','new {'),source.replace('x:10,y:20,velocity:1','x:10,y:20'),source.replace('particles[0]','particles[2]'),source.replace('columns.x[0]','columns.x[2]'),source.replace('x:10','x:X.size')])
+    assert.throws(()=>compileAttachedStruct(bad),/E_ATTACHED_STRUCT|E_PARAMETRIC_BUNDLE/,bad);
+});
+
+
+test('direct destination construction avoids row objects and stages scalar fields before stores',async()=>{
+  const source='define struct Particle { int x; int y; int velocity; } with { constructor(int v,int a,int b){self.x=a;self.y=b;self.velocity=v;} } type Base = <T=Particle,size=5,layout=soa>; pub fnc main():int { let particles: Array<infer X from Base> = [make {velocity:1+0,y:20,x:10},make {y:40,x:30,velocity:2}] with {size=infer}; particles[0].x += 5; return particles.columns.x[0]; }';
+  for(const layout of ['soa','aos']){
+    const input=source.replace('layout=soa','layout='+layout), code=compileAttachedStruct(input), main=code.split('export function main(){')[1];
+    assert.equal((main.match(/new BigInt64Array\(/g)||[]).length,1);
+    assert.doesNotMatch(main,/_row|_c\d+_\d+\(|=>|\.slice\(/);
+    assert.match(main,/\{const _f0=_checked\(\(1n\)\+\(0n\)\);const _f1=20n;const _f2=10n;_array\[/);
+    for(const [field,index,expected] of [['x',0,15n],['x',1,30n],['y',0,20n],['y',1,40n],['velocity',0,1n],['velocity',1,2n]]){
+      assert.equal(await run(compileAttachedStruct(input.replace('return particles.columns.x[0]','return particles.columns.'+field+'['+index+']'))),expected);
+    }
+    await assert.rejects(run(compileAttachedStruct(input.replace('velocity:1+0','velocity:9223372036854775807+1'))),/E_OVERFLOW/);
+    assert.throws(()=>compileAttachedStruct(input.replace('self.velocity=v;','self.velocity=a;')),/E_ATTACHED_STRUCT/);
+  }
+});
+
+
+test('nested direct destination rows flatten leaves in lexical order and snapshot existing values',async()=>{
+  const source='define struct Point { int x; int y; } with { constructor(int b,int a){self.x=a;self.y=b;} mut mtd void • change(int value){self.x=value;} } define struct Particle { Point origin; int velocity; } with { constructor(int v,Point p){self.origin=p;self.velocity=v;} } type Base = <T=Particle,size=5,layout=soa>; pub fnc main():int { let mut Point p = make {x:30,y:40}; let particles: Array<infer X from Base> = [make {velocity:1,origin:make {y:20,x:10}},make {origin:p,velocity:2}] with {size=infer}; p.change(999); particles[0].origin.x += 5; return particles.columns.origin.x[0]; }';
+  for(const layout of ['soa','aos']){
+    const input=source.replace('layout=soa','layout='+layout), code=compileAttachedStruct(input), main=code.split('export function main(){')[1], array=main.slice(main.indexOf('const _array='));
+    assert.equal((array.match(/new BigInt64Array\(/g)||[]).length,1);
+    assert.doesNotMatch(array,/_row|_c\d+_\d+\(|=>|\.slice\(/);
+    assert.match(array,/\{const _f0=1n;const _f1=20n;const _f2=10n;_array\[/);
+    for(const [field,index,expected] of [['origin.x',0,15n],['origin.x',1,30n],['origin.y',0,20n],['origin.y',1,40n],['velocity',0,1n],['velocity',1,2n]]){
+      assert.equal(await run(compileAttachedStruct(input.replace('return particles.columns.origin.x[0]','return particles.columns.'+field+'['+index+']'))),expected);
+    }
+    await assert.rejects(run(compileAttachedStruct(input.replace('y:20,x:10','y:9223372036854775807+1,x:10'))),/E_OVERFLOW/);
+    for(const bad of [input.replace('origin:make {','origin:new {'),input.replace('origin:make {','origin:make Particle {'),input.replace('y:20,x:10','y:20'),input.replace('y:20,x:10','y:20,y:10'),input.replace('columns.origin.x[0]','columns.origin[0]'),input.replace('columns.origin.x[0]','columns.origin.x[2]'),input.replace('self.y=b;','self.y=a;')]) assert.throws(()=>compileAttachedStruct(bad),/E_ATTACHED_STRUCT/);
+  }
+});
