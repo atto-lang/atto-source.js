@@ -131,3 +131,22 @@ test('nested direct destination rows flatten leaves in lexical order and snapsho
     for(const bad of [input.replace('origin:make {','origin:new {'),input.replace('origin:make {','origin:make Particle {'),input.replace('y:20,x:10','y:20'),input.replace('y:20,x:10','y:20,y:10'),input.replace('columns.origin.x[0]','columns.origin[0]'),input.replace('columns.origin.x[0]','columns.origin.x[2]'),input.replace('self.y=b;','self.y=a;')]) assert.throws(()=>compileAttachedStruct(bad),/E_ATTACHED_STRUCT/);
   }
 });
+
+test('seeded AoSoA uses checked constant lanes and zeroed tail padding',async()=>{
+  const source='define struct Particle { int x; int y; } with { constructor(int b,int a){self.x=a;self.y=b;} } type Base = <T=Particle,size=5,layout=aosoa(3)>; pub fnc main():int { let particles: Array<infer X from Base> = [make {y:10,x:1},make {y:20,x:2},make {y:30,x:3},make {y:40,x:4}] with {size=infer}; particles[3].x += 5; return particles.columns.x[3]; }';
+  const code=compileAttachedStruct(source),main=code.split('export function main(){')[1];
+  assert.match(main,/new BigInt64Array\(12\)/);
+  assert.doesNotMatch(main,/_row|_c\d+_\d+\(|=>|\.slice\(/);
+  assert.equal(await run(code),9n);
+  for(const [field,values] of [['x',[1n,2n,3n,9n]],['y',[10n,20n,30n,40n]]]) for(const [i,expected] of values.entries())
+    assert.equal(await run(compileAttachedStruct(source.replace('particles.columns.x[3]','particles.columns.'+field+'['+i+']'))),expected);
+  // Test-only instrumentation returns private storage after the emitted body.
+  // The guest language cannot expose the buffer or write logical tail cells.
+  const exposed=code.replace(/return _array\[6\];\}\s*$/,'return _array;}');
+  assert.notEqual(exposed,code);
+  const cells=await run(exposed);
+  assert.deepEqual([...cells],[1n,2n,3n,10n,20n,30n,9n,0n,0n,40n,0n,0n]);
+  assert.equal(await run(compileAttachedStruct(source.replace('particles.columns.x[3]','X.size+Base.size'))),9n);
+  for(const lanes of ['1','4','1024']) assert.equal(await run(compileAttachedStruct(source.replace('aosoa(3)','aosoa('+lanes+')'))),9n);
+  for(const bad of [source.replace('aosoa(3)','aosoa(0)'),source.replace('aosoa(3)','aosoa(1025)'),source.replace('aosoa(3)','aosoa(n)'),source.replace('aosoa(3)','aosoa(-1)'),source.replace('particles[3]','particles[4]'),source.replace('columns.x[3]','columns.x[4]')]) assert.throws(()=>compileAttachedStruct(bad),/E_ATTACHED_STRUCT|E_PARAMETRIC_BUNDLE/);
+});
