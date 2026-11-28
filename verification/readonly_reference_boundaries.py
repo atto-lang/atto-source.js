@@ -18,7 +18,7 @@ def main():
         ("ordinary", S, 42),
         ("maximum-fields-helpers", shape(), 42),
         ("maximum-calls", shape().replace("return h0(p) +", "return h0(p) - h0(p) +").replace("f0 = 6", "f0 = 7"), 42),
-        ("last-field", S.replace("p.value", "p.padding").replace("padding = 99", "padding = 21"), 42),
+        ("last-field", shape().replace("p.f0", "p.f7"), 42),
         ("ordered-subtraction", S.replace("padding = 99", "padding = 63").replace("return forward(p) + get(p);", "return forward(p) - get(p);").replace("return get(p);", "return p.padding;"), 42),
         ("nineteen-digits", S.replace("value = 21", "value = 0000000000000000021"), 42),
         ("twenty-digits", S.replace("value = 21", "value = 00000000000000000021"), None),
