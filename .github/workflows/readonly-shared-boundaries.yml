@@ -1,0 +1,39 @@
+name: Readonly reference shared guest boundaries
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  shared-readonly:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Authenticate exact source
+        env:
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          git fsck --full --no-reflogs
+          git rev-parse HEAD 'HEAD^{tree}'
+          git diff --exit-code HEAD --
+      - name: Build and execute compiler regressions
+        run: |
+          set -euo pipefail
+          npm run check
+          node --test tests/readonly-reference-v1.test.mjs tests/program-classes-v2.test.mjs
+      - name: Execute shared readonly guests and denials
+        run: |
+          set -euo pipefail
+          python3 verification/readonly_reference_boundaries.py js bin/oreslang-jsc.mjs
+          git diff --exit-code HEAD --

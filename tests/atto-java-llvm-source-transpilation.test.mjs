@@ -128,15 +128,23 @@ test('name-first declarations fail closed on ambiguous types, duplicate bindings
   ]) assert.throws(()=>compileProgramV2(source),/error: program v2:|error: program IR:/,source);
 });
 
-test('unsupported canonical Java .atto cases remain explicit gaps, not false parity passes',()=>{
-  // Java canonical scalar v1 has three immutable-local positive fixtures.
-  // Program-v2 still lacks source local-declaration lowering; the standalone
-  // lexical-const IR prototype does not make these programs executable.
+test('canonical Java immutable locals execute through actual program-v2 ESM',async()=>{
+  // Retain all three canonical sources and require real guest execution.
   for(const source of [
     'pub fnc main(): int { int x = 7; return x * 6; }\n',
     'pub fnc main(): int { const int x = 7; return x * 6; }\n',
     'pub fnc main(): int { const x = 7; return x * 6; }\n'
-  ]) assert.throws(()=>compileProgramV2(source),/error: program v2:/);
+  ]){
+    const ir=compileToProgramIRV2(source);
+    const emitted=compileProgramV2(source);
+    assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir))),emitted);
+    const guest=await import('data:text/javascript,'+encodeURIComponent(emitted));
+    assert.equal(guest.main(),42n,source);
+  }
+  for(const declaration of ['int x = 7','const int x = 7','const x = 7'])
+    assert.throws(()=>compileProgramV2('pub fnc main(): int { '+declaration+'; x = 42; return x; }'),/error: program v2:|error: program IR:/,declaration);
+  for(const declaration of ['int x = true','const int x = true','const int x = "wrong"'])
+    assert.throws(()=>compileProgramV2('pub fnc main(): int { '+declaration+'; return 42; }'),/error: program v2:|error: program IR:/,declaration);
 });
 
 test('AttoLang scalar profile rejects removed operators instead of emitting wrong semantics',()=>{
