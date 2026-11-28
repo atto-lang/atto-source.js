@@ -1,0 +1,31 @@
+name: Actual arena policy differential guest
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'stdlib/policy/**'
+      - 'tests/arena-policy-differential-v1.mjs'
+      - 'tests/arena-quota-lifecycle-guest.test.mjs'
+      - 'tests/fixtures/arena-quota-lifecycle-guest.atto'
+      - 'tests/run-arena-policy-differential.sh'
+      - 'pom.xml'
+      - 'package.json'
+      - '.github/workflows/arena-policy-differential-v1.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  guest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: |
+          set -euo pipefail
+          test "$(git hash-object tests/arena-policy-differential-v1.mjs)" = f98055af7bb9b8952664946d2b2a1f3a735dc283
+          node --test tests/arena-quota-lifecycle-guest.test.mjs
