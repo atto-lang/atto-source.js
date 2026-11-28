@@ -613,6 +613,8 @@ class Parser {
           this.expect('=');
           // This bootstrap supports only the requested val DynRecord
           // literal and read projections; no mutable val storage yet.
+          if(this.peek().value!=='('||this.ts[this.pos+1]?.kind!=='string'||![':', '='].includes(this.ts[this.pos+2]?.value))
+            throw new CompileError('E_LITERAL_KIND: val bootstrap requires a nonempty quoted DynRecord literal',at);
           this.readAggregateFields('DynRecord',name,null,false,params,at,false);
         }else this.localConst(params);
       }

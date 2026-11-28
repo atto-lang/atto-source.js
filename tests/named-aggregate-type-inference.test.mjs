@@ -153,7 +153,7 @@ test('empty product kind and exact shape cannot be silently changed',()=>{
     ['const t=(); return t.a;',/expected/],
     ['const r={}; return 0;',/E_LITERAL_KIND/],
     ['const struct s={}; return 0;',/E_LITERAL_KIND/],
-    ['const t=(); const Record r=t; return 0;',/expected/]
+    ['const t=(); const Record r=t; return 0;',/E_AGGREGATE_KIND/]
   ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),error,body);
 });
 
