@@ -132,5 +132,5 @@ export function compileReadonlyReferenceV1(source){
   out.push('export function main(){');
   out.push('const p={'+fields.map((f,i)=>'f'+i+':'+f.value+'n').join(',')+'};');
   renderBody(root,1);
-  return out.join('\\n')+'\\n';
+  return out.join('\n')+'\n';
 }
