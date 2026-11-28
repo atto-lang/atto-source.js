@@ -115,3 +115,19 @@ test('direct destination construction avoids row objects and stages scalar field
     assert.throws(()=>compileAttachedStruct(input.replace('self.velocity=v;','self.velocity=a;')),/E_ATTACHED_STRUCT/);
   }
 });
+
+
+test('nested direct destination rows flatten leaves in lexical order and snapshot existing values',async()=>{
+  const source='define struct Point { int x; int y; } with { constructor(int b,int a){self.x=a;self.y=b;} mut mtd void • change(int value){self.x=value;} } define struct Particle { Point origin; int velocity; } with { constructor(int v,Point p){self.origin=p;self.velocity=v;} } type Base = <T=Particle,size=5,layout=soa>; pub fnc main():int { let mut Point p = make {x:30,y:40}; let particles: Array<infer X from Base> = [make {velocity:1,origin:make {y:20,x:10}},make {origin:p,velocity:2}] with {size=infer}; p.change(999); particles[0].origin.x += 5; return particles.columns.origin.x[0]; }';
+  for(const layout of ['soa','aos']){
+    const input=source.replace('layout=soa','layout='+layout), code=compileAttachedStruct(input), main=code.split('export function main(){')[1], array=main.slice(main.indexOf('const _array='));
+    assert.equal((array.match(/new BigInt64Array\(/g)||[]).length,1);
+    assert.doesNotMatch(array,/_row|_c\d+_\d+\(|=>|\.slice\(/);
+    assert.match(array,/\{const _f0=1n;const _f1=20n;const _f2=10n;_array\[/);
+    for(const [field,index,expected] of [['origin.x',0,15n],['origin.x',1,30n],['origin.y',0,20n],['origin.y',1,40n],['velocity',0,1n],['velocity',1,2n]]){
+      assert.equal(await run(compileAttachedStruct(input.replace('return particles.columns.origin.x[0]','return particles.columns.'+field+'['+index+']'))),expected);
+    }
+    await assert.rejects(run(compileAttachedStruct(input.replace('y:20,x:10','y:9223372036854775807+1,x:10'))),/E_OVERFLOW/);
+    for(const bad of [input.replace('origin:make {','origin:new {'),input.replace('origin:make {','origin:make Particle {'),input.replace('y:20,x:10','y:20'),input.replace('y:20,x:10','y:20,y:10'),input.replace('columns.origin.x[0]','columns.origin[0]'),input.replace('columns.origin.x[0]','columns.origin.x[2]'),input.replace('self.y=b;','self.y=a;')]) assert.throws(()=>compileAttachedStruct(bad),/E_ATTACHED_STRUCT/);
+  }
+});
