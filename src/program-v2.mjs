@@ -445,14 +445,14 @@ class Parser {
   // Accept both legacy `int value` and canonical AttoLang `value: int`.
   // The decision is token-based, not a text rewrite, so comments and typed
   // compound values cannot change parameter binding or evaluation order.
-  typedParameter(readName) {
+  typedParameter(readName,allowDenotation=false) {
     if (this.peek().kind==='id' && this.tokens[this.i+1]?.value===':') {
       const name=readName();this.expect(':');
       if (['int','bool','Symbol','Option','Result'].includes(name))
         fail('type keyword cannot be a name-first parameter',this.peek());
-      return {name,type:this.valueType()};
+      return {name,type:this.valueType(allowDenotation)};
     }
-    const type=this.valueType(),name=readName();
+    const type=this.valueType(allowDenotation),name=readName();
     return {name,type};
   }
   scalarDenotation() {
@@ -516,9 +516,11 @@ class Parser {
       }
     }
   }
-  valueType() {
-    if(this.literalDenotations.has(this.peek().value))
+  valueType(allowDenotation=false) {
+    if(this.literalDenotations.has(this.peek().value)){
+      if(allowDenotation)return 'denote:'+this.tokens[this.i++].value;
       fail('literal denotation requires a proven immutable local initializer in this profile',this.peek(),'E_DENOTE_BOUNDARY_UNSUPPORTED');
+    }
     if(this.scalarDenotations.has(this.peek().value))
       return this.scalarDenotations.get(this.tokens[this.i++].value);
     if(this.eat('int'))return 'int';
@@ -687,7 +689,7 @@ class Parser {
     if (!this.eat(')')) {
       do {
         if (params.length >= 128) fail('parameter limit',this.peek());
-        const {type,name:p}=this.typedParameter(()=>this.name());
+        const {type,name:p}=this.typedParameter(()=>this.name(),true);
         if (params.includes(p)) fail('duplicate parameter ' + p);
         params.push(p); paramTypes.push(type);
       } while(this.eat(','));
@@ -697,7 +699,7 @@ class Parser {
     // pure void functions may fall through. No general effect lowering yet.
     let arrow=returnFirst?false:this.eat('->');
     if(!returnFirst&&!arrow)this.expect(':');
-    let returnType=returnFirst?requestedReturnType:this.eat('void')?'void':this.eat('infer')?'infer':this.valueType();
+    let returnType=returnFirst?requestedReturnType:this.eat('void')?'void':this.eat('infer')?'infer':this.valueType(true);
     // Post-type arrow is part of the canonical name-first header.
     if(!returnFirst&&!arrow)arrow=this.eat('->');
     if(returnFirst && ['->',':'].includes(this.peek().value))
@@ -1120,7 +1122,89 @@ class Parser {
     if(this.booleanAliasToken&&(usedClasses.has('boolean')||usedModules.has('boolean')))
       fail('E_TYPE_ALIAS_SHADOWED: boolean requires nominal type resolution',this.booleanAliasToken);
     if(!functions.length&&!generators.length&&!modules.length&&!classes.length)fail('empty program');
+    this.checkLiteralCallableBoundaries(functions);
     return {namespace,modules,functions,generators,classes,exportDeclarations};
+  }
+  // Literal-set proofs precede scalar erasure. The initial callable slice
+  // deliberately admits only closed, pure scalar ASTs, never unchecked
+  // public parameters, indirect calls, mutation, effects or task boundaries.
+  checkLiteralCallableBoundaries(functions) {
+    const members=type=>typeof type==='string'&&type.startsWith('denote:')?this.literalDenotations.get(type.slice(7)):undefined;
+    if(!functions.some(f=>members(f.returnType)||f.paramTypes?.some(members)))return;
+    const slots=new Map();
+    const signatures=new Map();
+    for(const f of functions){
+      const key=f.name+'/'+f.params.length;
+      if(slots.has(key))fail('duplicate callable slot '+key);
+      slots.set(key,f);
+      const inputs=f.params.map((_,i)=>members(f.paramTypes?.[i]));
+      if(f.pub&&inputs.some(Boolean))
+        fail('E_DENOTE_PUBLIC_PARAMETER: external literal union admission requires a checked host ABI');
+      signatures.set(f,{inputs,output:members(f.returnType)});
+    }
+    let visits=0;
+    const requireSubset=(actual,want,label)=>{
+      if(want&&(!actual||[...actual].some(v=>!want.has(v))))
+        fail('E_DENOTE_MEMBERSHIP: '+label+' is not a proven subset');
+    };
+    const proof=(e,scope,depth=0)=>{
+      if(depth>MAX_DEPTH||++visits>MAX_TOKENS)fail('E_DENOTE_LIMIT: proof budget exceeded');
+      if(!e)fail('E_DENOTE_BOUNDARY_UNSUPPORTED: missing scalar expression');
+      const child=x=>proof(x,scope,depth+1);
+      switch(e.kind){
+        case 'int':return new Set([e.value]);
+        case 'bool':return undefined;
+        case 'variable':return scope.get(e.name);
+        case 'neg':case 'not':child(e.inner);return undefined;
+        case 'binary':case 'compare':child(e.left);child(e.right);return undefined;
+        case 'if':{
+          child(e.condition);
+          const yes=child(e.yes),no=child(e.no);
+          return yes&&no?new Set([...yes,...no]):undefined;
+        }
+        case 'local':{
+          if(e.writable||e.taskWritable||e.rebind||e.taskRebind)
+            fail('E_DENOTE_BOUNDARY_UNSUPPORTED: mutable binding in literal callable profile');
+          const actual=child(e.init),next=new Map(scope);
+          next.set(e.name,['int','constInt'].includes(e.localType)?actual:undefined);
+          return proof(e.body,next,depth+1);
+        }
+        case 'call':{
+          if(e.qualifier!==null)
+            fail('E_DENOTE_BOUNDARY_UNSUPPORTED: qualified call in literal callable profile');
+          const target=slots.get(e.name+'/'+e.args.length);
+          if(!target)fail('E_DENOTE_BOUNDARY_UNSUPPORTED: unresolved direct call '+e.name);
+          const sig=signatures.get(target);
+          let positional=0;const seen=new Set();
+          for(const arg of e.args){
+            const index=arg.name===null?positional++:target.params.indexOf(arg.name);
+            if(index<0||index>=target.params.length||seen.has(index))
+              fail('E_DENOTE_BOUNDARY_UNSUPPORTED: invalid call binding');
+            seen.add(index);
+            requireSubset(child(arg.expr),sig.inputs[index],'argument '+target.params[index]);
+          }
+          if(seen.size!==target.params.length)fail('E_DENOTE_BOUNDARY_UNSUPPORTED: incomplete call binding');
+          return sig.output;
+        }
+        default:fail('E_DENOTE_BOUNDARY_UNSUPPORTED: unsupported expression '+e.kind+' in literal callable profile');
+      }
+    };
+    for(const f of functions){
+      const sig=signatures.get(f);
+      if(f.body!==null){
+        const scope=new Map(f.params.map((p,i)=>[p,sig.inputs[i]]));
+        requireSubset(proof(f.body,scope),sig.output,'return of '+f.name);
+      }
+    }
+    // Only after every body and call site is checked may the existing
+    // validated integer ABI be used. No source-level proof metadata leaks.
+    for(const f of functions){
+      if(f.paramTypes)f.paramTypes=f.paramTypes.map(t=>members(t)?'int':t);
+      if(members(f.returnType))f.returnType='int';
+      if(f.returnType==='int'&&f.paramTypes?.every(t=>t==='int')){
+        delete f.returnType;delete f.paramTypes;
+      }
+    }
   }
   integer(negative = false) {
     const token=this.peek();
