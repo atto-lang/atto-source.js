@@ -96,7 +96,7 @@ test('scalar Record with, spread, and inferred lexical aliases execute',async()=
   for(const body of [
     'const r={foo:40}; const v=r with {bar:true,foo:42}; return r.foo+v.foo-40;',
     'const r={foo:40}; const v={...r,bar:2}; return v.foo+v.bar;',
-    'const r={foo:40}; const Record<T> v=infer {...r,bar:2}; const Record<T> w=(bar:2,foo:40); return w.foo+v.bar;',
+    'const r={foo:40}; const Record<T> v=infer {...r,bar:2}; const Record<T> w=("bar":2,"foo":40); return w.foo+v.bar;',
     'const r={foo:40}; const Record<infer T> v={...r,bar:2}; const Record<T> w=r with {bar:2}; return w.foo+v.bar;',
     'const r={foo:40}; const s={foo:1}; const v={...r,...s,foo:42}; return v.foo;',
     'const r={foo:true}; const v=r with {foo:42}; return v.foo;',
@@ -149,7 +149,7 @@ test('empty product kind and exact shape cannot be silently changed',()=>{
     ['const t=(); const r={...t,a:42}; return r.a;',/E_RECORD_SPREAD/],
     ['const t=(); return t[0];',/E_NO_FIELD/],
     ['const Record r=(); return r.a;',/E_NO_FIELD/],
-    ['const Record r=(); return r[0];',/expected/],
+    ['const Record r=(); return r[0];',/E_RECORD_LABEL/],
     ['const t=(); return t.a;',/expected/],
     ['const r={}; return 0;',/E_LITERAL_KIND/],
     ['const struct s={}; return 0;',/E_LITERAL_KIND/],
