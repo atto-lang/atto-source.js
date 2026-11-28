@@ -478,6 +478,31 @@ class Parser {
     this.expect(')');
     return {args,applyProduct:record?'record':'tuple'};
   }
+  storedApplyProductFactory() {
+    const factory=this.name();
+    this.expect('.');this.expect('of');this.expect('(');
+    const fields=[],seen=new Set();
+    if(!this.eat(')')){
+      do {
+        if(fields.length>=32)fail('E_STORED_APPLY_PROFILE: Product field limit',this.peek());
+        let name=null;
+        if(factory==='Record'){
+          name=this.name();
+          if(seen.has(name))fail('duplicate Record field '+name,this.peek());
+          seen.add(name);
+          const colon=this.peek(),equals=this.tokens[this.i+1];
+          if(colon.value!==':'||equals?.value!=='='||colon.line!==equals.line||colon.col+1!==equals.col)
+            fail('E_STORED_APPLY_PROFILE: Record.of requires contiguous := fields',colon);
+          this.i+=2;
+        }
+        fields.push({name,expr:this.expression()});
+        if(this.eat(')'))break;
+        this.expect(',');
+        if(this.eat(')'))break;
+      }while(true);
+    }
+    return {factory,fields};
+  }
   argumentsAfterOpen() {
     const args=[];let namedSeen=false;
     if(!this.eat(')')) {
@@ -938,6 +963,21 @@ class Parser {
         if(!implicitConst&&!explicitConst&&!readOnlyLet)this.expect('val');
         // Function-scope scalar locals; only typed string let may rebind.
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
+        // Bounded immutable root Product: eager scalar replacement only.
+        // No general materialized Product ABI is introduced.
+        const head=this.tokens.slice(this.i,this.i+7);
+        const typedProduct=['Tuple','Record'].includes(head[0]?.value)&&head[1]?.kind==='id';
+        const offset=typedProduct?1:0;
+        if(!implicitConst&&!constMut&&!readOnlyLet&&head[offset]?.kind==='id'&&
+           head[offset+1]?.value==='='&&['Tuple','Record'].includes(head[offset+2]?.value)&&
+           head[offset+3]?.value==='.'&&head[offset+4]?.value==='of'&&head[offset+5]?.value==='('){
+          const declared=typedProduct?this.name():null;
+          const name=this.name();this.expect('=');
+          const product=this.storedApplyProductFactory();
+          if(declared!==null&&declared!==product.factory)fail('E_STORED_APPLY_PROFILE: Product kind mismatch');
+          this.expect(';');
+          statements.push({kind:'localProduct',name,...product});continue;
+        }
         // Keep existing Option, Result, string, bool, and directional bindings.
         const typedTrapResult=this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')==='Result < int , Error >';
         const typedTrapOption=this.tokens.slice(this.i,this.i+9).map(t=>t.value).join(' ')==='Result < Option < int > , Error >';
@@ -1043,6 +1083,10 @@ class Parser {
         fail('unreachable statement after terminating return/if');
       if(stmt.kind==='return'||stmt.kind==='effect')result=stmt.body;
       else if(stmt.kind==='tryCatch')result={kind:'tryCatch',name:stmt.name,body:this.lowerStatements(stmt.body,null),handler:this.lowerStatements(stmt.handler,null)};
+      else if(stmt.kind==='localProduct'){
+        if(result===null)fail('RETURN_EXPLICIT_REQUIRED: Product local must precede a value return');
+        result={kind:'localProduct',name:stmt.name,factory:stmt.factory,fields:stmt.fields,body:result};
+      }
       else if(stmt.kind==='local'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
         result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,taskWritable:stmt.taskWritable===true,lexicalLet:stmt.lexicalLet===true,rebind:stmt.rebind===true,...(stmt.literalName?{literalName:stmt.literalName,literalMutable:stmt.literalMutable===true}:{}),body:result};
@@ -1094,6 +1138,7 @@ class Parser {
         case 'seqVoidCall':add(expr.call);add(expr.value);break;
         case 'rootStdoutDefer':case 'stdoutSeq':case 'taskScope':case 'taskDefer':add(expr.body);break;
         case 'taskSet':case 'taskDeferInt':add(expr.value);add(expr.body);break;
+        case 'localProduct':for(const field of expr.fields)add(field.expr);add(expr.body);break;
         case 'local':add(expr.init);add(expr.body);break;
         case 'newClass':for(const arg of expr.args)add(arg.expr??arg);break;
         case 'methodCall':
@@ -2322,6 +2367,30 @@ function resolveProgram(parsed) {
         if(resolvedType(inner,owner)!=='int')fail('await requires immediate int in program-v2; asynchronous await unsupported');
         return inner;
       }
+      case 'localProduct': {
+        if(owner.ownerKind==='method'||owner.inlineTask||owner.kind!=='fnc'||owner.params.includes(expr.name)||
+           bindings.some(b=>b.name===expr.name)||['Tuple','Record'].includes(expr.name))
+          fail('E_STORED_APPLY_PROFILE: Product requires unique immutable root binding');
+        if(owner.params.includes(expr.factory)||bindings.some(b=>b.name===expr.factory)||
+           modules.includes(expr.factory)||classes.some(c=>c.name===expr.factory)||
+           functions.some(f=>f.name===expr.factory)||generators.some(g=>g.name===expr.factory))
+          fail('E_STORED_APPLY_PROFILE: Product factory is shadowed');
+        if(depth+expr.fields.length+1>MAX_DEPTH)fail('Product scalar replacement depth limit');
+        const fields=[],inits=[],scope=[...bindings];
+        for(const field of expr.fields){
+          const init=resolve(field.expr,owner,depth+1,bindings);
+          if(resolvedType(init,owner)!=='int')fail('E_STORED_APPLY_PROFILE: only integer Product fields admitted');
+          if(nextCaptureSlot>=MAX_TOKENS||++nodeCount>MAX_TOKENS)fail('Product scalar slot budget exceeded');
+          const slot=nextCaptureSlot++,internal='@apply-product:'+slot;
+          inits.push({slot,init});
+          fields.push({name:field.name,expr:{kind:'variable',name:internal}});
+          scope.push({name:internal,type:'int',slot});
+        }
+        scope.push({name:expr.name,type:'applyProduct',factory:expr.factory,fields});
+        let body=resolve(expr.body,owner,depth+expr.fields.length+1,scope);
+        for(let i=inits.length-1;i>=0;i--)body={kind:'local',...inits[i],body};
+        return body;
+      }
       case 'local': {
         const previous=bindings.findLast(b=>b.name===expr.name);
         if(owner.ownerKind==='method'||owner.params.includes(expr.name))
@@ -2449,6 +2518,7 @@ function resolveProgram(parsed) {
       }
       case 'variable': {
         const captured=bindings.findLast(b=>b.name===expr.name);
+        if(captured?.type==='applyProduct')fail('E_STORED_APPLY_PROFILE: Product escape requires materialized ABI');
         if(captured?.type==='caughtError')fail('E_CATCH_BINDING: caught Error is only available for typed rethrow');
         if(captured)return {kind:captured.type==='error'?'errorCapture':captured.type==='option<bool>'?'optionBoolCapture':captured.type==='trapBoolResult'?'trapBoolCapture':captured.type==='option<int>'?'optionCapture':captured.type==='result<int,int>'?'resultCapture':captured.type==='trapOptionResult'?'trapOptionCapture':captured.type==='trapResult'?'trapCapture':captured.type==='float'?'floatCapture':captured.type==='bool'?'boolCapture':captured.type==='string'?'stringCapture':'capture',slot:captured.slot};
         const index=owner.params.indexOf(expr.name);
@@ -2512,14 +2582,21 @@ function resolveProgram(parsed) {
            !modules.includes(expr.qualifier)&&!['Integer','Option','Result'].includes(expr.qualifier)){
           const key=(owner.module===null?'@file/':'@module/'+owner.module+'/')+expr.qualifier;
           if(symbolKinds.has(key)){
-            if(owner.ownerKind==='method'||expr.name==='apply'&&!expr.applyProduct)
-              fail('E_CALLABLE_APPLY_PROFILE: apply requires a fixed immediate Tuple or Record');
-            const target=slots.get(key+'/'+expr.args.length);
+            let args=expr.args,product=expr.applyProduct;
+            if(expr.name==='apply'&&!product&&args.length===1&&args[0].name===null&&args[0].expr.kind==='variable'){
+              const binding=bindings.findLast(b=>b.name===args[0].expr.name);
+              if(binding?.type==='applyProduct'){
+                args=binding.fields;product=binding.factory==='Record'?'record':'tuple';
+              }
+            }
+            if(owner.ownerKind==='method'||expr.name==='apply'&&!product)
+              fail('E_CALLABLE_APPLY_PROFILE: apply requires a fixed immediate or stored Tuple or Record');
+            const target=slots.get(key+'/'+args.length);
             if(typeof target!=='number'||functions[target].kind!=='fnc')
               fail('E_CALLABLE_APPLY_PROFILE: wrong arity or unsupported callable');
-            if(expr.applyProduct==='record'&&functions[target].params.some(name=>name==='_'||!name))
+            if(product==='record'&&functions[target].params.some(name=>name==='_'||!name))
               fail('E_CALLABLE_APPLY_PROFILE: retained formal names required');
-            const bound=bindArguments(functions[target].params,expr.args,key,owner,depth,bindings);
+            const bound=bindArguments(functions[target].params,args,key,owner,depth,bindings);
             return bound.hasNamed?{kind:'namedCall',target,args:bound.args,paramOrder:bound.paramOrder}:
               {kind:'call',target,args:bound.args};
           }
