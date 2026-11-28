@@ -118,6 +118,11 @@ function lex(src) {
       }
       while(i<literal.end)advance();
       add(literal.kind,literal,loc);
+    }else if(src[i]==='#'){
+      const policy=/^#(?:first|last|reject)(?![A-Za-z0-9_])/.exec(src.slice(i));
+      if(!policy)throw new CompileError('unsupported scalar symbol',loc);
+      for(let k=0;k<policy[0].length;k++)advance();
+      add('symbol',policy[0],loc);
     }else if(src.startsWith('...',i)){add('sym','...',loc);advance();advance();advance();}
     else if(src.startsWith('->',i)||src.startsWith('::',i)||src.startsWith(':=',i)){add('sym',src.slice(i,i+2),loc);advance();advance();}
     else if(src[i]==='%')throw new CompileError("'%' is reserved and is not AttoLang source syntax; use Integer.rem(a, b) or Integer.mod(a, b)",loc);
@@ -268,6 +273,7 @@ class Parser {
       this.readLocalPair(name,name,at);return;
     }
     this.expect('=');
+    if(this.readClosedProduct(name,null,params,at))return;
     if(this.peek().kind==='id'&&this.ts[this.pos+1]?.value===':='){
       const key=this.aggregateIdentifier();this.expect(':=');this.readLocalPair(name,key,at);return;
     }
@@ -303,6 +309,83 @@ class Parser {
       const value=this.readAggregateScalar([],false);
       this.expect(';');this.scalarConsts.set(name,value);
     }
+  }
+  // Compiler-only closed product metadata: every admitted payload is a literal
+  // or a previously evaluated immutable scalar, never an effectful expression.
+  // No guest Pair/Record ABI or ownership operations are synthesized here.
+  readClosedProduct(name,expectedKind,params,at){
+    const receiver=this.peek();
+    const member=this.ts[this.pos+2];
+    if(receiver.kind!=='id'||this.ts[this.pos+1]?.value!=='.'||member?.kind!=='id'||
+       this.ts[this.pos+3]?.value!=='(')return false;
+    const factory=['Tuple','Record'].includes(receiver.value)&&member.value==='of';
+    const convert=['to_record','to_tuple'].includes(member.value);
+    if(!factory&&!convert)return false;
+    let kind,fields;
+    this.pos+=4;
+    const pair=(key,payload)=>({type:'Pair',key,payload});
+    const constScalar=f=>f&&((f.type==='int'&&typeof f.value==='bigint')||
+      (f.type==='bool'&&typeof f.value==='boolean')||f.type==='string');
+    const namedFields=(pairs,policy)=>{
+      const result=new Map();
+      for(const p of pairs){
+        if(p?.type!=='Pair'||!constScalar(p.payload))
+          throw new CompileError('E_RECORD_KEY: closed named Pair slots required',at);
+        if(result.has(p.key)){
+          if(policy==='#reject')throw new CompileError('E_DUPLICATE_FIELD: '+p.key,at);
+          if(policy==='#first')continue;
+        }
+        result.set(p.key,p.payload);
+      }
+      return result;
+    };
+    if(factory){
+      const type=receiver.value;
+      // Reject even forward function declarations that shadow these builtin
+      // names. The bounded parser has no nominal factory-resolution fallback.
+      if(params.includes(type)||this.aggregateLocals.has(type)||this.scalarConsts.has(type)||
+         this.aggregateTypes.has(type)||this.ts.some((t,i)=>
+           ['fnc','routine'].includes(t.value)&&this.ts[i+1]?.value===type))
+        throw new CompileError('E_PRODUCT_SHADOW: factory identity not proven',receiver);
+      kind=type;
+      const pairs=[];
+      if(this.peek().value!==')')do{
+        if(pairs.length>=64)throw new CompileError('aggregate entry limit',at);
+        const key=this.aggregateIdentifier();this.expect(':=');
+        pairs.push(pair(key,this.readAggregateScalar([],false)));
+        if(!this.match(','))break;
+        if(this.peek().value===')')break;
+      }while(true);
+      fields=kind==='Record'?namedFields(pairs,'#reject'):
+        new Map(pairs.map((p,i)=>[String(i),p]));
+    }else{
+      const source=this.aggregateLocals.get(receiver.value);
+      if(!source)throw new CompileError('E_PRODUCT_CONVERSION: closed local product required',receiver);
+      if(member.value==='to_record'){
+        kind='Record';
+        if(source.kind!=='Tuple')throw new CompileError('E_PRODUCT_CONVERSION: expected Tuple',receiver);
+        let policy='#reject';
+        if(this.peek().value!==')'){
+          this.expect('duplicates');
+          if(!this.match(':'))this.expect('=');
+          const token=this.peek();
+          if(token.kind!=='symbol'||!['#reject','#first','#last'].includes(token.value))
+            throw new CompileError('E_DUPLICATE_POLICY: expected static policy',token);
+          this.pos++;policy=token.value;
+        }
+        fields=namedFields([...source.fields.values()],policy);
+      }else{
+        kind='Tuple';
+        if(source.kind!=='Record'||[...source.fields.values()].some(f=>!constScalar(f)))
+          throw new CompileError('E_PRODUCT_CONVERSION: closed constexpr Record required',receiver);
+        fields=new Map([...source.fields].map(([key,payload],i)=>[String(i),pair(key,payload)]));
+      }
+    }
+    this.expect(')');this.expect(';');
+    if(expectedKind!==null&&expectedKind!==kind)
+      throw new CompileError('E_AGGREGATE_KIND: conversion result '+kind,at);
+    this.aggregateLocals.set(name,{kind,fields});
+    return true;
   }
   readLocalPair(name,key,at){
     // The scalar subset exposes only integer .value projection. Preserve
@@ -365,6 +448,7 @@ class Parser {
     }
     if(alias!==null&&!binder&&!this.aggregateTypes.has(alias))
       throw new CompileError('E_UNKNOWN_TYPE: '+alias,at);
+    if(alias===null&&!infer&&this.scalarConsts&&this.readClosedProduct(name,kind,params,at))return;
     let base=null;
     if(kind==='Record'&&this.peek().kind==='id'&&this.ts[this.pos+1]?.value==='with'){
       base=this.readConstRecordOperand();this.expect('with');
@@ -455,8 +539,13 @@ class Parser {
     }else{
       this.expect('.');key=this.aggregateIdentifier();
     }
-    const field=aggregate.fields.get(key);
+    let field=aggregate.fields.get(key);
     if(!field)throw new CompileError('E_NO_FIELD: '+key,at);
+    if(aggregate.kind==='Tuple'&&field.type==='Pair'){
+      // A positional Pair is not its payload. Only explicit .value projection
+      // is admitted in this bounded scalar backend.
+      this.expect('.');this.expect('value');field=field.payload;
+    }
     if(field.type!=='int')throw new CompileError('JS scalar aggregate profile supports only int projections',at);
     return typeof field.value==='bigint' ? {kind:'int',n:field.value} : {...field.value};
   }
