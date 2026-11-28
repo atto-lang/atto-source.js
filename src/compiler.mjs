@@ -267,6 +267,41 @@ class Parser {
     }else throw new CompileError('E_TYPE_INFER_AMBIGUOUS: literal or immutable int parameter required',token);
     return {type,value};
   }
+  // Bounded recursive immutable literal tree, erased to checked scalar IR
+  // only after a complete statically proven projection. Not a heap ABI.
+  readRecordValue(params,allowRuntime,depth){
+    const at=this.peek();
+    if(depth>32)throw new CompileError('E_SOURCE_LIMIT: Record value nesting limit',at);
+    if(at.value==='['){
+      this.pos++;
+      const items=[];
+      if(this.peek().value===']')throw new CompileError('E_TYPE_INFER_AMBIGUOUS: empty Record array needs element type',at);
+      do {
+        if(items.length>=64)throw new CompileError('E_SOURCE_LIMIT: Record array element limit',at);
+        items.push(this.readRecordValue(params,allowRuntime,depth+1));
+        if(!this.match(','))break;
+        if(this.peek().value===']')break;
+      } while(true);
+      this.expect(']');
+      const types=[...new Set(items.map(x=>x.type))];
+      let elem=types[0];
+      if(types.length!==1){
+        if(items.every(x=>x.kind==='Record'))elem='OpenRecord';
+        else throw new CompileError('E_TYPE_MISMATCH: incompatible Record array elements',at);
+      }
+      return {kind:'Array',type:'A'+elem.length+':'+elem,items};
+    }
+    if(at.value==='{'|| (at.value==='('&&this.ts[this.pos+1]?.kind==='string'&&this.ts[this.pos+2]?.value===':')){
+      const nested=this.readAggregateFields('Record',null,null,false,params,at,allowRuntime,null,depth+1);
+      // Length-framed structural descriptors avoid recursive JSON escaping
+      // amplification and remain injective even for punctuation-bearing keys.
+      const entries=[...nested.fields].sort(([a],[b])=>a<b?-1:a>b?1:0);
+      const frame=v=>v.length+':'+v;
+      const type='R'+entries.length+':'+entries.map(([k,v])=>frame(k)+frame(v.type)).join('');
+      return {kind:'Record',type,fields:nested.fields};
+    }
+    return this.readAggregateScalar(params,allowRuntime);
+  }
   localConst(params){
     const at=this.peek(), next=this.ts[this.pos+1]?.value;
     if(['Record','Tuple','struct'].includes(next)){
@@ -329,7 +364,7 @@ class Parser {
   readConstRecordOperand(){
     const at=this.peek(),name=this.aggregateIdentifier();
     const record=this.aggregateLocals.get(name);
-    if(record?.kind!=='Record'||[...record.fields.values()].some(f=>f.type==='int'&&typeof f.value!=='bigint'))
+    if(record?.kind!=='Record'||[...record.fields.values()].some(f=>f.kind!==undefined||(f.type==='int'&&typeof f.value!=='bigint')))
       throw new CompileError('E_RECORD_SPREAD: requires an initialized compile-time scalar Record',at);
     return record;
   }
@@ -386,7 +421,7 @@ class Parser {
     }
     this.readAggregateFields(kind,name,alias,binder,params,at,true,base);
   }
-  readAggregateFields(kind,name,alias,binder,params,at,allowRuntime,base=null){
+  readAggregateFields(kind,name,alias,binder,params,at,allowRuntime,base=null,depth=0){
     const open=this.peek().value;
     if(kind==='struct')this.expect('{');
     else if(kind==='Record'&&(open==='{'||open==='('))this.pos++;
@@ -401,6 +436,7 @@ class Parser {
     if(this.peek().value!==close) do {
       if(++entryCount>64)throw new CompileError('aggregate entry limit',this.peek());
       if(kind==='Record'&&open==='{'&&this.match('...')){
+        if(depth>0)throw new CompileError('E_RECORD_SPREAD: nested spread outside scalar profile',at);
         const source=this.readConstRecordOperand();
         for(const [key,field] of source.fields){
           if(explicit.has(key))throw new CompileError('E_RECORD_SPREAD: spread overrides explicit field '+key,this.peek());
@@ -436,7 +472,7 @@ class Parser {
           else if(this.match(':='))pairEntry=true;
           else {if(!this.match(':'))this.expect('=');ordinaryField=true;}
         }else if(kind==='struct')this.expect(':');
-        field=this.readAggregateScalar(params,allowRuntime);
+        field=kind==='Record'?this.readRecordValue(params,allowRuntime,depth):this.readAggregateScalar(params,allowRuntime);
       }
       fields.set(key,field);
       if(fields.size>64)throw new CompileError('aggregate field limit',this.peek());
@@ -448,9 +484,10 @@ class Parser {
       }
       if(this.peek().value===close)break;
     } while(true);
-    this.expect(close);this.expect(';');
+    this.expect(close);if(depth===0)this.expect(';');
     if(kind==='Record'&&open==='('&&entryCount!==0&&!ordinaryField)throw new CompileError('E_LITERAL_KIND: Pair-only parentheses are not a Record',at);
     if(spreadConflicts.size)throw new CompileError('E_RECORD_SPREAD: unresolved spread overlap',at);
+    if(depth>0)return {kind,fields};
     const shape={kind,fields:new Map([...fields].map(([k,v])=>[k,v.type]))};
     if(alias!==null&&!binder){
       const expected=this.aggregateTypes.get(alias);
@@ -463,24 +500,36 @@ class Parser {
     this.aggregateLocals.set(name,{kind,fields});
   }
   aggregateProjection(){
-    const at=this.peek(), aggregate=this.aggregateLocals.get(at.value);
+    const at=this.peek();
+    let current=this.aggregateLocals.get(at.value);
     this.pos++;
-    let key;
-    if(aggregate.kind==='Tuple'){
-      this.expect('[');
-      const index=this.peek();
-      if(index.kind!=='int'||!/^(0|[1-9][0-9]*)$/.test(index.value))
-        throw new CompileError('tuple projection requires a static index',index);
-      key=index.value;this.pos++;this.expect(']');
-    }else if(aggregate.kind==='Record'&&this.match('[')){
-      key=this.readQuotedRecordKey();this.expect(']');
-    }else{
-      this.expect('.');key=this.aggregateIdentifier();
+    let count=0;
+    while(current.kind){
+      if(++count>64)throw new CompileError('E_SOURCE_LIMIT: aggregate projection depth',at);
+      let key;
+      if(current.kind==='Tuple'||current.kind==='Array'){
+        this.expect('[');
+        const index=this.peek();
+        if(index.kind!=='int'||!/^(0|[1-9][0-9]*)$/.test(index.value))
+          throw new CompileError('aggregate projection requires a static index',index);
+        key=index.value;this.pos++;this.expect(']');
+        if(current.kind==='Array'){
+          const n=BigInt(key);
+          if(n>=BigInt(current.items.length))
+            throw new CompileError('E_BOUNDS: Record array index outside bounds',index);
+          current=current.items[Number(n)];continue;
+        }
+      }else if(current.kind==='Record'&&this.match('[')){
+        key=this.readQuotedRecordKey();this.expect(']');
+      }else{
+        this.expect('.');key=this.aggregateIdentifier();
+      }
+      const field=current.fields.get(key);
+      if(!field)throw new CompileError('E_NO_FIELD: '+key,at);
+      current=field;
     }
-    const field=aggregate.fields.get(key);
-    if(!field)throw new CompileError('E_NO_FIELD: '+key,at);
-    if(field.type!=='int')throw new CompileError('JS scalar aggregate profile supports only int projections',at);
-    return typeof field.value==='bigint' ? {kind:'int',n:field.value} : {...field.value};
+    if(current.type!=='int')throw new CompileError('JS scalar aggregate profile supports only int projections',at);
+    return typeof current.value==='bigint' ? {kind:'int',n:current.value} : {...current.value};
   }
   exportDeclaration(){
     this.expect('export');this.expect('pub');
