@@ -48,13 +48,13 @@ test('literal denotations prove immutable local membership before scalar lowerin
 });
 test('literal denotations fail closed before integer erasure at unproved boundaries',()=>{
   for(const [body,diagnostic] of [
-    ['const Dice a = 8; return 42;', /E_DENOTE_MEMBERSHIP|not a proven member/],
-    ['val Dice a = true; return 42;', /not a proven member/],
-    ['val int x = 5; val Dice a = x; return 42;', /not a proven member/],
-    ['val Dice a = 4 + 1; return 42;', /not a proven member/],
+    ['const Dice a = 8; return 42;', /not a proven subset/],
+    ['val Dice a = true; return 42;', /not a proven subset/],
+    ['val int x = 8; val Dice a = x; return 42;', /not a proven subset/],
+    ['val Dice a = 4 + 4; return 42;', /not a proven subset/],
     ['val Dice a = 5; a = 8; return a;', /E_STRING_REBIND/],
     ['val a : Dice = 5; return a;', /literal denotation requires/],
-    ['let Dice a = 5; return a;', /unsupported|expected|requires/i],
+    ['let Dice a = 8; return a;', /not a proven subset/],
   ]) assert.throws(()=>compileProgramV2('denote type Dice = 5 | 6 | 7; pub fnc main(): int { '+body+' }'),diagnostic,body);
   for(const source of [
     'denote type Dice = 5 | 5; pub fnc main(): int { return 42; }',
@@ -71,7 +71,7 @@ test('forward denotations preserve scalar identity and literal membership',async
   assert.equal(await (await load(forward)).main(),42n);
   const union='denote type First = Second; denote type Second = 5 | 6; pub fnc main(): int { val First a = 5; return a + 37; }';
   assert.equal(await (await load(union)).main(),42n);
-  assert.throws(()=>compileProgramV2(union.replace('a = 5','a = 8')),/not a proven member/);
+  assert.throws(()=>compileProgramV2(union.replace('a = 5','a = 8')),/not a proven subset/);
 });
 test('unused forward alias cycles and unresolved targets are distinguished',()=>{
   for(const decl of ['denote type A = A;','denote type A = B; denote type B = A;',
@@ -107,8 +107,33 @@ test('closed literal union call boundaries reject unproven admissions',()=>{
     ['fnc bad(int n): Narrow { return n; } pub fnc main(): int { return bad(5); }',/not a proven subset/],
     ['fnc bad(bool b): Narrow { return b ? 5 : 8; } pub fnc main(): int { return bad(true); }',/not a proven subset/],
     ['pub fnc exposed(Narrow n): int { return n; } pub fnc main(): int { return 42; }',/external literal union admission/],
-    ['fnc id(Narrow n): int { return n; } pub fnc main(): int { return id(4 + 1); }',/not a proven subset/],
+    ['fnc id(Narrow n): int { return n; } pub fnc main(): int { return id(4 + 4); }',/not a proven subset/],
     ['fnc id(Narrow n): int { return n; } pub fnc main(): int { return id(true); }',/not a proven subset/],
     ['fnc id(Narrow n): int { return n; } pub fnc main(): int { let int n = 5; return id(n); }',/mutable binding/],
   ]) assert.throws(()=>compileProgramV2(prefix+source),reason,source);
+});
+
+test('bounded arithmetic membership and root sequential mutable union bindings',async()=>{
+  const prefix='denote type Wide = 5 | 6 | 7; denote type Narrow = 5 | 6; ';
+  const run=body=>load(prefix+'pub fnc main(): int { '+body+' }');
+  assert.equal((await run('const Wide x = 2 + 3; return x + 37;')).main(),42n);
+  assert.equal((await run('let Wide x = 5; x = 6; x = 7; return x + 35;')).main(),42n);
+  assert.equal((await run('let Wide x = 5; val Narrow y = 6; x = y; return x + 36;')).main(),42n);
+  assert.equal((await run('val Wide x = 3 * 2; return x + 36;')).main(),42n);
+  assert.equal((await run('let Wide x = 5; x = 2 * 3; return x + 36;')).main(),42n);
+  assert.equal((await load(prefix+'fnc id(Narrow n): Narrow { return n; } pub fnc main(): int { return id(4 + 1) + 37; }')).main(),42n);
+});
+test('literal mutable assignments reject invalid values without widening or overflow',()=>{
+  const prefix='denote type Wide = 5 | 6 | 7; denote type Narrow = 5 | 6; ';
+  for(const [body,reason] of [
+    ['let Wide x = 5; x = 8; return 42;',/not a proven subset/],
+    ['let Narrow x = 5; val Wide y = 7; x = y; return 42;',/not a proven subset/],
+    ['let Wide x = 5; x = true; return 42;',/not a proven subset/],
+    ['let Wide x = 5; x = 9223372036854775807 + 1; return 42;',/not a proven subset/],
+    ['let Wide x = 5; x = 5 / 1; return 42;',/not a proven subset/],
+    ['let Wide x = 5; x = x + 1; return 42;',/not a proven subset/],
+    ['val Wide x = 5; x = 6; return 42;',/E_STRING_REBIND/],
+    ['let Wide x = 5; if true then x = 6; fi return x;',/E_STRING_VIEW_SCOPE/],
+    ['let Wide x = 5; let Wide x = 6; return x;',/LOCAL_DUPLICATE_OR_SHADOW/],
+  ]) assert.throws(()=>compileProgramV2(prefix+'pub fnc main(): int { '+body+' }'),reason,body);
 });
