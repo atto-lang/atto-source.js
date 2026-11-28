@@ -82,3 +82,20 @@ test('contextual make in constructor arguments uses a unique viable nominal form
     assert.throws(()=>compileAttachedStruct(point+other+scene+body.replace('make {y:2,x:39}',bad)),/E_ATTACHED_STRUCT/);
   assert.throws(()=>compileAttachedStruct(point+scene+body.replace('Scene(1,','Scene(make {x:1,y:2},')),/E_ATTACHED_STRUCT/);
 });
+
+
+test('seeded scalar arrays refine size and execute checked physical column operations',async()=>{
+  const source='define struct Particle { int x; int y; int velocity; } with { constructor(int x,int y,int v){self.x=x;self.y=y;self.velocity=v;} } type Base = <T=Particle,size=5,layout=soa>; pub fnc main():int { let particles: Array<infer X from Base> = [make {x:10,y:20,velocity:1},make {velocity:2,x:30,y:40}] with {size=infer}; particles[0].x += 5; return particles.columns.x[0]; }';
+  const code=compileAttachedStruct(source);
+  assert.equal(await run(code),15n);
+  assert.match(code,/new BigInt64Array\(6\)/);
+  assert.match(code,/_array\[2\]=_row\[1\]/); // SoA y[0]
+  assert.match(compileAttachedStruct(source.replace('layout=soa','layout=aos')),/_array\[1\]=_row\[1\]/);
+  assert.equal(await run(compileAttachedStruct(source.replace('layout=soa','layout=aos'))),15n);
+  assert.equal(await run(compileAttachedStruct(source.replace('particles.columns.x[0]','X.size+Base.size'))),7n);
+  assert.equal(await run(compileAttachedStruct(source.replace('size=infer','size=2'))),15n);
+  assert.equal(await run(compileAttachedStruct(source.replace('size=5','size=2').replace(' with {size=infer}',''))),15n);
+  assert.equal(compileAttachedStruct(source.replace('T=Particle,size=5,layout=soa','layout=soa,size=5,T=Particle')),code);
+  for(const bad of [source.replace(' with {size=infer}',''),source.replace('size=infer','size=3'),source.replace('size=5','size=1025'),source.replace('size=5','size=5,size=5'),source.replace('T=Particle','T=Unknown'),source.replace('infer X from Base','infer Base from Base'),source.replace('infer X from Base','infer particles from Base'),source.replace('from Base','from Unknown'),source.replace('make {','new {'),source.replace('x:10,y:20,velocity:1','x:10,y:20'),source.replace('particles[0]','particles[2]'),source.replace('columns.x[0]','columns.x[2]'),source.replace('x:10','x:X.size')])
+    assert.throws(()=>compileAttachedStruct(bad),/E_ATTACHED_STRUCT|E_PARAMETRIC_BUNDLE/,bad);
+});
