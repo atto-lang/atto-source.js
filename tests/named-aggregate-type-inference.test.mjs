@@ -165,3 +165,11 @@ test('explicit Tuple context admits either singleton spelling',async()=>{
   assert.equal(await run('const Tuple<infer T> t=(1); const Tuple<T> u=(42,); return u[0];'),42n);
   assert.throws(()=>compileToIR('pub fnc main():int{const Tuple<infer T> t=(1,2);const Tuple<T> u=(42);return 0;}'),/E_TYPE_MISMATCH/);
 });
+
+test('untyped grouped scalar remains scalar and is not implicitly wrapped',async()=>{
+  assert.equal(await run('const x=(42); return x;'),42n);
+  assert.equal(await run('const x=(-42); return 0-x;'),42n);
+  assert.equal(await run('const x=42; const y=(x); return y;'),42n);
+  assert.throws(()=>compileToIR('pub fnc main():int{const x=(42);return x[0];}'));
+  assert.throws(()=>compileToIR('pub fnc main():int{const x=(42);const Tuple t=x;return 0;}'));
+});
