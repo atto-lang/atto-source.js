@@ -159,7 +159,9 @@ test('empty product kind and exact shape cannot be silently changed',()=>{
   ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),error,body);
 });
 
-test('singleton Tuple requires a comma even with a Tuple annotation',async()=>{
+test('explicit Tuple context admits either singleton spelling',async()=>{
   assert.equal(await run('const Tuple t=(42,); return t[0];'),42n);
-  assert.throws(()=>compileToIR('pub fnc main():int{const Tuple t=(42);return 0;}'),/E_TUPLE_ARITY/);
+  assert.equal(await run('const Tuple t=(42); return t[0];'),42n);
+  assert.equal(await run('const Tuple<infer T> t=(1); const Tuple<T> u=(42,); return u[0];'),42n);
+  assert.throws(()=>compileToIR('pub fnc main():int{const Tuple<infer T> t=(1,2);const Tuple<T> u=(42);return 0;}'),/E_TYPE_MISMATCH/);
 });
