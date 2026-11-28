@@ -288,7 +288,7 @@ class Parser {
       const types=[...new Set(items.map(x=>x.type))].sort();
       if(types.length!==1&&!allRecords)
         throw new CompileError('E_TYPE_MISMATCH: incompatible Array elements',at);
-      return {type:'Array:'+JSON.stringify(types),items};
+      return {type:'Array:'+types.map(t=>t.length+':'+t).join(''),items};
     }
     if(this.peek().value==='{'||
        (this.peek().value==='('&&this.ts[this.pos+1]?.kind==='string'&&this.ts[this.pos+2]?.value===':')){
@@ -304,7 +304,8 @@ class Parser {
         if(this.peek().value===close)break;
       }while(true);
       this.expect(close);
-      return {type:'Record:'+JSON.stringify([...fields].map(([k,v])=>[k,v.type]).sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0)),fields};
+      const slots=[...fields].sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0);
+      return {type:'Record:'+slots.map(([k,v])=>k.length+':'+k+v.type.length+':'+v.type).join(''),fields};
     }
     return this.readAggregateScalar(params,allowRuntime);
   }
