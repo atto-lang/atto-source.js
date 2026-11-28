@@ -276,6 +276,22 @@ class Parser {
       this.expect('with');this.readAggregateFields('Record',name,null,false,params,at,false,base);return;
     }
     const open=this.peek().value;
+    // Scalar grouping without a Tuple expectation is still scalar.
+    // Recognize only the complete existing constexpr scalar leaf grammar;
+    // never speculate, consume a field label, or flatten a nested product.
+    if(open==='('){
+      const leaf=this.ts[this.pos+1], negative=leaf?.value==='-'&&leaf.kind!=='string';
+      const scalar=negative?this.ts[this.pos+2]:leaf;
+      const close=this.ts[this.pos+(negative?3:2)];
+      const end=this.ts[this.pos+(negative?4:3)];
+      const admitted=scalar&&(scalar.kind==='int'||(!negative&&
+        (scalar.kind==='string'||(scalar.kind==='id'&&
+          (['true','false'].includes(scalar.value)||this.scalarConsts.has(scalar.value))))));
+      if(admitted&&close?.kind!=='string'&&close?.value===')'&&end?.value===';'){
+        this.expect('(');const value=this.readAggregateScalar([],false);
+        this.expect(')');this.expect(';');this.scalarConsts.set(name,value);return;
+      }
+    }
     if(open==='{'||open==='('||open==='struct'){
       // Without a concrete expected kind, the zero-arity () literal
       // defaults to Tuple. Nonempty inferred positional tuples remain
