@@ -401,7 +401,7 @@ function rejectUnsupportedStaticSelect(tokens) {
   }
 }
 class Parser {
-  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;this.patternConstants=new Map();this.patternUses=new Set();this.patternTypeNames=new Set();this.patternTypeAliases=new Map();this.patternAliasUses=new Set();}
+  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;this.scalarDenotations=new Map();this.literalDenotations=new Map();this.denotationTargets=new Map();this.patternConstants=new Map();this.patternUses=new Set();this.patternTypeNames=new Set();this.patternTypeAliases=new Map();this.patternAliasUses=new Set();}
   peek() {return this.tokens[this.i];}
   eat(s) {if(this.peek().value === s) {this.i++; return true;} return false;}
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
@@ -463,17 +463,84 @@ class Parser {
   // Accept both legacy `int value` and canonical AttoLang `value: int`.
   // The decision is token-based, not a text rewrite, so comments and typed
   // compound values cannot change parameter binding or evaluation order.
-  typedParameter(readName) {
+  typedParameter(readName,allowDenotation=false) {
     if (this.peek().kind==='id' && this.tokens[this.i+1]?.value===':') {
       const name=readName();this.expect(':');
       if (['int','bool','Symbol','Option','Result'].includes(name))
         fail('type keyword cannot be a name-first parameter',this.peek());
-      return {name,type:this.valueType()};
+      return {name,type:this.valueType(allowDenotation)};
     }
-    const type=this.valueType(),name=readName();
+    const type=this.valueType(allowDenotation),name=readName();
     return {name,type};
   }
-  valueType() {
+  scalarDenotation() {
+    const start=this.peek();
+    this.expect('denote');
+    if(this.peek().value==='pub'||this.peek().value==='private')
+      fail('denotation visibility unsupported in this profile',this.peek(),'E_UNSUPPORTED');
+    this.expect('type');
+    const name=this.name();
+    if(!/^[A-Z][A-Za-z0-9_]*$/.test(name)||isProtectedPreludeIdentity(name)||
+       GENERATOR_RESERVED.has(name)||CLASS_METHOD_RESERVED.has(name)||
+       ['Object','Actor','ActorRef','ActorMail','Error','Option','Result','Integer','String',
+        'Boolean','Float','Array','List','Vector','Tuple','Record','Map','Set','Pair','Entry',
+        'Pointer','Channel','Future','Task','Duration','UUID','Any','Never','Sendable',
+        'Serializable','Copyable','DeepCopyable','Newable','Atomic','Mutex','RwLock'].includes(name)||
+       this.denotationTargets.has(name)||this.literalDenotations.has(name))
+      fail('duplicate, reserved or unsupported denotation name '+name,start,'E_DUPLICATE');
+    if(this.denotationTargets.size+this.literalDenotations.size>=512)fail('denotation count limit',start,'E_SOURCE_LIMIT');
+    this.expect('=');
+    if(this.peek().kind==='int'||this.peek().value==='-'){
+      const members=new Set();
+      do {
+        if(members.size>=128)fail('literal union member budget exceeded',this.peek(),'E_DENOTE_LIMIT');
+        const value=this.integer(this.eat('-'));
+        if(members.has(value))fail('duplicate literal union member',this.peek(),'E_DENOTE_DUPLICATE_MEMBER');
+        members.add(value);
+      }while(this.eat('|'));
+      this.expect(';');
+      this.literalDenotations.set(name,members);
+      return;
+    }
+    const rhs=this.peek();
+    if(rhs.kind!=='id')
+      fail('unsupported scalar denotation RHS',rhs,'E_UNSUPPORTED_TYPE');
+    this.i++;
+    this.expect(';');
+    this.denotationTargets.set(name,rhs);
+  }
+  resolveDenotations() {
+    // Resolve the whole bounded prefix, including unused names. Iterative
+    // traversal avoids recursive stack growth; each successful path is
+    // memoized. A union target stays a union, never an unchecked int alias.
+    for(const name of this.denotationTargets.keys()){
+      if(this.scalarDenotations.has(name)||this.literalDenotations.has(name))continue;
+      const path=[],seen=new Set();
+      let current=name,type,members;
+      for(;;){
+        if(current==='int'||current==='bool'){type=current;break;}
+        if(this.scalarDenotations.has(current)){type=this.scalarDenotations.get(current);break;}
+        if(this.literalDenotations.has(current)){members=this.literalDenotations.get(current);break;}
+        if(seen.has(current))
+          fail('cyclic type denotation '+current,this.denotationTargets.get(current),'E_DENOTE_CYCLE');
+        const target=this.denotationTargets.get(current);
+        if(!target)
+          fail('unresolved denotation target '+current,this.denotationTargets.get(path.at(-1)),'E_UNSUPPORTED_TYPE');
+        seen.add(current);path.push(current);current=target.value;
+      }
+      for(const alias of path){
+        if(members)this.literalDenotations.set(alias,members);
+        else this.scalarDenotations.set(alias,type);
+      }
+    }
+  }
+  valueType(allowDenotation=false) {
+    if(this.literalDenotations.has(this.peek().value)){
+      if(allowDenotation)return 'denote:'+this.tokens[this.i++].value;
+      fail('literal denotation requires a proven immutable local initializer in this profile',this.peek(),'E_DENOTE_BOUNDARY_UNSUPPORTED');
+    }
+    if(this.scalarDenotations.has(this.peek().value))
+      return this.scalarDenotations.get(this.tokens[this.i++].value);
     if(this.eat('int'))return 'int';
     if(this.eat('bool'))return 'bool';
     if(this.peek().value==='boolean') {
@@ -640,7 +707,7 @@ class Parser {
     if (!this.eat(')')) {
       do {
         if (params.length >= 128) fail('parameter limit',this.peek());
-        const {type,name:p}=this.typedParameter(()=>this.name());
+        const {type,name:p}=this.typedParameter(()=>this.name(),true);
         if (params.includes(p)) fail('duplicate parameter ' + p);
         params.push(p); paramTypes.push(type);
       } while(this.eat(','));
@@ -650,7 +717,7 @@ class Parser {
     // pure void functions may fall through. No general effect lowering yet.
     let arrow=returnFirst?false:this.eat('->');
     if(!returnFirst&&!arrow)this.expect(':');
-    let returnType=returnFirst?requestedReturnType:this.eat('void')?'void':this.eat('infer')?'infer':this.valueType();
+    let returnType=returnFirst?requestedReturnType:this.eat('void')?'void':this.eat('infer')?'infer':this.valueType(true);
     // Post-type arrow is part of the canonical name-first header.
     if(!returnFirst&&!arrow)arrow=this.eat('->');
     if(returnFirst && ['->',':'].includes(this.peek().value))
@@ -822,7 +889,7 @@ class Parser {
           yes:failure,no:[]});
       } else if(this.peek().value==='val'||this.peek().value==='const'||
                  (this.peek().value==='int'&&this.tokens[this.i+1]?.kind==='id'&&this.tokens[this.i+2]?.value==='=')||
-                 (this.peek().value==='let'&&(['int','bool','string'].includes(this.tokens[this.i+1]?.value)||
+                 (this.peek().value==='let'&&(['int','bool','string'].includes(this.tokens[this.i+1]?.value)||this.literalDenotations.has(this.tokens[this.i+1]?.value)||this.scalarDenotations.has(this.tokens[this.i+1]?.value)||
                    (this.tokens[this.i+1]?.kind==='id'&&[':', 'as'].includes(this.tokens[this.i+2]?.value)&&this.tokens[this.i+3]?.value==='int')))) {
         // Only the bounded root scalar profile. Never reinterpret a failed
         // declaration as an expression or widen task/actor ownership.
@@ -840,7 +907,19 @@ class Parser {
         const typedTrapBool=this.tokens.slice(this.i,this.i+6).map(t=>t.value).join(' ')==='Result < bool , Error >';
         if(typedTrapResult||typedTrapBool)this.i+=6;
         else if(typedTrapOption)this.i+=9;
-        let localType=typedTrapBool?'trapBoolResult':typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():['Option','Result'].includes(this.peek().value)?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
+        // Keep literal membership metadata until the closed scalar proof
+        // checks each initializer and root-scope sequential assignment.
+        const literalName=this.tokens[this.i+1]?.kind==='id'&&this.literalDenotations.has(this.peek().value)?this.peek().value:null;
+        if(literalName){
+          this.literalLocalSeen=true;this.i++;
+          const name=this.name();
+          this.expect('=');
+          const init=this.expression();
+          this.expect(';');
+          statements.push({kind:'local',name,init,localType:'int',literalName,literalMutable:readOnlyLet,writable:false,taskWritable:false});
+          continue;
+        }
+        let localType=typedTrapBool?'trapBoolResult':typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():(['Option','Result'].includes(this.peek().value)||(this.scalarDenotations.has(this.peek().value)&&this.tokens[this.i+1]?.kind==='id'))?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':(this.peek().value==='String'&&this.tokens[this.i+1]?.kind==='id')?(this.stringAliasToken??=this.tokens[this.i++],'string'):'inferredTrap';
         const name=this.name();
         if(localType==='inferredTrap'&&(this.eat(':')||this.eat('as'))){
           localType=this.valueType();
@@ -858,10 +937,10 @@ class Parser {
         if(isConst&&directional&&localType!=='int')fail('only directional const int is admitted here',this.peek());
         // Keep the historic directional constexpr profile separate. Ordinary
         // locals are fixed, eagerly initialized runtime values; the validated
-        // typed IR owns checking and lowering. This slice admits int only.
+        // typed IR owns checking and lowering. Use existing bounded scalar slots.
         if(isConst&&!directional){
           if(localType==='inferredTrap')localType='inferredInt';
-          else if(localType!=='int')fail('ordinary const requires int in this bounded profile',this.peek());
+          else if(!['int','bool','string'].includes(localType))fail('ordinary const requires bounded int, bool or string in this profile',this.peek());
         }
         statements.push({kind:'local',name,init,localType:isConst&&directional?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string',taskWritable:readOnlyLet&&localType==='int',lexicalLet:readOnlyLet&&!directional&&localType==='int'});
       } else if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
@@ -929,7 +1008,7 @@ class Parser {
       else if(stmt.kind==='tryCatch')result={kind:'tryCatch',name:stmt.name,body:this.lowerStatements(stmt.body,null),handler:this.lowerStatements(stmt.handler,null)};
       else if(stmt.kind==='local'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
-        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,taskWritable:stmt.taskWritable===true,lexicalLet:stmt.lexicalLet===true,rebind:stmt.rebind===true,body:result};
+        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,taskWritable:stmt.taskWritable===true,lexicalLet:stmt.lexicalLet===true,rebind:stmt.rebind===true,...(stmt.literalName?{literalName:stmt.literalName,literalMutable:stmt.literalMutable===true}:{}),body:result};
       }
       else if(stmt.kind==='stdoutWrite'||stmt.kind==='stdoutDefer'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: stdout must precede a value return');
@@ -1024,6 +1103,11 @@ class Parser {
     }
     const modules=[],functions=[],generators=[],classes=[],usedModules=new Set(),usedClasses=new Set();
     const exportDeclarations=[];
+    while(this.peek().value==='denote'){
+      if(namespace!==null)fail('namespace denotations require verified type linking',this.peek(),'E_UNSUPPORTED');
+      this.scalarDenotation();
+    }
+    this.resolveDenotations();
     while(this.peek().kind!=='eof'){
       if(this.peek().value==='type'&&this.tokens[this.i+2]?.value==='='){
         if(functions.length||modules.length||classes.length||generators.length||exportDeclarations.length)
@@ -1093,6 +1177,10 @@ class Parser {
         else functions.push(this.functions(null));
       }
     }
+    if((this.scalarDenotations.size||this.literalDenotations.size)&&(classes.length||modules.length||generators.length||exportDeclarations.length))
+      fail('denotations with nominal, module, generator or explicit export declarations require linked type identities',this.peek(),'E_UNSUPPORTED');
+    if((this.scalarDenotations.size||this.literalDenotations.size)&&(this.patternTypeAliases.size||this.patternConstants.size))
+      fail('denotations combined with compile-time Pattern declarations require linked type identities',this.peek(),'E_UNSUPPORTED');
     // Initial file-scope profile: reject any other occurrence of a pattern
     // constant identifier, including runtime use or shadowing. This is
     // intentionally conservative until the full lexical resolver supports it.
@@ -1106,10 +1194,176 @@ class Parser {
     for(const name of this.patternTypeNames){
       if(usedClasses.has(name)||usedModules.has(name))fail('scalar pattern type name shadowed by declaration '+name,this.peek());
     }
+    if(this.stringAliasToken&&(usedClasses.has('String')||usedModules.has('String')))
+      fail('E_TYPE_ALIAS_SHADOWED: String requires nominal type resolution',this.stringAliasToken);
     if(this.booleanAliasToken&&(usedClasses.has('boolean')||usedModules.has('boolean')))
       fail('E_TYPE_ALIAS_SHADOWED: boolean requires nominal type resolution',this.booleanAliasToken);
     if(!functions.length&&!generators.length&&!modules.length&&!classes.length)fail('empty program');
+    this.checkLiteralCallableBoundaries(functions);
     return {namespace,modules,functions,generators,classes,exportDeclarations};
+  }
+  // Literal-set proofs precede scalar erasure. The initial callable slice
+  // deliberately admits only closed, pure scalar ASTs, never unchecked
+  // public parameters, indirect calls, mutation, effects or task boundaries.
+  checkLiteralCallableBoundaries(functions) {
+    const members=type=>typeof type==='string'&&type.startsWith('denote:')?this.literalDenotations.get(type.slice(7)):undefined;
+    if(!this.literalLocalSeen&&!this.literalExhaustiveMatchSeen&&!functions.some(f=>members(f.returnType)||f.paramTypes?.some(members)))return;
+    const slots=new Map();
+    const signatures=new Map();
+    for(const f of functions){
+      const key=f.name+'/'+f.params.length;
+      if(slots.has(key))fail('duplicate callable slot '+key);
+      slots.set(key,f);
+      const inputs=f.params.map((_,i)=>members(f.paramTypes?.[i]));
+      if(f.pub&&inputs.some(Boolean))
+        fail('E_DENOTE_PUBLIC_PARAMETER: external literal union admission requires a checked host ABI');
+      signatures.set(f,{inputs,output:members(f.returnType)});
+    }
+    let visits=0;
+    const provenExhaustive=new Set();
+    // Branch-local snapshots. Only compare an already-proven integer
+    // binding against a literal; never infer facts from an arbitrary call.
+    const narrowed=(condition,scope,truth)=>{
+      if(condition.kind==='not')return narrowed(condition.inner,scope,!truth);
+      if(condition.kind!=='compare')return scope;
+      const {left,right,op}=condition;
+      const reversed=left.kind==='int'&&right.kind==='variable';
+      const variable=reversed?right:left,literal=reversed?left:right;
+      if(variable.kind!=='variable'||literal.kind!=='int')return scope;
+      const prior=scope.get(variable.name);
+      if(!prior)return scope;
+      const test=(a,b)=>{
+        if(reversed)[a,b]=[b,a];
+        switch(op){
+          case '==':return a===b;case '!=':return a!==b;
+          case '<':return a<b;case '<=':return a<=b;
+          case '>':return a>b;case '>=':return a>=b;
+          default:return undefined;
+        }
+      };
+      if(!['==','!=','<','<=','>','>='].includes(op))return scope;
+      const subset=new Set([...prior].filter(v=>test(BigInt(v),BigInt(literal.value))===truth));
+      // Still validate unreachable arms conservatively; do not use empty
+      // proof sets to waive arbitrary type errors.
+      if(!subset.size)return scope;
+      const next=new Map(scope);next.set(variable.name,subset);return next;
+    };
+    const requireSubset=(actual,want,label)=>{
+      if(want&&(!actual||[...actual].some(v=>!want.has(v))))
+        fail('E_DENOTE_MEMBERSHIP: '+label+' is not a proven subset');
+    };
+    const proof=(e,scope,depth=0,mutable=new Map())=>{
+      if(depth>MAX_DEPTH||++visits>MAX_TOKENS)fail('E_DENOTE_LIMIT: proof budget exceeded');
+      if(!e)fail('E_DENOTE_BOUNDARY_UNSUPPORTED: missing scalar expression');
+      const child=x=>proof(x,scope,depth+1,mutable);
+      // Finite abstract interpretation; do not enumerate unbounded products.
+      const arithmetic=(left,right,op)=>{
+        if(!left||!right||left.size*right.size>128)return undefined;
+        const out=new Set();
+        for(const a of left)for(const b of right){
+          const x=BigInt(a),y=BigInt(b);
+          const n=op==='+'?x+y:op==='-'?x-y:op==='*'?x*y:undefined;
+          if(n===undefined||n<MIN||n>MAX)return undefined;
+          out.add(n.toString());
+        }
+        return out;
+      };
+      switch(e.kind){
+        case 'int':return new Set([e.value]);
+        case 'bool':case 'string':return undefined;
+        case 'variable':return scope.get(e.name);
+        case 'neg':return arithmetic(new Set(['0']),child(e.inner),'-');
+        case 'not':child(e.inner);return undefined;
+        case 'binary':return arithmetic(child(e.left),child(e.right),e.op);
+        case 'compare':child(e.left);child(e.right);return undefined;
+        case 'if':{
+          child(e.condition);
+          const yes=proof(e.yes,narrowed(e.condition,scope,true),depth+1,mutable);
+          const no=proof(e.no,narrowed(e.condition,scope,false),depth+1,mutable);
+          return yes&&no&&yes.size+no.size<=128?new Set([...yes,...no]):undefined;
+        }
+        case 'match':{
+          if(e.subjectType==='bool'||e.arms.some(a=>Array.isArray(a.value)))fail('E_DENOTE_BOUNDARY_UNSUPPORTED: grouped or bool match in literal callable profile');
+          const subject=child(e.subject);
+          const remaining=subject?new Set(subject):undefined;
+          let result=new Set(),allKnown=true,hasDefault=false;
+          for(const arm of e.arms){
+            const armValues=arm.value===null?remaining:remaining?.has(arm.value)?new Set([arm.value]):undefined;
+            if(arm.value===null)hasDefault=true;
+            const next=new Map(scope);
+            if(e.subject.kind==='variable'&&armValues?.size)
+              next.set(e.subject.name,new Set(armValues));
+            const actual=proof(arm.body,next,depth+1,mutable);
+            if(!actual)allKnown=false;
+            else for(const v of actual)result.add(v);
+            if(arm.value!==null)remaining?.delete(arm.value);
+          }
+          if(!hasDefault){
+            if(!subject?.size||remaining?.size||!e.arms.length)
+              fail('E_DENOTE_NONEXHAUSTIVE: literal match requires all possible members or default');
+            provenExhaustive.add(e);
+          }
+          return allKnown&&result.size<=128?result:undefined;
+        }
+        case 'local':{
+          const actual=child(e.init),next=new Map(scope),nextMutable=new Map(mutable);
+          if(e.rebind){
+            const want=mutable.get(e.name);
+            if(!want)fail('E_STRING_REBIND: requires writable typed string local or literal union');
+            requireSubset(actual,want,'assignment to '+e.name);
+            e.literalRebind=true;e.localType='int';e.writable=false;
+            next.set(e.name,want);
+          }else{
+            if(e.writable||e.taskWritable||e.taskRebind||e.lexicalLet)
+              fail('E_DENOTE_BOUNDARY_UNSUPPORTED: mutable binding in literal callable profile');
+            if(e.literalName){
+              const want=this.literalDenotations.get(e.literalName);
+              requireSubset(actual,want,'literal denotation initializer of '+e.name);
+              if(e.literalMutable)nextMutable.set(e.name,want);
+              next.set(e.name,want);
+            }else next.set(e.name,['int','constInt'].includes(e.localType)?actual:undefined);
+          }
+          return proof(e.body,next,depth+1,nextMutable);
+        }
+        case 'call':{
+          if(e.qualifier!==null)
+            fail('E_DENOTE_BOUNDARY_UNSUPPORTED: qualified call in literal callable profile');
+          const target=slots.get(e.name+'/'+e.args.length);
+          if(!target)fail('E_DENOTE_BOUNDARY_UNSUPPORTED: unresolved direct call '+e.name);
+          const sig=signatures.get(target);
+          let positional=0;const seen=new Set();
+          for(const arg of e.args){
+            const index=arg.name===null?positional++:target.params.indexOf(arg.name);
+            if(index<0||index>=target.params.length||seen.has(index))
+              fail('E_DENOTE_BOUNDARY_UNSUPPORTED: invalid call binding');
+            seen.add(index);
+            requireSubset(child(arg.expr),sig.inputs[index],'argument '+target.params[index]);
+          }
+          if(seen.size!==target.params.length)fail('E_DENOTE_BOUNDARY_UNSUPPORTED: incomplete call binding');
+          return sig.output;
+        }
+        default:fail('E_DENOTE_BOUNDARY_UNSUPPORTED: unsupported expression '+e.kind+' in literal callable profile');
+      }
+    };
+    for(const f of functions){
+      const sig=signatures.get(f);
+      if(f.body!==null){
+        const scope=new Map(f.params.map((p,i)=>[p,sig.inputs[i]]));
+        requireSubset(proof(f.body,scope),sig.output,'return of '+f.name);
+      }
+    }
+    // A lowered statement DAG can share a match between scopes. Delay
+    // conversion of its final arm to a wildcard until every visit passes.
+    for(const e of provenExhaustive)e.arms.at(-1).value=null;
+    // Only after every body and call site is checked may the existing
+    // validated integer ABI be used. No source-level proof metadata leaks.
+    for(const f of functions){
+      if(f.paramTypes)f.paramTypes=f.paramTypes.map(t=>members(t)?'int':t);
+      if(members(f.returnType))f.returnType='int';
+      if(f.returnType==='int'&&f.paramTypes?.every(t=>t==='int')){
+        delete f.returnType;delete f.paramTypes;
+      }
+    }
   }
   integer(negative = false) {
     const token=this.peek();
@@ -1777,7 +2031,10 @@ class Parser {
     const boolDomain=literals.some(v=>typeof v==='boolean');
     if(boolDomain&&literals.some(v=>typeof v!=='boolean'))fail('mixed scalar match domains');
     if(boolDomain&&new Set(literals).size===2&&wildcard)fail('unreachable wildcard after complete bool coverage');
-    if(!wildcard&&!(boolDomain&&new Set(literals).size===2))fail('scalar match requires exhaustive coverage');
+    if(!wildcard&&!(boolDomain&&new Set(literals).size===2)){
+      if(boolDomain||!this.literalDenotations.size)fail('scalar match requires exhaustive coverage');
+      this.literalExhaustiveMatchSeen=true;
+    }
     return {kind:'match',...(boolDomain?{subjectType:'bool'}:{}),subject,arms:arms.map(arm=>({value:arm.value,body:arm.body}))};
   }
 }
@@ -2028,6 +2285,9 @@ function resolveProgram(parsed) {
           fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
         if(expr.taskRebind){
           if(expr.rebind||!previous||previous.type!=='int')fail('E_TASK_LOCAL_WRITE: requires previously declared int local');
+        }else if(expr.literalRebind){
+          if(!previous||previous.type!=='int'||!previous.literalMutable)
+            fail('E_DENOTE_BOUNDARY_UNSUPPORTED: assignment requires writable literal local');
         }else if(expr.rebind){
           if(!previous||previous.type!=='string'||!previous.writable)
             fail('E_STRING_REBIND: requires writable typed string local');
@@ -2076,7 +2336,7 @@ function resolveProgram(parsed) {
         if(expr.taskRebind&&resolvedType(init,owner)!=='int')fail('E_TASK_LOCAL_WRITE: int assignment required');
         const taskMutable=expr.taskWritable===true&&taskWrites(expr.body,expr.name);
         return {kind:taskMutable?'taskMutableLocal':type==='option<bool>'?'optionBoolLocal':type==='trapBoolResult'?'trapBoolLocal':type==='option<int>'?'optionLocal':type==='result<int,int>'?'resultLocal':type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':type==='bool'?'boolLocal':type==='string'?'stringLocal':'local',slot,init,
-          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string',taskMutable,lexicalLet:expr.lexicalLet===true&&type==='int'}])};
+          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string',taskMutable,lexicalLet:expr.lexicalLet===true&&type==='int',literalMutable:expr.literalMutable===true||expr.literalRebind===true}])};
       }
       case 'taskScope':{
         if(owner.inlineTask||owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer')fail('E_SYNC_TASK_PROFILE: unsupported task boundary');
