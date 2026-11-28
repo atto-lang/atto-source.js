@@ -32,7 +32,7 @@ test('reject bad named aggregate declarations before IR',()=>{
     ['const Record<infer T> r=(a=1); const Record<T> s=(a=1,b=2);',/E_TYPE_MISMATCH/],
     ['const Record<infer T> r=(a=1,b=2); const Record<T> s=(a=1);',/E_TYPE_MISMATCH/],
     ['const Tuple<infer T> r=(1,true); const Tuple<T> s=(true,1);',/E_TYPE_MISMATCH/],
-    ['const Tuple<infer T> r=(1,true); const Tuple<T> s=(1);',/E_TYPE_MISMATCH/],
+    ['const Tuple<infer T> r=(1,true); const Tuple<T> s=(1,);',/E_TYPE_MISMATCH/],
     ['const struct<infer T> r={a:1}; const Record<T> s=(a=1);',/E_AGGREGATE_KIND/],
     ['const Record<infer T> r=(a=unknown);',/E_TYPE_INFER_AMBIGUOUS/],
   ])assert.throws(()=>compileToIR('pub fnc main(): int { '+body+' return 0; }'),error);
@@ -157,4 +157,9 @@ test('empty product kind and exact shape cannot be silently changed',()=>{
     ['const struct s={}; return 0;',/E_LITERAL_KIND/],
     ['const t=(); const Record r=t; return 0;',/expected/]
   ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),error,body);
+});
+
+test('singleton Tuple requires a comma even with a Tuple annotation',async()=>{
+  assert.equal(await run('const Tuple t=(42,); return t[0];'),42n);
+  assert.throws(()=>compileToIR('pub fnc main():int{const Tuple t=(42);return 0;}'),/E_TUPLE_ARITY/);
 });
