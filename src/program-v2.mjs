@@ -887,6 +887,13 @@ class Parser {
           fail('E_GUARD: every failure path must explicitly return from the function',this.peek());
         statements.push({kind:'branch',condition:{kind:'not',inner:condition},
           yes:failure,no:[]});
+      } else if(this.peek().value==='set'&&this.tokens[this.i+1]?.kind==='id'&&this.tokens[this.i+2]?.value==='<-'){
+        if(depth!==0)fail('E_OWNERSHIP: binding arrow requires root scalar scope',this.peek());
+        this.expect('set');const name=this.name();this.expect('<-');
+        const init=this.expression();this.expect(';');
+        if(!['int','variable'].includes(init.kind)||init.kind==='variable'&&init.name===name)
+          fail('E_OWNERSHIP: scalar transfer requires a distinct int source or literal',this.peek());
+        statements.push({kind:'local',name,init,localType:'int',lexicalLet:true,bindingTransfer:true,transferSet:true});
       } else if(this.peek().value==='val'||this.peek().value==='const'||
                  (this.peek().value==='int'&&this.tokens[this.i+1]?.kind==='id'&&this.tokens[this.i+2]?.value==='=')||
                  (this.peek().value==='let'&&(['int','bool','string'].includes(this.tokens[this.i+1]?.value)||this.literalDenotations.has(this.tokens[this.i+1]?.value)||this.scalarDenotations.has(this.tokens[this.i+1]?.value)||
@@ -926,14 +933,19 @@ class Parser {
           if(!['int','float','bool','string'].includes(localType))fail('name-first binding requires primitive type in this profile',this.peek());
         }
         if(this.peek().value===';')fail('E_MISSING_INITIALIZER: explicit initializer required',this.peek());
-        const directional=this.takeDirection('<');
-        if(!directional)this.expect('=');
+        const transfer=this.eat('<-');
+        if(transfer&&(!readOnlyLet||localType!=='int'))
+          fail('E_OWNERSHIP: only explicit typed int let transfer is admitted',this.peek());
+        const directional=!transfer&&this.takeDirection('<');
+        if(!directional&&!transfer)this.expect('=');
         let init;
         if(localType==='inferredTrap'&&!directional&&!isConst){
           if(this.eat('trap!')||this.eat('trap'))init={kind:'trap',inner:this.expression()};
           else {localType='inferredInt';init=this.expression();}
         }else init=this.expression();
         this.expect(';');
+        if(transfer&&!['int','variable'].includes(init.kind))
+          fail('E_OWNERSHIP: scalar transfer requires int literal or named source',this.peek());
         if(isConst&&directional&&localType!=='int')fail('only directional const int is admitted here',this.peek());
         // Keep the historic directional constexpr profile separate. Ordinary
         // locals are fixed, eagerly initialized runtime values; the validated
@@ -942,7 +954,7 @@ class Parser {
           if(localType==='inferredTrap')localType='inferredInt';
           else if(!['int','bool','string'].includes(localType))fail('ordinary const requires bounded int, bool or string in this profile',this.peek());
         }
-        statements.push({kind:'local',name,init,localType:isConst&&directional?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string',taskWritable:readOnlyLet&&localType==='int',lexicalLet:readOnlyLet&&!directional&&localType==='int'});
+        statements.push({kind:'local',name,init,localType:isConst&&directional?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string',taskWritable:readOnlyLet&&localType==='int',lexicalLet:readOnlyLet&&!directional&&localType==='int',bindingTransfer:transfer});
       } else if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
         if(depth!==0)fail('E_STRING_VIEW_SCOPE: rebinding requires root function scope',this.peek());
         const name=this.name();this.expect('=');
@@ -1008,7 +1020,7 @@ class Parser {
       else if(stmt.kind==='tryCatch')result={kind:'tryCatch',name:stmt.name,body:this.lowerStatements(stmt.body,null),handler:this.lowerStatements(stmt.handler,null)};
       else if(stmt.kind==='local'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
-        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,taskWritable:stmt.taskWritable===true,lexicalLet:stmt.lexicalLet===true,rebind:stmt.rebind===true,...(stmt.literalName?{literalName:stmt.literalName,literalMutable:stmt.literalMutable===true}:{}),body:result};
+        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,taskWritable:stmt.taskWritable===true,lexicalLet:stmt.lexicalLet===true,rebind:stmt.rebind===true,bindingTransfer:stmt.bindingTransfer===true,transferSet:stmt.transferSet===true,...(stmt.literalName?{literalName:stmt.literalName,literalMutable:stmt.literalMutable===true}:{}),body:result};
       }
       else if(stmt.kind==='stdoutWrite'||stmt.kind==='stdoutDefer'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: stdout must precede a value return');
@@ -2283,7 +2295,11 @@ function resolveProgram(parsed) {
         const previous=bindings.findLast(b=>b.name===expr.name);
         if(owner.ownerKind==='method'||owner.params.includes(expr.name))
           fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
-        if(expr.taskRebind){
+        if(expr.transferSet){
+          if(!previous||previous.type!=='int'||!previous.lexicalLet||previous.taskMutable||owner.inlineTask||
+             taskWrites(expr,expr.name))
+            fail('E_OWNERSHIP: transfer set requires an existing writable unshared int let');
+        }else if(expr.taskRebind){
           if(expr.rebind||!previous||previous.type!=='int')fail('E_TASK_LOCAL_WRITE: requires previously declared int local');
         }else if(expr.literalRebind){
           if(!previous||previous.type!=='int'||!previous.literalMutable)
@@ -2333,6 +2349,8 @@ function resolveProgram(parsed) {
           };
           if(typeof fold(init)!=='bigint')fail('directional const int requires int');
         }
+        if(expr.bindingTransfer&&resolvedType(init,owner)!=='int')
+          fail('E_OWNERSHIP: transfer source must be intrinsic int');
         if(expr.taskRebind&&resolvedType(init,owner)!=='int')fail('E_TASK_LOCAL_WRITE: int assignment required');
         const taskMutable=expr.taskWritable===true&&taskWrites(expr.body,expr.name);
         return {kind:taskMutable?'taskMutableLocal':type==='option<bool>'?'optionBoolLocal':type==='trapBoolResult'?'trapBoolLocal':type==='option<int>'?'optionLocal':type==='result<int,int>'?'resultLocal':type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':type==='bool'?'boolLocal':type==='string'?'stringLocal':'local',slot,init,
