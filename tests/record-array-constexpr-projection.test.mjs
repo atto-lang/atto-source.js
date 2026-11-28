@@ -9,12 +9,12 @@ const run=async body=>{
 test('literal Record arrays and heterogeneous record arrays project actual i64 guests',async()=>{
   for(const body of [
     'const Record r={x:[1,2,39]}; return r.x[0]+r.x[1]+r.x[2];',
-    'const Record r=("x":[1,2,39]); return r["x"][0]+r.x[1]+r.x[2];',
+    'const DynRecord r=("x":[1,2,39]); return r["x"][0]+r.x[1]+r.x[2];',
     'const Record r={x:[{a:1},{b:2},{c:39}]}; return r.x[0].a+r.x[1].b+r.x[2].c;',
-    'const Record r=("x":[{a:1},("b":2),{c:39}]); return r.x[0].a+r.x[1]["b"]+r.x[2].c;',
+    'const DynRecord r=("x":[{a:1},("b":2),{c:39}]); return r.x[0].a+r.x[1]["b"]+r.x[2].c;',
     'const Record r={x:{y:[{z:42}]}}; return r.x.y[0].z;',
-    'const Record r={x:[("content-type":42)]}; return r.x[0]["content-type"];',
-    'const Record<infer T> r={x:[{a:1},{b:2}]}; const Record<T> s=("x":[("b":42),{a:1}]); return s.x[0].b;'
+    'const Record r={x:[("content-type"=42)]}; return r.x[0]["content-type"];',
+    'const Record<infer T> r={x:[{a:1},{b:2}]}; const Record<T> s={x:[{b:42},{a:1}]}; return s.x[0].b;'
   ]) assert.equal(await run(body),42n,body);
 });
 test('recursive Record/Array boundaries reject before IR creation',()=>{
