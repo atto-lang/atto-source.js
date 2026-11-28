@@ -1626,16 +1626,21 @@ class Parser {
     if(this.peek().value===']')fail('empty membership list',this.peek());
     do {
       if(parts.length===64)fail('membership limit: 64 integer alternatives',this.peek());
-      parts.push({values:[this.integer(this.eat('-'))],types:[]});
+      parts.push({values:[this.patternLiteral()],types:[]});
     } while(this.eat(',')&&this.peek().value!==']');
     this.expect(']');
     return this.combinePatterns(parts);
+  }
+  patternLiteral() {
+    if(this.eat('true'))return true;
+    if(this.eat('false'))return false;
+    return this.integer(this.eat('-'));
   }
   patternDescriptor(depth=0) {
     if(depth>32)fail('compile-time pattern nesting limit',this.peek());
     if(this.eat('on')){
       if(this.patternConstants.has(this.peek().value))return this.patternRef(false);
-      return {values:[this.integer(this.eat('-'))],types:[]};
+      return {values:[this.patternLiteral()],types:[]};
     }
     if(this.eat('is'))return this.patternTypeList();
     if(this.eat('in'))return this.patternMembership(depth+1);
@@ -1656,6 +1661,11 @@ class Parser {
     this.patternConstants.set(name,{array,pattern});
   }
   scalarPatternArm(pattern) {
+    if(pattern.values.some(v=>typeof v==='boolean')) {
+      if(pattern.types.length||pattern.values.some(v=>typeof v!=='boolean'))
+        fail('mixed boolean pattern sets unsupported in this profile',this.peek());
+      return {tag:pattern.values.length===1?'integer':'membership',value:pattern.values.length===1?pattern.values[0]:pattern.values};
+    }
     if(pattern.types.includes('int'))return {tag:'wildcard',value:null};
     if(pattern.values.length===1)return {tag:'integer',value:pattern.values[0]};
     if(pattern.values.length)return {tag:'membership',value:pattern.values};
@@ -1714,7 +1724,7 @@ class Parser {
         } else {
           if(family==='adt')fail('cannot mix ADT and integer patterns',at);
           family='int';tag='integer';
-          value=this.integer(this.eat('-'));
+          value=this.patternLiteral();
         }
       }
       if(tag==='wildcard'&&(this.peek().value==='when'||this.peek().value==='as'))
@@ -1763,8 +1773,12 @@ class Parser {
       return {kind:'adtMatch',adt:option?'option<int>':'result<int,int>',
         typed,subject,arms:arms.map(arm=>({tag:arm.tag,bind:arm.bind,body:arm.body}))};
     }
-    if(!wildcard)fail('scalar int match requires exhaustive wildcard/else');
-    return {kind:'match',subject,arms:arms.map(arm=>({value:arm.value,body:arm.body}))};
+    const literals=arms.flatMap(arm=>arm.value===null?[]:Array.isArray(arm.value)?arm.value:[arm.value]);
+    const boolDomain=literals.some(v=>typeof v==='boolean');
+    if(boolDomain&&literals.some(v=>typeof v!=='boolean'))fail('mixed scalar match domains');
+    if(boolDomain&&new Set(literals).size===2&&wildcard)fail('unreachable wildcard after complete bool coverage');
+    if(!wildcard&&!(boolDomain&&new Set(literals).size===2))fail('scalar match requires exhaustive coverage');
+    return {kind:'match',...(boolDomain?{subjectType:'bool'}:{}),subject,arms:arms.map(arm=>({value:arm.value,body:arm.body}))};
   }
 }
 function resolveProgram(parsed) {
@@ -2270,7 +2284,7 @@ function resolveProgram(parsed) {
       case 'match':
         if(owner.ownerKind==='method')
           fail('match inside method body unsupported in convergence slice');
-        return {kind:'match',subject:resolve(expr.subject,owner,depth+1,bindings),
+        return {kind:'match',...(expr.subjectType==='bool'?{subjectType:'bool'}:{}),subject:resolve(expr.subject,owner,depth+1,bindings),
         arms:expr.arms.map(arm=>({value:arm.value,body:resolve(arm.body,owner,depth+1,bindings)}))};
       case 'adtMatch': {
         if(owner.ownerKind==='method')
@@ -2520,8 +2534,8 @@ function emitProgram(program) {
         const lines=['(()=>{const _subject='+emitExpr(expr.subject,depth+1)+';switch(_subject){'];
         expr.arms.forEach(arm=>{
           if(Array.isArray(arm.value)) {
-            for(const value of arm.value)lines.push('case '+value+'n:');
-          } else lines.push(arm.value===null?'default:':'case '+arm.value+'n:');
+            for(const value of arm.value)lines.push('case '+(typeof value==='boolean'?String(value):value+'n')+':');
+          } else lines.push(arm.value===null?'default:':'case '+(typeof arm.value==='boolean'?String(arm.value):arm.value+'n')+':');
           lines.push('return '+emitExpr(arm.body,depth+1)+';');
         });
         lines.push('}})()');

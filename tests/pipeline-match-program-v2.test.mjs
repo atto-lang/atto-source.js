@@ -119,7 +119,7 @@ test('compile-time Pattern constants cannot escape or be silently widened',()=>{
     'const Pattern[] z = [on 1]; pub fnc main():int { return match 1 over on z -> 42,on _ -> 0 end; }',
     'const Pattern p = on 1; fnc use(Pattern x):int { return 42; } pub fnc main():int { return use(p); }',
     'pub fnc main(int n):int { const Pattern p = on n; return 42; }',
-    'const Pattern p = on true; pub fnc main():int { return 42; }',
+    'const Pattern p = on true; pub fnc main():int { return match 1 over on p -> 42,on _ -> 0 end; }',
     'const Pattern p = is Foo; pub fnc main():int { return 42; }',
     'const Pattern[] z = [on 1,on 2]; pub fnc main():int { return match 2 over in z -> 42,on 2 -> 0,on _ -> 0 end; }',
     'const Pattern[] z = ['+Array.from({length:65},(_,i)=>'on '+i).join(',')+']; pub fnc main():int { return 42; }'
@@ -143,4 +143,28 @@ test('scalar type aliases resolve before pattern lowering',async()=>{
     'type X = int; pub fnc main():int { return X; }',
     'type X = int; const Pattern X = on 5; pub fnc main():int { return 42; }'
   ])assert.throws(()=>compileProgramV2(src),/error:/,src);
+});
+
+test('compile-time bool Pattern collections execute the original subject once',async()=>{
+  const prefix='const Pattern[] z = [on true, on false]; ';
+  const src=prefix+'pub fnc main():int { return match false over in z -> 42 end; }';
+  assert.equal((await load(src)).main(),42n);
+  assert.equal((await load(prefix+'pub fnc main(bool x):int { return x |> match over in z -> 42 end; }')).main(true),42n);
+  const direct='pub fnc main():int { return match false over in [on true,on false] -> 42 end; }';
+  assert.deepEqual(compileToProgramIRV2(src),compileToProgramIRV2(direct));
+  const branch=await load('pub fnc main(bool x):int { return match x over on false -> 30,on true -> 42 end; }');
+  assert.equal(branch.main(false),30n);
+  assert.equal(branch.main(true),42n);
+  const lazy=await load('pub fnc main(bool x,int n):int { return match x over on true -> 42,on false -> 1 / (n-n) end; }');
+  assert.equal(lazy.main(true,0n),42n);
+});
+test('bool pattern domain cannot coerce integers or fabricate exhaustiveness',()=>{
+  for(const source of [
+    'pub fnc main():int { return match 0 over in [on true,on false] -> 42 end; }',
+    'pub fnc main():int { return match true over on false -> 42 end; }',
+    'pub fnc main():int { return match true over in [on true,on true] -> 42 end; }',
+    'pub fnc main():int { return match true over in [on true,on 1] -> 42,on _ -> 0 end; }',
+    'pub fnc main():int { return match true over on true -> 42,on false -> 0,on _ -> 1 end; }',
+    'pub fnc main():int { return match true over on true -> 42,on 1 -> 0,on _ -> 1 end; }'
+  ])assert.throws(()=>compileProgramV2(source),/error:/,source);
 });

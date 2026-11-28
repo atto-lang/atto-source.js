@@ -823,8 +823,12 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
         return {kind:'adtMatch',adt:expr.adt,subject,arms:checked};
       }
       case 'match': {
-        record(expr,['kind','subject','arms'],'match');
-        const subject=node(expr.subject,owner,depth+1,'int',active);
+        const typed=Object.hasOwn(expr,'subjectType');
+        record(expr,typed?['kind','subjectType','subject','arms']:['kind','subject','arms'],'match');
+        if(typed&&expr.subjectType!=='bool')fail('invalid explicit match domain');
+        const domain=typed?'bool':'int';
+        const scalar=v=>{if(domain==='int')return int(v);if(typeof v!=='boolean')fail('invalid boolean pattern');return v;};
+        const subject=node(expr.subject,owner,depth+1,domain,active);
         const arms=sequence(expr.arms,256,'match arms');
         if(!arms.length)fail('empty match');
         let wildcard=false;
@@ -834,6 +838,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
           let value;
           if(arm.value===null) {
             if(wildcard)fail('duplicate wildcard');
+            if(domain==='bool'&&literals.size===2)fail('unreachable wildcard after complete bool coverage');
             wildcard=true;value=null;
           } else {
             if(wildcard)fail('unreachable arm after wildcard');
@@ -843,7 +848,7 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
               value=[];
               const local=new Set();
               for(const item of items){
-                const canonical=int(item);
+                const canonical=scalar(item);
                 if(local.has(canonical))fail('duplicate membership alternative');
                 local.add(canonical);
                 if(!literals.has(canonical))value.push(canonical);
@@ -851,15 +856,15 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
               if(!value.length)fail('unreachable membership arm');
               for(const item of value)literals.add(item);
             } else {
-              value=int(arm.value);
+              value=scalar(arm.value);
               if(literals.has(value))fail('duplicate scalar pattern');
               literals.add(value);
             }
           }
           return {value,body:node(arm.body,owner,depth+1,expected,active)};
         });
-        if(!wildcard)fail('non-exhaustive int match');
-        return {kind:'match',subject,arms:checked};
+        if(!wildcard&&!(domain==='bool'&&literals.size===2))fail('non-exhaustive scalar match');
+        return {kind:'match',...(typed?{subjectType:'bool'}:{}),subject,arms:checked};
       }
       default:fail('unsupported expression kind');
     }
