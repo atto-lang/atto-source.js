@@ -919,7 +919,7 @@ class Parser {
           statements.push({kind:'local',name,init,localType:'int',literalName,literalMutable:readOnlyLet,writable:false,taskWritable:false});
           continue;
         }
-        let localType=typedTrapBool?'trapBoolResult':typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():(['Option','Result'].includes(this.peek().value)||(this.scalarDenotations.has(this.peek().value)&&this.tokens[this.i+1]?.kind==='id'))?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
+        let localType=typedTrapBool?'trapBoolResult':typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():(['Option','Result'].includes(this.peek().value)||(this.scalarDenotations.has(this.peek().value)&&this.tokens[this.i+1]?.kind==='id'))?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':(this.peek().value==='String'&&this.tokens[this.i+1]?.kind==='id')?(this.stringAliasToken??=this.tokens[this.i++],'string'):'inferredTrap';
         const name=this.name();
         if(localType==='inferredTrap'&&(this.eat(':')||this.eat('as'))){
           localType=this.valueType();
@@ -937,10 +937,10 @@ class Parser {
         if(isConst&&directional&&localType!=='int')fail('only directional const int is admitted here',this.peek());
         // Keep the historic directional constexpr profile separate. Ordinary
         // locals are fixed, eagerly initialized runtime values; the validated
-        // typed IR owns checking and lowering. This slice admits int only.
+        // typed IR owns checking and lowering. Use existing bounded scalar slots.
         if(isConst&&!directional){
           if(localType==='inferredTrap')localType='inferredInt';
-          else if(localType!=='int')fail('ordinary const requires int in this bounded profile',this.peek());
+          else if(!['int','bool','string'].includes(localType))fail('ordinary const requires bounded int, bool or string in this profile',this.peek());
         }
         statements.push({kind:'local',name,init,localType:isConst&&directional?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string',taskWritable:readOnlyLet&&localType==='int',lexicalLet:readOnlyLet&&!directional&&localType==='int'});
       } else if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
@@ -1194,6 +1194,8 @@ class Parser {
     for(const name of this.patternTypeNames){
       if(usedClasses.has(name)||usedModules.has(name))fail('scalar pattern type name shadowed by declaration '+name,this.peek());
     }
+    if(this.stringAliasToken&&(usedClasses.has('String')||usedModules.has('String')))
+      fail('E_TYPE_ALIAS_SHADOWED: String requires nominal type resolution',this.stringAliasToken);
     if(this.booleanAliasToken&&(usedClasses.has('boolean')||usedModules.has('boolean')))
       fail('E_TYPE_ALIAS_SHADOWED: boolean requires nominal type resolution',this.booleanAliasToken);
     if(!functions.length&&!generators.length&&!modules.length&&!classes.length)fail('empty program');
@@ -1268,7 +1270,7 @@ class Parser {
       };
       switch(e.kind){
         case 'int':return new Set([e.value]);
-        case 'bool':return undefined;
+        case 'bool':case 'string':return undefined;
         case 'variable':return scope.get(e.name);
         case 'neg':return arithmetic(new Set(['0']),child(e.inner),'-');
         case 'not':child(e.inner);return undefined;
