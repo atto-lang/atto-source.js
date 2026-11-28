@@ -233,6 +233,36 @@ class Parser {
   // The scalar Record profile supports standard JSON-compatible double-quoted
   // keys; other legacy string escapes stay fail-closed until a shared decoder
   // is available. Never compare raw spellings or normalize decoded keys.
+  validateRecordKey(key,token){
+    if(key.length===0||key.length>128||/[\x00-\x1f\x7f-\x9f]/.test(key))
+      throw new CompileError('E_RECORD_LABEL: empty, oversized or control-character key outside scalar profile',token);
+    // Escapes must not bypass the source Unicode validity gate.
+    try { validateSourceText(key); }
+    catch { throw new CompileError('E_RECORD_LABEL: invalid decoded key',token); }
+    return key;
+  }
+  readDynRecordKey(){
+    if(!this.match('['))return this.readQuotedRecordKey();
+    const at=this.peek();
+    let key='',parts=0;
+    do {
+      if(++parts>64)throw new CompileError('E_SOURCE_LIMIT: computed key parts',at);
+      const token=this.peek();
+      const literal=token.kind==='string'?token.value:
+        token.kind==='id'?this.scalarConsts?.get(token.value)?.value:null;
+      if(!literal||literal.quote!=='"')
+        throw new CompileError('E_RECORD_KEY: computed key requires compile-time string literal or const string',token);
+      let part;
+      try { part=JSON.parse(literal.raw); }
+      catch { throw new CompileError('E_RECORD_KEY: unsupported computed key escape',token); }
+      if(typeof part!=='string')throw new CompileError('E_RECORD_KEY: string required',token);
+      key+=part;
+      if(key.length>128)throw new CompileError('E_RECORD_LABEL: oversized computed key',token);
+      this.pos++;
+    }while(this.match('+'));
+    this.expect(']');
+    return this.validateRecordKey(key,at);
+  }
   readQuotedRecordKey(){
     const token=this.peek();
     if(token.kind!=='string'||token.value.quote!=='"')
@@ -240,10 +270,8 @@ class Parser {
     let key;
     try { key=JSON.parse(token.value.raw); }
     catch { throw new CompileError('E_RECORD_LABEL: unsupported quoted key escape in scalar profile',token); }
-    if(key.length===0||key.length>128||/[\x00-\x1f\x7f-\x9f]/.test(key))
-      throw new CompileError('E_RECORD_LABEL: empty, oversized or control-character key outside scalar profile',token);
     this.pos++;
-    return key;
+    return this.validateRecordKey(key,token);
   }
   // Only compile-time scalar literals in local const bindings. No dynamic
   // evaluation, aggregate values or runtime reflection in this bootstrap path.
@@ -291,12 +319,12 @@ class Parser {
       return {type:'Array:'+types.map(t=>t.length+':'+t).join(''),items};
     }
     if(this.peek().value==='{'||
-       (this.peek().value==='('&&this.ts[this.pos+1]?.kind==='string'&&[':', '='].includes(this.ts[this.pos+2]?.value))){
+       (this.peek().value==='('&&(this.ts[this.pos+1]?.value==='['||(this.ts[this.pos+1]?.kind==='string'&&[':', '='].includes(this.ts[this.pos+2]?.value))))){
       const open=this.peek().value;this.pos++;
       const close=open==='{'?'}':')',fields=new Map();
       if(this.peek().value!==close)do{
         if(fields.size>=64)throw new CompileError('E_SOURCE_LIMIT: nested Record size',this.peek());
-        const key=open==='('?this.readQuotedRecordKey():this.aggregateIdentifier();
+        const key=open==='('?this.readDynRecordKey():this.aggregateIdentifier();
         if(fields.has(key))throw new CompileError('E_DUPLICATE_FIELD: '+key,this.peek());
         if(!this.match(':'))this.expect('=');
         fields.set(key,this.readRecordValue([],false,depth+1));
@@ -461,7 +489,7 @@ class Parser {
       if(kind==='Record'&&open==='{'&&!capture&&this.peek().kind!=='id')
         throw new CompileError('E_RECORD_LABEL: brace Record requires identifier key',this.peek());
       const key=kind==='Tuple'?String(fields.size):
-        kind==='DynRecord'&&!capture?this.readQuotedRecordKey():this.aggregateIdentifier();
+        kind==='DynRecord'&&!capture?this.readDynRecordKey():this.aggregateIdentifier();
       if(explicit.has(key))throw new CompileError('E_DUPLICATE_FIELD: '+key,this.peek());
       explicit.add(key);spreadConflicts.delete(key);
       let field,pairEntry=false;
@@ -613,7 +641,7 @@ class Parser {
           this.expect('=');
           // This bootstrap supports only the requested val DynRecord
           // literal and read projections; no mutable val storage yet.
-          if(this.peek().value!=='('||this.ts[this.pos+1]?.kind!=='string'||![':', '='].includes(this.ts[this.pos+2]?.value))
+          if(this.peek().value!=='('||!(this.ts[this.pos+1]?.value==='['||(this.ts[this.pos+1]?.kind==='string'&&[':', '='].includes(this.ts[this.pos+2]?.value))))
             throw new CompileError('E_LITERAL_KIND: val bootstrap requires a nonempty quoted DynRecord literal',at);
           this.readAggregateFields('DynRecord',name,null,false,params,at,false);
         }else this.localConst(params);
