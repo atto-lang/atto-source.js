@@ -173,3 +173,38 @@ test('untyped grouped scalar remains scalar and is not implicitly wrapped',async
   assert.throws(()=>compileToIR('pub fnc main():int{const x=(42);return x[0];}'));
   assert.throws(()=>compileToIR('pub fnc main():int{const x=(42);const Tuple t=x;return 0;}'));
 });
+
+
+test('closed named Tuple conversion selects exact payloads and retains Pair projection',async()=>{
+  for(const body of [
+    'const t=Tuple.of(five := 40,three := 2); const r=t.to_record(); return r.five+r.three;',
+    'const Tuple t=Tuple.of(five := 40,three := 2,five := true); const Record r=t.to_record(duplicates: #first); return r.five+r.three;',
+    'const t=Tuple.of(five := true,three := 2,five := 40); const r=t.to_record(duplicates=#last); return r.five+r.three;',
+    'const t=Tuple.of(five := 40,three := 2,five := "discard"); const r=t.to_record(duplicates=#first); return r.five+r.three;',
+    'const t=Tuple.of(five := "discard",three := 2,five := 40); const r=t.to_record(duplicates: #last); return r.five+r.three;',
+    'const r=Record.of(five := 40,three := 2); const t=r.to_tuple(); return t[0].value+t[1].value;',
+    'const r=Record.of(five := 40,three := 2); const Tuple t=r.to_tuple(); const Record s=t.to_record(duplicates: #reject); return s.five+s.three;',
+    'const t=Tuple.of(five := 40,five := 2); return t[0].value+t[1].value;',
+    'const r=Record.of(); const t=r.to_tuple(); const s=t.to_record(); return 42;',
+    'const r=Record.of(z := 42,a := 0); const t=r.to_tuple(); return t[0].value;'
+  ])assert.equal(await run(body),42n,body);
+});
+test('closed conversion rejects unsupported values, ambiguous keys, and kind mismatches',()=>{
+  for(const [body,error] of [
+    ['const t=Tuple.of(a := 1,a := 2); const r=t.to_record(); return 0;',/E_DUPLICATE_FIELD/],
+    ['const r=Record.of(a := 1,a := 2); return 0;',/E_DUPLICATE_FIELD/],
+    ['const t=Tuple.of(a := 1,a := 2); const r=t.to_record(duplicates: #reject); return 0;',/E_DUPLICATE_FIELD/],
+    ['const t=Tuple.of(a := 1); const r=t.to_record(duplicates:=#first); return 0;',/expected =/],
+    ['const t=Tuple.of(a := 1); const r=t.to_record(duplicates: true); return 0;',/E_DUPLICATE_POLICY/],
+    ['const Tuple t=(1,2); const r=t.to_record(); return 0;',/E_RECORD_KEY/],
+    ['const t=Tuple.of(a := 1); return t[0];',/expected \./],
+    ['const r=Record.of(a := 1); const Record t=r.to_tuple(); return 0;',/E_AGGREGATE_KIND/],
+    ['const r=Record.of(a := 1); const s=r.to_record(); return 0;',/expected Tuple/],
+    ['const t=Tuple.of(a := 1); const s=t.to_tuple(); return 0;',/closed constexpr Record/],
+    ['const t=Tuple.of(a := 1+2); return 0;',/expected \)/],
+    ['const Tuple=1; const t=Tuple.of(a := 1); return 0;',/E_PRODUCT_SHADOW/]
+  ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),error,body);
+  assert.throws(()=>compileToIR('pub fnc main(int x):int{const t=Tuple.of(a := x); return 0;}'),/E_TYPE_INFER_AMBIGUOUS/);
+  assert.throws(()=>compileToIR('pub fnc main(int Tuple):int{const t=Tuple.of(a := 1); return 0;}'),/E_PRODUCT_SHADOW/);
+  assert.throws(()=>compileToIR('pub fnc main():int{const t=Tuple.of(a := 1); return 0;} fnc Tuple():int{return 1;}'),/E_PRODUCT_SHADOW/);
+});
