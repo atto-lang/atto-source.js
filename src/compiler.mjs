@@ -277,10 +277,11 @@ class Parser {
     }
     const open=this.peek().value;
     if(open==='{'||open==='('||open==='struct'){
-      const kind=open==='struct'?'struct':'Record';
+      // Without a concrete expected kind, the zero-arity () literal
+      // defaults to Tuple. Nonempty inferred positional tuples remain
+      // outside this bounded local scalar profile.
+      const kind=open==='struct'?'struct':open==='('&&this.ts[this.pos+1]?.value===')'?'Tuple':'Record';
       if(kind==='struct')this.pos++;
-      // No inferred positional Tuple admission. Parentheses with named
-      // fields/captures only; empty and positional forms fail closed.
       this.readAggregateFields(kind,name,null,false,params,at,false);
     }else{
       const value=this.readAggregateScalar([],false);
@@ -362,7 +363,11 @@ class Parser {
     const close=open==='{'?'}':')', fields=new Map(base?.fields), explicit=new Set(), spreadConflicts=new Set();
     let ordinaryField=false,entryCount=0;
     if(base&&open!=='{')throw new CompileError('E_RECORD_SPREAD: with requires braces',at);
-    do {
+    if(this.peek().value===close&&(kind==='struct'||base||(kind==='Record'&&open==='{'&&!allowRuntime)))
+      throw new CompileError('E_LITERAL_KIND: empty braces require explicit Record in this profile',at);
+    // An explicitly typed zero-slot Record or Tuple shares this literal
+    // syntax, not its kind. Preserve the kind through shape matching.
+    if(this.peek().value!==close) do {
       if(++entryCount>64)throw new CompileError('aggregate entry limit',this.peek());
       if(kind==='Record'&&open==='{'&&this.match('...')){
         const source=this.readConstRecordOperand();
@@ -407,7 +412,7 @@ class Parser {
       if(this.peek().value===close)break;
     } while(true);
     this.expect(close);this.expect(';');
-    if(kind==='Record'&&open==='('&&!ordinaryField)throw new CompileError('E_LITERAL_KIND: Pair-only parentheses are not a Record',at);
+    if(kind==='Record'&&open==='('&&entryCount!==0&&!ordinaryField)throw new CompileError('E_LITERAL_KIND: Pair-only parentheses are not a Record',at);
     if(spreadConflicts.size)throw new CompileError('E_RECORD_SPREAD: unresolved spread overlap',at);
     const shape={kind,fields:new Map([...fields].map(([k,v])=>[k,v.type]))};
     if(alias!==null&&!binder){
