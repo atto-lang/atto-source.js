@@ -1,0 +1,23 @@
+name: Scalar destructure capture JS guest
+on:
+  push:
+    branches: ['feat/scalar-destructure-capture-v1-20261127']
+  pull_request:
+    paths: ['src/compiler.mjs','tests/scalar-destructure-capture.test.mjs']
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  guest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - run: node --test tests/scalar-destructure-capture.test.mjs tests/named-aggregate-type-inference.test.mjs

@@ -1,0 +1,76 @@
+# Backend-owned AttoLang perf hooks v1 — js
+ 
+**Status: source candidate and static admission tests ONLY; guest execution, JIT emission and strict AOT not verified.**
+
+This repository maintains its own `.atto` core/stdlib/alloc implementation. It does **not** import shared runtime library source from `atto-common-source` and it may use different backend-specific code, while keeping stable numeric probe IDs and equivalent event semantics.
+
+## Implemented source candidates
+
+- `stdlib/perf.atto`
+- `stdlib/perf_ids.atto`
+- `stdlib/alloc/perf_trace_buffer.atto`
+
+Canonical probe identity: 23 actor.user_mail.queue; 24 actor.user_mail.dispatch;
+25 scheduler.turn.queue; 26 future.waiter.notify; 27 map.set;
+28 map.get_optional; 29 map.delete. These are static and never derived
+from the order of declarations or runtime names. Registry and offline
+generation contract: `atto-lang/atto-common-source#136`.
+
+## Backend-specific requirements
+
+JavaScript backend: only precompiled closed-world probe IDs; no runtime eval/new Function, no host-provided tracing permissions. Runtime/built-in timers are host capabilities requiring explicit compiler lowering; this file is not an active JS adapter.
+
+## Instrumentation and safety
+
+A future typed compiler pass must choose fixed sites and generate a complete
+AOT probe plan. Compile-time OFF removes clock calls and recording entirely.
+Runtime disabled or unsampled paths must branch before clock access and
+allocation. Enabled events are numeric only; secrets, payload data, actor
+state and unbounded labels must not enter the hot path. The software
+buffer candidate is owner-local and drops at its fixed capacity (up to
+65536 entries) without waiting, expanding or exporting. Producer-side
+network, filesystem, stdout, logging and blocking are prohibited.
+
+AOT must always work with JIT absent. Optional JIT may optimize previously
+assigned sites but may not expand macros at runtime, mint capabilities, or
+alter output semantics. Scope exits include normal returns, throw/raise,
+panic, cancellation, await/resume and actor lifecycle boundaries; the
+compiler must prove each executes or suppresses hooks correctly and exactly
+once per defined event, not merely rely on manually paired user calls.
+
+## Current validation
+
+```sh
+node --test tests/perf_source_contract.test.mjs
+```
+
+That command checks static source invariants only. It is **not** proof
+of parser/import acceptance, host or guest execution, native AOT, browser
+Wasm module execution, runtime JIT, or performance characteristics.
+Missing/zero-step CI jobs are `NOT_EXECUTED`. A complete backend parity
+receipt requires exact head SHA, complete source tree, successful material
+runner steps, positive/negative compiled guest fixtures, disabled-path
+allocation/clock evidence, overflow/ownership tests and a linked program-
+specific strict AOT artifact (or closed Wasm module). Use the shared
+versioned contract but keep library source independently maintained.
+
+
+## Namespace-first option
+
+The backend now also owns `core/perf_policy_namespace.atto`, which declares
+`namespace perf;` and defines the five pure policy functions directly at file
+scope rather than wrapping them in `define module core`.
+`tests/perf_policy_namespace_guest.test.mjs` compiles the actual namespace
+source with `compileProgramV2`, the module form with
+`compileFreestandingCore`, and requires identical function bodies,
+observable results, and negative source-capability checks. This makes
+namespaces a first-class *alternative source organization* rather than
+requiring every core/alloc/std library to be a runtime module.
+
+The current JS backend accepts a flat single-identifier namespace; it does
+**not** implement arbitrary dotted namespace headers or verified external
+namespace imports. A namespace is file metadata, not a runtime object or
+a granted host capability. The module variant remains for the existing
+freestanding-core linker until that compiler's namespace support is proven.
+Do not advertise namespace import/linker or AOT parity until the executable
+test runs on the exact source head with nonempty CI steps.

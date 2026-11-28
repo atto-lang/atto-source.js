@@ -56,7 +56,11 @@ export class ReadonlyCopyDomain {
     for(const id of r.reach){const child=this.#node(id);if(child.initial)error('E_COPY_LAYOUT');if(child.noncopyable)error('E_COPY_FORBIDDEN');}
     if(this.#roots.size>=this.#limits.maxRoots)error('E_COPY_BUDGET');
     const id=token();this.#nodes.set(id,{dynamic:n.dynamic,noncopyable:false,initial:false,slots:new Map(n.slots)});
-    return this.#publish(id,this.#walk(id));
+    const reach=this.#walk(id);
+    // Independent writable outer slots cannot be promised if a retained
+    // descendant reaches the original root. Fail before publishing holders.
+    if(reach.has(r.id))error('E_COPY_SHALLOW_ALIAS');
+    return this.#publish(id,reach);
   }
   #slot(root,id,key,value){
     const n=this.#write(root,id);
@@ -98,7 +102,19 @@ export class ReadonlyCopyDomain {
   readLoan(owner,id){
     this.#reachable(this.#root(owner),id);
     if(this.#loans.size>=this.#limits.maxLoans)error('E_COPY_BUDGET');
-    const reach=this.#walk(id), loan=token();this.#loans.set(loan,reach);this.#adjust(this.#readers,reach,1);return loan;
+    const reach=this.#walk(id);
+    // A read loan may only expose fully initialized storage. Preflight all
+    // reachable nodes before consuming loan capacity or changing counters.
+    for(const child of reach)if(this.#node(child).initial)error('E_COPY_LAYOUT');
+    const loan=token();this.#loans.set(loan,reach);this.#adjust(this.#readers,reach,1);return loan;
+  }
+  // Read authority is tied to the live loan, not the original root. A
+  // detached subtree remains reachable through this token until release.
+  readBorrowed(loan,id,key){
+    const reach=this.#loans.get(loan);if(!reach)error('E_COPY_STALE');
+    if(!reach.has(id))error('E_COPY_DOMAIN');
+    const n=this.#node(id);if(n.initial||typeof key!=='string')error('E_COPY_LAYOUT');
+    return n.slots.get(key)?.value;
   }
   release(loan){const reach=this.#loans.get(loan);if(!reach)error('E_COPY_STALE');this.#loans.delete(loan);this.#adjust(this.#readers,reach,-1);}
   drop(owner){const r=this.#root(owner);this.#roots.delete(owner);this.#adjust(this.#holders,r.reach,-1);}

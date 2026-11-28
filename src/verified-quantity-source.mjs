@@ -64,7 +64,7 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
   const take=v=>peek().value===v?(at++,true):false;
   const expect=v=>{if(!take(v))fail('E_SYNTAX','expected '+v);};
   const name=()=>{const t=peek();if(t.kind!=='id')fail('E_UNIT_NAME','expected name');at++;return t.value;};
-  const dims=new Set(),bases=new Set(),units=new Map(),aliases=new Map(),signatures=new Map();
+  const dims=new Map(),bases=new Set(),units=new Map(),aliases=new Map(),signatures=new Map();
   let locals=new Map(),nextStrictSlot=0;
   const lookup=n=>{if(!units.has(n))fail('E_UNIT_NAME','unknown unit '+n);return units.get(n);};
   const integer=(negative=false)=>{
@@ -81,10 +81,36 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     const n=name();
     if(['int','i64','i32','float','bool','void','string','define','unit','dimension','main','return','as','fnc','pub'].includes(n))fail('E_RESERVED','reserved quantity name');
     if(dims.has(n)||units.has(n))fail('E_UNIT_DUPLICATE','duplicate quantity name');
-    if(dimension){expect(';');dims.add(n);continue;}
+    if(dimension){
+      let powers=new Map([[n,1]]);
+      if(take('=')){
+        if(strict)fail('E_VERIFY_UNSUPPORTED','compound dimension pilot is not strict-profile admitted');
+        const dimensionFactor=()=>{
+          const key=name();
+          if(!dims.has(key))fail('E_UNIT_NAME','unknown or forward dimension '+key);
+          return dims.get(key);
+        };
+        powers=new Map(dimensionFactor());
+        let factors=1;
+        while(peek().value==='*'||peek().value==='/'){
+          if(++factors>128)fail('E_UNIT_LIMIT','compound dimension factor budget exceeded');
+          const divide=take('/');if(!divide)expect('*');
+          for(const [key,exponent] of dimensionFactor()){
+            const next=(powers.get(key)??0)+(divide?-exponent:exponent);
+            if(Math.abs(next)>64)fail('E_UNIT_LIMIT','dimension exponent exceeds 64');
+            if(next===0)powers.delete(key);else powers.set(key,next);
+          }
+          if(powers.size>32)fail('E_UNIT_LIMIT','too many dimensions');
+        }
+        if(powers.size===0)fail('E_UNIT_DIMENSION','dimensionless named kinds require nominal kind admission');
+        if([...dims.values()].some(other=>other.size===powers.size&&[...powers].every(([k,v])=>other.get(k)===v)))
+          fail('E_UNIT_DIMENSION','equal dimension vectors require explicit nominal kind admission');
+      }
+      expect(';');dims.set(n,powers);continue;
+    }
     expect(':');const dim=name();
     if(!dims.has(dim))fail('E_UNIT_NAME','unknown dimension');
-    const powers=new Map([[dim,1]]);
+    const powers=new Map(dims.get(dim));
     let unit={powers,n:1n,d:1n};
     if(take('=')){
       let base,f=1n,divide=false;
@@ -250,12 +276,8 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
     }
     return postfix(make(unit,int(v),v),depth);
   }
-  function expr(min,depth){
-    let left=atom(depth);
-    for(;;){
-      const op=peek().value,prec=op==='+'||op==='-'?1:op==='*'||op==='/'?2:0;
-      if(prec<=min)break;
-      at++;const right=expr(prec,depth+1);let unit;
+  function checkedBinary(left,right,op){
+    let unit;
       if(op==='+'||op==='-'){
         if(!sameDimensions(left.unit,right.unit))fail('E_UNIT_DIMENSION','mixed dimensions');
         if(!same(left.unit,right.unit))fail('E_UNIT_SCALE','mixed scales');
@@ -267,7 +289,15 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       if(strict&&!provesArithmetic(left.range,right.range,op))fail('E_VERIFY_UNPROVEN','signed arithmetic may overflow or divide by zero');
       const width=left.width===64||right.width===64?64:left.width===32||right.width===32?32:64;
       if(width===32&&[left,right].some(v=>v.width===0&&!contains(NARROW,v.range)))fail('E_I32_RANGE','literal operand outside i32');
-      left=checkedWidth(make(unit,{kind:'binary',op,left:left.ir,right:right.ir},null,arithmeticRange(left.range,right.range,op)),width);
+    return checkedWidth(make(unit,{kind:'binary',op,left:left.ir,right:right.ir},null,arithmeticRange(left.range,right.range,op)),width);
+  }
+  function expr(min,depth){
+    let left=atom(depth);
+    for(;;){
+      const op=peek().value,prec=op==='+'||op==='-'?1:op==='*'||op==='/'?2:0;
+      if(prec<=min)break;
+      at++;const right=expr(prec,depth+1);
+      left=checkedBinary(left,right,op);
     }
     while(min===0&&take('as')){if(take('?'))fail('E_REFINEMENT_CAST','optional casts not admitted');left=cast(left,name(),true);}
     return left;
@@ -335,6 +365,51 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
   // Closed scalar control flow with fresh lexical SSA-like versions, bounded
   // path-sensitive continuation splitting and single-state iterative while.
   // No aliases, nonlocal mutation, effects or suspension are admitted.
+  // Contextual marker in the verified scalar profile only. Never rewrite
+  // source text or expand a macro/Record/named call.
+  function updateTarget(k){
+    if(tokens[k]?.kind!=='id'||tokens[k].value!=='set')return null;
+    const t=tokens[k+1];
+    if(!t||!['id','sym'].includes(t.kind))return null;
+    if(t.kind==='id')return t.value;
+    if(!['+','-','!'].includes(t.value))return null;
+    let j=k+1;
+    if(tokens[j]?.value==='!'){
+      j++;if(tokens[j]?.value==='(')j++;
+    }
+    if(['+','-'].includes(tokens[j]?.value)&&tokens[j+1]?.value===tokens[j].value)j+=2;
+    return tokens[j]?.kind==='id'?tokens[j].value:null;
+  }
+  function updatePair(a,b){
+    const x=peek(),y=tokens[at+1];
+    if(x.value!==a||y?.value!==b||x.line!==y.line||x.col+x.value.length!==y.col)return false;
+    at+=2;return true;
+  }
+  function readUpdate(facts,mutable){
+    const explicit=updateTarget(at)!==null;
+    let wrapped=false,op=null,inc=false;
+    if(explicit){
+      expect('set');
+      if(take('!'))wrapped=take('(');
+      if(updatePair('+','+')){op='+';inc=true;}
+      else if(updatePair('-','-')){op='-';inc=true;}
+    }
+    const key=identifier(),want=mutable.get(key),prior=facts.get(key);
+    if(!want||!prior||prior.ir.kind!=='capture')fail('E_VERIFY_UNSUPPORTED','assignment to nonmutable scalar binding');
+    if(explicit&&!inc){
+      if(updatePair('+','+')){op='+';inc=true;}
+      else if(updatePair('-','-')){op='-';inc=true;}
+      else if(updatePair('+','='))op='+';
+      else if(updatePair('-','='))op='-';
+      else if(updatePair('*','='))op='*';
+    }
+    if(!op)expect('=');
+    let value=inc?make(scalar(),int(1n),1n):expr(0,0);
+    if(op)value=checkedBinary(prior,value,op);
+    if(wrapped)expect(')');
+    expect(';');boundary(want,value,'E_REFINEMENT_BINDING');
+    return {key,prior,want,value};
+  }
   function loopPlan(facts,mutable,depth,top){
     if(depth>16||--budget<0)fail('E_UNIT_LIMIT','strict loop budget');
     let brace=at;
@@ -345,7 +420,10 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       const t=tokens[k];
       if(t.value==='{')nesting++;
       else if(t.value==='}')nesting--;
-      else if(t.kind==='id'&&tokens[k+1]?.value==='='&&mutable.has(t.value))writes.add(t.value);
+      else {
+        const target=updateTarget(k)??(t.kind==='id'&&tokens[k+1]?.value==='='?t.value:null);
+        if(target!==null&&mutable.has(target))writes.add(target);
+      }
     }
     if(nesting)fail('E_VERIFY_UNSUPPORTED','unterminated loop');
     const header=new Map(facts),states=[];
@@ -407,11 +485,8 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
         if(mut)declared.set(key,want);
         steps.push({kind:'bind',slot,mutable:mut,init:value.ir});continue;
       }
-      if(peek().kind==='id'&&tokens[at+1]?.value==='='){
-        const key=identifier();expect('=');
-        const want=declared.get(key),prior=current.get(key);
-        if(!want||prior?.ir.kind!=='capture')fail('E_VERIFY_UNSUPPORTED','assignment to nonmutable loop slot');
-        const value=expr(0,0);expect(';');boundary(want,value,'E_REFINEMENT_BINDING');
+      if(updateTarget(at)!==null||(peek().kind==='id'&&tokens[at+1]?.value==='=')){
+        const {key,want,prior,value}=readUpdate(current,declared);
         steps.push({kind:'set',slot:prior.ir.slot,value:value.ir});
         current.set(key,make(want.unit,prior.ir,null,value.range,want.width));continue;
       }
@@ -473,11 +548,8 @@ export function lowerVerifiedQuantitySource(tokens,report,strict=false){
       if(isMutable)decls.set(key,want);
       return {kind:'local',slot,init:value.ir,body:strictReturn(result,after,decls,depth+1,onExit)};
     }
-    if(peek().kind==='id'&&tokens[at+1]?.value==='='){
-      const key=identifier();expect('=');
-      if(!mutable.has(key))fail('E_VERIFY_UNSUPPORTED','assignment to nonmutable binding');
-      const value=expr(0,0);expect(';');
-      boundary(mutable.get(key),value,'E_REFINEMENT_BINDING');
+    if(updateTarget(at)!==null||(peek().kind==='id'&&tokens[at+1]?.value==='=')){
+      const {key,value}=readUpdate(facts,mutable);
       if(nextStrictSlot>=64)fail('E_UNIT_LIMIT','strict local slot budget');
       const slot=nextStrictSlot++,after=new Map(facts);
       // New binding identity and replacement range, never union with stale fact.

@@ -1,5 +1,8 @@
+import {lowerContextualScalar} from './contextual-scalar-v1.mjs';
 import {identifierCharAt,isIdentifierStart,isIdentifierPart,isIdentifier} from './portable-unicode-identifier-v1.mjs';
+import {validateNamedStageBody,emitNamedStage} from './closed-named-stage.mjs';
 import {lowerVerifiedQuantitySource} from './verified-quantity-source.mjs';
+import {MEASURE_SOURCE,requestsMeasurePrelude} from './measure-prelude.mjs';
 import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
 import {validLocalString,validateProgramIRV2,PROGRAM_IR_VERSION,PROGRAM_IR_DIALECT,PROGRAM_IR_INT_MODEL} from './program-ir-v2.mjs';
 import {TESTING_SCALAR_SOURCE, TESTING_SCALAR_EXPORTS} from './compiler-owned-testing-scalar.mjs';
@@ -140,7 +143,9 @@ function normalizeProcessSymbolName(input) {
   return value;
 }
 export function tokenizeCountedProfileSource(source) { return tokenize(source); }
-function tokenize(source) {
+// Separate opt-in lexer entry: only the closed scheduled profile consumes take! formals.
+export function tokenizeScheduledUnwindSource(source) { return tokenize(source,true); }
+function tokenize(source, scheduledFutureFormals=false) {
   validateSourceText(source);
   if (new TextEncoder().encode(source).length > MAX_BYTES) fail('oversized or invalid source');
   requireWellFormedCheckedI64Header(source);
@@ -294,7 +299,10 @@ function tokenize(source) {
       if (['copy','take','move','borrow','share'].includes(word) && source[pos]==='!' &&
           source[pos+1]!=='=' &&
           !(source.slice(pos+1,pos+3)==='eq' && !isIdentifierPart(identifierCharAt(source,pos+3))))
-        fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
+        {
+          if(scheduledFutureFormals&&word==='take'){advance();word='take!';}
+          else fail('OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and worker transfer lowering required',start);
+        }
       // Canonical bang exceptional control requires typed Error/Result and
       // checked guest unwind; no fallback to an ordinary JS exception.
       if(['trap','throw','raise','panic'].includes(word) && source[pos]==='!' &&
@@ -308,6 +316,11 @@ function tokenize(source) {
             fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: exceptional control must be a statement',start);
           advance();word+='!';
         }
+      // Reject unsupported protected containers before scalar artifacts exist.
+      if (word==='container' && result.at(-1)?.kind==='id' && result.at(-1).value==='state' &&
+          ((result.at(-2)?.kind==='id' && result.at(-2).value==='define') ||
+           (result.at(-2)?.kind==='id' && result.at(-2).value==='pub' && result.at(-3)?.kind==='id' && result.at(-3).value==='define')))
+        fail('STATE_CONTAINER_BACKEND_UNSUPPORTED: typed protected-state loans and native ESM lowering required',start);
       emit('id',word==='susp'?'suspends':word,start);
       if(word==='susp')result.at(-1).lexeme=word;
     } else if (/[0-9]/.test(c)) {
@@ -325,7 +338,8 @@ function tokenize(source) {
     } else if (source.startsWith('&&',pos) || source.startsWith('||',pos)) {
       // Atto's symbolic boolean operators are aliases of the existing
       // lazy `and`/`or` IR. Never lower these to eager JS bitwise ops.
-      emit('id',source.startsWith('&&',pos)?'and':'or',start);
+      const spelling=source.slice(pos,pos+2);
+      emit('id',spelling==='&&'?'and':'or',{...start,spelling});
       advance(); advance();
     } else if (['<=','>=','==','!='].some(op=>source.startsWith(op,pos))) {
       emit('sym',source.slice(pos,pos+2),start); advance(); advance();
@@ -387,7 +401,7 @@ function rejectUnsupportedStaticSelect(tokens) {
   }
 }
 class Parser {
-  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;this.scalarDenotations=new Map();this.literalDenotations=new Map();this.denotationTargets=new Map();}
+  constructor(tokens,coreBooleanModules=new Set()) {this.tokens = tokens;this.i = 0;this.depth = 0;this.expressions = 0;this.statementNodes = 0;this.coreBooleanModules=coreBooleanModules;this.scalarDenotations=new Map();this.literalDenotations=new Map();this.denotationTargets=new Map();this.patternConstants=new Map();this.patternUses=new Set();this.patternTypeNames=new Set();this.patternTypeAliases=new Map();this.patternAliasUses=new Set();}
   peek() {return this.tokens[this.i];}
   eat(s) {if(this.peek().value === s) {this.i++; return true;} return false;}
   expect(s) {if(!this.eat(s)) fail('expected ' + s + ', found ' + this.peek().value,this.peek());}
@@ -433,8 +447,12 @@ class Parser {
       do {
         if(args.length>=128)fail('argument limit',this.peek());
         let name=null;
-        if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value===':'){
-          name=this.name();this.expect(':');namedSeen=true;
+        if(this.peek().kind==='id'&&[':', '='].includes(this.tokens[this.i+1]?.value)){
+          // Both immediate call-label separators use the same checked slot binder.
+          // Equality (==) is not a label. Pair (:=) has no scalar ABI here.
+          if(this.tokens[this.i+1]?.value===':'&&this.tokens[this.i+2]?.value==='=')
+            fail('Pair expressions are unsupported in scalar call arguments',this.peek());
+          name=this.name();this.i++;namedSeen=true;
         }else if(namedSeen)fail('positional argument cannot follow a named argument',this.peek());
         args.push({name,expr:this.expression()});
       } while(this.eat(','));
@@ -714,7 +732,21 @@ class Parser {
     const began=!braced&&returnFirst&&this.eat('begin');
     if(!braced&&!began&&!arrow&&!returnFirst)
       fail('expected { or begin for return-first function body',this.peek());
-    if(!braced&&!began&&!returnFirst){if(!this.eat('as'))this.eat('::');}
+    let explicitScalarBody=false;
+    if(!braced&&!began&&!returnFirst&&!this.eat('as')){
+      if(this.eat('::')&&arrow&&returnType==='int'&&this.peek().value==='('){
+        // Only a complete parenthesized expression followed immediately by end.
+        // Existing explicit statement bodies and visibility rules stay intact.
+        let depth=0;
+        for(let j=this.i;j<this.tokens.length;j++){
+          const t=this.tokens[j];
+          if(t.kind==='sym'&&t.value==='(')depth++;
+          else if(t.kind==='sym'&&t.value===')'&&--depth===0){
+            explicitScalarBody=this.tokens[j+1]?.value==='end';break;
+          }
+        }
+      }
+    }
     const terminator=braced?'}':'end';
     let body=null;
     if(returnType==='void'){
@@ -727,8 +759,11 @@ class Parser {
       if(this.peek().value!==terminator)
         fail('void function effects require checked statement lowering',this.peek());
     }else{
-      const statements=this.statementSequence([terminator]);
-      body=this.lowerStatements(statements,null);
+      if(explicitScalarBody)body=this.expression();
+      else {
+        const statements=this.statementSequence([terminator]);
+        body=this.lowerStatements(statements,null);
+      }
       if(!body)fail('RETURN_EXPLICIT_REQUIRED: int function requires a return on every path',this.peek(),'E_RETURN');
       this.checkExpandedBudget(body);
       if(returnType==='infer'){
@@ -853,10 +888,17 @@ class Parser {
         statements.push({kind:'branch',condition:{kind:'not',inner:condition},
           yes:failure,no:[]});
       } else if(this.peek().value==='val'||this.peek().value==='const'||
-                 (this.peek().value==='let'&&(['int','bool','string'].includes(this.tokens[this.i+1]?.value)||this.literalDenotations.has(this.tokens[this.i+1]?.value)))) {
-        const isConst=this.eat('const');
-        const readOnlyLet=!isConst&&this.eat('let');
-        if(!isConst&&!readOnlyLet)this.expect('val');
+                 (this.peek().value==='int'&&this.tokens[this.i+1]?.kind==='id'&&this.tokens[this.i+2]?.value==='=')||
+                 (this.peek().value==='let'&&(['int','bool','string'].includes(this.tokens[this.i+1]?.value)||this.literalDenotations.has(this.tokens[this.i+1]?.value)||this.scalarDenotations.has(this.tokens[this.i+1]?.value)||
+                   (this.tokens[this.i+1]?.kind==='id'&&[':', 'as'].includes(this.tokens[this.i+2]?.value)&&this.tokens[this.i+3]?.value==='int')))) {
+        // Only the bounded root scalar profile. Never reinterpret a failed
+        // declaration as an expression or widen task/actor ownership.
+        const implicitConst=this.peek().value==='int';
+        const explicitConst=!implicitConst&&this.eat('const');
+        const constMut=explicitConst&&this.eat('mut');
+        const isConst=implicitConst||(explicitConst&&!constMut);
+        const readOnlyLet=!implicitConst&&!explicitConst&&this.eat('let');
+        if(!implicitConst&&!explicitConst&&!readOnlyLet)this.expect('val');
         // Function-scope scalar locals; only typed string let may rebind.
         if(depth!==0)fail('LOCAL_BRANCH_SCOPE_UNSUPPORTED',this.peek());
         // Keep existing Option, Result, string, bool, and directional bindings.
@@ -874,12 +916,12 @@ class Parser {
           this.expect('=');
           const init=this.expression();
           this.expect(';');
-          statements.push({kind:'local',name,init,localType:isConst?'constInt':'int',literalName,literalMutable:readOnlyLet,writable:false,taskWritable:false});
+          statements.push({kind:'local',name,init,localType:'int',literalName,literalMutable:readOnlyLet,writable:false,taskWritable:false});
           continue;
         }
         let localType=typedTrapBool?'trapBoolResult':typedTrapOption?'trapOptionResult':typedTrapResult?'trapResult':(this.peek().value==='boolean'&&this.tokens[this.i+1]?.kind==='id')?this.valueType():(['Option','Result'].includes(this.peek().value)||(this.scalarDenotations.has(this.peek().value)&&this.tokens[this.i+1]?.kind==='id'))?this.valueType():this.eat('float')?'float':this.eat('int')?'int':this.eat('bool')?'bool':this.eat('string')?'string':'inferredTrap';
         const name=this.name();
-        if(!isConst&&!readOnlyLet&&localType==='inferredTrap'&&this.eat(':')){
+        if(localType==='inferredTrap'&&(this.eat(':')||this.eat('as'))){
           localType=this.valueType();
           if(!['int','float','bool','string'].includes(localType))fail('name-first binding requires primitive type in this profile',this.peek());
         }
@@ -892,8 +934,15 @@ class Parser {
           else {localType='inferredInt';init=this.expression();}
         }else init=this.expression();
         this.expect(';');
-        if(isConst&&(!directional||localType!=='int'))fail('only directional const int is admitted here',this.peek());
-        statements.push({kind:'local',name,init,localType:isConst?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string',taskWritable:readOnlyLet&&localType==='int'});
+        if(isConst&&directional&&localType!=='int')fail('only directional const int is admitted here',this.peek());
+        // Keep the historic directional constexpr profile separate. Ordinary
+        // locals are fixed, eagerly initialized runtime values; the validated
+        // typed IR owns checking and lowering. This slice admits int only.
+        if(isConst&&!directional){
+          if(localType==='inferredTrap')localType='inferredInt';
+          else if(localType!=='int')fail('ordinary const requires int in this bounded profile',this.peek());
+        }
+        statements.push({kind:'local',name,init,localType:isConst&&directional?'constInt':directional&&localType==='inferredTrap'?'directionalInferred':localType,writable:readOnlyLet&&localType==='string',taskWritable:readOnlyLet&&localType==='int',lexicalLet:readOnlyLet&&!directional&&localType==='int'});
       } else if(this.peek().kind==='id'&&this.tokens[this.i+1]?.value==='='){
         if(depth!==0)fail('E_STRING_VIEW_SCOPE: rebinding requires root function scope',this.peek());
         const name=this.name();this.expect('=');
@@ -959,7 +1008,7 @@ class Parser {
       else if(stmt.kind==='tryCatch')result={kind:'tryCatch',name:stmt.name,body:this.lowerStatements(stmt.body,null),handler:this.lowerStatements(stmt.handler,null)};
       else if(stmt.kind==='local'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: local must precede a value return');
-        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,taskWritable:stmt.taskWritable===true,rebind:stmt.rebind===true,...(stmt.literalName?{literalName:stmt.literalName,literalMutable:stmt.literalMutable===true}:{}),body:result};
+        result={kind:'local',name:stmt.name,init:stmt.init,localType:stmt.localType,writable:stmt.writable===true,taskWritable:stmt.taskWritable===true,lexicalLet:stmt.lexicalLet===true,rebind:stmt.rebind===true,...(stmt.literalName?{literalName:stmt.literalName,literalMutable:stmt.literalMutable===true}:{}),body:result};
       }
       else if(stmt.kind==='stdoutWrite'||stmt.kind==='stdoutDefer'){
         if(result===null)fail('RETURN_EXPLICIT_REQUIRED: stdout must precede a value return');
@@ -993,7 +1042,9 @@ class Parser {
         if(total>MAX_TOKENS)fail('expanded conditional IR node budget exceeded');
       }
       switch(expr.kind){
-        case 'int':case 'float':case 'bool':case 'string':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':break;
+        case 'int':case 'float':case 'bool':case 'string':case 'symbol':case 'variable':case 'guestEffect':case 'rethrow':case 'stageArg':break;
+        case 'stageSelf':add(expr.inner);break;
+        case 'closedNamedStage':add(expr.input);add(expr.body);break;
         case 'tryCatch':add(expr.body);add(expr.handler);break;
         case 'neg':case 'not':case 'trap':case 'immediateAwait':case 'intTypeTest':case 'inlineScalarTask':add(expr.inner);break;
         case 'binary':case 'compare':add(expr.left);add(expr.right);break;
@@ -1058,6 +1109,18 @@ class Parser {
     }
     this.resolveDenotations();
     while(this.peek().kind!=='eof'){
+      if(this.peek().value==='type'&&this.tokens[this.i+2]?.value==='='){
+        if(functions.length||modules.length||classes.length||generators.length||exportDeclarations.length)
+          fail('scalar pattern type aliases must precede runtime declarations in this profile',this.peek());
+        this.readPatternTypeAlias();
+        continue;
+      }
+      if(this.peek().value==='const'&&this.tokens[this.i+1]?.value==='Pattern'){
+        if(functions.length||modules.length||classes.length||generators.length||exportDeclarations.length)
+          fail('compile-time Pattern declarations must precede runtime declarations in this profile',this.peek());
+        this.readPatternConstant();
+        continue;
+      }
       if(this.peek().value==='export') {
         if(exportDeclarations.length>=1024)fail('file export budget exceeded',this.peek());
         exportDeclarations.push(this.exportDeclaration());
@@ -1116,6 +1179,21 @@ class Parser {
     }
     if((this.scalarDenotations.size||this.literalDenotations.size)&&(classes.length||modules.length||generators.length||exportDeclarations.length))
       fail('denotations with nominal, module, generator or explicit export declarations require linked type identities',this.peek(),'E_UNSUPPORTED');
+    if((this.scalarDenotations.size||this.literalDenotations.size)&&(this.patternTypeAliases.size||this.patternConstants.size))
+      fail('denotations combined with compile-time Pattern declarations require linked type identities',this.peek(),'E_UNSUPPORTED');
+    // Initial file-scope profile: reject any other occurrence of a pattern
+    // constant identifier, including runtime use or shadowing. This is
+    // intentionally conservative until the full lexical resolver supports it.
+    for(let i=0;i<this.tokens.length;i++){
+      const t=this.tokens[i];
+      if(t.kind==='id'&&this.patternConstants.has(t.value)&&!this.patternUses.has(i))
+        fail('compile-time Pattern name cannot escape or be shadowed',t);
+      if(t.kind==='id'&&this.patternTypeAliases.has(t.value)&&!this.patternAliasUses.has(i))
+        fail('scalar pattern alias requires a resolved type position; general alias use unsupported',t);
+    }
+    for(const name of this.patternTypeNames){
+      if(usedClasses.has(name)||usedModules.has(name))fail('scalar pattern type name shadowed by declaration '+name,this.peek());
+    }
     if(this.booleanAliasToken&&(usedClasses.has('boolean')||usedModules.has('boolean')))
       fail('E_TYPE_ALIAS_SHADOWED: boolean requires nominal type resolution',this.booleanAliasToken);
     if(!functions.length&&!generators.length&&!modules.length&&!classes.length)fail('empty program');
@@ -1203,6 +1281,7 @@ class Parser {
           return yes&&no&&yes.size+no.size<=128?new Set([...yes,...no]):undefined;
         }
         case 'match':{
+          if(e.subjectType==='bool'||e.arms.some(a=>Array.isArray(a.value)))fail('E_DENOTE_BOUNDARY_UNSUPPORTED: grouped or bool match in literal callable profile');
           const subject=child(e.subject);
           const remaining=subject?new Set(subject):undefined;
           let result=new Set(),allKnown=true,hasDefault=false;
@@ -1233,7 +1312,7 @@ class Parser {
             e.literalRebind=true;e.localType='int';e.writable=false;
             next.set(e.name,want);
           }else{
-            if(e.writable||e.taskWritable||e.taskRebind)
+            if(e.writable||e.taskWritable||e.taskRebind||e.lexicalLet)
               fail('E_DENOTE_BOUNDARY_UNSUPPORTED: mutable binding in literal callable profile');
             if(e.literalName){
               const want=this.literalDenotations.get(e.literalName);
@@ -1317,7 +1396,9 @@ class Parser {
         if(op==='|>' && min===0){
           this.i++;
           if(++stages>128)fail('pipeline exceeds 128 stages',token);
-          if(this.eat('match')){
+          if(this.eat('fnc')){
+            left=this.namedStage(left,token);
+          }else if(this.eat('match')){
             // Subject injection uses the normal checked match IR, not a lambda.
             if(++this.depth>MAX_DEPTH)fail('expression budget exceeded',token);
             try{left=this.matchExpression(left);}finally{this.depth--;}
@@ -1508,6 +1589,41 @@ class Parser {
     if(nested(tail))fail('E_SYNC_TASK_PROFILE: nested effectful task unsupported',this.peek());
     return {kind:'taskScope',body:tail};
   }
+  namedStage(input,at){
+    if(this.namedStageActive)fail('nested named stage unsupported',at,'E_NAMED_STAGE_PROFILE');
+    const name=this.generatorIdentifier();
+    if(coreBooleanIntrinsic(name)||isCoreConstructor(name))fail('reserved named stage self-name',at);
+    this.expect('(');
+    const parameter=this.typedParameter(()=>this.generatorIdentifier());
+    if(parameter.type!=='int'||parameter.name===name)fail('named stage requires distinct immutable int parameter',at);
+    this.expect(')');
+    if(!this.eat(':')&&!this.eat('->'))fail('named stage requires explicit result annotation',at,'E_RETURN_ANNOTATION');
+    this.expect('int');this.expect('{');
+    if(!this.eat('return')&&!this.eat('^'))fail('named stage requires return or caret',at);
+    let body;
+    this.namedStageActive=true;
+    try{body=this.expression();}finally{this.namedStageActive=false;}
+    this.eat(';');this.expect('}');
+    const close=(e,depth=0)=>{
+      if(depth>64)fail('named stage body nesting',at);
+      const child=v=>close(v,depth+1);
+      switch(e.kind){
+        case 'int':return e;
+        case 'variable':if(e.name===parameter.name)return {kind:'stageArg'};break;
+        case 'call':
+          if(e.qualifier===null&&e.name===name&&e.args.length===1&&e.args[0].name===null)
+            return {kind:'stageSelf',inner:child(e.args[0].expr)};
+          break;
+        case 'neg':return {kind:'neg',inner:child(e.inner)};
+        case 'binary':
+          if(['+','-','*','/'].includes(e.op))return {kind:'binary',op:e.op,left:child(e.left),right:child(e.right)};
+          break;
+        case 'match':return {kind:'match',subject:child(e.subject),arms:e.arms.map(a=>({value:a.value,body:child(a.body)}))};
+      }
+      fail('unsupported capture, call or expression in named stage',at,'E_NAMED_STAGE_PROFILE');
+    };
+    return {kind:'closedNamedStage',input,body:validateNamedStageBody(close(body))};
+  }
   primary() {
     if(this.peek().kind==='id' && this.peek().value==='spawn' && this.tokens[this.i+1]?.kind==='id')
       fail('actor spawn requires typed initialization, resource admission and runtime lowering',this.peek(),'E_SPAWN_OPTIONS_UNSUPPORTED');
@@ -1527,17 +1643,23 @@ class Parser {
       }while(this.eat(','));
       this.expect(')');this.expect('{');
       const guards=[];
+      let terminalElse=false;
       while(this.eat('if')){
         if(guards.length>=32)fail('state loop guard limit',at);
         const condition=this.expression();this.expect('{');this.expect('break');
         const result=this.expression();this.expect(';');this.expect('}');
         guards.push({condition,result});
+        // A final else containing only recur is equivalent to the
+        // existing fallthrough backedge. No new IR or recursive call.
+        if(this.eat('else')){this.expect('{');terminalElse=true;break;}
       }
       if(!guards.length)fail('state loop requires valued break',at);
       this.expect('recur');this.expect('(');
       const updates=[];
       do{if(updates.length>=32)fail('recur arity limit',at);updates.push(this.expression());}while(this.eat(','));
-      this.expect(')');this.expect(';');this.expect('}');
+      this.expect(')');this.expect(';');
+      if(terminalElse){this.expect('}');this.eat('fi');}
+      this.expect('}');
       if(updates.length!==states.length)fail('recur state arity mismatch',at);
       if(this.peek().value==='(')fail('calling a computed value loop',at);
       return guards.length===1?{kind:'closedRecur',states,...guards[0],updates}:
@@ -1668,6 +1790,139 @@ class Parser {
       body={kind:'local',name:names[i],localType:'bool',init:values[i],body};
     return body;
   }
+  // Pattern descriptors exist only inside the parser. The existing checked
+  // scalar match IR receives bounded canonical literals or an int-domain proof.
+  patternRef(array) {
+    const at=this.peek(),entry=this.patternConstants.get(at.value);
+    if(at.kind!=='id'||!entry||entry.array!==array)
+      fail('expected previously declared compile-time '+(array?'Pattern[]':'Pattern'),at);
+    this.patternUses.add(this.i++);
+    return entry.pattern;
+  }
+  combinePatterns(parts) {
+    const values=[],types=[];
+    for(const part of parts){
+      for(const v of part.values){
+        if(values.includes(v))fail('duplicate pattern literal alternative',this.peek());
+        values.push(v);
+      }
+      for(const t of part.types){
+        if(types.includes(t))fail('duplicate canonical type in pattern set',this.peek());
+        types.push(t);
+      }
+      if(values.length+types.length>64)fail('compile-time pattern expansion limit',this.peek());
+    }
+    if(!values.length&&!types.length)fail('empty pattern set',this.peek());
+    return {values,types};
+  }
+  scalarPatternTypeAtom() {
+    const builtin=new Map([['int','int'],['Int','int'],['bool','bool'],['boolean','bool'],
+      ['string','string'],['String','string'],['float','float'],['f64','float']]);
+    const at=this.peek(),type=builtin.get(at.value),resolved=this.patternTypeAliases.get(at.value);
+    if(at.kind!=='id'||(type===undefined&&resolved===undefined))
+      fail('unknown or forward/cyclic scalar pattern type',at);
+    if(resolved!==undefined)this.patternAliasUses.add(this.i);
+    else this.patternTypeNames.add(at.value);
+    this.i++;
+    return {values:[],types:resolved===undefined?[type]:resolved};
+  }
+  readPatternTypeAlias() {
+    this.expect('type');const index=this.i,name=this.name();
+    if(this.patternConstants.has(name)||this.patternTypeAliases.has(name)||
+       GENERATOR_RESERVED.has(name)||['Pattern','Int','String','string','float','f64','boolean','bool','int'].includes(name))
+      fail('duplicate or reserved scalar pattern alias',this.tokens[index]);
+    if(this.patternTypeAliases.size>=128)fail('scalar pattern alias declaration limit',this.peek());
+    this.expect('=');const parts=[];
+    do {
+      if(parts.length>=64)fail('scalar type alias alternative limit',this.peek());
+      parts.push(this.scalarPatternTypeAtom());
+    } while(this.eat('|'));
+    this.expect(';');
+    this.patternAliasUses.add(index);
+    this.patternTypeAliases.set(name,this.combinePatterns(parts).types);
+  }
+  patternTypeList() {
+    const list=this.eat('in'),parts=[];
+    if(list&&this.peek().value!=='['){
+      const entry=this.patternRef(true);
+      if(entry.values.length)fail('is in requires type-test-only Pattern[]',this.peek());
+      return entry;
+    }
+    if(list)this.expect('[');
+    do {
+      parts.push(this.scalarPatternTypeAtom());
+    } while(list&&this.eat(','));
+    if(list)this.expect(']');
+    return this.combinePatterns(parts);
+  }
+  patternArray(depth) {
+    if(depth>32)fail('compile-time pattern nesting limit',this.peek());
+    this.expect('[');
+    const parts=[];
+    if(this.peek().value===']')fail('empty Pattern[] is unsupported in this profile',this.peek());
+    do {
+      if(parts.length===64)fail('compile-time pattern collection limit',this.peek());
+      parts.push(this.patternDescriptor(depth+1));
+    } while(this.eat(',')&&this.peek().value!==']');
+    this.expect(']');
+    return this.combinePatterns(parts);
+  }
+  patternMembership(depth) {
+    if(depth>32)fail('compile-time pattern nesting limit',this.peek());
+    if(this.peek().value!=='[')return this.patternRef(true);
+    const next=this.tokens[this.i+1];
+    if(['on','is','in'].includes(next?.value)||this.patternConstants.has(next?.value))
+      return this.patternArray(depth+1);
+    this.expect('[');
+    const parts=[];
+    if(this.peek().value===']')fail('empty membership list',this.peek());
+    do {
+      if(parts.length===64)fail('membership limit: 64 integer alternatives',this.peek());
+      parts.push({values:[this.patternLiteral()],types:[]});
+    } while(this.eat(',')&&this.peek().value!==']');
+    this.expect(']');
+    return this.combinePatterns(parts);
+  }
+  patternLiteral() {
+    if(this.eat('true'))return true;
+    if(this.eat('false'))return false;
+    return this.integer(this.eat('-'));
+  }
+  patternDescriptor(depth=0) {
+    if(depth>32)fail('compile-time pattern nesting limit',this.peek());
+    if(this.eat('on')){
+      if(this.patternConstants.has(this.peek().value))return this.patternRef(false);
+      return {values:[this.patternLiteral()],types:[]};
+    }
+    if(this.eat('is'))return this.patternTypeList();
+    if(this.eat('in'))return this.patternMembership(depth+1);
+    return this.patternRef(false);
+  }
+  readPatternConstant() {
+    this.expect('const');this.expect('Pattern');
+    const array=this.eat('[');
+    if(array)this.expect(']');
+    const index=this.i,name=this.name();
+    if(this.patternConstants.has(name)||this.patternTypeAliases.has(name)||GENERATOR_RESERVED.has(name)||name==='Pattern')
+      fail('duplicate or reserved compile-time Pattern name',this.tokens[index]);
+    if(this.patternConstants.size>=128)fail('compile-time Pattern declaration limit',this.peek());
+    this.expect('=');
+    const pattern=array?this.patternArray(0):this.patternDescriptor();
+    this.expect(';');
+    this.patternUses.add(index);
+    this.patternConstants.set(name,{array,pattern});
+  }
+  scalarPatternArm(pattern) {
+    if(pattern.values.some(v=>typeof v==='boolean')) {
+      if(pattern.types.length||pattern.values.some(v=>typeof v!=='boolean'))
+        fail('mixed boolean pattern sets unsupported in this profile',this.peek());
+      return {tag:pattern.values.length===1?'integer':'membership',value:pattern.values.length===1?pattern.values[0]:pattern.values};
+    }
+    if(pattern.types.includes('int'))return {tag:'wildcard',value:null};
+    if(pattern.values.length===1)return {tag:'integer',value:pattern.values[0]};
+    if(pattern.values.length)return {tag:'membership',value:pattern.values};
+    fail('pattern set does not cover admitted int subject',this.peek());
+  }
   matchExpression(injectedSubject=null) {
     // A typed scalar match is a canonical source form, not a new
     // dynamically-dispatched container or unchecked JS pattern primitive.
@@ -1688,12 +1943,22 @@ class Parser {
       if(canonicalDefault||legacyElse) {
         if(family==='adt')fail('ADT match requires exhaustive named variants, not default',this.peek());
         family='int';tag='wildcard';
+      } else if(hasOver&&(this.peek().value==='in'||this.peek().value==='is')){
+        if(family==='adt')fail('cannot mix scalar and ADT patterns',this.peek());
+        family='int';
+        const resolved=this.scalarPatternArm(this.patternDescriptor());
+        tag=resolved.tag;value=resolved.value;
       } else {
         this.expect('on');
         const at=this.peek();
         if(this.eat('default'))
           fail("match fallback must use 'default ->' without 'on'",at);
-        if(this.eat('_')){
+        if(this.patternConstants.has(at.value)){
+          if(family==='adt')fail('cannot mix scalar and ADT patterns',at);
+          family='int';
+          const resolved=this.scalarPatternArm(this.patternRef(false));
+          tag=resolved.tag;value=resolved.value;
+        } else if(this.eat('_')){
           if(family==='adt')fail('ADT match forbids wildcard');
           family='int';tag='wildcard';
         } else if(['Some','None','Ok','Err'].includes(at.value)){
@@ -1711,16 +1976,24 @@ class Parser {
         } else {
           if(family==='adt')fail('cannot mix ADT and integer patterns',at);
           family='int';tag='integer';
-          value=this.integer(this.eat('-'));
+          value=this.patternLiteral();
         }
       }
       if(tag==='wildcard'&&(this.peek().value==='when'||this.peek().value==='as'))
         fail('match default/wildcard arm cannot have a guard or binding',this.peek());
       if(wildcard)fail('unreachable arm after wildcard',this.peek());
       if(tag==='wildcard')wildcard=true;
-      const key=tag==='integer'?'int:'+value:tag;
-      if(seen.has(key))fail('duplicate match pattern '+key);
-      seen.add(key);
+      if(tag==='membership') {
+        // Preserve ordered semantics with one shared body. Prior literal
+        // coverage may eliminate alternatives, never the whole arm.
+        value=value.filter(item=>!seen.has('int:'+item));
+        if(!value.length)fail('unreachable membership arm');
+        for(const item of value)seen.add('int:'+item);
+      } else {
+        const key=tag==='integer'?'int:'+value:tag;
+        if(seen.has(key))fail('duplicate match pattern '+key);
+        seen.add(key);
+      }
       if(typed&&this.eat(':'))this.expect('int');
       const arrow=this.eat('->');
       if(!arrow&&(canonicalDefault||this.peek().value!=='{'))
@@ -1735,7 +2008,7 @@ class Parser {
       const body=this.expression();
       if(block){this.expect(';');this.expect('}');}
       const separated=this.eat(',');
-      if(!block&&!separated&&!ended()&&!['on','default','else'].includes(this.peek().value))
+      if(!block&&!separated&&!ended()&&!['on','in','is','default','else'].includes(this.peek().value))
         fail('expected match arm boundary',this.peek());
       arms.push({tag,bind,value,body});
       if(arms.length>256)fail('match arm limit');
@@ -1752,11 +2025,15 @@ class Parser {
       return {kind:'adtMatch',adt:option?'option<int>':'result<int,int>',
         typed,subject,arms:arms.map(arm=>({tag:arm.tag,bind:arm.bind,body:arm.body}))};
     }
-    if(!wildcard){
-      if(!this.literalDenotations.size)fail('scalar int match requires exhaustive wildcard/else');
+    const literals=arms.flatMap(arm=>arm.value===null?[]:Array.isArray(arm.value)?arm.value:[arm.value]);
+    const boolDomain=literals.some(v=>typeof v==='boolean');
+    if(boolDomain&&literals.some(v=>typeof v!=='boolean'))fail('mixed scalar match domains');
+    if(boolDomain&&new Set(literals).size===2&&wildcard)fail('unreachable wildcard after complete bool coverage');
+    if(!wildcard&&!(boolDomain&&new Set(literals).size===2)){
+      if(boolDomain||!this.literalDenotations.size)fail('scalar match requires exhaustive coverage');
       this.literalExhaustiveMatchSeen=true;
     }
-    return {kind:'match',subject,arms:arms.map(arm=>({value:arm.value,body:arm.body}))};
+    return {kind:'match',...(boolDomain?{subjectType:'bool'}:{}),subject,arms:arms.map(arm=>({value:arm.value,body:arm.body}))};
   }
 }
 function resolveProgram(parsed) {
@@ -1831,7 +2108,7 @@ function resolveProgram(parsed) {
   let nodeCount=0,nextCaptureSlot=0;
   function resolvedType(expr,owner) {
     switch(expr.kind){
-      case 'closedRecur':case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
+      case 'closedNamedStage':case 'closedRecur':case 'int':case 'neg':case 'binary':case 'capture':case 'match':return 'int';
       case 'float':case 'floatNeg':case 'floatBin':case 'floatCapture':return 'float';
       case 'trap':return expr.operandType==='bool'||expr.operandType==='trapBoolResult'?'trapBoolResult':['option<int>','trapOptionResult'].includes(expr.operandType)?'trapOptionResult':'trapResult';
       case 'errorCapture':return 'error';
@@ -1904,6 +2181,15 @@ function resolveProgram(parsed) {
   function resolve(expr,owner,depth=0,bindings=[]) {
     if(++nodeCount>MAX_TOKENS || depth>MAX_DEPTH) fail('IR node/depth budget exceeded');
     switch(expr.kind) {
+      case 'closedNamedStage':{
+        if(owner.kind!=='fnc'||owner.module!==null||owner.ownerKind==='method'||owner.inlineTask||
+           modules.length||classes.length||generators.length||functions.some(f=>f.kind==='routine'))
+          fail('named stage requires flat ordinary functions',null,'E_NAMED_STAGE_PROFILE');
+        const input=resolve(expr.input,owner,depth+1,bindings);
+        if(resolvedType(input,owner)!=='int')fail('named stage input must be int');
+        const body=validateNamedStageBody(expr.body,()=>{if(++nodeCount>MAX_TOKENS)fail('IR node budget exceeded');});
+        return {kind:'closedNamedStage',input,body};
+      }
       case 'closedRecur':{
         if(owner.ownerKind==='method')fail('state loop in method requires ownership lowering');
         // Resolve closed operands only. No external binding, callable or
@@ -2003,7 +2289,14 @@ function resolveProgram(parsed) {
         }else if(expr.rebind){
           if(!previous||previous.type!=='string'||!previous.writable)
             fail('E_STRING_REBIND: requires writable typed string local');
-        }else if(previous)fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
+        }else if(previous){
+          // Root integer let shadowing only; preserve existing task-write,
+          // parameter, capability and fixed-binding restrictions.
+          const canShadow=expr.lexicalLet===true&&previous.lexicalLet===true&&
+            previous.type==='int'&&!previous.taskMutable&&!owner.inlineTask&&
+            !taskWrites(expr,expr.name);
+          if(!canShadow)fail('LOCAL_DUPLICATE_OR_SHADOW: '+expr.name);
+        }
         if(nextCaptureSlot>=MAX_TOKENS)fail('local slot budget exceeded');
         const slot=nextCaptureSlot++;
         const optionBoolInit=expr.localType==='option<bool>'&&expr.init.kind==='call'&&expr.init.qualifier==='Option'&&['some','none'].includes(expr.init.name);
@@ -2041,7 +2334,7 @@ function resolveProgram(parsed) {
         if(expr.taskRebind&&resolvedType(init,owner)!=='int')fail('E_TASK_LOCAL_WRITE: int assignment required');
         const taskMutable=expr.taskWritable===true&&taskWrites(expr.body,expr.name);
         return {kind:taskMutable?'taskMutableLocal':type==='option<bool>'?'optionBoolLocal':type==='trapBoolResult'?'trapBoolLocal':type==='option<int>'?'optionLocal':type==='result<int,int>'?'resultLocal':type==='trapOptionResult'?'trapOptionLocal':type==='trapResult'?'trapLocal':type==='float'?'floatLocal':type==='bool'?'boolLocal':type==='string'?'stringLocal':'local',slot,init,
-          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string',taskMutable,literalMutable:expr.literalMutable===true||expr.literalRebind===true}])};
+          body:resolve(expr.body,owner,depth+1,[...bindings,{name:expr.name,slot,type,writable:expr.writable===true&&type==='string',taskMutable,lexicalLet:expr.lexicalLet===true&&type==='int',literalMutable:expr.literalMutable===true||expr.literalRebind===true}])};
       }
       case 'taskScope':{
         if(owner.inlineTask||owner.ownerKind==='method'||owner.returnType==='void'||owner.returnType==='infer')fail('E_SYNC_TASK_PROFILE: unsupported task boundary');
@@ -2249,7 +2542,7 @@ function resolveProgram(parsed) {
       case 'match':
         if(owner.ownerKind==='method')
           fail('match inside method body unsupported in convergence slice');
-        return {kind:'match',subject:resolve(expr.subject,owner,depth+1,bindings),
+        return {kind:'match',...(expr.subjectType==='bool'?{subjectType:'bool'}:{}),subject:resolve(expr.subject,owner,depth+1,bindings),
         arms:expr.arms.map(arm=>({value:arm.value,body:resolve(arm.body,owner,depth+1,bindings)}))};
       case 'adtMatch': {
         if(owner.ownerKind==='method')
@@ -2294,7 +2587,8 @@ function resolveProgram(parsed) {
   const graph=resolved.map(()=>new Set());
   function inspect(expr,owner) {
     if(expr===null)return; // Pure void bodies contain no calls or effects.
-    if(expr.kind==='call'||expr.kind==='namedCall') {
+    if(expr.kind==='closedNamedStage')inspect(expr.input,owner);
+    else if(expr.kind==='call'||expr.kind==='namedCall') {
       graph[owner].add(expr.target);expr.args.forEach(a=>inspect(a,owner));
     } else if(expr.kind==='methodCall'||expr.kind==='namedMethodCall') {
       inspect(expr.receiver,owner);expr.args.forEach(a=>inspect(a,owner));
@@ -2363,6 +2657,7 @@ function emitProgram(program) {
       case 'bool': return expr.value?'true':'false';
       case 'string': return JSON.stringify(expr.value);
       case 'param':return '_p'+expr.index;
+      case 'closedNamedStage':return emitNamedStage(expr.body,emitExpr(expr.input,depth+1));
       case 'closedRecur': {
         const e=x=>emitExpr(x,depth+1);
         // All scratch values computed left-to-right before committing
@@ -2496,7 +2791,9 @@ function emitProgram(program) {
         // so no fallthrough and unmatched arm expressions stay lazy.
         const lines=['(()=>{const _subject='+emitExpr(expr.subject,depth+1)+';switch(_subject){'];
         expr.arms.forEach(arm=>{
-          lines.push(arm.value===null?'default:':'case '+arm.value+'n:');
+          if(Array.isArray(arm.value)) {
+            for(const value of arm.value)lines.push('case '+(typeof value==='boolean'?String(value):value+'n')+':');
+          } else lines.push(arm.value===null?'default:':'case '+(typeof arm.value==='boolean'?String(arm.value):arm.value+'n')+':');
           lines.push('return '+emitExpr(arm.body,depth+1)+';');
         });
         lines.push('}})()');
@@ -2519,6 +2816,7 @@ function emitProgram(program) {
     if(expr===null)return false;
     switch(expr.kind) {
       case 'symbol':return true;
+      case 'closedNamedStage':return usesSymbol(expr.input);
       case 'newClass':return false;
       case 'methodCall':case 'namedMethodCall':
         return usesSymbol(expr.receiver)||expr.args.some(usesSymbol);
@@ -2568,6 +2866,7 @@ function emitProgram(program) {
     if(expr===null)return false;
     switch(expr.kind) {
       case 'intrinsic':case 'trap':case 'trapMethod':case 'trapOptionMethod':case 'trapBoolMethod':return true;
+      case 'closedNamedStage':return usesPortableRuntime(expr.input);
       case 'newClass':return false;
       case 'methodCall':case 'namedMethodCall':
         return usesPortableRuntime(expr.receiver)||expr.args.some(usesPortableRuntime);
@@ -2916,13 +3215,19 @@ function admitUnusedRefinementsBeforeCheckedUnwrap(tokens){
 }
 
 export function compileToProgramIRV2(source, options) {
-  const tokens=tokenize(source);
+  const sourceTokens=tokenize(source);
+  const tokens=lowerContextualScalar(sourceTokens,fail,GENERATOR_RESERVED,isProtectedPreludeIdentity,MAX_TOKENS);
   rejectExecutionDomains(tokens,fail,{inlineScalarTasks:true});
   rejectUnsupportedHttpActors(tokens,fail);
   rejectUnsupportedStaticSelect(tokens);
   rejectUnsupportedTrapEffect(tokens);
   const mixed=admitUnusedRefinementsBeforeCheckedUnwrap(tokens);
-  const quantity=mixed===null?lowerVerifiedQuantitySource(tokens,fail):null;
+  // Preserve original user token locations and all original admission checks.
+  // A selected implicit profile never falls back to ordinary lowering.
+  const implicit=mixed===null&&requestsMeasurePrelude(tokens);
+  const quantity=mixed===null?lowerVerifiedQuantitySource(
+    implicit?[...tokenize(MEASURE_SOURCE).slice(0,-1),...tokens]:tokens,fail):null;
+  if(implicit&&quantity===null)fail('E_VERIFY_UNSUPPORTED: measurement prelude requires typed quantity source',tokens[0]);
   if(quantity!==null)return validateProgramIRV2({
     schemaVersion:PROGRAM_IR_VERSION,dialect:PROGRAM_IR_DIALECT,integerModel:PROGRAM_IR_INT_MODEL,...quantity
   });

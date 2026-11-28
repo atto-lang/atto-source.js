@@ -1,4 +1,5 @@
 import {isIdentifier} from './portable-unicode-identifier-v1.mjs';
+import {validateNamedStageBody} from './closed-named-stage.mjs';
 /**
  * Strict JSON-safe resolved IR contract for the experimental program-v2 backend.
  * This is a backend-local migration seam, NOT yet the shared canonical Oreslang IR.
@@ -332,6 +333,17 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
     if(expected!=='symbol'&&desc.value==='symbol')
       fail('Symbol value cannot be used as non-Symbol');
     switch(desc.value) {
+      case 'closedNamedStage':{
+        record(expr,['kind','input','body'],'closed named stage');
+        if(expected!=='int'||allowScalarWhile||taskDepth||owner>=headers.length||
+           headers[owner].kind!=='fnc'||headers[owner].module!==null||
+           moduleNames.length||classHeaders.length||generatorHeaders.length||
+           headers.some(h=>h.kind==='routine'))
+          fail('E_NAMED_STAGE_PROFILE: invalid named stage context');
+        const upstream=node(expr.input,owner,depth+1,'int',active);
+        const body=validateNamedStageBody(expr.body,()=>{if(++nodes>LIMIT_NODES)fail('expression complexity exceeded');});
+        return {kind:'closedNamedStage',input:upstream,body};
+      }
       case 'tryCatch':{
         record(expr,['kind','slot','body','handler'],'ordinary catch');
         if(owner>=headers.length||expected!==(headers[owner].returnType??'int')||
@@ -811,8 +823,12 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
         return {kind:'adtMatch',adt:expr.adt,subject,arms:checked};
       }
       case 'match': {
-        record(expr,['kind','subject','arms'],'match');
-        const subject=node(expr.subject,owner,depth+1,'int',active);
+        const typed=Object.hasOwn(expr,'subjectType');
+        record(expr,typed?['kind','subjectType','subject','arms']:['kind','subject','arms'],'match');
+        if(typed&&expr.subjectType!=='bool')fail('invalid explicit match domain');
+        const domain=typed?'bool':'int';
+        const scalar=v=>{if(domain==='int')return int(v);if(typeof v!=='boolean')fail('invalid boolean pattern');return v;};
+        const subject=node(expr.subject,owner,depth+1,domain,active);
         const arms=sequence(expr.arms,256,'match arms');
         if(!arms.length)fail('empty match');
         let wildcard=false;
@@ -822,17 +838,33 @@ export function validateProgramIRV2(input, allowScalarWhile = false, allowStdout
           let value;
           if(arm.value===null) {
             if(wildcard)fail('duplicate wildcard');
+            if(domain==='bool'&&literals.size===2)fail('unreachable wildcard after complete bool coverage');
             wildcard=true;value=null;
           } else {
             if(wildcard)fail('unreachable arm after wildcard');
-            value=int(arm.value);
-            if(literals.has(value))fail('duplicate scalar pattern');
-            literals.add(value);
+            if(Array.isArray(arm.value)){
+              const items=sequence(arm.value,64,'membership alternatives');
+              if(!items.length)fail('empty membership alternatives');
+              value=[];
+              const local=new Set();
+              for(const item of items){
+                const canonical=scalar(item);
+                if(local.has(canonical))fail('duplicate membership alternative');
+                local.add(canonical);
+                if(!literals.has(canonical))value.push(canonical);
+              }
+              if(!value.length)fail('unreachable membership arm');
+              for(const item of value)literals.add(item);
+            } else {
+              value=scalar(arm.value);
+              if(literals.has(value))fail('duplicate scalar pattern');
+              literals.add(value);
+            }
           }
           return {value,body:node(arm.body,owner,depth+1,expected,active)};
         });
-        if(!wildcard)fail('non-exhaustive int match');
-        return {kind:'match',subject,arms:checked};
+        if(!wildcard&&!(domain==='bool'&&literals.size===2))fail('non-exhaustive scalar match');
+        return {kind:'match',...(typed?{subjectType:'bool'}:{}),subject,arms:checked};
       }
       default:fail('unsupported expression kind');
     }

@@ -38,8 +38,19 @@
     "./selectable-i64-future": "./src/selectable-i64-future.mjs",
     "./select-continuation-fence": "./src/select-continuation-fence.mjs",
     "./structural-runtime": "./src/structural-runtime.mjs",
+    "./text-pattern-v1": "./src/text-pattern-v1.mjs",
     "./std-time-runtime": "./src/std-time-runtime.mjs",
-    "./attached-struct-v1": "./src/attached-struct-v1.mjs"
+    "./attached-struct-v1": "./src/attached-struct-v1.mjs",
+    "./worker-control-loop": "./src/worker-control-loop.mjs",
+    "./wasm-jspi-control-bridge-v1": "./src/wasm-jspi-control-bridge-v1.mjs",
+    "./portable-task-host-v3": "./src/portable-task-host-v3.mjs",
+    "./portable-task-host-v4": "./src/portable-task-host-v4.mjs",
+    "./portable-task-host-v5": "./src/portable-task-host-v5.mjs",
+    "./actor-future-host-v1": "./src/actor-future-host-v1.mjs",
+    "./worker-completion-capability-v1": "./src/worker-completion-capability-v1.mjs",
+    "./task-future-host-v1": "./src/task-future-host-v1.mjs",
+    "./scheduled-unwind-compiler": "./src/scheduled-unwind-compiler.mjs",
+    "./scheduled-unwind-runtime": "./src/scheduled-unwind-runtime.mjs"
   },
   "bin": {
     "oreslang-jsc": "./bin/oreslang-jsc.mjs"
@@ -50,8 +61,8 @@
     "parity:js": "node bin/js-semantic-parity-report.mjs",
     "parity:numeric-js": "node bin/js-numeric-boundary-report.mjs",
     "static-facts:smoke": "node bin/oreslang-jsc.mjs --static-facts tests/fixtures/forward-call.ores",
-    "test:workers": "node --test tests/worker-node.test.mjs tests/worker-guest-scalar-e2e.test.mjs tests/worker-protocol-admission.test.mjs tests/worker-endpoint-admission.test.mjs tests/worker-real-integration.test.mjs tests/worker-copy-budget.test.mjs tests/worker-mailbox-bytes.test.mjs tests/worker-wire-allowlist.test.mjs tests/worker-wire-compat.test.mjs tests/worker-mailbox-invariants.test.mjs tests/worker-wire-real.test.mjs tests/worker-wire-error-brand.test.mjs tests/worker-malformed-error.test.mjs tests/worker-frame-getter-failure.test.mjs tests/worker-blob-type-budget.test.mjs tests/worker-resizable-buffer-budget.test.mjs tests/worker-negative-result-getter.test.mjs",
-    "test:browser": "node scripts/browser-worker-smoke.mjs",
+    "test:workers": "node --test tests/worker-tcp-causal.test.mjs tests/worker-control-loop-admission.test.mjs tests/worker-control-loop.test.mjs tests/worker-control-loop-node.test.mjs tests/worker-node.test.mjs tests/worker-guest-scalar-e2e.test.mjs tests/worker-protocol-admission.test.mjs tests/worker-endpoint-admission.test.mjs tests/worker-real-integration.test.mjs tests/worker-copy-budget.test.mjs tests/worker-mailbox-bytes.test.mjs tests/worker-wire-allowlist.test.mjs tests/worker-wire-compat.test.mjs tests/worker-mailbox-invariants.test.mjs tests/worker-wire-real.test.mjs tests/worker-wire-error-brand.test.mjs tests/worker-malformed-error.test.mjs tests/worker-frame-getter-failure.test.mjs tests/worker-blob-type-budget.test.mjs tests/worker-resizable-buffer-budget.test.mjs tests/worker-negative-result-getter.test.mjs",
+    "test:browser": "node scripts/browser-worker-smoke.mjs && node scripts/browser-worker-control-loop-smoke.mjs",
     "test:core": "node --test tests/freestanding-core.test.mjs",
     "test:core-browser": "node scripts/browser-core-smoke.mjs",
     "test:core-link": "node --test tests/core-linked-application.test.mjs",

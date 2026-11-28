@@ -1,0 +1,68 @@
+<!doctype html><meta charset="utf-8">
+<title>Atto JS browser Worker control-loop host smoke</title>
+<pre id="result">RUNNING</pre>
+<script type="module">
+const output=document.getElementById('result');
+const worker=new Worker(new URL('./fixtures/worker-control-loop-browser-fixture.mjs',import.meta.url),{type:'module'});
+const frames=[];
+let wake;
+worker.addEventListener('message',event=>{frames.push(event.data);wake?.();});
+const next=async kind=>{
+  for(let i=0;i<30;i++){
+    const err=frames.find(frame=>frame.kind==='recover-error'||frame.kind==='guest-error');if(err)throw Error(err.message);
+    const match=frames.find(frame=>frame.kind===kind);
+    if(match)return match;
+    await new Promise((resolve,reject)=>{
+      const timeout=setTimeout(()=>{wake=null;reject(Error('timeout '+kind));},1000);
+      wake=()=>{clearTimeout(timeout);wake=null;resolve();};
+    });
+  }
+  throw Error('unbounded wait');
+};
+try{
+  await next('ready');
+  worker.postMessage({kind:'complete',value:42});
+  if(!(await next('after')).accepted)throw Error('completion rejected');
+  await next('resumed');
+  if(frames.slice(0,4).map(f=>f.kind).join(',')!=='ready,before,after,resumed')
+    throw Error('inline reactor continuation detected');
+  if(frames.find(f=>f.kind==='resumed').value!==42)throw Error('resume value mismatch');
+  worker.postMessage({kind:'retire'});
+  const stale=await next('retired');
+  if(!stale.retired||stale.stale||!stale.attached)throw Error('generation fence failed');
+  worker.postMessage({kind:'complete',value:43});
+  if((await next('resumed2')).value!==43)throw Error('new epoch did not resume');
+  worker.postMessage({kind:'unwind-start'});
+  const parked=await next('unwind-parked');
+  if(!parked.retirementBlocked||!parked.closeBlocked)throw Error('unwind lease not held');
+  worker.postMessage({kind:'unwind-complete',value:7});
+  const admitted=await next('unwind-after');
+  if(!admitted.accepted||admitted.duplicate)throw Error('unwind completion replay');
+  const done=await next('unwind-done');
+  if(done.failure!=='cancel'||!done.retirementBlocked)throw Error('unwind cancellation or publication lease failed');
+  if(frames.filter(f=>f.kind.startsWith('unwind-')).map(f=>f.kind).join(',')!=='unwind-parked,unwind-before,unwind-after,unwind-resumed,unwind-outer,unwind-done')
+    throw Error('unwind ordering failed');
+  worker.postMessage({kind:'unwind-retire'});
+  const quiesced=await next('unwind-retired');
+  if(!quiesced.retired||!quiesced.attached||quiesced.stale||quiesced.retained!==0)throw Error('unwind retirement failed');
+  worker.postMessage({kind:'guest-start'});await next('guest-parked');
+  worker.postMessage({kind:'guest-second'});await next('guest-first-parked');
+  worker.postMessage({kind:'guest-first'});
+  if((await next('guest-done')).value!=='42')throw Error('compiled guest result');
+  worker.postMessage({kind:'guest-retire'});await next('guest-retired');
+  if(frames.filter(f=>f.kind.startsWith('guest-')).map(f=>f.kind).join(',')!=='guest-parked,guest-before-second,guest-after-second,guest-first-parked,guest-after-first,guest-done,guest-retired')
+    throw Error('compiled guest ordering');
+  worker.postMessage({kind:'recover-start'});await next('recover-input-parked');
+  worker.postMessage({kind:'recover-fail-input'});await next('recover-cleanup-parked');
+  worker.postMessage({kind:'recover-complete-cleanup'});await next('recover-fallback-parked');
+  worker.postMessage({kind:'recover-complete-fallback'});
+  const recovery=await next('recover-done');
+  if(recovery.value!=='42'||!recovery.sameError)throw Error('compiled recovery result');
+  worker.postMessage({kind:'recover-retire'});await next('recover-retired');
+  if(frames.filter(f=>f.kind.startsWith('recover-')).map(f=>f.kind).join(',')!=='recover-input-parked,recover-after-input,recover-cleanup-parked,recover-after-cleanup,recover-fallback-parked,recover-after-fallback,recover-done,recover-retired')throw Error('compiled recovery ordering');
+  worker.postMessage({kind:'close'});
+  if(!(await next('closed')).closed)throw Error('close did not revoke');
+  output.textContent='PASS_BROWSER_CONTROL_LOOP';
+}catch(error){output.textContent='FAIL_BROWSER_CONTROL_LOOP: '+String(error);}
+finally{worker.terminate();}
+</script>

@@ -4,9 +4,14 @@ on:
     paths:
       - 'src/readonly-copy-domain.mjs'
       - 'tests/readonly-copy-domain.test.mjs'
+      - 'tests/readonly-copy-domain-differential.test.mjs'
+      - 'tests/readonly-copy-loan-read.test.mjs'
       - '.github/workflows/readonly-copy-domain.yml'
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   runtime-component:
     runs-on: ubuntu-24.04
@@ -22,5 +27,5 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED"
           echo "SOURCE_TREE=$(git rev-parse 'HEAD^{tree}')"
-          node --test tests/readonly-copy-domain.test.mjs
+          node --test tests/readonly-copy-domain.test.mjs tests/readonly-copy-domain-differential.test.mjs tests/readonly-copy-loan-read.test.mjs
           echo "HOST_COMPONENT_ONLY"

@@ -3,9 +3,13 @@ on:
   pull_request:
     paths: [ 'src/proxy-receipt-gate-v1.mjs', 'tests/proxy-receipt-gate-v1.test.mjs', 'src/proxy-mailbox-ticket-v1.mjs', 'tests/proxy-mailbox-ticket-v1.test.mjs', '.github/workflows/proxy-receipt-host-gate.yml' ]
   push:
+    branches: [main]
     paths: [ 'src/proxy-receipt-gate-v1.mjs', 'tests/proxy-receipt-gate-v1.test.mjs', 'src/proxy-mailbox-ticket-v1.mjs', 'tests/proxy-mailbox-ticket-v1.test.mjs', '.github/workflows/proxy-receipt-host-gate.yml' ]
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   node-host-model:
     runs-on: ubuntu-24.04
@@ -22,4 +26,5 @@ jobs:
         with:
           node-version: '22'
       - run: node --test tests/proxy-receipt-gate-v1.test.mjs tests/proxy-mailbox-ticket-v1.test.mjs
-      - run: echo 'HOST_MODEL_ONLY: no compiled .atto remote actor, IPC, or cryptographic authentication'
+      - run: |
+          echo 'HOST_MODEL_ONLY: no compiled .atto remote actor, IPC, or cryptographic authentication'
