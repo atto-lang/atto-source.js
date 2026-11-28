@@ -10,7 +10,7 @@ pub fnc main(): int { let p = new Parcel(); return forward(p) + get(p); }
 def shape(n=8):
     fields = " ".join(f"pub let int f{i} = 6;" for i in range(n))
     helpers = "fnc h0(Parcel p): int { return p.f0; } " + " ".join(f"fnc h{i}(Parcel p): int {{ return h{i-1}(p); }}" for i in range(1,8))
-    return "// atto-ownership: borrow-default-v1\n" + f"define class Parcel as {fields} end\n{helpers}\npub fnc main(): int {{ let p = new Parcel(); return " + " + ".join(f"h{i}(p)" for i in range(7)) + "; }\n"
+    return "// atto-ownership: borrow-default-v1\n" + f"define class Parcel as {fields} end\n{helpers}\npub fnc main(): int {{ let p = new Parcel(); return " + " + ".join(f"h{i}(p)" for i in [0,1,2,3,4,5,7]) + "; }\n"
 def main():
     backend, compiler = sys.argv[1:]
     compiler = str(pathlib.Path(compiler).resolve())
@@ -18,6 +18,8 @@ def main():
         ("ordinary", S, 42),
         ("maximum-fields-helpers", shape(), 42),
         ("maximum-calls", shape().replace("return h0(p) +", "return h0(p) - h0(p) +").replace("f0 = 6", "f0 = 7"), 42),
+        ("last-field", S.replace("p.value", "p.padding").replace("padding = 99", "padding = 21"), 42),
+        ("ordered-subtraction", S.replace("padding = 99", "padding = 63").replace("return forward(p) + get(p);", "return forward(p) - get(p);").replace("return get(p);", "return p.padding;"), 42),
         ("nineteen-digits", S.replace("value = 21", "value = 0000000000000000021"), 42),
         ("twenty-digits", S.replace("value = 21", "value = 00000000000000000021"), None),
         ("nine-fields", shape(9), None),
@@ -27,6 +29,7 @@ def main():
         ("unicode-comment", S + "// é\n", None),
         ("overflow-literal", S.replace("value = 21", "value = 9223372036854775808"), None),
         ("mutation", S.replace("return p.value;", "p.value = 1; return p.value;"), None),
+        ("missing-field", S.replace("p.value", "p.unknown"), None),
         ("recursive", S.replace("return get(p);", "return forward(p);"), None),
     ]
     with tempfile.TemporaryDirectory() as tmp:
