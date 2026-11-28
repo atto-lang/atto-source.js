@@ -1,4 +1,5 @@
 import {missingBangKeywordSeparator} from './bang-keyword-separator.mjs';
+import {preflightCoreFutureOwnership} from './core-future-ownership.mjs';
 import { transpile_result_int_parse_tokens } from './result-int-parse-compiler.mjs';
 // Deliberately a strict AttoLang subset, not the full frontend.
 // Unsupported syntax MUST fail closed. Never splice source into generated JS.
@@ -30,6 +31,15 @@ function tokenize(source) {
     const contextualWord = /^[A-Za-z_][A-Za-z_0-9]*/.exec(tail)?.[0];
     if (contextualWord && missingBangKeywordSeparator(contextualWord, tail.slice(contextualWord.length)))
       throw new TranspileError('E_BANG_KEYWORD_WHITESPACE');
+    // Admit only the two ownership spellings needed by the sealed Future
+    // negative preflight. No Worker ownership lowering is granted by this.
+    const ownershipBang=/^(take|borrow)!(?=[ \t\r\n\v\f])/.exec(tail);
+    if(ownershipBang){
+      tokens.push(ownershipBang[1],'!');
+      if(tokens.length>MAX_TOKENS)throw new TranspileError('E_TOKEN_LIMIT');
+      i+=ownershipBang[0].length;
+      continue;
+    }
     // Only the four exceptional-control words may consume a contiguous bang.
     // Never widen arbitrary identifiers to name!; preserve != / !eq boundaries.
     // Full effects stay fail-closed in this trusted checked-Result subset.
@@ -55,7 +65,7 @@ function tokenize(source) {
 // Only split shift-like closers in recognized type contexts. Never join
 // spaced operator tokens or reinterpret << / >> as arithmetic.
 function normalize_generic_closers(tokens) {
-  const nominal=new Set(['task','Mutex','Option','Future','Result','Map','Channel','ActorMail']);
+  const nominal=new Set(['task','Mutex','Option','Future','TaskFuture','ActorFuture','Result','Map','Channel','ActorMail']);
   const out=[];let depth=0;
   for(const token of tokens){
     // Constructor payload bindings are angle-delimited but are not generic
@@ -93,6 +103,52 @@ function reject_unsupported_mutex_constructor(tokens) {
     throw new TranspileError('E_LOCK_UNSUPPORTED');
   }
 }
+// The Worker frontend and scalar compiler must reject the same sealed Future
+// ownership violations before emitting an artifact. Limit the shared
+// preflight to sealed formals, constructors and declarations; unrelated
+// inline-task generic arguments retain their original diagnostics.
+function preflight_worker_future_formals(tokens){
+  const sealed=new Set(['Future','TaskFuture','ActorFuture']);
+  const isId=t=>typeof t==='string'&&/^[A-Za-z_][A-Za-z_0-9]*$/.test(t);
+  let candidate=false;
+  for(let i=0;i<tokens.length;i++){
+    if(['new','class','actor','struct'].includes(tokens[i])&&sealed.has(tokens[i+1])){
+      candidate=true;break;
+    }
+    if(tokens[i]!=='fnc'||!isId(tokens[i+1]))continue;
+    let start=i+2;
+    if(tokens[start]==='<'){
+      let depth=1;
+      for(start++;start<tokens.length&&depth;start++){
+        if(tokens[start]==='<')depth++;
+        else if(tokens[start]==='>')depth--;
+      }
+      if(depth)continue;
+    }
+    if(tokens[start]!=='(')continue;
+    let parens=1;
+    for(let j=start+1;j<tokens.length&&parens;j++){
+      if(tokens[j]==='(')parens++;
+      else if(tokens[j]===')')parens--;
+      else if(sealed.has(tokens[j])&&tokens[j+1]==='<'){candidate=true;break;}
+    }
+    if(candidate)break;
+  }
+  // Reject sealed nominal declarations through every supported declaration
+  // keyword, even where the scalar ownership preflight has no positive lane.
+  for(let i=0;i+1<tokens.length;i++){
+    if(['enum','contract','interface','trait','type','alias','namespace','module','record'].includes(tokens[i])&&sealed.has(tokens[i+1]))
+      throw new TranspileError('E_RESERVED');
+  }
+  if(candidate){
+    preflightCoreFutureOwnership(tokens.map(value=>({kind:isId(value)?'id':'sym',value})),
+      code=>{throw new TranspileError(code);});
+    // A sealed candidate may never fall through to ordinary Worker lowering.
+    throw new TranspileError('E_UNSUPPORTED_TYPE');
+  }
+  // Preserve the previous no-ownership-token behavior outside this preflight.
+  if(tokens.includes('!'))throw new TranspileError('E_UNSUPPORTED_TOKEN');
+}
 function checked_tokens(source) {
   if (typeof source !== 'string' || new TextEncoder().encode(source).byteLength > MAX_SOURCE) throw new TranspileError('E_SOURCE_LIMIT');
   // Raw terminal controls and NUL must not be hidden in comments or
@@ -117,6 +173,7 @@ function checked_tokens(source) {
   if (/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(source))
     throw new TranspileError('E_BIDI_CONTROL');
   const tokens=normalize_generic_closers(tokenize(source));
+  preflight_worker_future_formals(tokens);
   reject_unsupported_mutex_constructor(tokens);
   return tokens;
 }

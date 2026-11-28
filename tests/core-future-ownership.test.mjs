@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {compileToIR,compile} from '../src/compiler.mjs';
+import {transpile_to_worker,TranspileError} from '../src/transpile-worker.mjs';
 const fixture=name=>readFileSync(new URL('../contracts/std-actor-v1/'+name,import.meta.url),'utf8');
 const expected=[
  ['future-borrowed.reject.atto','E_OWNERSHIP'],
@@ -43,4 +44,38 @@ test('scalar compiler remains executable for supported arithmetic',()=>{
   const out=compile('pub fnc main(): int { return 40 + 2; }');
   assert.match(out,/export \{/);
   assert.doesNotMatch(out,/ActorFuture/);
+});
+
+test('Worker and scalar compiler reject the identical six affine Future fixtures before emission',()=>{
+ for(const [name,code] of expected){
+  const source=fixture(name);
+  assert.throws(()=>transpile_to_worker(source),e=>e instanceof TranspileError&&e.code===code,name);
+ }
+});
+test('Worker retains fail-closed owned/nested Future and lexical boundary',()=>{
+ const owned=fixture('future-owned.accept.atto');
+ const denied=[
+  [owned,'E_UNSUPPORTED_TYPE'],
+  ['pub susp fnc f(take! ActorFuture<Result<int,String>> r) -> Result<int,String> { return await r; }','E_UNSUPPORTED_TYPE'],
+  ['pub susp fnc f(take!ActorFuture<int> r) -> int { return await r; }','E_BANG_KEYWORD_WHITESPACE'],
+  ['pub fnc main(): int { val x = take! y; return 42; }','E_UNSUPPORTED_TOKEN'],
+  ['pub fnc main(): int { do sync task<Future<int>> { return 42; }; return 0; }','E_TASK_RETURN_TYPE'],
+ ];
+ for(const [source,code] of denied)assert.throws(()=>transpile_to_worker(source),e=>e instanceof TranspileError&&e.code===code,code);
+});
+test('Worker Future preflight ignores comments and preserves actual emitted scalar guest',async()=>{
+ const source='pub fnc main(): int { /* take! ActorFuture<int> fake; */ return 42; }';
+ const {module_source}=transpile_to_worker(source);
+ const mod=await import('data:text/javascript;charset=utf-8,'+encodeURIComponent(module_source));
+ assert.equal((await (await mod.create_tenant({tenant:'future-probe',generation:1})).on_message()).value,'42');
+});
+
+test('both frontends reject sealed Future nominal redefinitions in additional declaration forms',()=>{
+ for(const kind of ['class','actor','struct','enum','contract','interface','trait','type','alias','namespace','module','record'])
+  for(const name of ['Future','TaskFuture','ActorFuture']){
+   const source='define '+kind+' '+name+' as end';
+   assert.throws(()=>compileToIR(source),/error: E_RESERVED:/,kind+' '+name);
+   assert.throws(()=>compile(source),/error: E_RESERVED:/,kind+' '+name);
+   assert.throws(()=>transpile_to_worker(source),e=>e instanceof TranspileError&&e.code==='E_RESERVED',kind+' '+name);
+  }
 });
