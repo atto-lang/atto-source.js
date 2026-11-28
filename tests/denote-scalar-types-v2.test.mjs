@@ -57,8 +57,6 @@ test('literal denotations fail closed before integer erasure at unproved boundar
     ['let Dice a = 5; return a;', /unsupported|expected|requires/i],
   ]) assert.throws(()=>compileProgramV2('denote type Dice = 5 | 6 | 7; pub fnc main(): int { '+body+' }'),diagnostic,body);
   for(const source of [
-    'denote type Dice = 5 | 6; fnc id(Dice a): int { return a; } pub fnc main(): int { return id(5); }',
-    'denote type Dice = 5 | 6; pub fnc main(): Dice { return 5; }',
     'denote type Dice = 5 | 5; pub fnc main(): int { return 42; }',
     'denote type Dice = 9223372036854775808 | 5; pub fnc main(): int { return 42; }',
     'denote type Dice = 5 | ; pub fnc main(): int { return 42; }',
@@ -87,4 +85,30 @@ test('bounded iterative resolution admits 512 names but not a 513th',async()=>{
     '\npub fnc main(): Alias0 { return 42; }';
   assert.equal(await (await load(chain(512))).main(),42n);
   assert.throws(()=>compileProgramV2(chain(513)),/denotation count limit/);
+});
+
+test('closed literal union call boundaries prove subset arguments and returns',async()=>{
+  const prefix='denote type Wide = 5 | 6 | 7; denote type Narrow = 5 | 6; ';
+  const source=prefix+'fnc narrow(Narrow n): Wide { return n; } fnc wide(Wide n): Wide { return n; } pub fnc main(): int { return wide(narrow(5)) + 37; }';
+  assert.equal(await (await load(source)).main(),42n);
+  const control='fnc narrow(int n): int { return n; } fnc wide(int n): int { return n; } pub fnc main(): int { return wide(narrow(5)) + 37; }';
+  assert.deepEqual(compileToProgramIRV2(source),compileToProgramIRV2(control));
+  assert.equal(compileProgramV2(source),compileProgramV2(control));
+  assert.equal(await (await load(prefix+'fnc pick(bool b): Narrow { return b ? 5 : 6; } pub fnc main(): int { return pick(true) + 37; }')).main(),42n);
+  assert.equal(await (await load(prefix+'fnc id(Wide x): Wide { return x; } pub fnc main(): int { val Narrow n = 5; return id(n) + 37; }')).main(),42n);
+  assert.equal(await (await load(prefix+'fnc id(Wide x): Wide { return x; } pub fnc main(): Wide { return id(5); }')).main(),5n);
+});
+test('closed literal union call boundaries reject unproven admissions',()=>{
+  const prefix='denote type Wide = 5 | 6 | 7; denote type Narrow = 5 | 6; ';
+  for(const [source,reason] of [
+    ['fnc id(Narrow n): int { return n; } pub fnc main(): int { return id(8); }',/not a proven subset/],
+    ['fnc id(Narrow n): int { return n; } fnc wider(Wide n): int { return id(n); } pub fnc main(): int { return wider(5); }',/not a proven subset/],
+    ['fnc bad(): Narrow { return 7; } pub fnc main(): int { return bad(); }',/not a proven subset/],
+    ['fnc bad(int n): Narrow { return n; } pub fnc main(): int { return bad(5); }',/not a proven subset/],
+    ['fnc bad(bool b): Narrow { return b ? 5 : 8; } pub fnc main(): int { return bad(true); }',/not a proven subset/],
+    ['pub fnc exposed(Narrow n): int { return n; } pub fnc main(): int { return 42; }',/external literal union admission/],
+    ['fnc id(Narrow n): int { return n; } pub fnc main(): int { return id(4 + 1); }',/not a proven subset/],
+    ['fnc id(Narrow n): int { return n; } pub fnc main(): int { return id(true); }',/not a proven subset/],
+    ['fnc id(Narrow n): int { return n; } pub fnc main(): int { let int n = 5; return id(n); }',/mutable binding/],
+  ]) assert.throws(()=>compileProgramV2(prefix+source),reason,source);
 });
