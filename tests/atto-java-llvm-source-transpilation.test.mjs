@@ -135,12 +135,16 @@ test('canonical Java immutable locals execute through actual program-v2 ESM',asy
     'pub fnc main(): int { const int x = 7; return x * 6; }\n',
     'pub fnc main(): int { const x = 7; return x * 6; }\n'
   ]){
+    const ir=compileToProgramIRV2(source);
     const emitted=compileProgramV2(source);
+    assert.equal(compileProgramIRV2(JSON.parse(JSON.stringify(ir))),emitted);
     const guest=await import('data:text/javascript,'+encodeURIComponent(emitted));
     assert.equal(guest.main(),42n,source);
   }
   for(const declaration of ['int x = 7','const int x = 7','const x = 7'])
     assert.throws(()=>compileProgramV2('pub fnc main(): int { '+declaration+'; x = 42; return x; }'),/error: program v2:|error: program IR:/,declaration);
+  for(const declaration of ['int x = true','const int x = true','const int x = "wrong"'])
+    assert.throws(()=>compileProgramV2('pub fnc main(): int { '+declaration+'; return 42; }'),/error: program v2:|error: program IR:/,declaration);
 });
 
 test('AttoLang scalar profile rejects removed operators instead of emitting wrong semantics',()=>{
