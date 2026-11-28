@@ -284,34 +284,34 @@ class Parser {
       // No contextual empty-element inference in this profile. Preserve
       // exact scalar element type, or the finite set of Record shapes.
       if(!items.length)throw new CompileError('E_TYPE_INFER_AMBIGUOUS: empty Array requires element type',at);
-      const allRecords=items.every(x=>x.type.startsWith('Record:'));
+      const allRecords=items.every(x=>x.type.startsWith('Record:')||x.type.startsWith('DynRecord:'));
       const types=[...new Set(items.map(x=>x.type))].sort();
       if(types.length!==1&&!allRecords)
         throw new CompileError('E_TYPE_MISMATCH: incompatible Array elements',at);
       return {type:'Array:'+types.map(t=>t.length+':'+t).join(''),items};
     }
     if(this.peek().value==='{'||
-       (this.peek().value==='('&&this.ts[this.pos+1]?.kind==='string'&&this.ts[this.pos+2]?.value===':')){
+       (this.peek().value==='('&&this.ts[this.pos+1]?.kind==='string'&&[':', '='].includes(this.ts[this.pos+2]?.value))){
       const open=this.peek().value;this.pos++;
       const close=open==='{'?'}':')',fields=new Map();
       if(this.peek().value!==close)do{
         if(fields.size>=64)throw new CompileError('E_SOURCE_LIMIT: nested Record size',this.peek());
         const key=open==='('?this.readQuotedRecordKey():this.aggregateIdentifier();
         if(fields.has(key))throw new CompileError('E_DUPLICATE_FIELD: '+key,this.peek());
-        this.expect(':');
+        if(!this.match(':'))this.expect('=');
         fields.set(key,this.readRecordValue([],false,depth+1));
         if(!this.match(','))break;
         if(this.peek().value===close)break;
       }while(true);
       this.expect(close);
       const slots=[...fields].sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0);
-      return {type:'Record:'+slots.map(([k,v])=>k.length+':'+k+v.type.length+':'+v.type).join(''),fields};
+      return {type:(open==='('?'DynRecord:':'Record:')+slots.map(([k,v])=>k.length+':'+k+v.type.length+':'+v.type).join(''),fields};
     }
     return this.readAggregateScalar(params,allowRuntime);
   }
   localConst(params){
     const at=this.peek(), next=this.ts[this.pos+1]?.value;
-    if(['Record','Tuple','struct'].includes(next)){
+    if(['Record','DynRecord','Tuple','struct'].includes(next)){
       this.aggregateConst(params);return;
     }
     this.expect('const');
@@ -353,7 +353,7 @@ class Parser {
       // Without a concrete expected kind, the zero-arity () literal
       // defaults to Tuple. Nonempty inferred positional tuples remain
       // outside this bounded local scalar profile.
-      const kind=open==='struct'?'struct':open==='('&&this.ts[this.pos+1]?.value===')'?'Tuple':'Record';
+      const kind=open==='struct'?'struct':open==='('?(this.ts[this.pos+1]?.value===')'?'Tuple':'DynRecord'):'Record';
       if(kind==='struct')this.pos++;
       this.readAggregateFields(kind,name,null,false,params,at,false);
     }else{
@@ -384,7 +384,7 @@ class Parser {
     if(this.match('<')){
       binder=this.match('infer');
       alias=this.aggregateIdentifier(); // bare infer cannot consume the closing angle
-      if(['infer','Record','Tuple','struct','int','bool','string','const','let','val',
+      if(['infer','Record','DynRecord','Tuple','struct','int','bool','string','const','let','val',
           'fnc','return','true','false','void','null','self','float','decimal','bigint','uint',
           'i8','i16','i32','i64','u8','u16','u32','u64','f32','f64','String','Bool','Integer',
           'boolean','Any','Unknown','Object','Error','Symbol','Array','List','Vector','Slice',
@@ -412,7 +412,7 @@ class Parser {
     this.expect('=');
     const infer=this.match('infer');
     if(infer){
-      if(kind!=='Record'||alias===null||binder||!this.scalarConsts)
+      if(!['Record','DynRecord'].includes(kind)||alias===null||binder||!this.scalarConsts)
         throw new CompileError('E_TYPE_INFER_AMBIGUOUS: infer requires local Record<T>',at);
       if(!this.aggregateTypes.has(alias)){
         if(params.includes(alias)||this.aggregateLocals.has(alias)||this.scalarConsts.has(alias)||alias===name)
@@ -431,7 +431,9 @@ class Parser {
   readAggregateFields(kind,name,alias,binder,params,at,allowRuntime,base=null){
     const open=this.peek().value;
     if(kind==='struct')this.expect('{');
-    else if(kind==='Record'&&(open==='{'||open==='('))this.pos++;
+    else if(kind==='Record'&&(open==='{'||(open==='('&&this.ts[this.pos+1]?.value===')')))this.pos++;
+    else if(kind==='DynRecord'&&open==='(')this.pos++;
+    else if(['Record','DynRecord'].includes(kind))throw new CompileError('E_AGGREGATE_KIND: wrong delimiter for '+kind,at);
     else this.expect('(');
     const close=open==='{'?'}':')', fields=new Map(base?.fields), explicit=new Set(), spreadConflicts=new Set();
     let ordinaryField=false,entryCount=0;
@@ -459,7 +461,7 @@ class Parser {
       if(kind==='Record'&&open==='{'&&!capture&&this.peek().kind!=='id')
         throw new CompileError('E_RECORD_LABEL: brace Record requires identifier key',this.peek());
       const key=kind==='Tuple'?String(fields.size):
-        kind==='Record'&&open==='('&&!capture?this.readQuotedRecordKey():this.aggregateIdentifier();
+        kind==='DynRecord'&&!capture?this.readQuotedRecordKey():this.aggregateIdentifier();
       if(explicit.has(key))throw new CompileError('E_DUPLICATE_FIELD: '+key,this.peek());
       explicit.add(key);spreadConflicts.delete(key);
       let field,pairEntry=false;
@@ -473,12 +475,14 @@ class Parser {
         // Colon is the specified quoted-key parenthesized spelling.
         // Quoted = and := are unresolved; do not promote them implicitly.
         // Retain brace punctuation and independent capture/Struct/Tuple paths.
-        if(kind==='Record'){
+        if(kind==='DynRecord'){
+          if(!this.match(':'))this.expect('=');ordinaryField=true;
+        }else if(kind==='Record'){
           if(open==='('){this.expect(':');ordinaryField=true;}
           else if(this.match(':='))pairEntry=true;
           else {if(!this.match(':'))this.expect('=');ordinaryField=true;}
         }else if(kind==='struct')this.expect(':');
-        field=kind==='Record'?this.readRecordValue(params,allowRuntime):this.readAggregateScalar(params,allowRuntime);
+        field=['Record','DynRecord'].includes(kind)?this.readRecordValue(params,allowRuntime):this.readAggregateScalar(params,allowRuntime);
       }
       fields.set(key,field);
       if(fields.size>64)throw new CompileError('aggregate field limit',this.peek());
@@ -514,7 +518,7 @@ class Parser {
       if(index.kind!=='int'||!/^(0|[1-9][0-9]*)$/.test(index.value))
         throw new CompileError('tuple projection requires a static index',index);
       key=index.value;this.pos++;this.expect(']');
-    }else if(aggregate.kind==='Record'&&this.match('[')){
+    }else if(['Record','DynRecord'].includes(aggregate.kind)&&this.match('[')){
       key=this.readQuotedRecordKey();this.expect(']');
     }else{
       this.expect('.');key=this.aggregateIdentifier();
@@ -560,7 +564,7 @@ class Parser {
     // Module prefix: named immutable literal Record/Tuple exemplars.
     // No module struct identity or full aggregate ABI is admitted.
     this.aggregateTypes=new Map();this.aggregateLocals=new Map();
-    while(this.peek().value==='const'&&['Record','Tuple','struct'].includes(this.ts[this.pos+1]?.value)){
+    while(this.peek().value==='const'&&['Record','DynRecord','Tuple','struct'].includes(this.ts[this.pos+1]?.value)){
       if(this.ts[this.pos+1].value==='struct'||this.ts[this.pos+2]?.value!=='<')
         throw new CompileError('E_MODULE_AGGREGATE_INFER_UNSUPPORTED: expected named Record or Tuple',this.peek());
       this.aggregateConst([]);
@@ -598,7 +602,20 @@ class Parser {
       this.aggregateTypes=new Map(moduleTypes);this.aggregateLocals=new Map(moduleLocals);
       for(const param of params)this.aggregateLocals.delete(param);
       this.scalarConsts=new Map();
-      while(this.peek().value==='const')this.localConst(params);
+      while(this.peek().value==='const'||this.peek().value==='val'){
+        if(this.peek().value==='val'){
+          const at=this.peek();this.pos++;
+          const name=this.aggregateIdentifier();
+          if(params.includes(name)||this.aggregateLocals.has(name)||this.scalarConsts.has(name))
+            throw new CompileError('duplicate local binding '+name,at);
+          if(this.aggregateLocals.size+this.scalarConsts.size>=64)
+            throw new CompileError('aggregate binding limit',at);
+          this.expect('=');
+          // This bootstrap supports only the requested val DynRecord
+          // literal and read projections; no mutable val storage yet.
+          this.readAggregateFields('DynRecord',name,null,false,params,at,false);
+        }else this.localConst(params);
+      }
       this.expect('return');
       const body=startsBareSequence(this)
         ? (this.pos++,this.sequence(false)) : this.expr();
