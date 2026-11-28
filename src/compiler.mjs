@@ -289,11 +289,16 @@ class Parser {
         if(items.every(x=>x.kind==='Record'))elem='OpenRecord';
         else throw new CompileError('E_TYPE_MISMATCH: incompatible Record array elements',at);
       }
-      return {kind:'Array',type:JSON.stringify(['Array',elem]),items};
+      return {kind:'Array',type:'A'+elem.length+':'+elem,items};
     }
     if(at.value==='{'|| (at.value==='('&&this.ts[this.pos+1]?.kind==='string'&&this.ts[this.pos+2]?.value===':')){
       const nested=this.readAggregateFields('Record',null,null,false,params,at,allowRuntime,null,depth+1);
-      return {kind:'Record',type:JSON.stringify(['Record',[...nested.fields].sort(([a],[b])=>a<b?-1:a>b?1:0).map(([k,v])=>[k,v.type])]),fields:nested.fields};
+      // Length-framed structural descriptors avoid recursive JSON escaping
+      // amplification and remain injective even for punctuation-bearing keys.
+      const entries=[...nested.fields].sort(([a],[b])=>a<b?-1:a>b?1:0);
+      const frame=v=>v.length+':'+v;
+      const type='R'+entries.length+':'+entries.map(([k,v])=>frame(k)+frame(v.type)).join('');
+      return {kind:'Record',type,fields:nested.fields};
     }
     return this.readAggregateScalar(params,allowRuntime);
   }
