@@ -104,6 +104,11 @@ function lex(src) {
           src[i+1]!=='=' &&
           !(src.slice(i+1,i+3)==='eq' && !isIdentifierPart(identifierCharAt(src,i+3))))
         ownershipBang ??= loc;
+      // Reject unsupported protected containers before scalar artifacts exist.
+      if (s==='container' && out.at(-1)?.kind==='id' && out.at(-1).value==='state' &&
+          ((out.at(-2)?.kind==='id' && out.at(-2).value==='define') ||
+           (out.at(-2)?.kind==='id' && out.at(-2).value==='pub' && out.at(-3)?.kind==='id' && out.at(-3).value==='define')))
+        throw new CompileError('STATE_CONTAINER_BACKEND_UNSUPPORTED: typed protected-state loans and native ESM lowering required',loc);
       add('id',s==='susp'?'suspends':s,loc);
     }else if(/[0-9]/.test(src[i])){
       let s='';while(i<src.length&&/[0-9_]/.test(src[i])){s+=src[i];advance();}

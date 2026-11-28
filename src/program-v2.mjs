@@ -316,6 +316,11 @@ function tokenize(source, scheduledFutureFormals=false) {
             fail('EXCEPTION_BANG_BACKEND_UNSUPPORTED: exceptional control must be a statement',start);
           advance();word+='!';
         }
+      // Reject unsupported protected containers before scalar artifacts exist.
+      if (word==='container' && result.at(-1)?.kind==='id' && result.at(-1).value==='state' &&
+          ((result.at(-2)?.kind==='id' && result.at(-2).value==='define') ||
+           (result.at(-2)?.kind==='id' && result.at(-2).value==='pub' && result.at(-3)?.kind==='id' && result.at(-3).value==='define')))
+        fail('STATE_CONTAINER_BACKEND_UNSUPPORTED: typed protected-state loans and native ESM lowering required',start);
       emit('id',word==='susp'?'suspends':word,start);
       if(word==='susp')result.at(-1).lexeme=word;
     } else if (/[0-9]/.test(c)) {
