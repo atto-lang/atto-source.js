@@ -161,23 +161,26 @@ class Reader{
   }
   bundleName(){const n=this.name();demand(!this.owners.has(n)&&!this.values.has(n)&&!['Array','infer','from','make','size','layout','T','Option','Result','Pointer','Vector','List','Map','Set','String','Symbol','Future','Channel'].includes(n),'invalid bundle identifier');return n}
   sizeLiteral(){const n=this.peek();demand(/^[0-9]+$/.test(n??'')&&n.length<=4&&Number(n)<=1024,'invalid fixed array size');this.i++;return Number(n)}
+  layoutLiteral(){const kind=this.name();if(kind==='aos'||kind==='soa')return kind;demand(kind==='aosoa','invalid layout');this.need('(');const lanes=this.sizeLiteral();demand(lanes>=1,'invalid AoSoA lane count');this.need(')');return 'aosoa('+lanes+')'}
   seedBundle(){
     demand(!this.seed,'only one seed bundle');this.need('type');const name=this.bundleName();this.need('=');this.need('<');const args=[];
-    do{demand(args.length<3,'bundle formal limit');const key=this.name();this.need('=');const value=key==='size'?this.sizeLiteral():this.name();args.push([key,value])}while(this.eat(','));
+    do{demand(args.length<3,'bundle formal limit');const key=this.name();this.need('=');const value=key==='size'?this.sizeLiteral():key==='layout'?this.layoutLiteral():this.name();args.push([key,value])}while(this.eat(','));
     this.need('>');this.need(';');
-    const schema=[{name:'T',accepts:n=>this.owners.has(n)},{name:'size',accepts:n=>Number.isInteger(n)&&n>=0&&n<=1024},{name:'layout',accepts:n=>n==='soa'||n==='aos'}];
+    const schema=[{name:'T',accepts:n=>this.owners.has(n)},{name:'size',accepts:n=>Number.isInteger(n)&&n>=0&&n<=1024},{name:'layout',accepts:n=>n==='soa'||n==='aos'||/^aosoa\([1-9][0-9]{0,3}\)$/.test(n)&&Number(n.slice(6,-1))<=1024}];
     const values=bindBundle(schema,[],args,'application');demand(values.length===3,'incomplete seed bundle');const o=Object.fromEntries(values);
     demand(this.owners.get(o.T).leaves.every(f=>f.type==='int'),'only int array leaves');this.seed={name,schema,values,...o};
   }
   fixedIndex(size){this.need('[');const i=this.sizeLiteral();this.need(']');demand(i<size,'array bounds');return i}
-  arrayOffset(field,row){const a=this.array;return a.layout==='soa'?field*a.size+row:row*a.fields.length+field}
+  arrayOffset(field,row){const a=this.array;demand(field>=0&&field<a.fields.length&&row>=0&&row<a.size,'array cell bounds');if(a.lanes)return Math.floor(row/a.lanes)*a.fields.length*a.lanes+field*a.lanes+row%a.lanes;return a.layout==='soa'?field*a.size+row:row*a.fields.length+field}
   bindArray(){
     demand(this.seed&&!this.array,'one seeded array required');this.need('let');const name=this.bundleName();demand(name!==this.seed.name,'array conflicts with seed');this.need(':');this.need('Array');this.need('<');this.need('infer');const capture=this.bundleName();demand(capture!==name&&capture!==this.seed.name,'bundle capture collision');this.need('from');this.need(this.seed.name);this.need('>');this.need('=');this.need('[');
     const rows=[];if(!this.eat(']')){do{demand(rows.length<1024,'array row limit');demand(this.peek()==='make','inline array requires value construction');rows.push(this.makeValue(this.seed.T,0,true).leaves)}while(this.eat(','));this.need(']')}
     let values=this.seed.values;if(this.eat('with')){this.need('{');this.need('size');this.need('=');values=this.eat('infer')?refineInferred(this.seed.schema,this.seed.values,[],['size'],[['size',rows.length]]):bindBundle(this.seed.schema,this.seed.values,[['size',this.sizeLiteral()]],'refinement');this.need('}')}
     this.need(';');const {size,layout}=Object.fromEntries(values);demand(size===rows.length,'fixed size must equal explicit row count');
-    const fields=this.owners.get(this.seed.T).leaves.map(f=>f.path),id='_array';this.capture={name:capture,size};this.array={name,id,fields,size,layout};
-    let code='const '+id+'=new BigInt64Array('+size*fields.length+');';
+    const fields=this.owners.get(this.seed.T).leaves.map(f=>f.path),id='_array';const lanes=layout.startsWith('aosoa(')?Number(layout.slice(6,-1)):0;this.capture={name:capture,size};this.array={name,id,fields,size,layout,lanes};
+    const physicalRows=lanes?Math.ceil(size/lanes)*lanes:size;
+    demand(physicalRows*fields.length<=16384,'array physical cell budget');
+    let code='const '+id+'=new BigInt64Array('+physicalRows*fields.length+');';
     for(const [row,entries] of rows.entries()){
       // Evaluate every initializer exactly once in written order, before any
       // store for that row. The destination is private until initialization
