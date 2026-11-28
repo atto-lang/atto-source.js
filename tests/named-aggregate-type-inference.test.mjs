@@ -129,3 +129,32 @@ test('bounded Pair/Record grammar rejects malformed, ambiguous and unsafe forms'
   ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),undefined,body);
   assert.throws(()=>compileToIR('pub fnc main(int a):int{const Record r=(x=a); const v={...r}; return v.x;}'),/E_RECORD_SPREAD/);
 });
+
+
+test('contextual empty local products preserve exact kind and zero shape',async()=>{
+  for(const body of [
+    'const t=(); return 42;',
+    'const Tuple t=(); const Record r=(); const Record s={}; return 42;',
+    'const Record<infer R> r=(); const Record<R> s={}; return 42;',
+    'const Tuple<infer T> t=(); const Tuple<T> u=(); return 42;',
+    'const Record r=(); const s={...r,a:42}; return s.a;',
+    'const Record r=(); const s=r with {a:42}; return s.a;'
+  ])assert.equal(await run(body),42n,body);
+});
+test('empty product kind and exact shape cannot be silently changed',()=>{
+  for(const [body,error] of [
+    ['const Record<infer R> r=(); const Tuple<R> t=(); return 0;',/E_AGGREGATE_KIND/],
+    ['const Tuple<infer T> t=(); const Record<T> r=(); return 0;',/E_AGGREGATE_KIND/],
+    ['const Record<infer R> r={a:1}; const Record<R> s=(); return 0;',/E_TYPE_MISMATCH/],
+    ['const Record<infer R> r=(); const Record<R> s={a:1}; return 0;',/E_TYPE_MISMATCH/],
+    ['const Tuple<infer T> t=(1,2); const Tuple<T> u=(); return 0;',/E_TYPE_MISMATCH/],
+    ['const t=(); const r={...t,a:42}; return r.a;',/E_RECORD_SPREAD/],
+    ['const t=(); return t[0];',/E_NO_FIELD/],
+    ['const Record r=(); return r.a;',/E_NO_FIELD/],
+    ['const Record r=(); return r[0];',/expected/],
+    ['const t=(); return t.a;',/expected/],
+    ['const r={}; return 0;',/E_LITERAL_KIND/],
+    ['const struct s={}; return 0;',/E_LITERAL_KIND/],
+    ['const t=(); const Record r=t; return 0;',/expected/]
+  ])assert.throws(()=>compileToIR('pub fnc main():int{'+body+'}'),error,body);
+});
